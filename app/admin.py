@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .db import get_db
-from .models import ApiKey, UsageDaily, User
+from .models import ApiKey, RechargeLog, UsageDaily, User
 from .schemas import AdminKeyUpdate, AdminUserUpdate
 from .security import generate_api_key, generate_id, hash_key, require_admin
 
@@ -154,3 +154,50 @@ async def summary_metrics(db: AsyncSession = Depends(get_db)):
         "total_tokens": int(total_tokens or 0),
         "total_requests_today": int(total_requests_today or 0),
     }
+
+
+@router.get("/keys", dependencies=[Depends(admin_guard)])
+async def list_keys(user_id: Optional[str] = None, db: AsyncSession = Depends(get_db)):
+    """列出所有 Key"""
+    query = select(ApiKey, User).join(User, ApiKey.user_id == User.id)
+    if user_id:
+        query = query.where(ApiKey.user_id == user_id)
+    result = await db.execute(query.order_by(ApiKey.created_at.desc()).limit(200))
+    rows = result.all()
+    return [
+        {
+            "id": key.id,
+            "user_id": key.user_id,
+            "username": user.username,
+            "external_id": user.external_id,
+            "status": key.status,
+            "created_at": key.created_at,
+            "last_used_at": key.last_used_at,
+        }
+        for key, user in rows
+    ]
+
+
+@router.get("/recharges", dependencies=[Depends(admin_guard)])
+async def list_recharges(user_id: Optional[str] = None, db: AsyncSession = Depends(get_db)):
+    """列出充值记录"""
+    query = select(RechargeLog, User).join(User, RechargeLog.user_id == User.id)
+    if user_id:
+        query = query.where(RechargeLog.user_id == user_id)
+    result = await db.execute(query.order_by(RechargeLog.created_at.desc()).limit(200))
+    rows = result.all()
+    return [
+        {
+            "id": log.id,
+            "order_id": log.order_id,
+            "user_id": log.user_id,
+            "username": user.username,
+            "external_id": user.external_id,
+            "amount": log.amount,
+            "tokens_added": log.tokens_added,
+            "daily_requests_added": log.daily_requests_added,
+            "note": log.note,
+            "created_at": log.created_at,
+        }
+        for log, user in rows
+    ]
