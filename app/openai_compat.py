@@ -187,14 +187,14 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
     if "max_completion_tokens" in payload:
         resp_payload["max_output_tokens"] = payload.get("max_completion_tokens")
     
-    # 基础参数透传
-    for field in ("temperature", "top_p", "presence_penalty", "frequency_penalty", "stop"):
-        if field in payload:
-            resp_payload[field] = payload[field]
+    # 注意: gpt-5.2-codex 模型不支持 temperature, top_p, presence_penalty, frequency_penalty 等参数
+    # 只透传 stop 和 seed（如果模型支持）
+    if "stop" in payload:
+        resp_payload["stop"] = payload["stop"]
     
-    # seed 参数
-    if "seed" in payload:
-        resp_payload["seed"] = payload["seed"]
+    # seed 参数（某些模型支持）
+    # if "seed" in payload:
+    #     resp_payload["seed"] = payload["seed"]
     
     # response_format 支持 (JSON mode / Structured Outputs)
     if "response_format" in payload:

@@ -207,6 +207,11 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
 
     payload["model"] = settings.fixed_model
     payload.pop("model_provider", None)
+    
+    # 移除 Codex 模型不支持的参数
+    unsupported_params = ["temperature", "top_p", "presence_penalty", "frequency_penalty", "n", "logprobs", "top_logprobs"]
+    for param in unsupported_params:
+        payload.pop(param, None)
 
     upstream_url = f"{settings.upstream_base_url.rstrip('/')}/responses"
     headers = {
