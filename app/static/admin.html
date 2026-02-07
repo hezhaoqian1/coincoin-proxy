@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CoinCoin 控制台</title>
+    <style>
+      :root {
+        --bg: #0b0f14;
+        --panel: #111827;
+        --panel-2: #0f172a;
+        --muted: #94a3b8;
+        --text: #e2e8f0;
+        --accent: #22d3ee;
+        --accent-2: #38bdf8;
+        --danger: #f87171;
+        --ok: #34d399;
+        --border: #1f2937;
+        --shadow: 0 20px 40px rgba(0,0,0,0.3);
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        background: radial-gradient(1200px 800px at 10% -10%, #0f2a3a 0%, transparent 55%),
+                    radial-gradient(1000px 700px at 90% 0%, #1e293b 0%, transparent 55%),
+                    var(--bg);
+        color: var(--text);
+      }
+      header {
+        padding: 22px 28px;
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        backdrop-filter: blur(6px);
+      }
+      .brand { display: flex; gap: 12px; align-items: center; }
+      .logo {
+        width: 34px; height: 34px; border-radius: 10px;
+        background: linear-gradient(135deg, #22d3ee, #38bdf8);
+        box-shadow: var(--shadow);
+      }
+      h1 { margin: 0; font-size: 18px; }
+      .container { padding: 24px 28px 48px; display: grid; gap: 20px; }
+      .grid-4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+      .panel {
+        background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
+        border: 1px solid var(--border); border-radius: 14px; padding: 18px;
+        box-shadow: var(--shadow);
+      }
+      .panel h2 { margin: 0 0 12px 0; font-size: 16px; }
+      .row { display: grid; gap: 12px; grid-template-columns: 1fr auto; }
+      input, select, button {
+        background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+        padding: 8px 10px; border-radius: 10px; font-size: 14px;
+      }
+      button {
+        cursor: pointer; border-color: transparent;
+        background: linear-gradient(135deg, var(--accent), var(--accent-2));
+        color: #0b1220; font-weight: 600;
+      }
+      button.secondary { background: #1f2937; color: var(--text); }
+      button.danger { background: var(--danger); color: #1f1212; }
+      table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+      th, td { text-align: left; padding: 9px 6px; border-bottom: 1px solid var(--border); }
+      th { color: var(--muted); font-weight: 500; }
+      .inline { display: inline-flex; gap: 8px; align-items: center; }
+      .small { font-size: 12px; color: var(--muted); }
+      .stat { font-size: 22px; font-weight: 700; }
+      .stat-label { color: var(--muted); font-size: 12px; }
+      .split { display: grid; grid-template-columns: 1.2fr 1fr; gap: 16px; }
+      @media (max-width: 1100px) { .grid-4 { grid-template-columns: 1fr 1fr; } .split { grid-template-columns: 1fr; } }
+      @media (max-width: 700px) { .grid-4 { grid-template-columns: 1fr; } }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="brand">
+        <div class="logo"></div>
+        <div>
+          <h1>CoinCoin 控制台</h1>
+          <div class="small">用户、额度、请求管理</div>
+        </div>
+      </div>
+      <div class="inline">
+        <input id="token" type="password" placeholder="Admin Token" />
+        <button class="secondary" onclick="saveToken()">保存</button>
+      </div>
+    </header>
+
+    <div class="container">
+      <div class="grid-4">
+        <div class="panel"><div class="stat" id="statTotalUsers">-</div><div class="stat-label">总用户数</div></div>
+        <div class="panel"><div class="stat" id="statActiveUsers">-</div><div class="stat-label">活跃用户</div></div>
+        <div class="panel"><div class="stat" id="statTotalTokens">-</div><div class="stat-label">累计 Token</div></div>
+        <div class="panel"><div class="stat" id="statReqToday">-</div><div class="stat-label">今日请求</div></div>
+      </div>
+
+      <div class="panel split">
+        <div>
+          <h2>创建用户 / Key</h2>
+          <div class="row">
+            <input id="newUsername" placeholder="username (可选)" />
+            <input id="newExternal" placeholder="external_id (可选)" />
+          </div>
+          <div class="small">username 或 external_id 二选一</div>
+          <div style="margin-top:10px;"><button onclick="createUserKey()">生成 Key</button></div>
+        </div>
+        <div>
+          <h2>每日统计</h2>
+          <div class="row">
+            <input id="usageDay" placeholder="YYYY-MM-DD (可选)" />
+            <button onclick="loadUsage()">刷新统计</button>
+          </div>
+          <div style="overflow:auto; margin-top:12px; max-height:240px;">
+            <table id="usageTable"><thead><tr><th>日期</th><th>用户</th><th>请求数</th><th>Token</th></tr></thead><tbody></tbody></table>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>用户管理</h2>
+        <div class="row">
+          <input id="userSearch" placeholder="username / external_id" />
+          <button onclick="loadUsers()">刷新用户</button>
+        </div>
+        <div class="small">可设置：Token 限额 / 每分钟请求 / 每日请求</div>
+        <div style="overflow:auto; margin-top:12px;">
+          <table id="usersTable">
+            <thead><tr><th>ID</th><th>用户名</th><th>External</th><th>状态</th><th>已用 Token</th><th>Token 限额</th><th>每分钟限额</th><th>每日限额</th><th>操作</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const tokenInput = document.getElementById('token');
+      const saved = localStorage.getItem('cc_admin_token');
+      if (saved) tokenInput.value = saved;
+
+      function saveToken() {
+        localStorage.setItem('cc_admin_token', tokenInput.value.trim());
+        alert('已保存');
+        loadSummary(); loadUsers(); loadUsage();
+      }
+
+      function adminHeaders() {
+        const token = (localStorage.getItem('cc_admin_token') || '').trim();
+        return token ? { 'Authorization': 'Bearer ' + token } : {};
+      }
+
+      async function loadSummary() {
+        const res = await fetch('/admin/metrics/summary', { headers: adminHeaders() });
+        if (!res.ok) return;
+        const data = await res.json();
+        document.getElementById('statTotalUsers').textContent = data.total_users;
+        document.getElementById('statActiveUsers').textContent = data.active_users;
+        document.getElementById('statTotalTokens').textContent = data.total_tokens;
+        document.getElementById('statReqToday').textContent = data.total_requests_today;
+      }
+
+      async function createUserKey() {
+        const username = document.getElementById('newUsername').value.trim();
+        const external_id = document.getElementById('newExternal').value.trim();
+        const payload = {};
+        if (username) payload.username = username;
+        if (external_id) payload.external_id = external_id;
+        const res = await fetch('/v1/keys/activate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (res.ok) { alert('新 Key: ' + data.api_key); loadUsers(); loadSummary(); }
+        else { alert(data.detail || '创建失败'); }
+      }
+
+      async function loadUsers() {
+        const search = document.getElementById('userSearch').value.trim();
+        const url = search ? `/admin/users?search=${encodeURIComponent(search)}` : '/admin/users';
+        const res = await fetch(url, { headers: adminHeaders() });
+        const data = await res.json();
+        const body = document.querySelector('#usersTable tbody');
+        body.innerHTML = '';
+        for (const u of data) {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td>${u.id}</td><td>${u.username || ''}</td><td>${u.external_id || ''}</td>
+            <td><select data-id="${u.id}" class="status">
+              <option value="active" ${u.status === 'active' ? 'selected' : ''}>active</option>
+              <option value="blocked" ${u.status === 'blocked' ? 'selected' : ''}>blocked</option>
+            </select></td>
+            <td>${u.token_used ?? 0}</td>
+            <td><input data-id="${u.id}" class="limit" value="${u.token_limit ?? ''}" placeholder="不限" /></td>
+            <td><input data-id="${u.id}" class="rpm" value="${u.request_limit_per_minute ?? ''}" placeholder="不限" /></td>
+            <td><input data-id="${u.id}" class="rpd" value="${u.request_limit_per_day ?? ''}" placeholder="不限" /></td>
+            <td class="inline">
+              <button onclick="updateUser('${u.id}')">保存</button>
+              <button class="secondary" onclick="createKey('${u.id}')">新 Key</button>
+            </td>`;
+          body.appendChild(tr);
+        }
+      }
+
+      async function updateUser(userId) {
+        const status = document.querySelector(`select.status[data-id='${userId}']`).value;
+        const limit = document.querySelector(`input.limit[data-id='${userId}']`).value.trim();
+        const rpm = document.querySelector(`input.rpm[data-id='${userId}']`).value.trim();
+        const rpd = document.querySelector(`input.rpd[data-id='${userId}']`).value.trim();
+        const payload = { status };
+        if (limit !== '') payload.token_limit = Number(limit);
+        if (rpm !== '') payload.request_limit_per_minute = Number(rpm);
+        if (rpd !== '') payload.request_limit_per_day = Number(rpd);
+        const res = await fetch(`/admin/users/${userId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+          body: JSON.stringify(payload)
+        });
+        if (!res.ok) alert('更新失败');
+        loadSummary();
+      }
+
+      async function createKey(userId) {
+        const res = await fetch(`/admin/users/${userId}/keys`, { method: 'POST', headers: adminHeaders() });
+        const data = await res.json();
+        if (res.ok) { alert('新 Key: ' + data.api_key); } else { alert('创建失败'); }
+      }
+
+      async function loadUsage() {
+        const day = document.getElementById('usageDay').value.trim();
+        const url = day ? `/admin/usage/daily?day=${encodeURIComponent(day)}` : '/admin/usage/daily';
+        const res = await fetch(url, { headers: adminHeaders() });
+        const data = await res.json();
+        const body = document.querySelector('#usageTable tbody');
+        body.innerHTML = '';
+        for (const row of data) {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `<td>${row.day}</td><td>${row.username || row.user_id}</td><td>${row.requests_total}</td><td>${row.tokens_total}</td>`;
+          body.appendChild(tr);
+        }
+      }
+
+      loadSummary(); loadUsers(); loadUsage();
+    </script>
+  </body>
+</html>
