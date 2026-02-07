@@ -8,6 +8,7 @@ from .admin import router as admin_router
 from .keys import router as keys_router
 from .proxy import router as proxy_router, close_http_client
 from .openai_compat import router as openai_router
+from .webhook import router as webhook_router
 from .config import settings
 from .db import Base, engine
 from .usage_buffer import flush_loop, flush_once
@@ -57,6 +58,9 @@ app.include_router(keys_router)
 
 # Admin 管理后台
 app.include_router(admin_router)
+
+# Webhook（支付回调）
+app.include_router(webhook_router)
 
 
 @app.get("/health")

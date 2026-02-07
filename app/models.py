@@ -54,3 +54,17 @@ class UsageDaily(Base):
     tokens_total: Mapped[int] = mapped_column(BigInteger, default=0)
     requests_total: Mapped[int] = mapped_column(BigInteger, default=0)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class RechargeLog(Base):
+    """充值记录表，用于对账和幂等性"""
+    __tablename__ = "coincoin_recharge_logs"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    order_id: Mapped[str] = mapped_column(String(128), unique=True, index=True)  # 外部订单号，幂等 key
+    user_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_users.id"), index=True)
+    amount: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)  # 金额（分）
+    tokens_added: Mapped[int] = mapped_column(BigInteger, default=0)  # 增加的 token 额度
+    daily_requests_added: Mapped[int] = mapped_column(BigInteger, default=0)  # 增加的每日请求数
+    note: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)  # 备注
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

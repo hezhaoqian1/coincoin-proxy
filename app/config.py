@@ -7,6 +7,7 @@ class Settings(BaseSettings):
 
     # Auth / security
     admin_token: str = "change-me"
+    webhook_secret: str = "change-me-webhook"  # 支付回调验证
     key_prefix: str = "sk_cc_"
     key_pepper: str = "coincoin-pepper"
 
