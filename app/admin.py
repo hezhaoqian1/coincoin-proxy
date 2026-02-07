@@ -61,6 +61,8 @@ async def update_user(user_id: str, payload: AdminUserUpdate, db: AsyncSession =
         user.status = payload.status
     if payload.token_limit is not None:
         user.token_limit = payload.token_limit
+    if payload.token_used is not None:
+        user.token_used = payload.token_used
     if payload.request_limit_per_minute is not None:
         user.request_limit_per_minute = payload.request_limit_per_minute
     if payload.request_limit_per_day is not None:
@@ -71,8 +73,66 @@ async def update_user(user_id: str, payload: AdminUserUpdate, db: AsyncSession =
         "id": user.id,
         "status": user.status,
         "token_limit": user.token_limit,
+        "token_used": user.token_used,
         "request_limit_per_minute": user.request_limit_per_minute,
         "request_limit_per_day": user.request_limit_per_day,
+    }
+
+
+@router.post("/users/{user_id}/reset-usage", dependencies=[Depends(admin_guard)])
+async def reset_user_usage(user_id: str, db: AsyncSession = Depends(get_db)):
+    """重置用户的 token_used 为 0"""
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
+
+    old_value = user.token_used
+    user.token_used = 0
+    await db.commit()
+    
+    return {
+        "id": user.id,
+        "token_used_before": old_value,
+        "token_used_after": 0,
+        "message": "usage reset successfully"
+    }
+
+
+@router.get("/users/{user_id}", dependencies=[Depends(admin_guard)])
+async def get_user_detail(user_id: str, db: AsyncSession = Depends(get_db)):
+    """获取用户详情，包含该用户的所有 Key"""
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
+    
+    # 获取用户的所有 Key
+    keys_result = await db.execute(
+        select(ApiKey).where(ApiKey.user_id == user_id).order_by(ApiKey.created_at.desc())
+    )
+    keys = keys_result.scalars().all()
+    
+    return {
+        "id": user.id,
+        "username": user.username,
+        "external_id": user.external_id,
+        "status": user.status,
+        "token_limit": user.token_limit,
+        "token_used": user.token_used,
+        "request_limit_per_minute": user.request_limit_per_minute,
+        "request_limit_per_day": user.request_limit_per_day,
+        "created_at": user.created_at,
+        "updated_at": user.updated_at,
+        "keys": [
+            {
+                "id": k.id,
+                "status": k.status,
+                "created_at": k.created_at,
+                "last_used_at": k.last_used_at,
+            }
+            for k in keys
+        ]
     }
 
 

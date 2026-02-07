@@ -18,6 +18,7 @@ class KeyActivateResponse(BaseModel):
 class AdminUserUpdate(BaseModel):
     status: Optional[str] = Field(default=None, examples=["active", "blocked"])
     token_limit: Optional[int] = None
+    token_used: Optional[int] = Field(default=None, description="手动调整已用 token 数")
     request_limit_per_minute: Optional[int] = None
     request_limit_per_day: Optional[int] = None
 
