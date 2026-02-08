@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .config import settings
 from .db import get_db
 from .proxy import authorize_request, filter_headers, get_http_client, get_stream_client, proxy_responses, responses_health
+from .schemas import BalanceResponse
 from .usage_buffer import usage_buffer
 
 
@@ -31,6 +32,53 @@ def openai_error(message: str, error_type: str = "invalid_request_error",
                 "code": code,
             }
         }
+    )
+
+
+@router.get("/balance", response_model=BalanceResponse)
+async def get_balance(request: Request, db: AsyncSession = Depends(get_db)):
+    """
+    查询账户余额和使用量
+    
+    使用自己的 API Key 认证，返回余额、token 用量和价格信息。
+    """
+    try:
+        user = await authorize_request(request, db)
+    except HTTPException as e:
+        if e.status_code == 401:
+            return openai_error("Invalid API key provided", "authentication_error", code="invalid_api_key", status_code=401)
+        elif e.status_code == 403:
+            return openai_error("Access denied", "permission_error", code="access_denied", status_code=403)
+        raise
+    
+    # 获取待刷新的数据
+    pending_tokens = await usage_buffer.get_pending_tokens(user.id)
+    pending_cost = await usage_buffer.get_pending_cost(user.id)
+    
+    # 计算当前值（包含待刷新）
+    current_balance = getattr(user, "balance", 0) or 0
+    balance = current_balance - pending_cost
+    token_used = (getattr(user, "token_used", 0) or 0) + pending_tokens
+    input_tokens_used = getattr(user, "input_tokens_used", 0) or 0
+    output_tokens_used = getattr(user, "output_tokens_used", 0) or 0
+    token_limit = getattr(user, "token_limit", None)
+    
+    # 计算剩余 tokens
+    token_remaining = None
+    if token_limit is not None:
+        token_remaining = max(0, token_limit - token_used)
+    
+    return BalanceResponse(
+        user_id=user.id,
+        balance=balance,
+        balance_usd=balance / 100,  # 分转美元
+        token_used=token_used,
+        input_tokens_used=input_tokens_used,
+        output_tokens_used=output_tokens_used,
+        token_limit=token_limit,
+        token_remaining=token_remaining,
+        price_input_per_million=settings.price_input_per_million / 100,  # 分转美元
+        price_output_per_million=settings.price_output_per_million / 100,  # 分转美元
     )
 
 
@@ -498,7 +546,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                 await upstream.aclose()
 
         if upstream.status_code < 400:
-            await usage_buffer.add(user.id, tokens=0, requests=1)
+            await usage_buffer.add(user.id, input_tokens=0, output_tokens=0, requests=1)
         stream_headers = filter_headers(dict(upstream.headers))
         stream_headers.pop("content-length", None)
         stream_headers.setdefault("cache-control", "no-cache")
@@ -516,17 +564,15 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
     else:
         data = upstream.text
 
-    tokens_delta = 0
+    input_tokens_delta = 0
+    output_tokens_delta = 0
     if upstream.status_code < 400 and isinstance(data, dict):
         usage = data.get("usage") or {}
-        total = usage.get("total_tokens") or (
-            (usage.get("input_tokens") or 0) + (usage.get("output_tokens") or 0)
-        )
-        if total:
-            tokens_delta = int(total)
+        input_tokens_delta = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
+        output_tokens_delta = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
 
     if upstream.status_code < 400:
-        await usage_buffer.add(user.id, tokens=tokens_delta, requests=1)
+        await usage_buffer.add(user.id, input_tokens=input_tokens_delta, output_tokens=output_tokens_delta, requests=1)
 
     if isinstance(data, dict):
         return JSONResponse(content=build_chat_response(data), status_code=upstream.status_code, headers=response_headers)
@@ -575,15 +621,14 @@ async def embeddings(request: Request, db: AsyncSession = Depends(get_db)):
     else:
         data = upstream.text
 
-    tokens_delta = 0
+    input_tokens_delta = 0
     if upstream.status_code < 400 and isinstance(data, dict):
         usage = data.get("usage") or {}
-        total = usage.get("total_tokens")
-        if total:
-            tokens_delta = int(total)
+        # Embeddings 只有 input tokens（prompt_tokens 或 total_tokens）
+        input_tokens_delta = int(usage.get("prompt_tokens") or usage.get("total_tokens") or 0)
 
     if upstream.status_code < 400:
-        await usage_buffer.add(user.id, tokens=tokens_delta, requests=1)
+        await usage_buffer.add(user.id, input_tokens=input_tokens_delta, output_tokens=0, requests=1)
 
     if isinstance(data, dict):
         return JSONResponse(content=data, status_code=upstream.status_code, headers=response_headers)

@@ -21,10 +21,20 @@ class User(Base):
     username: Mapped[Optional[str]] = mapped_column(String(128), unique=True, nullable=True)
     external_id: Mapped[Optional[str]] = mapped_column(String(128), unique=True, nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="active")
+    
+    # 余额（单位：分，即 0.01 美元）
+    balance: Mapped[int] = mapped_column(BigInteger, default=0)
+    
+    # Token 限制和使用量
     token_limit: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
-    token_used: Mapped[int] = mapped_column(BigInteger, default=0)
+    token_used: Mapped[int] = mapped_column(BigInteger, default=0)  # 保留总量兼容
+    input_tokens_used: Mapped[int] = mapped_column(BigInteger, default=0)
+    output_tokens_used: Mapped[int] = mapped_column(BigInteger, default=0)
+    
+    # 请求限制
     request_limit_per_minute: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     request_limit_per_day: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -51,7 +61,10 @@ class UsageDaily(Base):
 
     user_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_users.id"), primary_key=True)
     day: Mapped[date] = mapped_column(Date, primary_key=True)
-    tokens_total: Mapped[int] = mapped_column(BigInteger, default=0)
+    tokens_total: Mapped[int] = mapped_column(BigInteger, default=0)  # 保留兼容
+    input_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
+    output_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
+    cost_cents: Mapped[int] = mapped_column(BigInteger, default=0)  # 消费金额（分）
     requests_total: Mapped[int] = mapped_column(BigInteger, default=0)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -63,8 +76,9 @@ class RechargeLog(Base):
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     order_id: Mapped[str] = mapped_column(String(128), unique=True, index=True)  # 外部订单号，幂等 key
     user_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_users.id"), index=True)
-    amount: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)  # 金额（分）
-    tokens_added: Mapped[int] = mapped_column(BigInteger, default=0)  # 增加的 token 额度
+    amount: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)  # 支付金额（分）
+    balance_added: Mapped[int] = mapped_column(BigInteger, default=0)  # 增加的余额（分）
+    tokens_added: Mapped[int] = mapped_column(BigInteger, default=0)  # 增加的 token 额度（兼容旧逻辑）
     daily_requests_added: Mapped[int] = mapped_column(BigInteger, default=0)  # 增加的每日请求数
     note: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)  # 备注
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

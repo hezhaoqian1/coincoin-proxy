@@ -32,6 +32,14 @@ class Settings(BaseSettings):
     http_pool_keepalive: int = 20
     key_cache_ttl: int = 30
     key_cache_max: int = 10000
+    
+    # Pricing (cents per million tokens)
+    # Default: Input $1.75/M = 175 cents/M, Output $14/M = 1400 cents/M
+    price_input_per_million: int = 175  # 单位：分/百万 tokens
+    price_output_per_million: int = 1400  # 单位：分/百万 tokens
+    
+    # Billing mode: "balance" (扣余额) or "token_limit" (扣 token 额度) or "none" (不限制)
+    billing_mode: str = "balance"
 
     class Config:
         env_prefix = "COINCOIN_"

@@ -54,6 +54,7 @@ async def recharge(payload: RechargeRequest, db: AsyncSession = Depends(get_db))
             success=True,
             order_id=payload.order_id,
             user_id=existing_log.user_id,
+            balance=user.balance if user else 0,
             token_limit=user.token_limit if user else None,
             request_limit_per_day=user.request_limit_per_day if user else None,
             message="order already processed (idempotent)"
@@ -78,6 +79,11 @@ async def recharge(payload: RechargeRequest, db: AsyncSession = Depends(get_db))
         )
 
     # 3. 增加额度
+    # 增加余额
+    if payload.add_balance > 0:
+        user.balance += payload.add_balance
+    
+    # 增加 token 限额（兼容旧逻辑）
     if payload.add_tokens > 0:
         if user.token_limit is None:
             user.token_limit = payload.add_tokens
@@ -96,6 +102,7 @@ async def recharge(payload: RechargeRequest, db: AsyncSession = Depends(get_db))
         order_id=payload.order_id,
         user_id=user.id,
         amount=payload.amount,
+        balance_added=payload.add_balance,
         tokens_added=payload.add_tokens,
         daily_requests_added=payload.add_daily_requests,
         note=payload.note,
@@ -104,12 +111,13 @@ async def recharge(payload: RechargeRequest, db: AsyncSession = Depends(get_db))
     db.add(log)
     await db.commit()
 
-    logger.info(f"Recharge success: order={payload.order_id} user={user.id} tokens=+{payload.add_tokens} daily_requests=+{payload.add_daily_requests}")
+    logger.info(f"Recharge success: order={payload.order_id} user={user.id} balance=+{payload.add_balance} tokens=+{payload.add_tokens} daily_requests=+{payload.add_daily_requests}")
 
     return RechargeResponse(
         success=True,
         order_id=payload.order_id,
         user_id=user.id,
+        balance=user.balance,
         token_limit=user.token_limit,
         request_limit_per_day=user.request_limit_per_day,
         message="recharge success"

@@ -39,8 +39,11 @@ async def list_users(search: Optional[str] = None, db: AsyncSession = Depends(ge
             "username": u.username,
             "external_id": u.external_id,
             "status": u.status,
+            "balance": u.balance,
             "token_limit": u.token_limit,
             "token_used": u.token_used,
+            "input_tokens_used": u.input_tokens_used,
+            "output_tokens_used": u.output_tokens_used,
             "request_limit_per_minute": u.request_limit_per_minute,
             "request_limit_per_day": u.request_limit_per_day,
             "created_at": u.created_at,
@@ -59,10 +62,16 @@ async def update_user(user_id: str, payload: AdminUserUpdate, db: AsyncSession =
 
     if payload.status:
         user.status = payload.status
+    if payload.balance is not None:
+        user.balance = payload.balance
     if payload.token_limit is not None:
         user.token_limit = payload.token_limit
     if payload.token_used is not None:
         user.token_used = payload.token_used
+    if payload.input_tokens_used is not None:
+        user.input_tokens_used = payload.input_tokens_used
+    if payload.output_tokens_used is not None:
+        user.output_tokens_used = payload.output_tokens_used
     if payload.request_limit_per_minute is not None:
         user.request_limit_per_minute = payload.request_limit_per_minute
     if payload.request_limit_per_day is not None:
@@ -72,8 +81,11 @@ async def update_user(user_id: str, payload: AdminUserUpdate, db: AsyncSession =
     return {
         "id": user.id,
         "status": user.status,
+        "balance": user.balance,
         "token_limit": user.token_limit,
         "token_used": user.token_used,
+        "input_tokens_used": user.input_tokens_used,
+        "output_tokens_used": user.output_tokens_used,
         "request_limit_per_minute": user.request_limit_per_minute,
         "request_limit_per_day": user.request_limit_per_day,
     }
@@ -81,20 +93,30 @@ async def update_user(user_id: str, payload: AdminUserUpdate, db: AsyncSession =
 
 @router.post("/users/{user_id}/reset-usage", dependencies=[Depends(admin_guard)])
 async def reset_user_usage(user_id: str, db: AsyncSession = Depends(get_db)):
-    """重置用户的 token_used 为 0"""
+    """重置用户的 token 使用量为 0"""
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
 
-    old_value = user.token_used
+    old_values = {
+        "token_used": user.token_used,
+        "input_tokens_used": user.input_tokens_used,
+        "output_tokens_used": user.output_tokens_used,
+    }
     user.token_used = 0
+    user.input_tokens_used = 0
+    user.output_tokens_used = 0
     await db.commit()
     
     return {
         "id": user.id,
-        "token_used_before": old_value,
-        "token_used_after": 0,
+        "before": old_values,
+        "after": {
+            "token_used": 0,
+            "input_tokens_used": 0,
+            "output_tokens_used": 0,
+        },
         "message": "usage reset successfully"
     }
 
@@ -118,8 +140,12 @@ async def get_user_detail(user_id: str, db: AsyncSession = Depends(get_db)):
         "username": user.username,
         "external_id": user.external_id,
         "status": user.status,
+        "balance": user.balance,
+        "balance_usd": user.balance / 100,  # 分转美元
         "token_limit": user.token_limit,
         "token_used": user.token_used,
+        "input_tokens_used": user.input_tokens_used,
+        "output_tokens_used": user.output_tokens_used,
         "request_limit_per_minute": user.request_limit_per_minute,
         "request_limit_per_day": user.request_limit_per_day,
         "created_at": user.created_at,
@@ -189,6 +215,10 @@ async def list_daily_usage(
             "user_id": usage.user_id,
             "day": usage.day,
             "tokens_total": usage.tokens_total,
+            "input_tokens": usage.input_tokens,
+            "output_tokens": usage.output_tokens,
+            "cost_cents": usage.cost_cents,
+            "cost_usd": usage.cost_cents / 100,  # 分转美元
             "requests_total": usage.requests_total,
             "username": user.username,
             "external_id": user.external_id,
@@ -254,6 +284,8 @@ async def list_recharges(user_id: Optional[str] = None, db: AsyncSession = Depen
             "username": user.username,
             "external_id": user.external_id,
             "amount": log.amount,
+            "balance_added": log.balance_added,
+            "balance_added_usd": log.balance_added / 100,  # 分转美元
             "tokens_added": log.tokens_added,
             "daily_requests_added": log.daily_requests_added,
             "note": log.note,

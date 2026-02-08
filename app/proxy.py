@@ -153,6 +153,7 @@ async def authorize_request(request: Request, db: AsyncSession):
             {
                 "id": user.id,
                 "status": user.status,
+                "balance": user.balance,
                 "token_limit": user.token_limit,
                 "token_used": user.token_used,
                 "request_limit_per_minute": user.request_limit_per_minute,
@@ -167,9 +168,17 @@ async def authorize_request(request: Request, db: AsyncSession):
         if not allowed:
             raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="rate limit exceeded")
 
+    # Token 限制检查（兼容旧逻辑）
     pending_tokens = await usage_buffer.get_pending_tokens(user.id)
     if user.token_limit is not None and (user.token_used + pending_tokens) >= user.token_limit:
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="token limit exceeded")
+    
+    # 余额检查（balance 计费模式）
+    if settings.billing_mode == "balance":
+        pending_cost = await usage_buffer.get_pending_cost(user.id)
+        current_balance = getattr(user, "balance", 0) or 0
+        if current_balance - pending_cost <= 0:
+            raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail="insufficient balance")
 
     if user.request_limit_per_day is not None:
         today = date.today()
@@ -250,7 +259,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 await upstream.aclose()
 
         if upstream.status_code < 400:
-            await usage_buffer.add(user.id, tokens=0, requests=1)
+            await usage_buffer.add(user.id, input_tokens=0, output_tokens=0, requests=1)
         stream_headers = filter_headers(dict(upstream.headers))
         stream_headers.pop("content-length", None)
         stream_headers.setdefault("cache-control", "no-cache")
@@ -273,17 +282,15 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
     else:
         data = upstream.text
 
-    tokens_delta = 0
+    input_tokens_delta = 0
+    output_tokens_delta = 0
     if upstream.status_code < 400 and isinstance(data, dict):
         usage = data.get("usage") or {}
-        total = usage.get("total_tokens")
-        if total is None:
-            total = (usage.get("input_tokens") or 0) + (usage.get("output_tokens") or 0)
-        if total:
-            tokens_delta = int(total)
+        input_tokens_delta = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
+        output_tokens_delta = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
 
     if upstream.status_code < 400:
-        await usage_buffer.add(user.id, tokens=tokens_delta, requests=1)
+        await usage_buffer.add(user.id, input_tokens=input_tokens_delta, output_tokens=output_tokens_delta, requests=1)
     elif isinstance(data, (dict, str)):
         logger.error("upstream error %s: %s", upstream.status_code, str(data)[:500])
 

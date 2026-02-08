@@ -959,6 +959,7 @@
                   <tr>
                     <th>User</th>
                     <th>Status</th>
+                    <th>Balance</th>
                     <th>Token Usage</th>
                     <th>Rate Limits</th>
                     <th>Created</th>
@@ -1023,9 +1024,9 @@
                   <tr>
                     <th>Order ID</th>
                     <th>User</th>
-                    <th>Amount</th>
+                    <th>Payment</th>
+                    <th>Balance Added</th>
                     <th>Tokens</th>
-                    <th>Requests</th>
                     <th>Note</th>
                     <th>Date</th>
                   </tr>
@@ -1059,7 +1060,9 @@
                     <th>Date</th>
                     <th>User</th>
                     <th>Requests</th>
-                    <th>Tokens</th>
+                    <th>Input Tokens</th>
+                    <th>Output Tokens</th>
+                    <th>Cost</th>
                   </tr>
                 </thead>
                 <tbody id="usageBody"></tbody>
@@ -1196,6 +1199,8 @@
         body.innerHTML = data.map(u => {
           const pct = u.token_limit ? Math.min(100, (u.token_used / u.token_limit) * 100) : 0;
           const color = pct > 80 ? 'red' : pct > 50 ? 'yellow' : 'green';
+          const balanceUsd = (u.balance || 0) / 100;
+          const balanceClass = balanceUsd > 0 ? 'text-success' : (balanceUsd < 0 ? 'text-muted' : '');
           return `<tr>
             <td>
               <div class="user-cell">
@@ -1208,7 +1213,12 @@
             </td>
             <td><span class="badge ${u.status === 'active' ? 'badge-success' : 'badge-error'}">${u.status}</span></td>
             <td>
+              <div class="${balanceClass}" style="font-weight:600">$${balanceUsd.toFixed(2)}</div>
+              <div class="text-sm text-muted">${u.balance || 0} cents</div>
+            </td>
+            <td>
               <div>${formatNum(u.token_used)} / ${u.token_limit ? formatNum(u.token_limit) : '∞'}</div>
+              <div class="text-sm text-muted">In: ${formatNum(u.input_tokens_used || 0)} | Out: ${formatNum(u.output_tokens_used || 0)}</div>
               ${u.token_limit ? `<div class="progress"><div class="progress-bar ${color}" style="width:${pct}%"></div></div>` : ''}
             </td>
             <td>
@@ -1251,6 +1261,7 @@
           </div>
         `).join('') : '<div class="text-muted text-sm">No keys yet</div>';
 
+        const balanceUsd = (u.balance || 0) / 100;
         document.getElementById('userModalBody').innerHTML = `
           <div class="form-group">
             <label class="form-label">User ID</label>
@@ -1275,14 +1286,26 @@
           </div>
           <div class="form-row">
             <div class="form-group">
+              <label class="form-label">Balance (cents) <span class="text-muted">= $${balanceUsd.toFixed(2)}</span></label>
+              <input type="number" id="modalBalance" class="form-input" value="${u.balance || 0}" placeholder="0" />
+            </div>
+            <div class="form-group">
               <label class="form-label">Token Limit</label>
               <input type="number" id="modalTokenLimit" class="form-input" value="${u.token_limit || ''}" placeholder="Unlimited" />
             </div>
+          </div>
+          <div class="form-row">
             <div class="form-group">
-              <label class="form-label">Tokens Used</label>
+              <label class="form-label">Tokens Used (Total)</label>
               <div style="display:flex;gap:8px">
                 <input type="number" id="modalTokenUsed" class="form-input" value="${u.token_used || 0}" style="flex:1" />
                 <button class="btn btn-sm btn-danger" onclick="resetUsage('${u.id}')" title="Reset to 0">Reset</button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Input / Output Tokens</label>
+              <div class="text-sm text-muted" style="padding:12px 0">
+                In: ${formatNum(u.input_tokens_used || 0)} | Out: ${formatNum(u.output_tokens_used || 0)}
               </div>
             </div>
           </div>
@@ -1323,10 +1346,12 @@
 
     async function saveUserFromModal() {
       const payload = { status: document.getElementById('modalStatus').value };
+      const bal = document.getElementById('modalBalance').value;
       const tl = document.getElementById('modalTokenLimit').value;
       const tu = document.getElementById('modalTokenUsed').value;
       const rpm = document.getElementById('modalRPM').value;
       const rpd = document.getElementById('modalRPD').value;
+      if (bal !== '') payload.balance = Number(bal);
       if (tl) payload.token_limit = Number(tl);
       if (tu !== '') payload.token_used = Number(tu);
       if (rpm) payload.request_limit_per_minute = Number(rpm);
@@ -1455,9 +1480,9 @@
         body.innerHTML = data.map(r => `<tr>
           <td class="text-mono text-sm">${r.order_id}</td>
           <td>${r.username || r.external_id || r.user_id}</td>
-          <td>${r.amount ? '¥' + (r.amount / 100).toFixed(2) : '-'}</td>
-          <td class="text-success">+${formatNum(r.tokens_added)}</td>
-          <td class="text-success">+${formatNum(r.daily_requests_added)}</td>
+          <td>${r.amount ? '$' + (r.amount / 100).toFixed(2) : '-'}</td>
+          <td class="text-success">${r.balance_added ? '+$' + (r.balance_added / 100).toFixed(2) : '-'}</td>
+          <td class="text-success">${r.tokens_added ? '+' + formatNum(r.tokens_added) : '-'}</td>
           <td class="text-sm">${r.note || '-'}</td>
           <td class="text-sm text-muted">${formatDate(r.created_at)}</td>
         </tr>`).join('');
@@ -1490,14 +1515,16 @@
         const data = await res.json();
         const body = document.getElementById('usageBody');
         if (!data.length) {
-          body.innerHTML = '<tr><td colspan="4"><div class="empty-state"><div class="empty-state-icon">📊</div><h3>No data</h3><p>Usage statistics will appear here</p></div></td></tr>';
+          body.innerHTML = '<tr><td colspan="6"><div class="empty-state"><div class="empty-state-icon">📊</div><h3>No data</h3><p>Usage statistics will appear here</p></div></td></tr>';
           return;
         }
         body.innerHTML = data.map(r => `<tr>
           <td>${r.day}</td>
           <td>${r.username || r.user_id}</td>
           <td>${formatNum(r.requests_total)}</td>
-          <td>${formatNum(r.tokens_total)}</td>
+          <td>${formatNum(r.input_tokens || 0)}</td>
+          <td>${formatNum(r.output_tokens || 0)}</td>
+          <td class="text-success">$${((r.cost_cents || 0) / 100).toFixed(4)}</td>
         </tr>`).join('');
       } catch (e) { console.error(e); }
     }
