@@ -41,9 +41,10 @@ async def get_balance(request: Request, db: AsyncSession = Depends(get_db)):
     查询账户余额和使用量
     
     使用自己的 API Key 认证，返回余额、token 用量和价格信息。
+    注：直接从数据库读取最新数据，不使用缓存。
     """
     try:
-        user = await authorize_request(request, db)
+        cached_user = await authorize_request(request, db)
     except HTTPException as e:
         if e.status_code == 401:
             return openai_error("Invalid API key provided", "authentication_error", code="invalid_api_key", status_code=401)
@@ -51,17 +52,25 @@ async def get_balance(request: Request, db: AsyncSession = Depends(get_db)):
             return openai_error("Access denied", "permission_error", code="access_denied", status_code=403)
         raise
     
+    # 直接从数据库查询最新用户数据（不用缓存）
+    from .models import User
+    from sqlalchemy import select
+    result = await db.execute(select(User).where(User.id == cached_user.id))
+    user = result.scalar_one_or_none()
+    if not user:
+        return openai_error("User not found", "authentication_error", code="user_not_found", status_code=404)
+    
     # 获取待刷新的数据
     pending_tokens = await usage_buffer.get_pending_tokens(user.id)
     pending_cost = await usage_buffer.get_pending_cost(user.id)
     
-    # 计算当前值（包含待刷新）
-    current_balance = getattr(user, "balance", 0) or 0
+    # 计算当前值（数据库最新值 + 待刷新）
+    current_balance = user.balance or 0
     balance = current_balance - pending_cost
-    token_used = (getattr(user, "token_used", 0) or 0) + pending_tokens
-    input_tokens_used = getattr(user, "input_tokens_used", 0) or 0
-    output_tokens_used = getattr(user, "output_tokens_used", 0) or 0
-    token_limit = getattr(user, "token_limit", None)
+    token_used = (user.token_used or 0) + pending_tokens
+    input_tokens_used = user.input_tokens_used or 0
+    output_tokens_used = user.output_tokens_used or 0
+    token_limit = user.token_limit
     
     # 计算剩余 tokens
     token_remaining = None
