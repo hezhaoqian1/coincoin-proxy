@@ -41,8 +41,8 @@ class Settings(BaseSettings):
     # Billing mode: "balance" (扣余额) or "token_limit" (扣 token 额度) or "none" (不限制)
     billing_mode: str = "balance"
     
-    # 新用户默认余额（分），1000 = $10
-    default_balance: int = 1000
+    # 新用户默认余额（分），0 = 需要充值才能使用
+    default_balance: int = 0
 
     class Config:
         env_prefix = "COINCOIN_"
