@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .config import settings
 from .db import get_db
 from .models import ApiKey, User
 from .schemas import KeyActivateRequest, KeyActivateResponse
@@ -37,6 +38,7 @@ async def activate_key(payload: KeyActivateRequest, db: AsyncSession = Depends(g
                 external_id=payload.external_id,
                 status="active",
                 token_used=0,
+                balance=settings.default_balance,
             )
             db.add(user)
             await db.flush()
