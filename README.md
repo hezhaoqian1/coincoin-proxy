@@ -571,7 +571,7 @@ from openai import OpenAI
 
 client = OpenAI(
     api_key="sk_cc_xxx",
-    base_url="https://your-proxy.railway.app/v1"
+    base_url="https://clawfather.up.railway.app/v1"
 )
 
 response = client.chat.completions.create(
@@ -590,7 +590,7 @@ model_provider = "openai"
 
 [model_providers.openai]
 name = "CoinCoin Proxy"
-base_url = "https://your-proxy.railway.app/v1"
+base_url = "https://clawfather.up.railway.app/v1"
 env_key = "COINCOIN_API_KEY"
 ```
 
@@ -602,7 +602,7 @@ codex
 ### curl
 
 ```bash
-curl https://your-proxy.railway.app/v1/chat/completions \
+curl https://clawfather.up.railway.app/v1/chat/completions \
   -H "Authorization: Bearer sk_cc_xxx" \
   -H "Content-Type: application/json" \
   -d '{"messages": [{"role": "user", "content": "Hello"}]}'
