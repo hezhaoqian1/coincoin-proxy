@@ -91,6 +91,70 @@ async def get_balance(request: Request, db: AsyncSession = Depends(get_db)):
     )
 
 
+@router.get("/usage")
+async def get_usage(request: Request, db: AsyncSession = Depends(get_db), limit: int = 50, offset: int = 0):
+    """
+    查询请求明细（每次 API 调用的记录）
+    
+    参数：
+    - limit: 返回条数，默认 50，最大 200
+    - offset: 偏移量，用于分页
+    """
+    try:
+        cached_user = await authorize_request(request, db)
+    except HTTPException as e:
+        if e.status_code == 401:
+            return openai_error("Invalid API key provided", "authentication_error", code="invalid_api_key", status_code=401)
+        elif e.status_code == 403:
+            return openai_error("Access denied", "permission_error", code="access_denied", status_code=403)
+        raise
+
+    from .models import RequestLog
+    from sqlalchemy import select, func
+
+    # 限制 limit 范围
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
+
+    # 查询总数
+    count_result = await db.execute(
+        select(func.count()).select_from(RequestLog).where(RequestLog.user_id == cached_user.id)
+    )
+    total = count_result.scalar() or 0
+
+    # 查询明细（按时间倒序）
+    result = await db.execute(
+        select(RequestLog)
+        .where(RequestLog.user_id == cached_user.id)
+        .order_by(RequestLog.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    logs = result.scalars().all()
+
+    return {
+        "user_id": cached_user.id,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "data": [
+            {
+                "created_at": log.created_at.isoformat() if log.created_at else None,
+                "endpoint": log.endpoint,
+                "model": log.model,
+                "input_tokens": log.input_tokens,
+                "output_tokens": log.output_tokens,
+                "total_tokens": log.input_tokens + log.output_tokens,
+                "cost_cents": log.cost_cents,
+                "cost_usd": log.cost_cents / 100,
+                "duration_ms": log.duration_ms,
+                "status_code": log.status_code,
+            }
+            for log in logs
+        ],
+    }
+
+
 @router.get("/models")
 async def list_models():
     """列出可用模型"""
@@ -555,7 +619,10 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                 await upstream.aclose()
 
         if upstream.status_code < 400:
-            await usage_buffer.add(user.id, input_tokens=0, output_tokens=0, requests=1)
+            await usage_buffer.add(
+                user.id, input_tokens=0, output_tokens=0, requests=1,
+                endpoint="chat/completions:stream", model=settings.fixed_model, duration_ms=0, status_code=upstream.status_code,
+            )
         stream_headers = filter_headers(dict(upstream.headers))
         stream_headers.pop("content-length", None)
         stream_headers.setdefault("cache-control", "no-cache")
@@ -563,7 +630,9 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
         return StreamingResponse(iter_events(), status_code=upstream.status_code, headers=stream_headers, media_type=content_type)
 
     client = await get_http_client()
+    t0 = time.monotonic()
     upstream = await client.post(upstream_url, json=resp_payload, headers=headers)
+    duration_ms = int((time.monotonic() - t0) * 1000)
     response_headers = filter_headers(dict(upstream.headers))
     response_headers.pop("content-length", None)
 
@@ -581,7 +650,10 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
         output_tokens_delta = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
 
     if upstream.status_code < 400:
-        await usage_buffer.add(user.id, input_tokens=input_tokens_delta, output_tokens=output_tokens_delta, requests=1)
+        await usage_buffer.add(
+            user.id, input_tokens=input_tokens_delta, output_tokens=output_tokens_delta, requests=1,
+            endpoint="chat/completions", model=settings.fixed_model, duration_ms=duration_ms, status_code=upstream.status_code,
+        )
 
     if isinstance(data, dict):
         return JSONResponse(content=build_chat_response(data), status_code=upstream.status_code, headers=response_headers)
@@ -620,7 +692,9 @@ async def embeddings(request: Request, db: AsyncSession = Depends(get_db)):
     }
 
     client = await get_http_client()
+    t0 = time.monotonic()
     upstream = await client.post(upstream_url, json=payload, headers=headers)
+    duration_ms = int((time.monotonic() - t0) * 1000)
     response_headers = filter_headers(dict(upstream.headers))
     response_headers.pop("content-length", None)
 
@@ -637,7 +711,10 @@ async def embeddings(request: Request, db: AsyncSession = Depends(get_db)):
         input_tokens_delta = int(usage.get("prompt_tokens") or usage.get("total_tokens") or 0)
 
     if upstream.status_code < 400:
-        await usage_buffer.add(user.id, input_tokens=input_tokens_delta, output_tokens=0, requests=1)
+        await usage_buffer.add(
+            user.id, input_tokens=input_tokens_delta, output_tokens=0, requests=1,
+            endpoint="embeddings", model=settings.fixed_model, duration_ms=duration_ms, status_code=upstream.status_code,
+        )
 
     if isinstance(data, dict):
         return JSONResponse(content=data, status_code=upstream.status_code, headers=response_headers)

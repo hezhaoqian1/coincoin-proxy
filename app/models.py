@@ -69,6 +69,22 @@ class UsageDaily(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class RequestLog(Base):
+    """请求日志表，记录每次 API 调用明细"""
+    __tablename__ = "coincoin_request_logs"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    endpoint: Mapped[str] = mapped_column(String(64), default="")  # chat/completions, responses, embeddings
+    model: Mapped[str] = mapped_column(String(64), default="")
+    input_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
+    output_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
+    cost_cents: Mapped[int] = mapped_column(BigInteger, default=0)  # 费用（分）
+    duration_ms: Mapped[int] = mapped_column(BigInteger, default=0)  # 响应耗时（毫秒）
+    status_code: Mapped[int] = mapped_column(BigInteger, default=200)  # 上游响应状态码
+
+
 class RechargeLog(Base):
     """充值记录表，用于对账和幂等性"""
     __tablename__ = "coincoin_recharge_logs"

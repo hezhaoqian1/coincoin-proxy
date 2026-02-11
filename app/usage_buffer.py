@@ -1,15 +1,17 @@
 import asyncio
 import logging
+import math
 from collections import defaultdict
 from datetime import date, datetime
-from typing import Dict, Tuple
+from typing import Dict, List, Tuple
 
 from sqlalchemy import update
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 
 from .config import settings
 from .db import SessionLocal
-from .models import UsageDaily, User
+from .models import RequestLog, UsageDaily, User
+from .security import generate_id
 
 
 logger = logging.getLogger("coincoin.usage")
@@ -57,6 +59,8 @@ class UsageBuffer:
         self._usage_by_user: Dict[str, Dict[str, float]] = defaultdict(
             lambda: {"input_tokens": 0, "output_tokens": 0, "cost_cents_f": 0.0}
         )
+        # 请求日志缓冲（每次 API 调用一条）
+        self._request_logs: List[dict] = []
         # 全局锁（用于 snapshot_and_reset）
         self._global_lock = asyncio.Lock()
 
@@ -70,7 +74,11 @@ class UsageBuffer:
         user_id: str, 
         input_tokens: int = 0, 
         output_tokens: int = 0, 
-        requests: int = 0
+        requests: int = 0,
+        endpoint: str = "",
+        model: str = "",
+        duration_ms: int = 0,
+        status_code: int = 200,
     ) -> None:
         """添加使用量（高性能，不阻塞请求）
         
@@ -98,6 +106,19 @@ class UsageBuffer:
             user_bucket["input_tokens"] += int(input_tokens)
             user_bucket["output_tokens"] += int(output_tokens)
             user_bucket["cost_cents_f"] += cost_cents  # 保留浮点精度
+            
+            # 请求日志（append 到 list，纳秒级）
+            self._request_logs.append({
+                "user_id": user_id,
+                "endpoint": endpoint,
+                "model": model,
+                "input_tokens": int(input_tokens),
+                "output_tokens": int(output_tokens),
+                "cost_cents": math.ceil(cost_cents),
+                "duration_ms": int(duration_ms),
+                "status_code": int(status_code),
+                "created_at": datetime.utcnow(),
+            })
 
     async def get_pending_tokens(self, user_id: str) -> int:
         """获取待刷新的总 tokens（兼容旧接口）
@@ -140,13 +161,15 @@ class UsageBuffer:
             try:
                 daily = dict(self._daily)
                 usage_by_user = dict(self._usage_by_user)
+                request_logs = list(self._request_logs)
                 self._daily.clear()
                 self._usage_by_user.clear()
+                self._request_logs.clear()
             finally:
                 # 释放所有分片锁
                 for lock in self._locks:
                     lock.release()
-        return daily, usage_by_user
+        return daily, usage_by_user, request_logs
 
     async def requeue(self, daily, usage_by_user) -> None:
         """重新入队（刷新失败时）
@@ -178,10 +201,8 @@ usage_buffer = UsageBuffer()
 
 async def flush_once() -> None:
     """将缓冲区数据刷新到数据库"""
-    import math
-    
-    daily, usage_by_user = await usage_buffer.snapshot_and_reset()
-    if not daily and not usage_by_user:
+    daily, usage_by_user, request_logs = await usage_buffer.snapshot_and_reset()
+    if not daily and not usage_by_user and not request_logs:
         return
 
     try:
@@ -238,10 +259,29 @@ async def flush_once() -> None:
                 )
                 await session.execute(stmt)
 
+            # 批量插入请求日志
+            if request_logs:
+                session.add_all([
+                    RequestLog(
+                        id=generate_id("rl_"),
+                        user_id=log["user_id"],
+                        endpoint=log["endpoint"],
+                        model=log["model"],
+                        input_tokens=log["input_tokens"],
+                        output_tokens=log["output_tokens"],
+                        cost_cents=log["cost_cents"],
+                        duration_ms=log["duration_ms"],
+                        status_code=log["status_code"],
+                        created_at=log["created_at"],
+                    )
+                    for log in request_logs
+                ])
+
             await session.commit()
     except Exception:
         logger.exception("usage flush failed; re-queueing")
         await usage_buffer.requeue(daily, usage_by_user)
+        # 请求日志丢失可接受，不 requeue（避免无限重试）
 
 
 async def flush_loop(interval_seconds: int) -> None:

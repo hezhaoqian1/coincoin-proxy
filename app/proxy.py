@@ -259,7 +259,10 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 await upstream.aclose()
 
         if upstream.status_code < 400:
-            await usage_buffer.add(user.id, input_tokens=0, output_tokens=0, requests=1)
+            await usage_buffer.add(
+                user.id, input_tokens=0, output_tokens=0, requests=1,
+                endpoint="responses:stream", model=payload.get("model", ""), duration_ms=0, status_code=upstream.status_code,
+            )
         stream_headers = filter_headers(dict(upstream.headers))
         stream_headers.pop("content-length", None)
         stream_headers.setdefault("cache-control", "no-cache")
@@ -272,7 +275,9 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         )
 
     client = await get_http_client()
+    t0 = time.monotonic()
     upstream = await client.post(upstream_url, json=payload, headers=headers)
+    duration_ms = int((time.monotonic() - t0) * 1000)
     response_headers = filter_headers(dict(upstream.headers))
     response_headers.pop("content-length", None)
 
@@ -290,7 +295,10 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         output_tokens_delta = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
 
     if upstream.status_code < 400:
-        await usage_buffer.add(user.id, input_tokens=input_tokens_delta, output_tokens=output_tokens_delta, requests=1)
+        await usage_buffer.add(
+            user.id, input_tokens=input_tokens_delta, output_tokens=output_tokens_delta, requests=1,
+            endpoint="responses", model=payload.get("model", ""), duration_ms=duration_ms, status_code=upstream.status_code,
+        )
     elif isinstance(data, (dict, str)):
         logger.error("upstream error %s: %s", upstream.status_code, str(data)[:500])
 
