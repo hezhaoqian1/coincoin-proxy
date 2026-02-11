@@ -83,6 +83,7 @@ uvicorn app.main:app --reload --port 8000
 | `/v1/models` | GET | 列出可用模型 |
 | `/v1/models/{model_id}` | GET | 获取模型信息 |
 | `/v1/balance` | GET | 查询账户余额和用量 |
+| `/v1/usage` | GET | 查询请求明细（支持分页） |
 
 ### OpenAI 兼容端点
 
@@ -262,6 +263,63 @@ Authorization: Bearer sk_cc_xxx
 | `token_remaining` | int/null | 剩余 Token（null 表示无限） |
 | `price_input_per_million` | float | 输入价格（$/百万 Token） |
 | `price_output_per_million` | float | 输出价格（$/百万 Token） |
+
+### 请求明细查询
+
+#### 查询 API 调用历史
+
+```bash
+GET /v1/usage?limit=50&offset=0
+Authorization: Bearer sk_cc_xxx
+```
+
+**参数：**
+
+| 参数 | 类型 | 默认 | 描述 |
+|------|------|------|------|
+| `limit` | int | 50 | 返回条数（1-200） |
+| `offset` | int | 0 | 偏移量（分页） |
+
+**响应：**
+
+```json
+{
+  "user_id": "u_xxx",
+  "total": 42,
+  "limit": 50,
+  "offset": 0,
+  "data": [
+    {
+      "created_at": "2026-02-11T03:16:09",
+      "endpoint": "chat/completions",
+      "model": "gpt-5.2",
+      "input_tokens": 12,
+      "output_tokens": 12,
+      "total_tokens": 24,
+      "cost_cents": 1,
+      "cost_usd": 0.01,
+      "duration_ms": 1535,
+      "status_code": 200
+    }
+  ]
+}
+```
+
+**字段说明：**
+
+| 字段 | 类型 | 描述 |
+|------|------|------|
+| `total` | int | 该用户的总记录数 |
+| `data[].created_at` | string | 请求时间 (ISO 8601) |
+| `data[].endpoint` | string | 调用端点（chat/completions, responses, embeddings） |
+| `data[].model` | string | 使用的模型 |
+| `data[].input_tokens` | int | 输入 Token 数 |
+| `data[].output_tokens` | int | 输出 Token 数 |
+| `data[].total_tokens` | int | 总 Token 数 |
+| `data[].cost_cents` | int | 费用（分） |
+| `data[].cost_usd` | float | 费用（美元） |
+| `data[].duration_ms` | int | 响应耗时（毫秒） |
+| `data[].status_code` | int | 上游状态码 |
 
 ### 用户管理端点
 
@@ -447,6 +505,7 @@ Content-Type: application/json
 - `coincoin_users` - 用户表（含余额和分项 Token 统计）
 - `coincoin_api_keys` - API Key 表
 - `coincoin_usage_daily` - 每日用量表（含分项统计和消费金额）
+- `coincoin_request_logs` - 请求明细日志表（每次 API 调用记录）
 - `coincoin_recharge_logs` - 充值记录表
 
 ### 手动创建表（可选）
@@ -488,6 +547,21 @@ CREATE TABLE coincoin_usage_daily (
     requests_total BIGINT DEFAULT 0,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (user_id, day),
+    FOREIGN KEY (user_id) REFERENCES coincoin_users(id)
+);
+
+CREATE TABLE coincoin_request_logs (
+    id VARCHAR(32) PRIMARY KEY,
+    user_id VARCHAR(32) NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    endpoint VARCHAR(64) NOT NULL DEFAULT '' COMMENT '调用端点',
+    model VARCHAR(64) NOT NULL DEFAULT '' COMMENT '模型名称',
+    input_tokens BIGINT NOT NULL DEFAULT 0 COMMENT '输入tokens',
+    output_tokens BIGINT NOT NULL DEFAULT 0 COMMENT '输出tokens',
+    cost_cents BIGINT NOT NULL DEFAULT 0 COMMENT '费用（分）',
+    duration_ms BIGINT NOT NULL DEFAULT 0 COMMENT '响应耗时（毫秒）',
+    status_code BIGINT NOT NULL DEFAULT 200 COMMENT '上游状态码',
+    INDEX idx_user_created (user_id, created_at DESC),
     FOREIGN KEY (user_id) REFERENCES coincoin_users(id)
 );
 
