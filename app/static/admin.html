@@ -1089,6 +1089,40 @@
     </div>
   </div>
 
+  <!-- Request Logs Modal -->
+  <div id="logsModal" class="modal-overlay">
+    <div class="modal" style="max-width:900px">
+      <div class="modal-header">
+        <span class="modal-title" id="logsModalTitle">Request Logs</span>
+        <button class="modal-close" onclick="closeModal('logsModal')">&times;</button>
+      </div>
+      <div class="modal-body" style="padding:0;max-height:520px;overflow-y:auto">
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Endpoint</th>
+              <th>Model</th>
+              <th>Input</th>
+              <th>Output</th>
+              <th>Cost</th>
+              <th>Latency</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="logsBody"></tbody>
+        </table>
+      </div>
+      <div class="modal-footer" style="justify-content:space-between">
+        <span class="text-sm text-muted" id="logsPagination"></span>
+        <div class="flex gap-2">
+          <button class="btn btn-sm btn-secondary" id="logsPrev" onclick="logsPage(-1)">Prev</button>
+          <button class="btn btn-sm btn-secondary" id="logsNext" onclick="logsPage(1)">Next</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Key Modal -->
   <div id="keyModal" class="modal-overlay">
     <div class="modal">
@@ -1229,6 +1263,7 @@
             <td>
               <div class="actions">
                 <button class="btn btn-sm btn-secondary" onclick="openUserModal('${u.id}')">Edit</button>
+                <button class="btn btn-sm btn-ghost" onclick="openLogsModal('${u.id}', '${(u.username || u.external_id || u.id).replace(/'/g, "\\'")}')">Logs</button>
                 <button class="btn btn-sm btn-ghost" onclick="createKeyForUser('${u.id}')">+ Key</button>
               </div>
             </td>
@@ -1527,6 +1562,61 @@
           <td class="text-success">$${((r.cost_cents || 0) / 100).toFixed(4)}</td>
         </tr>`).join('');
       } catch (e) { console.error(e); }
+    }
+
+    // ========== Request Logs ==========
+    let logsUserId = null;
+    let logsOffset = 0;
+    const LOGS_LIMIT = 30;
+
+    async function openLogsModal(userId, displayName) {
+      logsUserId = userId;
+      logsOffset = 0;
+      document.getElementById('logsModalTitle').textContent = `Request Logs — ${displayName}`;
+      openModal('logsModal');
+      await loadRequestLogs();
+    }
+
+    async function loadRequestLogs() {
+      try {
+        const res = await fetch(`/admin/users/${logsUserId}/request-logs?limit=${LOGS_LIMIT}&offset=${logsOffset}`, { headers: adminHeaders() });
+        if (!res.ok) return toast('Failed to load logs', 'error');
+        const data = await res.json();
+        const body = document.getElementById('logsBody');
+
+        if (!data.data.length) {
+          body.innerHTML = `<tr><td colspan="8"><div class="empty-state" style="padding:40px"><div class="empty-state-icon">📋</div><h3>No requests</h3><p>This user has no request logs yet</p></div></td></tr>`;
+        } else {
+          body.innerHTML = data.data.map(log => {
+            const statusClass = log.status_code < 400 ? 'badge-success' : 'badge-error';
+            return `<tr>
+              <td class="text-sm">${log.created_at ? new Date(log.created_at).toLocaleString('zh-CN', {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '-'}</td>
+              <td><span class="text-sm">${log.endpoint}</span></td>
+              <td class="text-sm text-muted">${log.model}</td>
+              <td class="text-sm">${formatNum(log.input_tokens)}</td>
+              <td class="text-sm">${formatNum(log.output_tokens)}</td>
+              <td class="text-sm text-success">$${log.cost_usd.toFixed(4)}</td>
+              <td class="text-sm text-muted">${log.duration_ms}ms</td>
+              <td><span class="badge ${statusClass}" style="font-size:11px">${log.status_code}</span></td>
+            </tr>`;
+          }).join('');
+        }
+
+        // Pagination info
+        const from = data.total > 0 ? logsOffset + 1 : 0;
+        const to = Math.min(logsOffset + LOGS_LIMIT, data.total);
+        document.getElementById('logsPagination').textContent = `${from}-${to} of ${data.total}`;
+        document.getElementById('logsPrev').disabled = logsOffset === 0;
+        document.getElementById('logsNext').disabled = (logsOffset + LOGS_LIMIT) >= data.total;
+      } catch (e) {
+        console.error(e);
+        toast('Failed to load logs', 'error');
+      }
+    }
+
+    function logsPage(direction) {
+      logsOffset = Math.max(0, logsOffset + direction * LOGS_LIMIT);
+      loadRequestLogs();
     }
 
     function loadAll() {

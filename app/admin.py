@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .db import get_db
-from .models import ApiKey, RechargeLog, UsageDaily, User
+from .models import ApiKey, RechargeLog, RequestLog, UsageDaily, User
 from .schemas import AdminKeyUpdate, AdminUserUpdate
 from .security import generate_api_key, generate_id, hash_key, require_admin
 
@@ -293,3 +293,51 @@ async def list_recharges(user_id: Optional[str] = None, db: AsyncSession = Depen
         }
         for log, user in rows
     ]
+
+
+@router.get("/users/{user_id}/request-logs", dependencies=[Depends(admin_guard)])
+async def list_user_request_logs(
+    user_id: str,
+    limit: int = 50,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+):
+    """查询用户的请求明细日志"""
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
+
+    count_result = await db.execute(
+        select(func.count()).select_from(RequestLog).where(RequestLog.user_id == user_id)
+    )
+    total = count_result.scalar() or 0
+
+    result = await db.execute(
+        select(RequestLog)
+        .where(RequestLog.user_id == user_id)
+        .order_by(RequestLog.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    logs = result.scalars().all()
+
+    return {
+        "user_id": user_id,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "data": [
+            {
+                "created_at": log.created_at.isoformat() if log.created_at else None,
+                "endpoint": log.endpoint,
+                "model": log.model,
+                "input_tokens": log.input_tokens,
+                "output_tokens": log.output_tokens,
+                "total_tokens": log.input_tokens + log.output_tokens,
+                "cost_cents": log.cost_cents,
+                "cost_usd": log.cost_cents / 100,
+                "duration_ms": log.duration_ms,
+                "status_code": log.status_code,
+            }
+            for log in logs
+        ],
+    }
