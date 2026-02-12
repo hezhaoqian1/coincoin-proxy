@@ -785,6 +785,52 @@
     .gap-3 { gap: 12px; }
     .mt-4 { margin-top: 16px; }
 
+    /* Sortable columns */
+    th.sortable {
+      cursor: pointer;
+      user-select: none;
+      transition: color 0.15s;
+    }
+    th.sortable:hover { color: var(--accent-hover); }
+    th.sortable .sort-icon { margin-left: 4px; opacity: 0.4; font-size: 10px; }
+    th.sortable.asc .sort-icon,
+    th.sortable.desc .sort-icon { opacity: 1; color: var(--accent); }
+
+    /* Mobile hamburger */
+    .mobile-header {
+      display: none;
+      position: sticky;
+      top: 0;
+      z-index: 500;
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 16px;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .mobile-header .logo { gap: 10px; }
+    .mobile-header .logo-icon { width: 36px; height: 36px; font-size: 18px; border-radius: 10px; }
+    .mobile-header .logo-text h1 { font-size: 16px; }
+
+    .hamburger {
+      width: 40px; height: 40px;
+      border-radius: 10px;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      color: var(--text-primary);
+      font-size: 20px;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+    }
+
+    .sidebar-backdrop {
+      display: none;
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.6);
+      z-index: 900;
+    }
+    .sidebar-backdrop.active { display: block; }
+
     /* Responsive */
     @media (max-width: 1200px) {
       .stats-grid { grid-template-columns: repeat(2, 1fr); }
@@ -793,15 +839,57 @@
 
     @media (max-width: 768px) {
       .app { grid-template-columns: 1fr; }
-      .sidebar { display: none; }
-      .main { padding: 20px; }
+      .mobile-header { display: flex; }
+
+      .sidebar {
+        position: fixed;
+        left: -280px;
+        top: 0;
+        width: 280px;
+        z-index: 1000;
+        transition: left 0.25s ease;
+      }
+      .sidebar.open { left: 0; }
+
+      .main { padding: 16px; }
+      .stats-grid { grid-template-columns: 1fr 1fr; }
+
+      .page-title { font-size: 22px; }
+      .page-header { margin-bottom: 20px; }
+
+      .modal { max-width: 95vw !important; }
+      .modal-body { padding: 16px; }
+
+      .form-row { grid-template-columns: 1fr; }
+
+      td, th { padding: 10px 12px; font-size: 13px; }
+
+      .user-cell { gap: 8px; }
+      .user-avatar { width: 32px; height: 32px; font-size: 12px; }
+
+      .actions { flex-wrap: wrap; }
+    }
+
+    @media (max-width: 480px) {
       .stats-grid { grid-template-columns: 1fr; }
+      .stat-card { padding: 16px; }
+      .stat-value { font-size: 24px; }
     }
   </style>
 </head>
 <body>
   <div class="app">
-    <aside class="sidebar">
+    <!-- Mobile Header -->
+    <div class="mobile-header">
+      <div class="logo">
+        <div class="logo-icon">🪙</div>
+        <div class="logo-text"><h1>CoinCoin</h1></div>
+      </div>
+      <button class="hamburger" onclick="toggleSidebar()">☰</button>
+    </div>
+    <div class="sidebar-backdrop" id="sidebarBackdrop" onclick="toggleSidebar()"></div>
+
+    <aside class="sidebar" id="sidebar">
       <div class="sidebar-header">
         <div class="logo">
           <div class="logo-icon">🪙</div>
@@ -962,7 +1050,7 @@
                     <th>Balance</th>
                     <th>Token Usage</th>
                     <th>Rate Limits</th>
-                    <th>Created</th>
+                    <th class="sortable desc" onclick="toggleUserSort()">Created <span class="sort-icon">▼</span></th>
                     <th>Actions</th>
                   </tr>
                 </thead>
@@ -1144,6 +1232,15 @@
     let currentUserId = null;
     let usersCache = [];
     let searchTimeout = null;
+    let userSortAsc = false; // false = newest first (desc)
+
+    // Mobile sidebar
+    function toggleSidebar() {
+      const sidebar = document.getElementById('sidebar');
+      const backdrop = document.getElementById('sidebarBackdrop');
+      sidebar.classList.toggle('open');
+      backdrop.classList.toggle('active');
+    }
 
     const tokenInput = document.getElementById('token');
     const saved = localStorage.getItem('cc_admin_token');
@@ -1153,10 +1250,17 @@
     document.querySelectorAll('.nav-item').forEach(item => {
       item.addEventListener('click', () => {
         const page = item.dataset.page;
+        if (!page) return; // skip external links
         document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
         document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
         item.classList.add('active');
         document.getElementById('page-' + page).classList.add('active');
+
+        // 手机端自动关闭 sidebar
+        const sidebar = document.getElementById('sidebar');
+        const backdrop = document.getElementById('sidebarBackdrop');
+        sidebar.classList.remove('open');
+        backdrop.classList.remove('active');
         
         if (page === 'users') loadUsers();
         if (page === 'keys') loadAllKeys();
@@ -1221,7 +1325,13 @@
         const url = search ? `/admin/users?search=${encodeURIComponent(search)}` : '/admin/users';
         const res = await fetch(url, { headers: adminHeaders() });
         if (!res.ok) return toast('Failed to load', 'error');
-        const data = await res.json();
+        let data = await res.json();
+        // 排序
+        data.sort((a, b) => {
+          const ta = new Date(a.created_at || 0).getTime();
+          const tb = new Date(b.created_at || 0).getTime();
+          return userSortAsc ? ta - tb : tb - ta;
+        });
         usersCache = data;
         
         const body = document.getElementById('usersBody');
@@ -1263,7 +1373,7 @@
             <td>
               <div class="actions">
                 <button class="btn btn-sm btn-secondary" onclick="openUserModal('${u.id}')">Edit</button>
-                <button class="btn btn-sm btn-ghost" onclick="openLogsModal('${u.id}', '${(u.username || u.external_id || u.id).replace(/'/g, "\\'")}')">Logs</button>
+                <button class="btn btn-sm btn-ghost" data-uid="${u.id}" data-uname="${encodeURIComponent(u.username || u.external_id || u.id)}" onclick="openLogsModal(this.dataset.uid, decodeURIComponent(this.dataset.uname))">Logs</button>
                 <button class="btn btn-sm btn-ghost" onclick="createKeyForUser('${u.id}')">+ Key</button>
               </div>
             </td>
@@ -1275,6 +1385,17 @@
     function debounceSearch() {
       clearTimeout(searchTimeout);
       searchTimeout = setTimeout(loadUsers, 300);
+    }
+
+    function toggleUserSort() {
+      userSortAsc = !userSortAsc;
+      const th = document.querySelector('th.sortable');
+      if (th) {
+        th.classList.toggle('asc', userSortAsc);
+        th.classList.toggle('desc', !userSortAsc);
+        th.querySelector('.sort-icon').textContent = userSortAsc ? '▲' : '▼';
+      }
+      loadUsers();
     }
 
     async function openUserModal(userId) {
