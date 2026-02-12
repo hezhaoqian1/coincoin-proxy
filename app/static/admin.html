@@ -1694,6 +1694,9 @@
       logsUserId = userId;
       logsOffset = 0;
       document.getElementById('logsModalTitle').textContent = `Request Logs — ${displayName}`;
+      // 先清空旧数据，显示 loading
+      document.getElementById('logsBody').innerHTML = '<tr><td colspan="8" style="text-align:center;padding:40px;color:var(--text-tertiary)">Loading...</td></tr>';
+      document.getElementById('logsPagination').textContent = '';
       openModal('logsModal');
       await loadRequestLogs();
     }
