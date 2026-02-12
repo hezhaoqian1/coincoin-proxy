@@ -1373,7 +1373,7 @@
             <td>
               <div class="actions">
                 <button class="btn btn-sm btn-secondary" onclick="openUserModal('${u.id}')">Edit</button>
-                <button class="btn btn-sm btn-ghost" onclick="openLogsModal('${u.id}', decodeURIComponent('${encodeURIComponent(u.username || u.external_id || u.id)}'))">Logs</button>
+                <button class="btn btn-sm btn-ghost" onclick="openLogsModal(&quot;${u.id}&quot;, &quot;${(u.username || u.external_id || u.id).replace(/"/g, '&amp;quot;')}&quot;)">Logs</button>
                 <button class="btn btn-sm btn-ghost" onclick="createKeyForUser('${u.id}')">+ Key</button>
               </div>
             </td>
