@@ -327,7 +327,7 @@ async def list_user_request_logs(
         "offset": offset,
         "data": [
             {
-                "created_at": log.created_at.isoformat() if log.created_at else None,
+                "created_at": (log.created_at.isoformat() + "Z") if log.created_at else None,
                 "endpoint": log.endpoint,
                 "model": log.model,
                 "input_tokens": log.input_tokens,

@@ -1298,9 +1298,16 @@
       return n;
     }
 
+    // 后端存的是 UTC，但返回的 ISO 字符串没带 Z，手动补上确保浏览器按 UTC 解析再转本地时区
+    function utcDate(d) {
+      if (!d) return null;
+      const s = String(d);
+      return new Date(s.endsWith('Z') || s.includes('+') ? s : s + 'Z');
+    }
+
     function formatDate(d) {
       if (!d) return '-';
-      return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      return utcDate(d).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
     }
 
     function getInitials(name) {
@@ -1714,7 +1721,7 @@
           body.innerHTML = data.data.map(log => {
             const statusClass = log.status_code < 400 ? 'badge-success' : 'badge-error';
             return `<tr>
-              <td class="text-sm">${log.created_at ? new Date(log.created_at).toLocaleString('zh-CN', {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '-'}</td>
+              <td class="text-sm">${log.created_at ? utcDate(log.created_at).toLocaleString('zh-CN', {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '-'}</td>
               <td><span class="text-sm">${log.endpoint}</span></td>
               <td class="text-sm text-muted">${log.model}</td>
               <td class="text-sm">${formatNum(log.input_tokens)}</td>
