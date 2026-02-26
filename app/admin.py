@@ -26,7 +26,10 @@ def admin_guard(request: Request):
 
 
 @router.get("/ui")
-async def admin_ui():
+async def admin_ui(token: str = ""):
+    from .config import settings as _s
+    if token != _s.admin_token:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
     ui_path = Path(__file__).parent / "static" / "admin.html"
     return FileResponse(ui_path)
 

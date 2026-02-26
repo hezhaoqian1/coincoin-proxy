@@ -2,13 +2,14 @@ from datetime import datetime
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import settings
 from .db import get_db
 from .models import ApiKey, User
+from .rate_limiter import rate_limiter
 from .schemas import KeyActivateRequest, KeyActivateResponse
 from .security import generate_api_key, generate_id, hash_key
 
@@ -16,11 +17,28 @@ from .security import generate_api_key, generate_id, hash_key
 router = APIRouter(prefix="/v1/keys", tags=["keys"])
 logger = logging.getLogger("coincoin.keys")
 
+ACTIVATE_RATE_LIMIT = 5  # per IP per minute
+
+
+def _client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
 
 @router.post("/activate", response_model=KeyActivateResponse)
-async def activate_key(payload: KeyActivateRequest, db: AsyncSession = Depends(get_db)):
+async def activate_key(
+    payload: KeyActivateRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
     if not payload.username and not payload.external_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="username or external_id required")
+
+    ip = _client_ip(request)
+    if not await rate_limiter.allow(f"activate:{ip}", ACTIVATE_RATE_LIMIT):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, "too many requests, try later")
 
     user = None
     try:
@@ -55,6 +73,7 @@ async def activate_key(payload: KeyActivateRequest, db: AsyncSession = Depends(g
             id=generate_id("k_"),
             user_id=user.id,
             key_hash=hash_key(api_key_value),
+            kind="api",
             status="active",
             last_used_at=None,
             created_at=datetime.utcnow(),
@@ -63,6 +82,8 @@ async def activate_key(payload: KeyActivateRequest, db: AsyncSession = Depends(g
         await db.commit()
 
         return KeyActivateResponse(user_id=user.id, api_key=api_key_value, status="active")
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("activate_key failed")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="internal error")
