@@ -73,6 +73,8 @@ async def create_order(
 
     order_no = f"CC_{int(datetime.utcnow().timestamp())}_{generate_id('')[:8]}"
 
+    base = settings.self_base_url or str(request.base_url).rstrip("/")
+
     async with httpx.AsyncClient(timeout=10) as client:
         try:
             resp = await client.post(
@@ -83,7 +85,8 @@ async def create_order(
                     "money": payload.money,
                     "type": payload.pay_type,
                     "sitename": "CoinCoin",
-                    "notify_url": f"{settings.self_base_url or str(request.base_url).rstrip('/')}/webhook/pay-notify",
+                    "notify_url": f"{base}/webhook/pay-notify",
+                    "return_url": f"{base}/pay-return",
                 },
             )
             data = resp.json()
