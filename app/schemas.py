@@ -128,3 +128,19 @@ class AnnouncementUpdate(BaseModel):
     content: Optional[str] = None
     priority: Optional[str] = None
     status: Optional[str] = Field(default=None, description="active / archived")
+
+
+# ===== Auth =====
+
+class AuthRegisterRequest(BaseModel):
+    username: str = Field(..., min_length=2, max_length=64, pattern=r'^[a-zA-Z0-9_-]+$')
+    password: str = Field(..., min_length=6, max_length=128)
+
+class AuthLoginRequest(BaseModel):
+    username: str
+    password: str
+
+class AuthResponse(BaseModel):
+    user_id: str
+    username: str
+    session_key: str = Field(description="kind=session key for Dashboard access only")

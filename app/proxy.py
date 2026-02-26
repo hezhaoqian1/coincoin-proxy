@@ -20,6 +20,8 @@ from .rate_limiter import rate_limiter
 from .security import extract_api_key, hash_key
 from .usage_buffer import usage_buffer
 
+_KEY_KIND_ATTR = "_key_kind"
+
 
 router = APIRouter(prefix="/openai/v1", tags=["proxy"])
 logger = logging.getLogger("coincoin.proxy")
@@ -122,7 +124,7 @@ async def responses_health():
 
 
 async def _resolve_user(request: Request, db: AsyncSession):
-    """Resolve API key → user object. Identity + active check only."""
+    """Resolve API key → user object. Identity + active + expiry check."""
     if not settings.upstream_api_key:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="upstream api key not configured")
 
@@ -148,7 +150,11 @@ async def _resolve_user(request: Request, db: AsyncSession):
         if not api_key or not api_key.user:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid api key")
 
+        if api_key.expires_at and api_key.expires_at < datetime.utcnow():
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="session expired, please login again")
+
         user = api_key.user
+        key_kind = getattr(api_key, "kind", None) or "api"
         await key_cache.set(
             key_hash,
             {
@@ -159,6 +165,7 @@ async def _resolve_user(request: Request, db: AsyncSession):
                 "token_used": user.token_used,
                 "request_limit_per_minute": user.request_limit_per_minute,
                 "request_limit_per_day": user.request_limit_per_day,
+                _KEY_KIND_ATTR: key_kind,
             },
         )
     if user.status != "active":
@@ -174,8 +181,15 @@ async def authenticate_user(request: Request, db: AsyncSession):
 
 async def authorize_request(request: Request, db: AsyncSession):
     """Full auth: identity + active + rate limit + balance/quota checks.
-    Use for API proxy endpoints that consume resources."""
+    Use for API proxy endpoints that consume resources.
+    Only kind='api' keys are allowed here; session keys get 403."""
     user = await _resolve_user(request, db)
+
+    if getattr(user, _KEY_KIND_ATTR, "api") != "api":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="please generate an API key from your dashboard",
+        )
 
     if user.request_limit_per_minute is not None:
         allowed = await rate_limiter.allow(user.id, int(user.request_limit_per_minute))

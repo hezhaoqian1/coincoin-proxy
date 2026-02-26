@@ -49,7 +49,9 @@ class ApiKey(Base):
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_users.id"))
     key_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    kind: Mapped[str] = mapped_column(String(16), default="api")  # api / session
     status: Mapped[str] = mapped_column(String(16), default="active")
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -138,4 +140,18 @@ class Announcement(Base):
     content: Mapped[str] = mapped_column(String(2048), default="")
     priority: Mapped[str] = mapped_column(String(16), default="info")
     status: Mapped[str] = mapped_column(String(16), default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Account(Base):
+    """Web 登录账号 — 与 User 通过 linked_user_id 硬绑定"""
+    __tablename__ = "coincoin_accounts"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    username: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(512))
+    linked_user_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_users.id"))
+    last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    failed_attempts: Mapped[int] = mapped_column(BigInteger, default=0)
+    locked_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

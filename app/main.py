@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .admin import router as admin_router
+from .auth import router as auth_router
 from .keys import router as keys_router
 from .proxy import router as proxy_router, close_http_client
 from .openai_compat import router as openai_router
@@ -28,26 +29,27 @@ logging.basicConfig(
 WEB_DIR = Path(__file__).parent.parent / "static" / "web"
 
 
-async def _migrate_payment_orders(conn):
+async def _run_migrations(conn):
     """Add columns introduced after initial create_all (safe to re-run)."""
     from sqlalchemy import text
-    for col, ddl in [
-        ("trade_no", "VARCHAR(128) NULL"),
-        ("pay_url", "VARCHAR(512) NULL"),
-    ]:
+    migrations = [
+        ("coincoin_payment_orders", "trade_no", "VARCHAR(128) NULL"),
+        ("coincoin_payment_orders", "pay_url", "VARCHAR(512) NULL"),
+        ("coincoin_api_keys", "kind", "VARCHAR(16) DEFAULT 'api'"),
+        ("coincoin_api_keys", "expires_at", "DATETIME NULL"),
+    ]
+    for table, col, ddl in migrations:
         try:
-            await conn.execute(text(
-                f"ALTER TABLE coincoin_payment_orders ADD COLUMN {col} {ddl}"
-            ))
+            await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}"))
         except Exception:
-            pass  # column already exists
+            pass
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        await _migrate_payment_orders(conn)
+        await _run_migrations(conn)
 
     flush_task = asyncio.create_task(flush_loop(settings.usage_flush_interval))
     logging.info("CoinCoin Proxy started")
@@ -66,6 +68,9 @@ app = FastAPI(
     description="OpenAI Compatible API Proxy for Azure OpenAI",
     version="1.0.0",
     lifespan=lifespan,
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
 )
 
 app.add_middleware(
@@ -82,6 +87,7 @@ app.include_router(keys_router)
 app.include_router(admin_router)
 app.include_router(webhook_router)
 app.include_router(payment_router)
+app.include_router(auth_router)
 
 
 @app.get("/health")

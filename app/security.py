@@ -1,11 +1,15 @@
 import base64
 import hashlib
+import hmac as _hmac
+import os
 import secrets
 from typing import Optional
 
 from fastapi import HTTPException, Request, status
 
 from .config import settings
+
+PBKDF2_ITERATIONS = 260000
 
 
 def generate_id(prefix: str) -> str:
@@ -21,6 +25,22 @@ def generate_api_key() -> str:
 def hash_key(key: str) -> str:
     payload = f"{settings.key_pepper}:{key}".encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
+
+
+def hash_password(password: str) -> str:
+    salt = os.urandom(16)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, PBKDF2_ITERATIONS)
+    return f"pbkdf2_sha256${PBKDF2_ITERATIONS}${salt.hex()}${dk.hex()}"
+
+
+def verify_password(password: str, stored: str) -> bool:
+    parts = stored.split("$")
+    if len(parts) != 4 or parts[0] != "pbkdf2_sha256":
+        return False
+    iterations = int(parts[1])
+    salt = bytes.fromhex(parts[2])
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, iterations)
+    return _hmac.compare_digest(dk.hex(), parts[3])
 
 
 def extract_api_key(request: Request) -> Optional[str]:
