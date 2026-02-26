@@ -251,18 +251,45 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 return JSONResponse(content=data, status_code=upstream.status_code, headers=response_headers)
             return Response(content=body, status_code=upstream.status_code, headers=response_headers, media_type=content_type)
 
+        stream_t0 = time.monotonic()
+        _stream_usage = {"input": 0, "output": 0}
+
         async def iter_bytes():
+            buf = b""
             try:
                 async for chunk in upstream.aiter_bytes():
                     yield chunk
+                    buf += chunk
+                    while b"\n\n" in buf:
+                        event_raw, buf = buf.split(b"\n\n", 1)
+                        for line in event_raw.split(b"\n"):
+                            if line.startswith(b"data: "):
+                                payload_str = line[6:].strip()
+                                if payload_str == b"[DONE]":
+                                    continue
+                                try:
+                                    evt = json.loads(payload_str)
+                                    usage = evt.get("usage")
+                                    if usage:
+                                        _stream_usage["input"] = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
+                                        _stream_usage["output"] = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
+                                except (json.JSONDecodeError, ValueError):
+                                    pass
             finally:
                 await upstream.aclose()
+                if upstream.status_code < 400:
+                    dur = int((time.monotonic() - stream_t0) * 1000)
+                    asyncio.create_task(usage_buffer.add(
+                        user.id,
+                        input_tokens=_stream_usage["input"],
+                        output_tokens=_stream_usage["output"],
+                        requests=1,
+                        endpoint="responses:stream",
+                        model=payload.get("model", ""),
+                        duration_ms=dur,
+                        status_code=upstream.status_code,
+                    ))
 
-        if upstream.status_code < 400:
-            await usage_buffer.add(
-                user.id, input_tokens=0, output_tokens=0, requests=1,
-                endpoint="responses:stream", model=payload.get("model", ""), duration_ms=0, status_code=upstream.status_code,
-            )
         stream_headers = filter_headers(dict(upstream.headers))
         stream_headers.pop("content-length", None)
         stream_headers.setdefault("cache-control", "no-cache")

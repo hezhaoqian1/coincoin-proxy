@@ -1,3 +1,4 @@
+import asyncio
 import json
 import secrets
 import time
@@ -486,6 +487,8 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
         tool_call_index = 0
         has_tool_calls = False
         first_content_sent = False
+        compat_stream_t0 = time.monotonic()
+        _compat_stream_usage = {"input": 0, "output": 0}
 
         async def iter_events():
             nonlocal tool_call_index, has_tool_calls, first_content_sent
@@ -501,6 +504,11 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                     except Exception:
                         continue
                     event_type = event.get("type")
+
+                    usage = event.get("usage")
+                    if usage:
+                        _compat_stream_usage["input"] = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
+                        _compat_stream_usage["output"] = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
                     
                     # 处理文本内容
                     if event_type in ("response.output_text.delta", "response.output_text.chunk"):
@@ -510,7 +518,6 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                         else:
                             delta_text = delta if isinstance(delta, str) else None
                         if delta_text:
-                            # 首个内容 chunk 需要带 role (OpenAI 标准)
                             if not first_content_sent:
                                 first_content_sent = True
                                 delta_obj = {"role": "assistant", "content": delta_text}
@@ -532,7 +539,6 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                             has_tool_calls = True
                             func_name = item.get("name") or item.get("function", {}).get("name", "")
                             call_id = item.get("id") or item.get("call_id") or f"call_{secrets.token_hex(12)}"
-                            # 首个 chunk 需要带 role
                             delta_obj: Dict[str, Any] = {
                                 "tool_calls": [{
                                     "index": tool_call_index,
@@ -587,7 +593,6 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                         if not error_msg:
                             error_msg = event.get("message", "Unknown upstream error")
                         
-                        # 发送 SSE error 事件（OpenAI 兼容格式）
                         error_data = {
                             "error": {
                                 "message": error_msg,
@@ -613,16 +618,21 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                         break
                 yield "data: [DONE]\n\n"
             except Exception:
-                # 流处理异常，静默结束
                 pass
             finally:
                 await upstream.aclose()
-
-        if upstream.status_code < 400:
-            await usage_buffer.add(
-                user.id, input_tokens=0, output_tokens=0, requests=1,
-                endpoint="chat/completions:stream", model=settings.fixed_model, duration_ms=0, status_code=upstream.status_code,
-            )
+                if upstream.status_code < 400:
+                    dur = int((time.monotonic() - compat_stream_t0) * 1000)
+                    asyncio.create_task(usage_buffer.add(
+                        user.id,
+                        input_tokens=_compat_stream_usage["input"],
+                        output_tokens=_compat_stream_usage["output"],
+                        requests=1,
+                        endpoint="chat/completions:stream",
+                        model=settings.fixed_model,
+                        duration_ms=dur,
+                        status_code=upstream.status_code,
+                    ))
         stream_headers = filter_headers(dict(upstream.headers))
         stream_headers.pop("content-length", None)
         stream_headers.setdefault("cache-control", "no-cache")
