@@ -199,7 +199,7 @@ async def _do_confirm_order(order_no: str, db: AsyncSession) -> bool:
             logger.error("pay-notify: failed to verify order %s: %s", order_no, e)
             return False
 
-    if data.get("status") != 1:
+    if str(data.get("status")) != "1":
         return False
 
     money = data.get("money", order.amount_rmb)

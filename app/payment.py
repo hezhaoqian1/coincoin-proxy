@@ -175,7 +175,7 @@ async def confirm_order(
             logger.error("Failed to verify order %s: %s", payload.order_no, e)
             raise HTTPException(status.HTTP_502_BAD_GATEWAY, "unable to verify payment status")
 
-    if data.get("status") != 1:
+    if str(data.get("status")) != "1":
         raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, "payment not completed")
 
     money = data.get("money", order.amount_rmb)
