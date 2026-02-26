@@ -90,11 +90,52 @@ class RechargeLog(Base):
     __tablename__ = "coincoin_recharge_logs"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
-    order_id: Mapped[str] = mapped_column(String(128), unique=True, index=True)  # 外部订单号，幂等 key
+    order_id: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     user_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_users.id"), index=True)
-    amount: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)  # 支付金额（分）
-    balance_added: Mapped[int] = mapped_column(BigInteger, default=0)  # 增加的余额（分）
-    tokens_added: Mapped[int] = mapped_column(BigInteger, default=0)  # 增加的 token 额度（兼容旧逻辑）
-    daily_requests_added: Mapped[int] = mapped_column(BigInteger, default=0)  # 增加的每日请求数
-    note: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)  # 备注
+    amount: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    balance_added: Mapped[int] = mapped_column(BigInteger, default=0)
+    tokens_added: Mapped[int] = mapped_column(BigInteger, default=0)
+    daily_requests_added: Mapped[int] = mapped_column(BigInteger, default=0)
+    note: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PaymentOrder(Base):
+    """支付订单表 — 订单由 proxy 创建（pending），支付确认后变 confirmed"""
+    __tablename__ = "coincoin_payment_orders"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_users.id"), index=True)
+    order_no: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    amount_rmb: Mapped[str] = mapped_column(String(16), default="0")
+    add_balance_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    trade_no: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    pay_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    confirmed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class RedemptionCode(Base):
+    """兑换码表"""
+    __tablename__ = "coincoin_redemption_codes"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    code: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    balance_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    status: Mapped[str] = mapped_column(String(16), default="unused")
+    used_by: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("coincoin_users.id"), nullable=True)
+    used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Announcement(Base):
+    """公告表"""
+    __tablename__ = "coincoin_announcements"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    title: Mapped[str] = mapped_column(String(256), default="")
+    content: Mapped[str] = mapped_column(String(2048), default="")
+    priority: Mapped[str] = mapped_column(String(16), default="info")
+    status: Mapped[str] = mapped_column(String(16), default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

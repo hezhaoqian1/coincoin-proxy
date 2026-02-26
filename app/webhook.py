@@ -1,19 +1,22 @@
 """
 支付回调 Webhook 接口
-- 支付端调用此接口给用户增加额度
-- 使用 webhook_secret 验证请求合法性
-- 使用 order_id 保证幂等性
+- /webhook/recharge        — 旧的手工充值（webhook_secret 鉴权）
+- /webhook/pay-notify      — 支付服务异步通知（主路径自动入账）
 """
 import logging
 from datetime import datetime
+from decimal import Decimal, InvalidOperation, ROUND_DOWN
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import PlainTextResponse
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import settings
 from .db import get_db
-from .models import RechargeLog, User
+from .models import PaymentOrder, RechargeLog, User
 from .schemas import RechargeRequest, RechargeResponse
 from .security import generate_id
 
@@ -142,3 +145,108 @@ async def get_recharge(order_id: str, db: AsyncSession = Depends(get_db)):
         "note": log.note,
         "created_at": log.created_at,
     }
+
+
+# ============================================================
+#  支付服务异步通知 — 主路径自动入账
+#  支付平台在用户付款后回调此 URL（即使用户关闭浏览器也会到达）
+# ============================================================
+
+def _rmb_to_cents(money_str: str) -> int:
+    """Mirror of payment.rmb_to_cents (avoid circular import)."""
+    PLAN_MAP: dict[Decimal, int] = {
+        Decimal("9.90"): 500,
+        Decimal("29.90"): 2000,
+        Decimal("99.90"): 10000,
+    }
+    try:
+        d = Decimal(money_str).quantize(Decimal("0.01"))
+    except (InvalidOperation, ValueError):
+        return 0
+    if d <= 0:
+        return 0
+    if d in PLAN_MAP:
+        return PLAN_MAP[d]
+    rate = Decimal(str(settings.rmb_to_cents_rate))
+    return max(1, int((d * rate).to_integral_value(ROUND_DOWN)))
+
+
+async def _do_confirm_order(order_no: str, db: AsyncSession) -> bool:
+    """
+    Core confirm logic shared by pay-notify callback.
+    Returns True if balance was added (or already confirmed).
+    """
+    order = (
+        await db.execute(
+            select(PaymentOrder)
+            .where(PaymentOrder.order_no == order_no)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+
+    if not order:
+        logger.warning("pay-notify: order %s not found in DB", order_no)
+        return False
+
+    if order.status == "confirmed":
+        return True
+
+    async with httpx.AsyncClient(timeout=10) as client:
+        try:
+            resp = await client.get(f"{settings.pay_base_url}/api/order/{order_no}")
+            data = resp.json()
+        except Exception as e:
+            logger.error("pay-notify: failed to verify order %s: %s", order_no, e)
+            return False
+
+    if data.get("status") != 1:
+        return False
+
+    money = data.get("money", order.amount_rmb)
+    add_cents = _rmb_to_cents(money)
+    trade_no = data.get("trade_no", "")
+
+    user = (
+        await db.execute(select(User).where(User.id == order.user_id).with_for_update())
+    ).scalar_one_or_none()
+    if not user:
+        logger.error("pay-notify: user %s not found for order %s", order.user_id, order_no)
+        return False
+
+    user.balance += add_cents
+    order.status = "confirmed"
+    order.add_balance_cents = add_cents
+    order.trade_no = trade_no
+    order.confirmed_at = datetime.utcnow()
+
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        logger.warning("pay-notify: concurrent confirm for order %s", order_no)
+        return True
+
+    logger.info(
+        "pay-notify auto-confirmed: order=%s user=%s rmb=%s +%dcents",
+        order_no, order.user_id, money, add_cents,
+    )
+    return True
+
+
+@router.get("/pay-notify")
+async def pay_notify(request: Request, db: AsyncSession = Depends(get_db)):
+    """
+    支付服务异步回调（GET + query params）。
+    标准参数：out_trade_no, trade_no, money, type, name, sign 等。
+    我们不信任参数金额 — 拿 out_trade_no 二次查询支付服务确认。
+    """
+    params = dict(request.query_params)
+    order_no = params.get("out_trade_no", "")
+
+    if not order_no:
+        return PlainTextResponse("fail", status_code=400)
+
+    logger.info("pay-notify received: order_no=%s params=%s", order_no, params)
+
+    ok = await _do_confirm_order(order_no, db)
+    return PlainTextResponse("success" if ok else "fail")

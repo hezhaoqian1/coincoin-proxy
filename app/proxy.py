@@ -121,7 +121,8 @@ async def responses_health():
     return {"status": "ok"}
 
 
-async def authorize_request(request: Request, db: AsyncSession):
+async def _resolve_user(request: Request, db: AsyncSession):
+    """Resolve API key → user object. Identity + active check only."""
     if not settings.upstream_api_key:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="upstream api key not configured")
 
@@ -162,6 +163,19 @@ async def authorize_request(request: Request, db: AsyncSession):
         )
     if user.status != "active":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="user blocked")
+    return user
+
+
+async def authenticate_user(request: Request, db: AsyncSession):
+    """Light auth: identity + active check only. No balance/quota enforcement.
+    Use for payment, redeem, balance queries — endpoints where zero balance is fine."""
+    return await _resolve_user(request, db)
+
+
+async def authorize_request(request: Request, db: AsyncSession):
+    """Full auth: identity + active + rate limit + balance/quota checks.
+    Use for API proxy endpoints that consume resources."""
+    user = await _resolve_user(request, db)
 
     if user.request_limit_per_minute is not None:
         allowed = await rate_limiter.allow(user.id, int(user.request_limit_per_minute))

@@ -1,3 +1,4 @@
+import secrets
 from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
@@ -8,8 +9,12 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .db import get_db
-from .models import ApiKey, RechargeLog, RequestLog, UsageDaily, User
-from .schemas import AdminKeyUpdate, AdminUserUpdate
+from .models import Announcement, ApiKey, PaymentOrder, RechargeLog, RedemptionCode, RequestLog, UsageDaily, User
+from .schemas import (
+    AdminKeyUpdate, AdminUserUpdate,
+    AnnouncementCreate, AnnouncementUpdate,
+    RedemptionGenerateRequest, RedemptionGenerateResponse,
+)
 from .security import generate_api_key, generate_id, hash_key, require_admin
 
 
@@ -341,3 +346,170 @@ async def list_user_request_logs(
             for log in logs
         ],
     }
+
+
+# ============== Redemption Code Management ==============
+
+def _generate_code() -> str:
+    parts = [secrets.token_hex(2).upper() for _ in range(4)]
+    return f"CC-{parts[0]}-{parts[1]}-{parts[2]}-{parts[3]}"
+
+
+@router.post("/redemption-codes/generate", dependencies=[Depends(admin_guard)],
+             response_model=RedemptionGenerateResponse)
+async def generate_redemption_codes(
+    payload: RedemptionGenerateRequest, db: AsyncSession = Depends(get_db)
+):
+    codes = []
+    for _ in range(payload.count):
+        code_str = _generate_code()
+        code = RedemptionCode(
+            id=generate_id("rc_"),
+            code=code_str,
+            balance_cents=payload.balance_cents,
+            status="unused",
+        )
+        db.add(code)
+        codes.append(code_str)
+    await db.commit()
+    return RedemptionGenerateResponse(
+        codes=codes, balance_cents=payload.balance_cents, count=payload.count
+    )
+
+
+@router.get("/redemption-codes", dependencies=[Depends(admin_guard)])
+async def list_redemption_codes(
+    status_filter: Optional[str] = None, db: AsyncSession = Depends(get_db)
+):
+    query = select(RedemptionCode).order_by(RedemptionCode.created_at.desc())
+    if status_filter:
+        query = query.where(RedemptionCode.status == status_filter)
+    result = await db.execute(query.limit(200))
+    codes = result.scalars().all()
+    return [
+        {
+            "id": c.id,
+            "code": c.code,
+            "balance_cents": c.balance_cents,
+            "status": c.status,
+            "used_by": c.used_by,
+            "used_at": c.used_at,
+            "created_at": c.created_at,
+        }
+        for c in codes
+    ]
+
+
+@router.patch("/redemption-codes/{code_id}", dependencies=[Depends(admin_guard)])
+async def disable_redemption_code(code_id: str, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(RedemptionCode).where(RedemptionCode.id == code_id))
+    code = result.scalar_one_or_none()
+    if not code:
+        raise HTTPException(status_code=404, detail="code not found")
+    code.status = "disabled"
+    await db.commit()
+    return {"id": code.id, "status": code.status}
+
+
+# ============== Announcement Management ==============
+
+@router.post("/announcements", dependencies=[Depends(admin_guard)])
+async def create_announcement(payload: AnnouncementCreate, db: AsyncSession = Depends(get_db)):
+    ann = Announcement(
+        id=generate_id("ann_"),
+        title=payload.title,
+        content=payload.content,
+        priority=payload.priority,
+        status="active",
+    )
+    db.add(ann)
+    await db.commit()
+    return {"id": ann.id, "title": ann.title, "status": ann.status}
+
+
+@router.get("/announcements", dependencies=[Depends(admin_guard)])
+async def list_announcements_admin(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(Announcement).order_by(Announcement.created_at.desc()).limit(50)
+    )
+    anns = result.scalars().all()
+    return [
+        {
+            "id": a.id,
+            "title": a.title,
+            "content": a.content,
+            "priority": a.priority,
+            "status": a.status,
+            "created_at": a.created_at,
+        }
+        for a in anns
+    ]
+
+
+@router.patch("/announcements/{ann_id}", dependencies=[Depends(admin_guard)])
+async def update_announcement(
+    ann_id: str, payload: AnnouncementUpdate, db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(select(Announcement).where(Announcement.id == ann_id))
+    ann = result.scalar_one_or_none()
+    if not ann:
+        raise HTTPException(status_code=404, detail="announcement not found")
+    if payload.title is not None:
+        ann.title = payload.title
+    if payload.content is not None:
+        ann.content = payload.content
+    if payload.priority is not None:
+        ann.priority = payload.priority
+    if payload.status is not None:
+        ann.status = payload.status
+    await db.commit()
+    return {"id": ann.id, "title": ann.title, "status": ann.status}
+
+
+# ============== Payment Order Management ==============
+
+@router.get("/payment-orders", dependencies=[Depends(admin_guard)])
+async def list_payment_orders(
+    status_filter: Optional[str] = None,
+    limit: int = 50,
+    db: AsyncSession = Depends(get_db),
+):
+    query = select(PaymentOrder).order_by(PaymentOrder.created_at.desc())
+    if status_filter:
+        query = query.where(PaymentOrder.status == status_filter)
+    result = await db.execute(query.limit(limit))
+    orders = result.scalars().all()
+    return [
+        {
+            "id": o.id,
+            "user_id": o.user_id,
+            "order_no": o.order_no,
+            "amount_rmb": o.amount_rmb,
+            "add_balance_cents": o.add_balance_cents,
+            "status": o.status,
+            "trade_no": o.trade_no,
+            "pay_url": o.pay_url,
+            "created_at": o.created_at,
+            "confirmed_at": o.confirmed_at,
+        }
+        for o in orders
+    ]
+
+
+@router.post("/payment-orders/{order_no}/force-confirm", dependencies=[Depends(admin_guard)])
+async def force_confirm_order(order_no: str, db: AsyncSession = Depends(get_db)):
+    """Admin 手动补单：查询支付服务验证后强制入账。"""
+    from .webhook import _do_confirm_order
+
+    order = (
+        await db.execute(select(PaymentOrder).where(PaymentOrder.order_no == order_no))
+    ).scalar_one_or_none()
+    if not order:
+        raise HTTPException(status_code=404, detail="order not found")
+    if order.status == "confirmed":
+        return {"order_no": order_no, "status": "already_confirmed"}
+
+    ok = await _do_confirm_order(order_no, db)
+    if not ok:
+        raise HTTPException(status_code=502, detail="payment verification failed or not paid yet")
+    return {"order_no": order_no, "status": "confirmed"}

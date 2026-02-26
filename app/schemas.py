@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -57,16 +57,74 @@ class RechargeResponse(BaseModel):
 class BalanceResponse(BaseModel):
     """余额查询响应"""
     user_id: str
-    # 余额（分）
     balance: int = Field(description="账户余额（分，即 0.01 美元）")
     balance_usd: float = Field(description="账户余额（美元）")
-    # Token 用量
     token_used: int = Field(description="已用 tokens 总量")
     input_tokens_used: int = Field(description="已用输入 tokens")
     output_tokens_used: int = Field(description="已用输出 tokens")
-    # Token 限额
     token_limit: Optional[int] = Field(default=None, description="Token 限额（null 表示无限）")
     token_remaining: Optional[int] = Field(default=None, description="剩余 tokens（null 表示无限）")
-    # 价格信息
     price_input_per_million: float = Field(description="输入价格（美元/百万 tokens）")
     price_output_per_million: float = Field(description="输出价格（美元/百万 tokens）")
+
+
+# ===== Payment =====
+
+class OrderCreateRequest(BaseModel):
+    money: str = Field(..., description="支付金额（元），如 '9.90'")
+    name: str = Field(default="CoinCoin 充值", description="商品名称")
+    pay_type: str = Field(default="alipay", description="支付方式: alipay / wxpay")
+
+class OrderCreateResponse(BaseModel):
+    order_no: str
+    pay_url: str
+    amount_rmb: str
+    expected_cents: int = Field(description="预计充值余额（分）")
+
+class OrderConfirmRequest(BaseModel):
+    order_no: str = Field(..., description="proxy 侧订单号")
+
+class OrderConfirmResponse(BaseModel):
+    success: bool
+    order_no: str
+    amount_rmb: str
+    added_cents: int = Field(description="充值金额（分）")
+    new_balance: int = Field(description="充值后余额（分）")
+    new_balance_usd: float
+    message: str
+
+
+# ===== Redemption =====
+
+class RedeemRequest(BaseModel):
+    code: str = Field(..., description="兑换码")
+
+class RedeemResponse(BaseModel):
+    success: bool
+    added_cents: int
+    new_balance: int
+    new_balance_usd: float
+    message: str
+
+class RedemptionGenerateRequest(BaseModel):
+    count: int = Field(default=1, ge=1, le=100, description="生成数量")
+    balance_cents: int = Field(..., ge=1, description="每张面额（分）")
+
+class RedemptionGenerateResponse(BaseModel):
+    codes: List[str]
+    balance_cents: int
+    count: int
+
+
+# ===== Announcements =====
+
+class AnnouncementCreate(BaseModel):
+    title: str
+    content: str
+    priority: str = Field(default="info", description="info / warning / critical")
+
+class AnnouncementUpdate(BaseModel):
+    title: Optional[str] = None
+    content: Optional[str] = None
+    priority: Optional[str] = None
+    status: Optional[str] = Field(default=None, description="active / archived")

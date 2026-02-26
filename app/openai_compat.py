@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import settings
 from .db import get_db
-from .proxy import authorize_request, filter_headers, get_http_client, get_stream_client, proxy_responses, responses_health
+from .proxy import authenticate_user, authorize_request, filter_headers, get_http_client, get_stream_client, proxy_responses, responses_health
 from .schemas import BalanceResponse
 from .usage_buffer import usage_buffer
 
@@ -45,7 +45,7 @@ async def get_balance(request: Request, db: AsyncSession = Depends(get_db)):
     注：直接从数据库读取最新数据，不使用缓存。
     """
     try:
-        cached_user = await authorize_request(request, db)
+        cached_user = await authenticate_user(request, db)
     except HTTPException as e:
         if e.status_code == 401:
             return openai_error("Invalid API key provided", "authentication_error", code="invalid_api_key", status_code=401)
@@ -93,16 +93,18 @@ async def get_balance(request: Request, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/usage")
-async def get_usage(request: Request, db: AsyncSession = Depends(get_db), limit: int = 50, offset: int = 0):
-    """
-    查询请求明细（每次 API 调用的记录）
-    
-    参数：
-    - limit: 返回条数，默认 50，最大 200
-    - offset: 偏移量，用于分页
-    """
+async def get_usage(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    limit: int = 50,
+    offset: int = 0,
+    endpoint: Optional[str] = None,
+    status_code: Optional[int] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+):
     try:
-        cached_user = await authorize_request(request, db)
+        cached_user = await authenticate_user(request, db)
     except HTTPException as e:
         if e.status_code == 401:
             return openai_error("Invalid API key provided", "authentication_error", code="invalid_api_key", status_code=401)
@@ -111,22 +113,38 @@ async def get_usage(request: Request, db: AsyncSession = Depends(get_db), limit:
         raise
 
     from .models import RequestLog
-    from sqlalchemy import select, func
+    from sqlalchemy import select, func, and_
+    from datetime import datetime as dt
 
-    # 限制 limit 范围
     limit = max(1, min(limit, 200))
     offset = max(0, offset)
 
-    # 查询总数
+    conditions = [RequestLog.user_id == cached_user.id]
+    if endpoint:
+        conditions.append(RequestLog.endpoint == endpoint)
+    if status_code is not None:
+        conditions.append(RequestLog.status_code == status_code)
+    if start_date:
+        try:
+            conditions.append(RequestLog.created_at >= dt.fromisoformat(start_date))
+        except ValueError:
+            pass
+    if end_date:
+        try:
+            conditions.append(RequestLog.created_at <= dt.fromisoformat(end_date))
+        except ValueError:
+            pass
+
+    where = and_(*conditions)
+
     count_result = await db.execute(
-        select(func.count()).select_from(RequestLog).where(RequestLog.user_id == cached_user.id)
+        select(func.count()).select_from(RequestLog).where(where)
     )
     total = count_result.scalar() or 0
 
-    # 查询明细（按时间倒序）
     result = await db.execute(
         select(RequestLog)
-        .where(RequestLog.user_id == cached_user.id)
+        .where(where)
         .order_by(RequestLog.created_at.desc())
         .limit(limit)
         .offset(offset)
@@ -154,6 +172,123 @@ async def get_usage(request: Request, db: AsyncSession = Depends(get_db), limit:
             for log in logs
         ],
     }
+
+
+@router.get("/usage/daily")
+async def get_daily_usage(request: Request, db: AsyncSession = Depends(get_db), days: int = 7):
+    try:
+        cached_user = await authenticate_user(request, db)
+    except HTTPException as e:
+        if e.status_code == 401:
+            return openai_error("Invalid API key", "authentication_error", code="invalid_api_key", status_code=401)
+        raise
+
+    from .models import UsageDaily
+    from sqlalchemy import select
+    from datetime import date, timedelta
+
+    days = max(1, min(days, 90))
+    start = date.today() - timedelta(days=days - 1)
+
+    result = await db.execute(
+        select(UsageDaily)
+        .where(UsageDaily.user_id == cached_user.id, UsageDaily.day >= start)
+        .order_by(UsageDaily.day.asc())
+    )
+    rows = result.scalars().all()
+    return [
+        {
+            "day": str(r.day),
+            "input_tokens": r.input_tokens,
+            "output_tokens": r.output_tokens,
+            "tokens_total": r.tokens_total,
+            "cost_cents": r.cost_cents,
+            "cost_usd": r.cost_cents / 100,
+            "requests_total": r.requests_total,
+        }
+        for r in rows
+    ]
+
+
+@router.post("/redeem")
+async def redeem_code(request: Request, db: AsyncSession = Depends(get_db)):
+    try:
+        cached_user = await authenticate_user(request, db)
+    except HTTPException as e:
+        if e.status_code == 401:
+            return openai_error("Invalid API key", "authentication_error", code="invalid_api_key", status_code=401)
+        raise
+
+    from .models import RedemptionCode, User
+    from .rate_limiter import rate_limiter
+    from sqlalchemy import select
+    from sqlalchemy.exc import IntegrityError
+    from datetime import datetime as dt
+
+    if not await rate_limiter.allow(f"redeem:{cached_user.id}", 6):
+        raise HTTPException(status_code=429, detail="too many redeem attempts")
+
+    body = await request.json()
+    code_str = body.get("code", "").strip()
+    if not code_str:
+        raise HTTPException(status_code=400, detail="code is required")
+
+    result = await db.execute(
+        select(RedemptionCode)
+        .where(RedemptionCode.code == code_str)
+        .with_for_update()
+    )
+    code = result.scalar_one_or_none()
+    if not code:
+        raise HTTPException(status_code=404, detail="invalid redemption code")
+    if code.status != "unused":
+        raise HTTPException(status_code=400, detail="code already used or disabled")
+
+    user = (
+        await db.execute(select(User).where(User.id == cached_user.id).with_for_update())
+    ).scalar_one()
+    user.balance += code.balance_cents
+    code.status = "used"
+    code.used_by = user.id
+    code.used_at = dt.utcnow()
+
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="concurrent redeem conflict, retry")
+
+    return {
+        "success": True,
+        "added_cents": code.balance_cents,
+        "new_balance": user.balance,
+        "new_balance_usd": user.balance / 100,
+        "message": "redemption successful",
+    }
+
+
+@router.get("/announcements")
+async def list_announcements(db: AsyncSession = Depends(get_db)):
+    from .models import Announcement
+    from sqlalchemy import select
+
+    result = await db.execute(
+        select(Announcement)
+        .where(Announcement.status == "active")
+        .order_by(Announcement.created_at.desc())
+        .limit(10)
+    )
+    anns = result.scalars().all()
+    return [
+        {
+            "id": a.id,
+            "title": a.title,
+            "content": a.content,
+            "priority": a.priority,
+            "created_at": a.created_at.isoformat() + "Z" if a.created_at else None,
+        }
+        for a in anns
+    ]
 
 
 @router.get("/models")

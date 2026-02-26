@@ -1,14 +1,19 @@
 import asyncio
 import logging
+from pathlib import Path
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from .admin import router as admin_router
 from .keys import router as keys_router
 from .proxy import router as proxy_router, close_http_client
 from .openai_compat import router as openai_router
 from .webhook import router as webhook_router
+from .payment import router as payment_router
 from .config import settings
 from .db import Base, engine
 from .usage_buffer import flush_loop, flush_once
@@ -20,17 +25,33 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 
+WEB_DIR = Path(__file__).parent.parent / "static" / "web"
+
+
+async def _migrate_payment_orders(conn):
+    """Add columns introduced after initial create_all (safe to re-run)."""
+    from sqlalchemy import text
+    for col, ddl in [
+        ("trade_no", "VARCHAR(128) NULL"),
+        ("pay_url", "VARCHAR(512) NULL"),
+    ]:
+        try:
+            await conn.execute(text(
+                f"ALTER TABLE coincoin_payment_orders ADD COLUMN {col} {ddl}"
+            ))
+        except Exception:
+            pass  # column already exists
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Create tables
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    
-    # Start usage flush loop
+        await _migrate_payment_orders(conn)
+
     flush_task = asyncio.create_task(flush_loop(settings.usage_flush_interval))
     logging.info("CoinCoin Proxy started")
-    
+
     try:
         yield
     finally:
@@ -47,25 +68,36 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# 直接代理（Azure Responses API 原生格式）
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.include_router(proxy_router)
-
-# OpenAI 兼容层（Chat Completions 格式）
 app.include_router(openai_router)
-
-# Key 管理
 app.include_router(keys_router)
-
-# Admin 管理后台
 app.include_router(admin_router)
-
-# Webhook（支付回调）
 app.include_router(webhook_router)
+app.include_router(payment_router)
 
 
 @app.get("/health")
 async def health_check():
     return {"status": "ok", "service": "coincoin-proxy"}
+
+
+if WEB_DIR.is_dir():
+    app.mount("/assets", StaticFiles(directory=WEB_DIR / "assets"), name="web-assets")
+
+    @app.get("/{full_path:path}")
+    async def spa_fallback(request: Request, full_path: str):
+        file_path = WEB_DIR / full_path
+        if full_path and file_path.is_file():
+            return FileResponse(file_path)
+        return FileResponse(WEB_DIR / "index.html")
 
 
 if __name__ == "__main__":
