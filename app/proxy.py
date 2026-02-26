@@ -269,7 +269,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                                     continue
                                 try:
                                     evt = json.loads(payload_str)
-                                    usage = evt.get("usage")
+                                    usage = evt.get("usage") or (evt.get("response") or {}).get("usage")
                                     if usage:
                                         _stream_usage["input"] = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
                                         _stream_usage["output"] = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)

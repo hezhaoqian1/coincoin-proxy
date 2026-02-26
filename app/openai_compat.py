@@ -505,7 +505,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                         continue
                     event_type = event.get("type")
 
-                    usage = event.get("usage")
+                    usage = event.get("usage") or (event.get("response") or {}).get("usage")
                     if usage:
                         _compat_stream_usage["input"] = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
                         _compat_stream_usage["output"] = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
