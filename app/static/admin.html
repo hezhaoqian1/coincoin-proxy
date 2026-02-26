@@ -7,28 +7,33 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg-primary: #09090b;
-      --bg-secondary: #18181b;
-      --bg-tertiary: #27272a;
-      --bg-elevated: #1f1f23;
+      --bg-primary: #0a0a1a;
+      --bg-secondary: #0f0f2a;
+      --bg-tertiary: #141432;
+      --bg-elevated: #181840;
+      --bg-card: rgba(20, 20, 50, 0.6);
+      --bg-card-hover: rgba(30, 30, 70, 0.7);
+      --bg-glass: rgba(255,255,255,0.03);
+      --bg-glass-strong: rgba(255,255,255,0.06);
       --border: rgba(255,255,255,0.06);
-      --border-hover: rgba(255,255,255,0.1);
-      --text-primary: #fafafa;
-      --text-secondary: #a1a1aa;
-      --text-tertiary: #71717a;
-      --accent: #8b5cf6;
-      --accent-hover: #a78bfa;
-      --accent-subtle: rgba(139, 92, 246, 0.1);
+      --border-hover: rgba(255,255,255,0.12);
+      --border-accent: rgba(99,102,241,0.3);
+      --text-primary: #f0f0ff;
+      --text-secondary: #9ca3af;
+      --text-tertiary: #6b7280;
+      --accent: #6366f1;
+      --accent-hover: #818cf8;
+      --accent-subtle: rgba(99, 102, 241, 0.12);
       --success: #10b981;
-      --success-subtle: rgba(16, 185, 129, 0.1);
+      --success-subtle: rgba(16, 185, 129, 0.12);
       --warning: #f59e0b;
-      --warning-subtle: rgba(245, 158, 11, 0.1);
+      --warning-subtle: rgba(245, 158, 11, 0.12);
       --error: #ef4444;
-      --error-subtle: rgba(239, 68, 68, 0.1);
-      --gradient-1: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      --gradient-2: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-      --gradient-3: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
-      --gradient-4: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+      --error-subtle: rgba(239, 68, 68, 0.12);
+      --gradient-1: linear-gradient(135deg, #6366f1, #8b5cf6);
+      --gradient-2: linear-gradient(135deg, #f093fb, #f5576c);
+      --gradient-3: linear-gradient(135deg, #06b6d4, #6366f1);
+      --gradient-4: linear-gradient(135deg, #10b981, #06b6d4);
     }
 
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -42,13 +47,11 @@
       -webkit-font-smoothing: antialiased;
     }
 
-    /* Scrollbar */
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: var(--bg-tertiary); border-radius: 3px; }
     ::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); }
 
-    /* Layout */
     .app {
       display: grid;
       grid-template-columns: 260px 1fr;
@@ -64,6 +67,7 @@
       position: sticky;
       top: 0;
       height: 100vh;
+      backdrop-filter: blur(20px);
     }
 
     .sidebar-header {
@@ -86,13 +90,16 @@
       align-items: center;
       justify-content: center;
       font-size: 22px;
-      box-shadow: 0 8px 24px rgba(102, 126, 234, 0.25);
+      box-shadow: 0 8px 24px rgba(99, 102, 241, 0.3);
     }
 
     .logo-text h1 {
       font-size: 18px;
       font-weight: 700;
       letter-spacing: -0.5px;
+      background: var(--gradient-1);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
     }
 
     .logo-text span {
@@ -107,9 +114,7 @@
       overflow-y: auto;
     }
 
-    .nav-group {
-      margin-bottom: 24px;
-    }
+    .nav-group { margin-bottom: 24px; }
 
     .nav-group-title {
       font-size: 11px;
@@ -135,7 +140,7 @@
     }
 
     .nav-item:hover {
-      background: rgba(255,255,255,0.04);
+      background: var(--bg-glass-strong);
       color: var(--text-primary);
     }
 
@@ -144,9 +149,7 @@
       color: var(--accent-hover);
     }
 
-    .nav-item.active .nav-icon {
-      color: var(--accent);
-    }
+    .nav-item.active .nav-icon { color: var(--accent); opacity: 1; }
 
     .nav-icon {
       width: 20px;
@@ -154,11 +157,6 @@
       opacity: 0.7;
     }
 
-    .nav-item.active .nav-icon {
-      opacity: 1;
-    }
-
-    /* Auth */
     .sidebar-footer {
       padding: 16px;
       border-top: 1px solid var(--border);
@@ -200,7 +198,7 @@
     .auth-btn {
       width: 100%;
       margin-top: 10px;
-      background: var(--accent);
+      background: var(--gradient-1);
       border: none;
       border-radius: 8px;
       padding: 10px;
@@ -212,8 +210,9 @@
     }
 
     .auth-btn:hover {
-      background: var(--accent-hover);
+      opacity: 0.9;
       transform: translateY(-1px);
+      box-shadow: 0 4px 16px rgba(99, 102, 241, 0.4);
     }
 
     /* Main */
@@ -230,9 +229,7 @@
       to { opacity: 1; transform: translateY(0) scale(1); }
     }
 
-    .page-header {
-      margin-bottom: 32px;
-    }
+    .page-header { margin-bottom: 32px; }
 
     .page-title {
       font-size: 28px;
@@ -255,19 +252,21 @@
     }
 
     .stat-card {
-      background: var(--bg-secondary);
+      background: var(--bg-card);
+      backdrop-filter: blur(20px);
       border: 1px solid var(--border);
       border-radius: 16px;
       padding: 24px;
       position: relative;
       overflow: hidden;
-      transition: all 0.2s ease;
+      transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
     }
 
     .stat-card:hover {
       border-color: var(--border-hover);
       transform: translateY(-2px);
       box-shadow: 0 12px 40px rgba(0,0,0,0.3);
+      background: var(--bg-card-hover);
     }
 
     .stat-card::before {
@@ -276,7 +275,7 @@
       top: 0;
       left: 0;
       right: 0;
-      height: 4px;
+      height: 3px;
     }
 
     .stat-card:nth-child(1)::before { background: var(--gradient-1); }
@@ -285,21 +284,20 @@
     .stat-card:nth-child(4)::before { background: var(--gradient-3); }
 
     .stat-icon {
-      width: 52px;
-      height: 52px;
+      width: 48px;
+      height: 48px;
       border-radius: 14px;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 24px;
-      margin-bottom: 18px;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      font-size: 22px;
+      margin-bottom: 16px;
     }
 
-    .stat-card:nth-child(1) .stat-icon { background: linear-gradient(135deg, #667eea, #764ba2); }
-    .stat-card:nth-child(2) .stat-icon { background: linear-gradient(135deg, #43e97b, #38f9d7); }
-    .stat-card:nth-child(3) .stat-icon { background: linear-gradient(135deg, #f093fb, #f5576c); }
-    .stat-card:nth-child(4) .stat-icon { background: linear-gradient(135deg, #4facfe, #00f2fe); }
+    .stat-card:nth-child(1) .stat-icon { background: linear-gradient(135deg, #6366f1, #8b5cf6); box-shadow: 0 4px 16px rgba(99, 102, 241, 0.3); }
+    .stat-card:nth-child(2) .stat-icon { background: linear-gradient(135deg, #10b981, #06b6d4); box-shadow: 0 4px 16px rgba(16, 185, 129, 0.3); }
+    .stat-card:nth-child(3) .stat-icon { background: linear-gradient(135deg, #f093fb, #f5576c); box-shadow: 0 4px 16px rgba(240, 147, 251, 0.3); }
+    .stat-card:nth-child(4) .stat-icon { background: linear-gradient(135deg, #06b6d4, #6366f1); box-shadow: 0 4px 16px rgba(6, 182, 212, 0.3); }
 
     .stat-value {
       font-size: 32px;
@@ -316,11 +314,15 @@
 
     /* Cards */
     .card {
-      background: var(--bg-secondary);
+      background: var(--bg-card);
+      backdrop-filter: blur(20px);
       border: 1px solid var(--border);
       border-radius: 16px;
       overflow: hidden;
+      transition: border-color 0.15s;
     }
+
+    .card:hover { border-color: var(--border-hover); }
 
     .card-header {
       padding: 20px 24px;
@@ -328,6 +330,8 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
     }
 
     .card-title {
@@ -335,13 +339,9 @@
       font-weight: 600;
     }
 
-    .card-body {
-      padding: 24px;
-    }
-
+    .card-body { padding: 24px; }
     .card-body.flush { padding: 0; }
 
-    /* Grid Layout */
     .grid-2 {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -360,7 +360,7 @@
       margin-bottom: 8px;
     }
 
-    .form-input {
+    .form-input, .form-select {
       width: 100%;
       background: var(--bg-primary);
       border: 1px solid var(--border);
@@ -372,13 +372,27 @@
       transition: all 0.15s;
     }
 
-    .form-input:focus {
+    .form-input:focus, .form-select:focus {
       outline: none;
       border-color: var(--accent);
       box-shadow: 0 0 0 3px var(--accent-subtle);
     }
 
     .form-input::placeholder { color: var(--text-tertiary); }
+
+    .form-select {
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 14px center;
+      padding-right: 36px;
+      cursor: pointer;
+    }
+
+    .form-select option {
+      background: var(--bg-secondary);
+      color: var(--text-primary);
+    }
 
     .form-row {
       display: grid;
@@ -400,26 +414,29 @@
       cursor: pointer;
       border: none;
       transition: all 0.15s ease;
+      white-space: nowrap;
     }
 
     .btn-primary {
-      background: var(--accent);
+      background: var(--gradient-1);
       color: white;
     }
 
     .btn-primary:hover {
-      background: var(--accent-hover);
+      opacity: 0.9;
       transform: translateY(-1px);
-      box-shadow: 0 4px 12px rgba(139, 92, 246, 0.4);
+      box-shadow: 0 4px 16px rgba(99, 102, 241, 0.4);
     }
 
     .btn-secondary {
-      background: var(--bg-tertiary);
+      background: var(--bg-glass-strong);
       color: var(--text-primary);
+      border: 1px solid var(--border);
     }
 
     .btn-secondary:hover {
       background: var(--border-hover);
+      border-color: var(--border-hover);
     }
 
     .btn-ghost {
@@ -428,7 +445,7 @@
     }
 
     .btn-ghost:hover {
-      background: rgba(255,255,255,0.05);
+      background: var(--bg-glass-strong);
       color: var(--text-primary);
     }
 
@@ -442,16 +459,40 @@
       color: white;
     }
 
+    .btn-success {
+      background: var(--success-subtle);
+      color: var(--success);
+    }
+
+    .btn-success:hover {
+      background: var(--success);
+      color: white;
+    }
+
+    .btn-warning {
+      background: var(--warning-subtle);
+      color: var(--warning);
+    }
+
+    .btn-warning:hover {
+      background: var(--warning);
+      color: white;
+    }
+
     .btn-sm {
       padding: 7px 12px;
       font-size: 12px;
       border-radius: 8px;
     }
 
-    /* Table */
-    .table-wrapper {
-      overflow-x: auto;
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none !important;
     }
+
+    /* Table */
+    .table-wrapper { overflow-x: auto; }
 
     table {
       width: 100%;
@@ -466,7 +507,7 @@
       text-transform: uppercase;
       letter-spacing: 0.8px;
       color: var(--text-tertiary);
-      background: var(--bg-primary);
+      background: rgba(10, 10, 26, 0.6);
       border-bottom: 1px solid var(--border);
       position: sticky;
       top: 0;
@@ -474,26 +515,15 @@
     }
 
     td {
-      padding: 18px 20px;
+      padding: 16px 20px;
       font-size: 14px;
       border-bottom: 1px solid var(--border);
       vertical-align: middle;
-      transition: background 0.15s ease;
     }
 
     tr:last-child td { border-bottom: none; }
-
-    tbody tr {
-      transition: all 0.15s ease;
-    }
-
-    tbody tr:hover {
-      background: rgba(139, 92, 246, 0.03);
-    }
-
-    tbody tr:hover td {
-      border-color: rgba(139, 92, 246, 0.1);
-    }
+    tbody tr { transition: background 0.15s ease; }
+    tbody tr:hover { background: rgba(99, 102, 241, 0.04); }
 
     /* Badge */
     .badge {
@@ -514,107 +544,64 @@
       border-radius: 50%;
     }
 
-    .badge-success {
-      background: var(--success-subtle);
-      color: var(--success);
-    }
-
+    .badge-success { background: var(--success-subtle); color: var(--success); }
     .badge-success::before { background: var(--success); }
-
-    .badge-error {
-      background: var(--error-subtle);
-      color: var(--error);
-    }
-
+    .badge-error { background: var(--error-subtle); color: var(--error); }
     .badge-error::before { background: var(--error); }
-
-    .badge-warning {
-      background: var(--warning-subtle);
-      color: var(--warning);
-    }
-
+    .badge-warning { background: var(--warning-subtle); color: var(--warning); }
     .badge-warning::before { background: var(--warning); }
+    .badge-info { background: var(--accent-subtle); color: var(--accent-hover); }
+    .badge-info::before { background: var(--accent); }
 
     /* Progress */
     .progress {
-      height: 8px;
+      height: 6px;
       background: var(--bg-tertiary);
-      border-radius: 4px;
+      border-radius: 3px;
       overflow: hidden;
       margin-top: 8px;
-      box-shadow: inset 0 1px 2px rgba(0,0,0,0.2);
     }
 
     .progress-bar {
       height: 100%;
-      border-radius: 4px;
+      border-radius: 3px;
       transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-      position: relative;
     }
 
-    .progress-bar::after {
-      content: '';
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.15), transparent);
-      animation: shimmer 2s infinite;
-    }
-
-    @keyframes shimmer {
-      0% { transform: translateX(-100%); }
-      100% { transform: translateX(100%); }
-    }
-
-    .progress-bar.green { background: linear-gradient(90deg, #10b981, #34d399); box-shadow: 0 0 12px rgba(16, 185, 129, 0.4); }
-    .progress-bar.yellow { background: linear-gradient(90deg, #f59e0b, #fbbf24); box-shadow: 0 0 12px rgba(245, 158, 11, 0.4); }
-    .progress-bar.red { background: linear-gradient(90deg, #ef4444, #f87171); box-shadow: 0 0 12px rgba(239, 68, 68, 0.4); }
+    .progress-bar.green { background: linear-gradient(90deg, #10b981, #34d399); }
+    .progress-bar.yellow { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
+    .progress-bar.red { background: linear-gradient(90deg, #ef4444, #f87171); }
 
     /* User Cell */
-    .user-cell {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
+    .user-cell { display: flex; align-items: center; gap: 12px; }
 
     .user-avatar {
-      width: 40px;
-      height: 40px;
-      border-radius: 12px;
+      width: 38px;
+      height: 38px;
+      border-radius: 10px;
       background: var(--gradient-1);
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 15px;
+      font-size: 14px;
       font-weight: 600;
       color: white;
       text-transform: uppercase;
-      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+      flex-shrink: 0;
     }
 
-    tr:nth-child(2n) .user-avatar { background: var(--gradient-2); box-shadow: 0 4px 12px rgba(240, 147, 251, 0.3); }
-    tr:nth-child(3n) .user-avatar { background: var(--gradient-3); box-shadow: 0 4px 12px rgba(79, 172, 254, 0.3); }
-    tr:nth-child(4n) .user-avatar { background: var(--gradient-4); box-shadow: 0 4px 12px rgba(67, 233, 123, 0.3); }
+    tr:nth-child(2n) .user-avatar { background: var(--gradient-2); }
+    tr:nth-child(3n) .user-avatar { background: var(--gradient-3); }
+    tr:nth-child(4n) .user-avatar { background: var(--gradient-4); }
 
-    .user-info strong {
-      display: block;
-      font-weight: 600;
-      font-size: 14px;
-    }
-
-    .user-info span {
-      font-size: 12px;
-      color: var(--text-tertiary);
-      font-family: 'SF Mono', Monaco, monospace;
-    }
+    .user-info strong { display: block; font-weight: 600; font-size: 14px; }
+    .user-info span { font-size: 12px; color: var(--text-tertiary); font-family: 'SF Mono', Monaco, monospace; }
 
     /* Modal */
     .modal-overlay {
       position: fixed;
       inset: 0;
-      background: rgba(0,0,0,0.75);
+      background: rgba(0,0,0,0.7);
       backdrop-filter: blur(8px);
       display: flex;
       align-items: center;
@@ -625,10 +612,7 @@
       transition: all 0.2s ease;
     }
 
-    .modal-overlay.active {
-      opacity: 1;
-      visibility: visible;
-    }
+    .modal-overlay.active { opacity: 1; visibility: visible; }
 
     .modal {
       background: var(--bg-secondary);
@@ -641,9 +625,7 @@
       box-shadow: 0 24px 80px rgba(0,0,0,0.5);
     }
 
-    .modal-overlay.active .modal {
-      transform: scale(1) translateY(0);
-    }
+    .modal-overlay.active .modal { transform: scale(1) translateY(0); }
 
     .modal-header {
       padding: 24px;
@@ -653,10 +635,7 @@
       justify-content: space-between;
     }
 
-    .modal-title {
-      font-size: 18px;
-      font-weight: 600;
-    }
+    .modal-title { font-size: 18px; font-weight: 600; }
 
     .modal-close {
       width: 32px;
@@ -673,11 +652,7 @@
       transition: all 0.15s;
     }
 
-    .modal-close:hover {
-      background: var(--bg-tertiary);
-      color: var(--text-primary);
-    }
-
+    .modal-close:hover { background: var(--bg-tertiary); color: var(--text-primary); }
     .modal-body { padding: 24px; }
 
     .modal-footer {
@@ -710,6 +685,7 @@
       box-shadow: 0 8px 32px rgba(0,0,0,0.4);
       animation: toastIn 0.3s ease;
       min-width: 280px;
+      font-size: 14px;
     }
 
     .toast.success { border-left: 3px solid var(--success); }
@@ -721,57 +697,54 @@
       to { opacity: 1; transform: translateX(0); }
     }
 
-    /* Key Display */
-    .key-display {
+    /* Key/Code Display */
+    .code-display {
       background: var(--bg-primary);
       border: 1px solid var(--border);
       border-radius: 12px;
       padding: 16px;
       font-family: 'SF Mono', Monaco, monospace;
-      font-size: 14px;
+      font-size: 13px;
       color: var(--success);
       word-break: break-all;
-      line-height: 1.5;
+      line-height: 1.8;
+      max-height: 300px;
+      overflow-y: auto;
     }
 
     /* Empty State */
-    .empty-state {
-      padding: 80px 20px;
-      text-align: center;
-    }
+    .empty-state { padding: 60px 20px; text-align: center; }
 
     .empty-state-icon {
-      width: 80px;
-      height: 80px;
-      margin: 0 auto 24px;
-      background: linear-gradient(135deg, var(--bg-tertiary), var(--bg-elevated));
-      border-radius: 20px;
+      width: 72px;
+      height: 72px;
+      margin: 0 auto 20px;
+      background: var(--bg-glass-strong);
+      border-radius: 18px;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 36px;
-      box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+      font-size: 32px;
       border: 1px solid var(--border);
     }
 
-    .empty-state h3 {
-      font-size: 18px;
-      font-weight: 600;
-      margin-bottom: 8px;
-      color: var(--text-primary);
-    }
+    .empty-state h3 { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
+    .empty-state p { color: var(--text-tertiary); font-size: 13px; }
 
-    .empty-state p {
-      color: var(--text-tertiary);
-      font-size: 14px;
-      max-width: 280px;
-      margin: 0 auto;
-    }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
-    /* Actions */
-    .actions {
+    /* Inline filter bar */
+    .filter-bar {
       display: flex;
-      gap: 8px;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .filter-bar .form-input,
+    .filter-bar .form-select {
+      width: auto;
+      min-width: 160px;
     }
 
     /* Utils */
@@ -779,24 +752,21 @@
     .text-sm { font-size: 12px; }
     .text-muted { color: var(--text-tertiary); }
     .text-success { color: var(--success); }
+    .text-warning { color: var(--warning); }
+    .text-error { color: var(--error); }
     .flex { display: flex; }
     .items-center { align-items: center; }
     .gap-2 { gap: 8px; }
     .gap-3 { gap: 12px; }
     .mt-4 { margin-top: 16px; }
+    .mb-4 { margin-bottom: 16px; }
 
-    /* Sortable columns */
-    th.sortable {
-      cursor: pointer;
-      user-select: none;
-      transition: color 0.15s;
-    }
+    th.sortable { cursor: pointer; user-select: none; transition: color 0.15s; }
     th.sortable:hover { color: var(--accent-hover); }
     th.sortable .sort-icon { margin-left: 4px; opacity: 0.4; font-size: 10px; }
-    th.sortable.asc .sort-icon,
-    th.sortable.desc .sort-icon { opacity: 1; color: var(--accent); }
+    th.sortable.asc .sort-icon, th.sortable.desc .sort-icon { opacity: 1; color: var(--accent); }
 
-    /* Mobile hamburger */
+    /* Mobile */
     .mobile-header {
       display: none;
       position: sticky;
@@ -808,6 +778,7 @@
       align-items: center;
       justify-content: space-between;
     }
+
     .mobile-header .logo { gap: 10px; }
     .mobile-header .logo-icon { width: 36px; height: 36px; font-size: 18px; border-radius: 10px; }
     .mobile-header .logo-text h1 { font-size: 16px; }
@@ -831,7 +802,6 @@
     }
     .sidebar-backdrop.active { display: block; }
 
-    /* Responsive */
     @media (max-width: 1200px) {
       .stats-grid { grid-template-columns: repeat(2, 1fr); }
       .grid-2 { grid-template-columns: 1fr; }
@@ -840,7 +810,6 @@
     @media (max-width: 768px) {
       .app { grid-template-columns: 1fr; }
       .mobile-header { display: flex; }
-
       .sidebar {
         position: fixed;
         left: -280px;
@@ -850,24 +819,17 @@
         transition: left 0.25s ease;
       }
       .sidebar.open { left: 0; }
-
       .main { padding: 16px; }
       .stats-grid { grid-template-columns: 1fr 1fr; }
-
       .page-title { font-size: 22px; }
       .page-header { margin-bottom: 20px; }
-
       .modal { max-width: 95vw !important; }
       .modal-body { padding: 16px; }
-
       .form-row { grid-template-columns: 1fr; }
-
       td, th { padding: 10px 12px; font-size: 13px; }
-
       .user-cell { gap: 8px; }
       .user-avatar { width: 32px; height: 32px; font-size: 12px; }
-
-      .actions { flex-wrap: wrap; }
+      .filter-bar .form-input, .filter-bar .form-select { min-width: 120px; }
     }
 
     @media (max-width: 480px) {
@@ -895,7 +857,7 @@
           <div class="logo-icon">🪙</div>
           <div class="logo-text">
             <h1>CoinCoin</h1>
-            <span>API Console</span>
+            <span>Admin Console</span>
           </div>
         </div>
       </div>
@@ -919,13 +881,37 @@
             <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg>
             API Keys
           </div>
+        </div>
+
+        <div class="nav-group">
+          <div class="nav-group-title">Finance</div>
           <div class="nav-item" data-page="recharge">
             <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
             Billing
           </div>
+          <div class="nav-item" data-page="orders">
+            <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
+            Payment Orders
+          </div>
+          <div class="nav-item" data-page="codes">
+            <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"/></svg>
+            Redemption Codes
+          </div>
+        </div>
+
+        <div class="nav-group">
+          <div class="nav-group-title">Analytics</div>
           <div class="nav-item" data-page="usage">
             <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
-            Analytics
+            Usage Stats
+          </div>
+        </div>
+
+        <div class="nav-group">
+          <div class="nav-group-title">Content</div>
+          <div class="nav-item" data-page="announcements">
+            <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z"/></svg>
+            Announcements
           </div>
         </div>
 
@@ -934,12 +920,7 @@
           <a class="nav-item" href="/docs" target="_blank" style="text-decoration:none;color:inherit">
             <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
             API Docs
-            <svg style="width:14px;height:14px;margin-left:auto;opacity:0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
-          </a>
-          <a class="nav-item" href="/redoc" target="_blank" style="text-decoration:none;color:inherit">
-            <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
-            ReDoc
-            <svg style="width:14px;height:14px;margin-left:auto;opacity:0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+            <svg style="width:14px;height:14px;margin-left:auto;opacity:0.4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
           </a>
         </div>
       </nav>
@@ -954,38 +935,38 @@
     </aside>
 
     <main class="main">
-      <!-- Dashboard -->
+      <!-- =============== Dashboard =============== -->
       <div id="page-dashboard" class="page active">
         <div class="page-header">
           <h1 class="page-title">Dashboard</h1>
-          <p class="page-desc">Overview of your API usage and statistics</p>
+          <p class="page-desc">Overview of your API platform</p>
         </div>
 
         <div class="stats-grid">
           <div class="stat-card">
             <div class="stat-icon">
-              <svg width="24" height="24" fill="none" stroke="white" stroke-width="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+              <svg width="22" height="22" fill="none" stroke="white" stroke-width="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
             </div>
             <div class="stat-value" id="statTotalUsers">-</div>
             <div class="stat-label">Total Users</div>
           </div>
           <div class="stat-card">
             <div class="stat-icon">
-              <svg width="24" height="24" fill="none" stroke="white" stroke-width="2" viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+              <svg width="22" height="22" fill="none" stroke="white" stroke-width="2" viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
             </div>
             <div class="stat-value" id="statActiveUsers">-</div>
             <div class="stat-label">Active Users</div>
           </div>
           <div class="stat-card">
             <div class="stat-icon">
-              <svg width="24" height="24" fill="none" stroke="white" stroke-width="2" viewBox="0 0 24 24"><path d="M12 20V10M18 20V4M6 20v-4"/></svg>
+              <svg width="22" height="22" fill="none" stroke="white" stroke-width="2" viewBox="0 0 24 24"><path d="M12 20V10M18 20V4M6 20v-4"/></svg>
             </div>
             <div class="stat-value" id="statTotalTokens">-</div>
             <div class="stat-label">Tokens Used</div>
           </div>
           <div class="stat-card">
             <div class="stat-icon">
-              <svg width="24" height="24" fill="none" stroke="white" stroke-width="2" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+              <svg width="22" height="22" fill="none" stroke="white" stroke-width="2" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
             </div>
             <div class="stat-value" id="statReqToday">-</div>
             <div class="stat-label">Requests Today</div>
@@ -994,9 +975,7 @@
 
         <div class="grid-2">
           <div class="card">
-            <div class="card-header">
-              <span class="card-title">Quick Create</span>
-            </div>
+            <div class="card-header"><span class="card-title">Quick Create</span></div>
             <div class="card-body">
               <div class="form-group">
                 <label class="form-label">Username</label>
@@ -1009,7 +988,6 @@
               <button class="btn btn-primary" onclick="createUserKey()">Create User & Generate Key</button>
             </div>
           </div>
-
           <div class="card">
             <div class="card-header">
               <span class="card-title">Top Usage Today</span>
@@ -1025,7 +1003,7 @@
         </div>
       </div>
 
-      <!-- Users -->
+      <!-- =============== Users =============== -->
       <div id="page-users" class="page">
         <div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start;">
           <div>
@@ -1034,7 +1012,6 @@
           </div>
           <button class="btn btn-primary" onclick="showCreateModal()">+ New User</button>
         </div>
-
         <div class="card">
           <div class="card-header">
             <input type="text" id="userSearch" class="form-input" style="width:300px" placeholder="Search users..." oninput="debounceSearch()" />
@@ -1061,13 +1038,12 @@
         </div>
       </div>
 
-      <!-- Keys -->
+      <!-- =============== Keys =============== -->
       <div id="page-keys" class="page">
         <div class="page-header">
           <h1 class="page-title">API Keys</h1>
           <p class="page-desc">View and manage all API keys</p>
         </div>
-
         <div class="card">
           <div class="card-header">
             <span class="card-title">All Keys</span>
@@ -1077,14 +1053,7 @@
             <div class="table-wrapper">
               <table>
                 <thead>
-                  <tr>
-                    <th>Key ID</th>
-                    <th>User</th>
-                    <th>Status</th>
-                    <th>Last Used</th>
-                    <th>Created</th>
-                    <th>Actions</th>
-                  </tr>
+                  <tr><th>Key ID</th><th>User</th><th>Status</th><th>Last Used</th><th>Created</th><th>Actions</th></tr>
                 </thead>
                 <tbody id="keysBody"></tbody>
               </table>
@@ -1093,13 +1062,12 @@
         </div>
       </div>
 
-      <!-- Recharge -->
+      <!-- =============== Billing =============== -->
       <div id="page-recharge" class="page">
         <div class="page-header">
           <h1 class="page-title">Billing History</h1>
           <p class="page-desc">View all recharge and quota changes</p>
         </div>
-
         <div class="card">
           <div class="card-header">
             <span class="card-title">Transactions</span>
@@ -1109,15 +1077,7 @@
             <div class="table-wrapper">
               <table>
                 <thead>
-                  <tr>
-                    <th>Order ID</th>
-                    <th>User</th>
-                    <th>Payment</th>
-                    <th>Balance Added</th>
-                    <th>Tokens</th>
-                    <th>Note</th>
-                    <th>Date</th>
-                  </tr>
+                  <tr><th>Order ID</th><th>User</th><th>Payment</th><th>Balance Added</th><th>Tokens</th><th>Note</th><th>Date</th></tr>
                 </thead>
                 <tbody id="rechargeBody"></tbody>
               </table>
@@ -1126,16 +1086,97 @@
         </div>
       </div>
 
-      <!-- Usage -->
-      <div id="page-usage" class="page">
+      <!-- =============== Payment Orders =============== -->
+      <div id="page-orders" class="page">
         <div class="page-header">
-          <h1 class="page-title">Analytics</h1>
-          <p class="page-desc">Detailed usage statistics</p>
+          <h1 class="page-title">Payment Orders</h1>
+          <p class="page-desc">Monitor payment orders and handle reconciliation</p>
         </div>
-
         <div class="card">
           <div class="card-header">
-            <div class="flex items-center gap-3">
+            <div class="filter-bar">
+              <select id="orderStatusFilter" class="form-select" onchange="loadPaymentOrders()">
+                <option value="">All Status</option>
+                <option value="pending">Pending</option>
+                <option value="confirmed">Confirmed</option>
+              </select>
+            </div>
+            <button class="btn btn-secondary" onclick="loadPaymentOrders()">Refresh</button>
+          </div>
+          <div class="card-body flush">
+            <div class="table-wrapper">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Order No</th>
+                    <th>User</th>
+                    <th>Amount (RMB)</th>
+                    <th>Balance (cents)</th>
+                    <th>Status</th>
+                    <th>Trade No</th>
+                    <th>Created</th>
+                    <th>Confirmed</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="ordersBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- =============== Redemption Codes =============== -->
+      <div id="page-codes" class="page">
+        <div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start;">
+          <div>
+            <h1 class="page-title">Redemption Codes</h1>
+            <p class="page-desc">Generate and manage pre-paid redemption codes</p>
+          </div>
+          <button class="btn btn-primary" onclick="openModal('generateCodesModal')">+ Generate Codes</button>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <div class="filter-bar">
+              <select id="codeStatusFilter" class="form-select" onchange="loadRedemptionCodes()">
+                <option value="">All Status</option>
+                <option value="unused">Unused</option>
+                <option value="used">Used</option>
+                <option value="disabled">Disabled</option>
+              </select>
+            </div>
+            <button class="btn btn-secondary" onclick="loadRedemptionCodes()">Refresh</button>
+          </div>
+          <div class="card-body flush">
+            <div class="table-wrapper">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Code</th>
+                    <th>Face Value</th>
+                    <th>Status</th>
+                    <th>Used By</th>
+                    <th>Used At</th>
+                    <th>Created</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="codesBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- =============== Usage =============== -->
+      <div id="page-usage" class="page">
+        <div class="page-header">
+          <h1 class="page-title">Usage Stats</h1>
+          <p class="page-desc">Detailed usage statistics by day</p>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <div class="filter-bar">
               <input type="date" id="usageDay" class="form-input" style="width:180px" />
               <button class="btn btn-secondary" onclick="loadFullUsage()">Filter</button>
             </div>
@@ -1144,16 +1185,42 @@
             <div class="table-wrapper">
               <table>
                 <thead>
-                  <tr>
-                    <th>Date</th>
-                    <th>User</th>
-                    <th>Requests</th>
-                    <th>Input Tokens</th>
-                    <th>Output Tokens</th>
-                    <th>Cost</th>
-                  </tr>
+                  <tr><th>Date</th><th>User</th><th>Requests</th><th>Input Tokens</th><th>Output Tokens</th><th>Cost</th></tr>
                 </thead>
                 <tbody id="usageBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- =============== Announcements =============== -->
+      <div id="page-announcements" class="page">
+        <div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start;">
+          <div>
+            <h1 class="page-title">Announcements</h1>
+            <p class="page-desc">Manage user-facing announcements</p>
+          </div>
+          <button class="btn btn-primary" onclick="openAnnouncementModal()">+ New Announcement</button>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">All Announcements</span>
+            <button class="btn btn-secondary" onclick="loadAnnouncements()">Refresh</button>
+          </div>
+          <div class="card-body flush">
+            <div class="table-wrapper">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Title</th>
+                    <th>Priority</th>
+                    <th>Status</th>
+                    <th>Created</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="announcementsBody"></tbody>
               </table>
             </div>
           </div>
@@ -1162,9 +1229,11 @@
     </main>
   </div>
 
-  <!-- User Modal -->
+  <!-- =============== Modals =============== -->
+
+  <!-- User Edit Modal -->
   <div id="userModal" class="modal-overlay">
-    <div class="modal">
+    <div class="modal" style="max-width:540px">
       <div class="modal-header">
         <span class="modal-title">Edit User</span>
         <button class="modal-close" onclick="closeModal('userModal')">&times;</button>
@@ -1187,16 +1256,7 @@
       <div class="modal-body" style="padding:0;max-height:520px;overflow-y:auto">
         <table>
           <thead>
-            <tr>
-              <th>Time</th>
-              <th>Endpoint</th>
-              <th>Model</th>
-              <th>Input</th>
-              <th>Output</th>
-              <th>Cost</th>
-              <th>Latency</th>
-              <th>Status</th>
-            </tr>
+            <tr><th>Time</th><th>Endpoint</th><th>Model</th><th>Input</th><th>Output</th><th>Cost</th><th>Latency</th><th>Status</th></tr>
           </thead>
           <tbody id="logsBody"></tbody>
         </table>
@@ -1211,17 +1271,101 @@
     </div>
   </div>
 
-  <!-- Key Modal -->
+  <!-- Key Display Modal -->
   <div id="keyModal" class="modal-overlay">
     <div class="modal">
       <div class="modal-header">
-        <span class="modal-title">🔑 API Key Generated</span>
+        <span class="modal-title">API Key Generated</span>
         <button class="modal-close" onclick="closeModal('keyModal')">&times;</button>
       </div>
       <div class="modal-body">
         <p class="text-muted" style="margin-bottom:16px">Copy this key now. It won't be shown again.</p>
-        <div class="key-display" id="newKeyValue"></div>
-        <button class="btn btn-secondary mt-4" onclick="copyKey()" style="width:100%">📋 Copy to Clipboard</button>
+        <div class="code-display" id="newKeyValue"></div>
+        <button class="btn btn-secondary mt-4" onclick="copyToClipboard(document.getElementById('newKeyValue').textContent)" style="width:100%">Copy to Clipboard</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Generate Codes Modal -->
+  <div id="generateCodesModal" class="modal-overlay">
+    <div class="modal">
+      <div class="modal-header">
+        <span class="modal-title">Generate Redemption Codes</span>
+        <button class="modal-close" onclick="closeModal('generateCodesModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Quantity (1-100)</label>
+            <input type="number" id="genCount" class="form-input" value="10" min="1" max="100" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Face Value (cents)</label>
+            <input type="number" id="genBalance" class="form-input" value="1000" min="1" placeholder="e.g. 1000 = $10" />
+          </div>
+        </div>
+        <p class="text-sm text-muted mb-4">Each code will add the specified balance (in cents) when redeemed.</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('generateCodesModal')">Cancel</button>
+        <button class="btn btn-primary" onclick="generateCodes()">Generate</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Generated Codes Result Modal -->
+  <div id="codesResultModal" class="modal-overlay">
+    <div class="modal" style="max-width:540px">
+      <div class="modal-header">
+        <span class="modal-title">Codes Generated</span>
+        <button class="modal-close" onclick="closeModal('codesResultModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="text-sm text-muted" style="margin-bottom:12px" id="codesResultInfo"></p>
+        <div class="code-display" id="codesResultList"></div>
+        <button class="btn btn-secondary mt-4" onclick="copyToClipboard(document.getElementById('codesResultList').textContent)" style="width:100%">Copy All Codes</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Announcement Modal -->
+  <div id="announcementModal" class="modal-overlay">
+    <div class="modal" style="max-width:540px">
+      <div class="modal-header">
+        <span class="modal-title" id="annModalTitle">New Announcement</span>
+        <button class="modal-close" onclick="closeModal('announcementModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="annEditId" value="" />
+        <div class="form-group">
+          <label class="form-label">Title</label>
+          <input type="text" id="annTitle" class="form-input" placeholder="Announcement title" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Content</label>
+          <textarea id="annContent" class="form-input" rows="4" placeholder="Announcement content..." style="resize:vertical;min-height:100px"></textarea>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Priority</label>
+            <select id="annPriority" class="form-select">
+              <option value="info">Info</option>
+              <option value="warning">Warning</option>
+              <option value="critical">Critical</option>
+            </select>
+          </div>
+          <div class="form-group" id="annStatusGroup" style="display:none">
+            <label class="form-label">Status</label>
+            <select id="annStatus" class="form-select">
+              <option value="active">Active</option>
+              <option value="archived">Archived</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('announcementModal')">Cancel</button>
+        <button class="btn btn-primary" onclick="saveAnnouncement()">Save</button>
       </div>
     </div>
   </div>
@@ -1232,14 +1376,11 @@
     let currentUserId = null;
     let usersCache = [];
     let searchTimeout = null;
-    let userSortAsc = false; // false = newest first (desc)
+    let userSortAsc = false;
 
-    // Mobile sidebar
     function toggleSidebar() {
-      const sidebar = document.getElementById('sidebar');
-      const backdrop = document.getElementById('sidebarBackdrop');
-      sidebar.classList.toggle('open');
-      backdrop.classList.toggle('active');
+      document.getElementById('sidebar').classList.toggle('open');
+      document.getElementById('sidebarBackdrop').classList.toggle('active');
     }
 
     const tokenInput = document.getElementById('token');
@@ -1247,58 +1388,59 @@
     if (saved) tokenInput.value = saved;
 
     // Navigation
-    document.querySelectorAll('.nav-item').forEach(item => {
+    document.querySelectorAll('.nav-item[data-page]').forEach(item => {
       item.addEventListener('click', () => {
         const page = item.dataset.page;
-        if (!page) return; // skip external links
+        if (!page) return;
         document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
         document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
         item.classList.add('active');
         document.getElementById('page-' + page).classList.add('active');
+        document.getElementById('sidebar').classList.remove('open');
+        document.getElementById('sidebarBackdrop').classList.remove('active');
 
-        // 手机端自动关闭 sidebar
-        const sidebar = document.getElementById('sidebar');
-        const backdrop = document.getElementById('sidebarBackdrop');
-        sidebar.classList.remove('open');
-        backdrop.classList.remove('active');
-        
-        if (page === 'users') loadUsers();
-        if (page === 'keys') loadAllKeys();
-        if (page === 'recharge') loadRecharges();
-        if (page === 'usage') loadFullUsage();
+        const loaders = {
+          users: loadUsers,
+          keys: loadAllKeys,
+          recharge: loadRecharges,
+          usage: loadFullUsage,
+          orders: loadPaymentOrders,
+          codes: loadRedemptionCodes,
+          announcements: loadAnnouncements,
+        };
+        if (loaders[page]) loaders[page]();
       });
     });
 
     function saveToken() {
       localStorage.setItem('cc_admin_token', tokenInput.value.trim());
-      toast('Connected successfully', 'success');
+      toast('Connected', 'success');
       loadAll();
     }
 
     function adminHeaders() {
-      const token = (localStorage.getItem('cc_admin_token') || '').trim();
-      return token ? { 'Authorization': 'Bearer ' + token } : {};
+      const t = (localStorage.getItem('cc_admin_token') || '').trim();
+      return t ? { 'Authorization': 'Bearer ' + t } : {};
     }
 
-    function toast(message, type = 'info') {
-      const container = document.getElementById('toastContainer');
-      const div = document.createElement('div');
-      div.className = `toast ${type}`;
-      div.textContent = message;
-      container.appendChild(div);
-      setTimeout(() => div.remove(), 3000);
+    function toast(msg, type = 'info') {
+      const c = document.getElementById('toastContainer');
+      const d = document.createElement('div');
+      d.className = `toast ${type}`;
+      d.textContent = msg;
+      c.appendChild(d);
+      setTimeout(() => d.remove(), 3000);
     }
 
     function openModal(id) { document.getElementById(id).classList.add('active'); }
     function closeModal(id) { document.getElementById(id).classList.remove('active'); }
 
     function formatNum(n) {
-      if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
-      if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+      if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+      if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
       return n;
     }
 
-    // 后端存的是 UTC，但返回的 ISO 字符串没带 Z，手动补上确保浏览器按 UTC 解析再转本地时区
     function utcDate(d) {
       if (!d) return null;
       const s = String(d);
@@ -1310,89 +1452,89 @@
       return utcDate(d).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
     }
 
-    function getInitials(name) {
-      return (name || '?').charAt(0).toUpperCase();
+    function formatDateFull(d) {
+      if (!d) return '-';
+      return utcDate(d).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
     }
 
+    function getInitials(name) { return (name || '?').charAt(0).toUpperCase(); }
+
+    function copyToClipboard(text) {
+      navigator.clipboard.writeText(text);
+      toast('Copied', 'success');
+    }
+
+    // ==================== Dashboard ====================
     async function loadSummary() {
       try {
-        const res = await fetch('/admin/metrics/summary', { headers: adminHeaders() });
-        if (!res.ok) return;
-        const data = await res.json();
-        document.getElementById('statTotalUsers').textContent = formatNum(data.total_users);
-        document.getElementById('statActiveUsers').textContent = formatNum(data.active_users);
-        document.getElementById('statTotalTokens').textContent = formatNum(data.total_tokens);
-        document.getElementById('statReqToday').textContent = formatNum(data.total_requests_today);
+        const r = await fetch('/admin/metrics/summary', { headers: adminHeaders() });
+        if (!r.ok) return;
+        const d = await r.json();
+        document.getElementById('statTotalUsers').textContent = formatNum(d.total_users);
+        document.getElementById('statActiveUsers').textContent = formatNum(d.active_users);
+        document.getElementById('statTotalTokens').textContent = formatNum(d.total_tokens);
+        document.getElementById('statReqToday').textContent = formatNum(d.total_requests_today);
       } catch (e) { console.error(e); }
     }
 
+    async function loadUsage() {
+      try {
+        const r = await fetch('/admin/usage/daily', { headers: adminHeaders() });
+        if (!r.ok) return;
+        const d = await r.json();
+        const body = document.getElementById('topUsageBody');
+        if (!body) return;
+        const top5 = d.slice(0, 5);
+        body.innerHTML = top5.length ? top5.map(r => `<tr>
+          <td>${r.username || (r.user_id||'').slice(0, 10)}</td>
+          <td>${formatNum(r.requests_total)}</td>
+          <td>${formatNum(r.tokens_total)}</td>
+        </tr>`).join('') : '<tr><td colspan="3" class="text-muted" style="text-align:center;padding:20px">No data</td></tr>';
+      } catch (e) { console.error(e); }
+    }
+
+    // ==================== Users ====================
     async function loadUsers() {
       try {
         const search = document.getElementById('userSearch')?.value.trim() || '';
         const url = search ? `/admin/users?search=${encodeURIComponent(search)}` : '/admin/users';
-        const res = await fetch(url, { headers: adminHeaders() });
-        if (!res.ok) return toast('Failed to load', 'error');
-        let data = await res.json();
-        // 排序
+        const r = await fetch(url, { headers: adminHeaders() });
+        if (!r.ok) return toast('Failed to load', 'error');
+        let data = await r.json();
         data.sort((a, b) => {
           const ta = new Date(a.created_at || 0).getTime();
           const tb = new Date(b.created_at || 0).getTime();
           return userSortAsc ? ta - tb : tb - ta;
         });
         usersCache = data;
-        
         const body = document.getElementById('usersBody');
         if (!data.length) {
-          body.innerHTML = '<tr><td colspan="6"><div class="empty-state"><div class="empty-state-icon">👥</div><h3>No users yet</h3><p>Create your first user to get started</p></div></td></tr>';
+          body.innerHTML = '<tr><td colspan="7"><div class="empty-state"><div class="empty-state-icon">👥</div><h3>No users yet</h3><p>Create your first user</p></div></td></tr>';
           return;
         }
-
         body.innerHTML = data.map(u => {
           const pct = u.token_limit ? Math.min(100, (u.token_used / u.token_limit) * 100) : 0;
           const color = pct > 80 ? 'red' : pct > 50 ? 'yellow' : 'green';
-          const balanceUsd = (u.balance || 0) / 100;
-          const balanceClass = balanceUsd > 0 ? 'text-success' : (balanceUsd < 0 ? 'text-muted' : '');
+          const bal = (u.balance || 0) / 100;
+          const balCls = bal > 0 ? 'text-success' : bal < 0 ? 'text-error' : '';
           return `<tr>
-            <td>
-              <div class="user-cell">
-                <div class="user-avatar">${getInitials(u.username || u.external_id)}</div>
-                <div class="user-info">
-                  <strong>${u.username || u.external_id || 'Unknown'}</strong>
-                  <span>${u.id}</span>
-                </div>
-              </div>
-            </td>
+            <td><div class="user-cell"><div class="user-avatar">${getInitials(u.username || u.external_id)}</div><div class="user-info"><strong>${u.username || u.external_id || 'Unknown'}</strong><span>${u.id}</span></div></div></td>
             <td><span class="badge ${u.status === 'active' ? 'badge-success' : 'badge-error'}">${u.status}</span></td>
-            <td>
-              <div class="${balanceClass}" style="font-weight:600">$${balanceUsd.toFixed(2)}</div>
-              <div class="text-sm text-muted">${u.balance || 0} cents</div>
-            </td>
-            <td>
-              <div>${formatNum(u.token_used)} / ${u.token_limit ? formatNum(u.token_limit) : '∞'}</div>
-              <div class="text-sm text-muted">In: ${formatNum(u.input_tokens_used || 0)} | Out: ${formatNum(u.output_tokens_used || 0)}</div>
-              ${u.token_limit ? `<div class="progress"><div class="progress-bar ${color}" style="width:${pct}%"></div></div>` : ''}
-            </td>
-            <td>
-              <div class="text-sm">${u.request_limit_per_minute ? u.request_limit_per_minute + '/min' : '∞'}</div>
-              <div class="text-sm text-muted">${u.request_limit_per_day ? u.request_limit_per_day + '/day' : '∞'}</div>
-            </td>
+            <td><div class="${balCls}" style="font-weight:600">$${bal.toFixed(2)}</div><div class="text-sm text-muted">${u.balance || 0} cents</div></td>
+            <td><div>${formatNum(u.token_used)} / ${u.token_limit ? formatNum(u.token_limit) : '∞'}</div><div class="text-sm text-muted">In: ${formatNum(u.input_tokens_used||0)} | Out: ${formatNum(u.output_tokens_used||0)}</div>${u.token_limit ? `<div class="progress"><div class="progress-bar ${color}" style="width:${pct}%"></div></div>` : ''}</td>
+            <td><div class="text-sm">${u.request_limit_per_minute ? u.request_limit_per_minute + '/min' : '∞'}</div><div class="text-sm text-muted">${u.request_limit_per_day ? u.request_limit_per_day + '/day' : '∞'}</div></td>
             <td class="text-sm text-muted">${formatDate(u.created_at)}</td>
-            <td>
-              <div class="actions">
-                <button class="btn btn-sm btn-secondary" onclick="openUserModal('${u.id}')">Edit</button>
-                <button class="btn btn-sm btn-ghost" onclick="openLogsModal(&quot;${u.id}&quot;, &quot;${(u.username || u.external_id || u.id).replace(/"/g, '&amp;quot;')}&quot;)">Logs</button>
-                <button class="btn btn-sm btn-ghost" onclick="createKeyForUser('${u.id}')">+ Key</button>
-              </div>
-            </td>
+            <td><div class="actions">
+              <button class="btn btn-sm btn-secondary" onclick="openUserModal('${u.id}')">Edit</button>
+              <button class="btn btn-sm btn-ghost" onclick="openLogsModal('${u.id}','${(u.username||u.external_id||u.id).replace(/'/g,"\\'")}')">Logs</button>
+              <button class="btn btn-sm btn-ghost" onclick="createKeyForUser('${u.id}')">+ Key</button>
+            </div></td>
           </tr>`;
         }).join('');
       } catch (e) { console.error(e); toast('Failed to load', 'error'); }
     }
 
-    function debounceSearch() {
-      clearTimeout(searchTimeout);
-      searchTimeout = setTimeout(loadUsers, 300);
-    }
+    function debounceSearch() { clearTimeout(searchTimeout); searchTimeout = setTimeout(loadUsers, 300); }
 
     function toggleUserSort() {
       userSortAsc = !userSortAsc;
@@ -1405,303 +1547,191 @@
       loadUsers();
     }
 
+    function showCreateModal() {
+      document.getElementById('newUsername').focus();
+    }
+
     async function openUserModal(userId) {
       currentUserId = userId;
-      
-      // 获取用户详情（包含 Keys）
       try {
-        const res = await fetch(`/admin/users/${userId}`, { headers: adminHeaders() });
-        if (!res.ok) return toast('Failed to load user', 'error');
-        const u = await res.json();
-        
-        const keysHtml = u.keys && u.keys.length ? u.keys.map(k => `
+        const r = await fetch(`/admin/users/${userId}`, { headers: adminHeaders() });
+        if (!r.ok) return toast('Failed', 'error');
+        const u = await r.json();
+        const keysHtml = u.keys?.length ? u.keys.map(k => `
           <div style="display:flex;align-items:center;justify-content:space-between;padding:10px;background:var(--bg-primary);border-radius:8px;margin-bottom:8px">
-            <div>
-              <div class="text-mono text-sm">${k.id}</div>
-              <div class="text-sm text-muted">${k.last_used_at ? 'Last used: ' + formatDate(k.last_used_at) : 'Never used'}</div>
-            </div>
+            <div><div class="text-mono text-sm">${k.id}</div><div class="text-sm text-muted">${k.last_used_at ? 'Last: ' + formatDate(k.last_used_at) : 'Never used'}</div></div>
             <span class="badge ${k.status === 'active' ? 'badge-success' : 'badge-error'}">${k.status}</span>
-          </div>
-        `).join('') : '<div class="text-muted text-sm">No keys yet</div>';
-
-        const balanceUsd = (u.balance || 0) / 100;
+          </div>`).join('') : '<div class="text-muted text-sm">No keys</div>';
+        const bal = (u.balance || 0) / 100;
         document.getElementById('userModalBody').innerHTML = `
-          <div class="form-group">
-            <label class="form-label">User ID</label>
-            <input class="form-input" value="${u.id}" disabled />
+          <div class="form-group"><label class="form-label">User ID</label><input class="form-input" value="${u.id}" disabled /></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">Username</label><input class="form-input" value="${u.username || ''}" disabled /></div>
+            <div class="form-group"><label class="form-label">External ID</label><input class="form-input" value="${u.external_id || ''}" disabled /></div>
+          </div>
+          <div class="form-group"><label class="form-label">Status</label>
+            <select id="modalStatus" class="form-select"><option value="active" ${u.status==='active'?'selected':''}>Active</option><option value="blocked" ${u.status==='blocked'?'selected':''}>Blocked</option></select>
           </div>
           <div class="form-row">
-            <div class="form-group">
-              <label class="form-label">Username</label>
-              <input class="form-input" value="${u.username || ''}" disabled />
-            </div>
-            <div class="form-group">
-              <label class="form-label">External ID</label>
-              <input class="form-input" value="${u.external_id || ''}" disabled />
-            </div>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Status</label>
-            <select id="modalStatus" class="form-input">
-              <option value="active" ${u.status === 'active' ? 'selected' : ''}>Active</option>
-              <option value="blocked" ${u.status === 'blocked' ? 'selected' : ''}>Blocked</option>
-            </select>
+            <div class="form-group"><label class="form-label">Balance (cents) <span class="text-muted">= $${bal.toFixed(2)}</span></label><input type="number" id="modalBalance" class="form-input" value="${u.balance||0}" /></div>
+            <div class="form-group"><label class="form-label">Token Limit</label><input type="number" id="modalTokenLimit" class="form-input" value="${u.token_limit||''}" placeholder="Unlimited" /></div>
           </div>
           <div class="form-row">
-            <div class="form-group">
-              <label class="form-label">Balance (cents) <span class="text-muted">= $${balanceUsd.toFixed(2)}</span></label>
-              <input type="number" id="modalBalance" class="form-input" value="${u.balance || 0}" placeholder="0" />
-            </div>
-            <div class="form-group">
-              <label class="form-label">Token Limit</label>
-              <input type="number" id="modalTokenLimit" class="form-input" value="${u.token_limit || ''}" placeholder="Unlimited" />
-            </div>
+            <div class="form-group"><label class="form-label">Tokens Used</label><div style="display:flex;gap:8px"><input type="number" id="modalTokenUsed" class="form-input" value="${u.token_used||0}" style="flex:1" /><button class="btn btn-sm btn-danger" onclick="resetUsage('${u.id}')">Reset</button></div></div>
+            <div class="form-group"><label class="form-label">Input / Output</label><div class="text-sm text-muted" style="padding:12px 0">In: ${formatNum(u.input_tokens_used||0)} | Out: ${formatNum(u.output_tokens_used||0)}</div></div>
           </div>
           <div class="form-row">
-            <div class="form-group">
-              <label class="form-label">Tokens Used (Total)</label>
-              <div style="display:flex;gap:8px">
-                <input type="number" id="modalTokenUsed" class="form-input" value="${u.token_used || 0}" style="flex:1" />
-                <button class="btn btn-sm btn-danger" onclick="resetUsage('${u.id}')" title="Reset to 0">Reset</button>
-              </div>
-            </div>
-            <div class="form-group">
-              <label class="form-label">Input / Output Tokens</label>
-              <div class="text-sm text-muted" style="padding:12px 0">
-                In: ${formatNum(u.input_tokens_used || 0)} | Out: ${formatNum(u.output_tokens_used || 0)}
-              </div>
-            </div>
+            <div class="form-group"><label class="form-label">Req/Min</label><input type="number" id="modalRPM" class="form-input" value="${u.request_limit_per_minute||''}" placeholder="Unlimited" /></div>
+            <div class="form-group"><label class="form-label">Req/Day</label><input type="number" id="modalRPD" class="form-input" value="${u.request_limit_per_day||''}" placeholder="Unlimited" /></div>
           </div>
-          <div class="form-row">
-            <div class="form-group">
-              <label class="form-label">Requests/Minute</label>
-              <input type="number" id="modalRPM" class="form-input" value="${u.request_limit_per_minute || ''}" placeholder="Unlimited" />
-            </div>
-            <div class="form-group">
-              <label class="form-label">Requests/Day</label>
-              <input type="number" id="modalRPD" class="form-input" value="${u.request_limit_per_day || ''}" placeholder="Unlimited" />
-            </div>
-          </div>
-          <div class="form-group">
-            <label class="form-label">API Keys (${u.keys ? u.keys.length : 0})</label>
-            <div style="max-height:150px;overflow-y:auto">${keysHtml}</div>
-          </div>
-        `;
+          <div class="form-group"><label class="form-label">API Keys (${u.keys?.length||0})</label><div style="max-height:140px;overflow-y:auto">${keysHtml}</div></div>`;
         openModal('userModal');
-      } catch (e) {
-        console.error(e);
-        toast('Failed to load user', 'error');
-      }
+      } catch (e) { console.error(e); toast('Failed', 'error'); }
     }
 
     async function resetUsage(userId) {
       if (!confirm('Reset token usage to 0?')) return;
       try {
-        const res = await fetch(`/admin/users/${userId}/reset-usage`, { method: 'POST', headers: adminHeaders() });
-        if (res.ok) {
-          toast('Usage reset successfully', 'success');
-          document.getElementById('modalTokenUsed').value = '0';
-          loadUsers();
-          loadSummary();
-        } else toast('Failed to reset', 'error');
-      } catch (e) { toast('Failed to reset', 'error'); }
+        const r = await fetch(`/admin/users/${userId}/reset-usage`, { method: 'POST', headers: adminHeaders() });
+        if (r.ok) { toast('Reset done', 'success'); document.getElementById('modalTokenUsed').value = '0'; loadUsers(); loadSummary(); }
+        else toast('Failed', 'error');
+      } catch (e) { toast('Failed', 'error'); }
     }
 
     async function saveUserFromModal() {
-      const payload = { status: document.getElementById('modalStatus').value };
+      const p = { status: document.getElementById('modalStatus').value };
       const bal = document.getElementById('modalBalance').value;
       const tl = document.getElementById('modalTokenLimit').value;
       const tu = document.getElementById('modalTokenUsed').value;
       const rpm = document.getElementById('modalRPM').value;
       const rpd = document.getElementById('modalRPD').value;
-      if (bal !== '') payload.balance = Number(bal);
-      if (tl) payload.token_limit = Number(tl);
-      if (tu !== '') payload.token_used = Number(tu);
-      if (rpm) payload.request_limit_per_minute = Number(rpm);
-      if (rpd) payload.request_limit_per_day = Number(rpd);
-
+      if (bal !== '') p.balance = Number(bal);
+      if (tl) p.token_limit = Number(tl);
+      if (tu !== '') p.token_used = Number(tu);
+      if (rpm) p.request_limit_per_minute = Number(rpm);
+      if (rpd) p.request_limit_per_day = Number(rpd);
       try {
-        const res = await fetch(`/admin/users/${currentUserId}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json', ...adminHeaders() },
-          body: JSON.stringify(payload)
-        });
-        if (res.ok) {
-          toast('Saved successfully', 'success');
-          closeModal('userModal');
-          loadUsers();
-          loadSummary();
-        } else toast('Failed to save', 'error');
-      } catch (e) { toast('Failed to save', 'error'); }
+        const r = await fetch(`/admin/users/${currentUserId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...adminHeaders() }, body: JSON.stringify(p) });
+        if (r.ok) { toast('Saved', 'success'); closeModal('userModal'); loadUsers(); loadSummary(); }
+        else toast('Failed', 'error');
+      } catch (e) { toast('Failed', 'error'); }
     }
 
     async function createUserKey() {
       const username = document.getElementById('newUsername').value.trim();
       const external_id = document.getElementById('newExternal').value.trim();
       if (!username && !external_id) return toast('Enter username or external ID', 'error');
-      
       const payload = {};
       if (username) payload.username = username;
       if (external_id) payload.external_id = external_id;
-
       try {
-        const res = await fetch('/v1/keys/activate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        const data = await res.json();
-        if (res.ok) {
-          document.getElementById('newKeyValue').textContent = data.api_key;
+        const r = await fetch('/v1/keys/activate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        const d = await r.json();
+        if (r.ok) {
+          document.getElementById('newKeyValue').textContent = d.api_key;
           openModal('keyModal');
           document.getElementById('newUsername').value = '';
           document.getElementById('newExternal').value = '';
-          loadUsers();
-          loadSummary();
-        } else toast(data.detail || 'Failed', 'error');
+          loadUsers(); loadSummary();
+        } else toast(d.detail || 'Failed', 'error');
       } catch (e) { toast('Failed', 'error'); }
     }
 
     async function createKeyForUser(userId) {
       try {
-        const res = await fetch(`/admin/users/${userId}/keys`, { method: 'POST', headers: adminHeaders() });
-        const data = await res.json();
-        if (res.ok) {
-          document.getElementById('newKeyValue').textContent = data.api_key;
-          openModal('keyModal');
-        } else toast('Failed', 'error');
+        const r = await fetch(`/admin/users/${userId}/keys`, { method: 'POST', headers: adminHeaders() });
+        const d = await r.json();
+        if (r.ok) { document.getElementById('newKeyValue').textContent = d.api_key; openModal('keyModal'); }
+        else toast('Failed', 'error');
       } catch (e) { toast('Failed', 'error'); }
     }
 
-    function copyKey() {
-      navigator.clipboard.writeText(document.getElementById('newKeyValue').textContent);
-      toast('Copied to clipboard', 'success');
-    }
-
+    // ==================== Keys ====================
     async function loadAllKeys() {
       try {
-        const res = await fetch('/admin/keys', { headers: adminHeaders() });
-        if (!res.ok) return toast('Failed to load', 'error');
-        const data = await res.json();
-        
+        const r = await fetch('/admin/keys', { headers: adminHeaders() });
+        if (!r.ok) return toast('Failed', 'error');
+        const data = await r.json();
         const body = document.getElementById('keysBody');
         if (!data.length) {
-          body.innerHTML = '<tr><td colspan="6"><div class="empty-state"><div class="empty-state-icon">🔑</div><h3>No keys yet</h3><p>Create a user to generate API keys</p></div></td></tr>';
+          body.innerHTML = '<tr><td colspan="6"><div class="empty-state"><div class="empty-state-icon">🔑</div><h3>No keys</h3><p>Create a user to generate keys</p></div></td></tr>';
           return;
         }
-
         body.innerHTML = data.map(k => `<tr>
           <td class="text-mono text-sm">${k.id}</td>
-          <td>
-            <div class="user-cell">
-              <div class="user-avatar" style="width:32px;height:32px;font-size:12px">${getInitials(k.username || k.external_id)}</div>
-              <div class="user-info">
-                <strong>${k.username || k.external_id || '-'}</strong>
-                <span>${k.user_id}</span>
-              </div>
-            </div>
-          </td>
-          <td><span class="badge ${k.status === 'active' ? 'badge-success' : 'badge-error'}">${k.status}</span></td>
+          <td><div class="user-cell"><div class="user-avatar" style="width:32px;height:32px;font-size:12px">${getInitials(k.username||k.external_id)}</div><div class="user-info"><strong>${k.username||k.external_id||'-'}</strong><span>${k.user_id}</span></div></div></td>
+          <td><span class="badge ${k.status==='active'?'badge-success':'badge-error'}">${k.status}</span></td>
           <td class="text-sm text-muted">${k.last_used_at ? formatDate(k.last_used_at) : 'Never'}</td>
           <td class="text-sm text-muted">${formatDate(k.created_at)}</td>
-          <td>
-            <button class="btn btn-sm ${k.status === 'active' ? 'btn-danger' : 'btn-secondary'}" onclick="toggleKey('${k.id}', '${k.status}')">
-              ${k.status === 'active' ? 'Disable' : 'Enable'}
-            </button>
-          </td>
+          <td><button class="btn btn-sm ${k.status==='active'?'btn-danger':'btn-success'}" onclick="toggleKey('${k.id}','${k.status}')">${k.status==='active'?'Disable':'Enable'}</button></td>
         </tr>`).join('');
-      } catch (e) { console.error(e); toast('Failed to load', 'error'); }
+      } catch (e) { console.error(e); toast('Failed', 'error'); }
     }
 
     async function toggleKey(keyId, status) {
-      const newStatus = status === 'active' ? 'disabled' : 'active';
+      const ns = status === 'active' ? 'disabled' : 'active';
       try {
-        const res = await fetch(`/admin/keys/${keyId}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json', ...adminHeaders() },
-          body: JSON.stringify({ status: newStatus })
-        });
-        if (res.ok) {
-          toast(newStatus === 'active' ? 'Key enabled' : 'Key disabled', 'success');
-          loadAllKeys();
-        } else toast('Failed', 'error');
+        const r = await fetch(`/admin/keys/${keyId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...adminHeaders() }, body: JSON.stringify({ status: ns }) });
+        if (r.ok) { toast(ns === 'active' ? 'Enabled' : 'Disabled', 'success'); loadAllKeys(); }
+        else toast('Failed', 'error');
       } catch (e) { toast('Failed', 'error'); }
     }
 
+    // ==================== Billing ====================
     async function loadRecharges() {
       try {
-        const res = await fetch('/admin/recharges', { headers: adminHeaders() });
-        if (!res.ok) return toast('Failed to load', 'error');
-        const data = await res.json();
-        
+        const r = await fetch('/admin/recharges', { headers: adminHeaders() });
+        if (!r.ok) return toast('Failed', 'error');
+        const data = await r.json();
         const body = document.getElementById('rechargeBody');
         if (!data.length) {
           body.innerHTML = '<tr><td colspan="7"><div class="empty-state"><div class="empty-state-icon">💰</div><h3>No transactions</h3><p>Billing history will appear here</p></div></td></tr>';
           return;
         }
-
         body.innerHTML = data.map(r => `<tr>
           <td class="text-mono text-sm">${r.order_id}</td>
-          <td>${r.username || r.external_id || r.user_id}</td>
-          <td>${r.amount ? '$' + (r.amount / 100).toFixed(2) : '-'}</td>
-          <td class="text-success">${r.balance_added ? '+$' + (r.balance_added / 100).toFixed(2) : '-'}</td>
-          <td class="text-success">${r.tokens_added ? '+' + formatNum(r.tokens_added) : '-'}</td>
-          <td class="text-sm">${r.note || '-'}</td>
+          <td>${r.username||r.external_id||r.user_id}</td>
+          <td>${r.amount ? '$'+(r.amount/100).toFixed(2) : '-'}</td>
+          <td class="text-success">${r.balance_added ? '+$'+(r.balance_added/100).toFixed(2) : '-'}</td>
+          <td class="text-success">${r.tokens_added ? '+'+formatNum(r.tokens_added) : '-'}</td>
+          <td class="text-sm">${r.note||'-'}</td>
           <td class="text-sm text-muted">${formatDate(r.created_at)}</td>
         </tr>`).join('');
-      } catch (e) { console.error(e); toast('Failed to load', 'error'); }
+      } catch (e) { console.error(e); toast('Failed', 'error'); }
     }
 
-    async function loadUsage() {
-      try {
-        const res = await fetch('/admin/usage/daily', { headers: adminHeaders() });
-        if (!res.ok) return;
-        const data = await res.json();
-        const body = document.getElementById('topUsageBody');
-        if (body) {
-          const top5 = data.slice(0, 5);
-          body.innerHTML = top5.length ? top5.map(r => `<tr>
-            <td>${r.username || r.user_id.slice(0, 10)}</td>
-            <td>${formatNum(r.requests_total)}</td>
-            <td>${formatNum(r.tokens_total)}</td>
-          </tr>`).join('') : '<tr><td colspan="3" class="text-muted" style="text-align:center;padding:20px">No data</td></tr>';
-        }
-      } catch (e) { console.error(e); }
-    }
-
+    // ==================== Usage ====================
     async function loadFullUsage() {
       try {
         const day = document.getElementById('usageDay')?.value || '';
         const url = day ? `/admin/usage/daily?day=${day}` : '/admin/usage/daily';
-        const res = await fetch(url, { headers: adminHeaders() });
-        if (!res.ok) return;
-        const data = await res.json();
+        const r = await fetch(url, { headers: adminHeaders() });
+        if (!r.ok) return;
+        const data = await r.json();
         const body = document.getElementById('usageBody');
         if (!data.length) {
-          body.innerHTML = '<tr><td colspan="6"><div class="empty-state"><div class="empty-state-icon">📊</div><h3>No data</h3><p>Usage statistics will appear here</p></div></td></tr>';
+          body.innerHTML = '<tr><td colspan="6"><div class="empty-state"><div class="empty-state-icon">📊</div><h3>No data</h3><p>Usage will appear here</p></div></td></tr>';
           return;
         }
         body.innerHTML = data.map(r => `<tr>
           <td>${r.day}</td>
-          <td>${r.username || r.user_id}</td>
+          <td>${r.username||r.user_id}</td>
           <td>${formatNum(r.requests_total)}</td>
-          <td>${formatNum(r.input_tokens || 0)}</td>
-          <td>${formatNum(r.output_tokens || 0)}</td>
-          <td class="text-success">$${((r.cost_cents || 0) / 100).toFixed(4)}</td>
+          <td>${formatNum(r.input_tokens||0)}</td>
+          <td>${formatNum(r.output_tokens||0)}</td>
+          <td class="text-success">$${((r.cost_cents||0)/100).toFixed(4)}</td>
         </tr>`).join('');
       } catch (e) { console.error(e); }
     }
 
-    // ========== Request Logs ==========
-    let logsUserId = null;
-    let logsOffset = 0;
+    // ==================== Request Logs ====================
+    let logsUserId = null, logsOffset = 0;
     const LOGS_LIMIT = 30;
 
     async function openLogsModal(userId, displayName) {
       logsUserId = userId;
       logsOffset = 0;
       document.getElementById('logsModalTitle').textContent = `Request Logs — ${displayName}`;
-      // 先清空旧数据，显示 loading
       document.getElementById('logsBody').innerHTML = '<tr><td colspan="8" style="text-align:center;padding:40px;color:var(--text-tertiary)">Loading...</td></tr>';
       document.getElementById('logsPagination').textContent = '';
       openModal('logsModal');
@@ -1710,46 +1740,245 @@
 
     async function loadRequestLogs() {
       try {
-        const res = await fetch(`/admin/users/${logsUserId}/request-logs?limit=${LOGS_LIMIT}&offset=${logsOffset}`, { headers: adminHeaders() });
-        if (!res.ok) return toast('Failed to load logs', 'error');
-        const data = await res.json();
+        const r = await fetch(`/admin/users/${logsUserId}/request-logs?limit=${LOGS_LIMIT}&offset=${logsOffset}`, { headers: adminHeaders() });
+        if (!r.ok) return toast('Failed', 'error');
+        const data = await r.json();
         const body = document.getElementById('logsBody');
-
         if (!data.data.length) {
-          body.innerHTML = `<tr><td colspan="8"><div class="empty-state" style="padding:40px"><div class="empty-state-icon">📋</div><h3>No requests</h3><p>This user has no request logs yet</p></div></td></tr>`;
+          body.innerHTML = '<tr><td colspan="8"><div class="empty-state" style="padding:40px"><div class="empty-state-icon">📋</div><h3>No requests</h3></div></td></tr>';
         } else {
-          body.innerHTML = data.data.map(log => {
-            const statusClass = log.status_code < 400 ? 'badge-success' : 'badge-error';
+          body.innerHTML = data.data.map(l => {
+            const sc = l.status_code < 400 ? 'badge-success' : 'badge-error';
             return `<tr>
-              <td class="text-sm">${log.created_at ? utcDate(log.created_at).toLocaleString('zh-CN', {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '-'}</td>
-              <td><span class="text-sm">${log.endpoint}</span></td>
-              <td class="text-sm text-muted">${log.model}</td>
-              <td class="text-sm">${formatNum(log.input_tokens)}</td>
-              <td class="text-sm">${formatNum(log.output_tokens)}</td>
-              <td class="text-sm text-success">$${log.cost_usd.toFixed(4)}</td>
-              <td class="text-sm text-muted">${log.duration_ms}ms</td>
-              <td><span class="badge ${statusClass}" style="font-size:11px">${log.status_code}</span></td>
+              <td class="text-sm">${l.created_at ? utcDate(l.created_at).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '-'}</td>
+              <td class="text-sm">${l.endpoint}</td>
+              <td class="text-sm text-muted">${l.model}</td>
+              <td class="text-sm">${formatNum(l.input_tokens)}</td>
+              <td class="text-sm">${formatNum(l.output_tokens)}</td>
+              <td class="text-sm text-success">$${l.cost_usd.toFixed(4)}</td>
+              <td class="text-sm text-muted">${l.duration_ms}ms</td>
+              <td><span class="badge ${sc}" style="font-size:11px">${l.status_code}</span></td>
             </tr>`;
           }).join('');
         }
-
-        // Pagination info
         const from = data.total > 0 ? logsOffset + 1 : 0;
         const to = Math.min(logsOffset + LOGS_LIMIT, data.total);
         document.getElementById('logsPagination').textContent = `${from}-${to} of ${data.total}`;
         document.getElementById('logsPrev').disabled = logsOffset === 0;
         document.getElementById('logsNext').disabled = (logsOffset + LOGS_LIMIT) >= data.total;
-      } catch (e) {
-        console.error(e);
-        toast('Failed to load logs', 'error');
+      } catch (e) { console.error(e); toast('Failed', 'error'); }
+    }
+
+    function logsPage(dir) { logsOffset = Math.max(0, logsOffset + dir * LOGS_LIMIT); loadRequestLogs(); }
+
+    // ==================== Payment Orders ====================
+    async function loadPaymentOrders() {
+      try {
+        const sf = document.getElementById('orderStatusFilter').value;
+        let url = '/admin/payment-orders';
+        if (sf) url += `?status_filter=${sf}`;
+        const r = await fetch(url, { headers: adminHeaders() });
+        if (!r.ok) return toast('Failed', 'error');
+        const data = await r.json();
+        const body = document.getElementById('ordersBody');
+        if (!data.length) {
+          body.innerHTML = '<tr><td colspan="9"><div class="empty-state"><div class="empty-state-icon">📦</div><h3>No orders</h3><p>Payment orders will appear here</p></div></td></tr>';
+          return;
+        }
+        body.innerHTML = data.map(o => {
+          const isPending = o.status === 'pending';
+          const badgeCls = isPending ? 'badge-warning' : 'badge-success';
+          return `<tr>
+            <td class="text-mono text-sm">${o.order_no}</td>
+            <td>${o.user_id}</td>
+            <td>¥${o.amount_rmb}</td>
+            <td>${o.add_balance_cents} ¢</td>
+            <td><span class="badge ${badgeCls}">${o.status}</span></td>
+            <td class="text-mono text-sm text-muted">${o.trade_no || '-'}</td>
+            <td class="text-sm text-muted">${formatDate(o.created_at)}</td>
+            <td class="text-sm text-muted">${formatDate(o.confirmed_at)}</td>
+            <td>${isPending ? `<button class="btn btn-sm btn-warning" onclick="forceConfirmOrder('${o.order_no}')">Force Confirm</button>` : '<span class="text-sm text-muted">—</span>'}</td>
+          </tr>`;
+        }).join('');
+      } catch (e) { console.error(e); toast('Failed', 'error'); }
+    }
+
+    async function forceConfirmOrder(orderNo) {
+      if (!confirm(`Force confirm order ${orderNo}? This will verify with payment service and credit balance.`)) return;
+      try {
+        const r = await fetch(`/admin/payment-orders/${orderNo}/force-confirm`, { method: 'POST', headers: adminHeaders() });
+        const d = await r.json();
+        if (r.ok) {
+          toast(d.status === 'already_confirmed' ? 'Already confirmed' : 'Order confirmed & balance credited', 'success');
+          loadPaymentOrders();
+        } else {
+          toast(d.detail || 'Failed to confirm', 'error');
+        }
+      } catch (e) { toast('Failed', 'error'); }
+    }
+
+    // ==================== Redemption Codes ====================
+    async function loadRedemptionCodes() {
+      try {
+        const sf = document.getElementById('codeStatusFilter').value;
+        let url = '/admin/redemption-codes';
+        if (sf) url += `?status_filter=${sf}`;
+        const r = await fetch(url, { headers: adminHeaders() });
+        if (!r.ok) return toast('Failed', 'error');
+        const data = await r.json();
+        const body = document.getElementById('codesBody');
+        if (!data.length) {
+          body.innerHTML = '<tr><td colspan="7"><div class="empty-state"><div class="empty-state-icon">🎟️</div><h3>No codes</h3><p>Generate codes to get started</p></div></td></tr>';
+          return;
+        }
+        body.innerHTML = data.map(c => {
+          const badgeCls = c.status === 'unused' ? 'badge-success' : c.status === 'used' ? 'badge-info' : 'badge-error';
+          const canDisable = c.status === 'unused';
+          return `<tr>
+            <td class="text-mono text-sm">${c.code}</td>
+            <td>$${(c.balance_cents/100).toFixed(2)} <span class="text-muted text-sm">(${c.balance_cents}¢)</span></td>
+            <td><span class="badge ${badgeCls}">${c.status}</span></td>
+            <td class="text-sm">${c.used_by || '-'}</td>
+            <td class="text-sm text-muted">${formatDate(c.used_at)}</td>
+            <td class="text-sm text-muted">${formatDate(c.created_at)}</td>
+            <td>${canDisable ? `<button class="btn btn-sm btn-danger" onclick="disableCode('${c.id}')">Disable</button>` : '<span class="text-sm text-muted">—</span>'}</td>
+          </tr>`;
+        }).join('');
+      } catch (e) { console.error(e); toast('Failed', 'error'); }
+    }
+
+    async function generateCodes() {
+      const count = parseInt(document.getElementById('genCount').value) || 10;
+      const balance_cents = parseInt(document.getElementById('genBalance').value) || 1000;
+      if (count < 1 || count > 100) return toast('Quantity: 1-100', 'error');
+      if (balance_cents < 1) return toast('Face value must be positive', 'error');
+      try {
+        const r = await fetch('/admin/redemption-codes/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+          body: JSON.stringify({ count, balance_cents })
+        });
+        const d = await r.json();
+        if (r.ok) {
+          closeModal('generateCodesModal');
+          document.getElementById('codesResultInfo').textContent = `${d.count} codes generated, each worth $${(d.balance_cents/100).toFixed(2)} (${d.balance_cents}¢)`;
+          document.getElementById('codesResultList').textContent = d.codes.join('\n');
+          openModal('codesResultModal');
+          loadRedemptionCodes();
+        } else toast(d.detail || 'Failed', 'error');
+      } catch (e) { toast('Failed', 'error'); }
+    }
+
+    async function disableCode(codeId) {
+      if (!confirm('Disable this code? It cannot be undone.')) return;
+      try {
+        const r = await fetch(`/admin/redemption-codes/${codeId}`, { method: 'PATCH', headers: adminHeaders() });
+        if (r.ok) { toast('Code disabled', 'success'); loadRedemptionCodes(); }
+        else toast('Failed', 'error');
+      } catch (e) { toast('Failed', 'error'); }
+    }
+
+    // ==================== Announcements ====================
+    async function loadAnnouncements() {
+      try {
+        const r = await fetch('/admin/announcements', { headers: adminHeaders() });
+        if (!r.ok) return toast('Failed', 'error');
+        const data = await r.json();
+        const body = document.getElementById('announcementsBody');
+        if (!data.length) {
+          body.innerHTML = '<tr><td colspan="5"><div class="empty-state"><div class="empty-state-icon">📢</div><h3>No announcements</h3><p>Create one to notify users</p></div></td></tr>';
+          return;
+        }
+        body.innerHTML = data.map(a => {
+          const priBadge = a.priority === 'critical' ? 'badge-error' : a.priority === 'warning' ? 'badge-warning' : 'badge-info';
+          const stBadge = a.status === 'active' ? 'badge-success' : 'badge-error';
+          return `<tr>
+            <td><strong>${a.title}</strong><div class="text-sm text-muted" style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.content}</div></td>
+            <td><span class="badge ${priBadge}">${a.priority}</span></td>
+            <td><span class="badge ${stBadge}">${a.status}</span></td>
+            <td class="text-sm text-muted">${formatDateFull(a.created_at)}</td>
+            <td><div class="actions">
+              <button class="btn btn-sm btn-secondary" onclick="editAnnouncement('${a.id}')">Edit</button>
+              ${a.status === 'active' ? `<button class="btn btn-sm btn-danger" onclick="archiveAnnouncement('${a.id}')">Archive</button>` : ''}
+            </div></td>
+          </tr>`;
+        }).join('');
+      } catch (e) { console.error(e); toast('Failed', 'error'); }
+    }
+
+    let announcementsCache = [];
+
+    function openAnnouncementModal(editData) {
+      document.getElementById('annEditId').value = editData ? editData.id : '';
+      document.getElementById('annTitle').value = editData ? editData.title : '';
+      document.getElementById('annContent').value = editData ? editData.content : '';
+      document.getElementById('annPriority').value = editData ? editData.priority : 'info';
+      document.getElementById('annModalTitle').textContent = editData ? 'Edit Announcement' : 'New Announcement';
+      const sg = document.getElementById('annStatusGroup');
+      if (editData) {
+        sg.style.display = 'block';
+        document.getElementById('annStatus').value = editData.status || 'active';
+      } else {
+        sg.style.display = 'none';
       }
+      openModal('announcementModal');
     }
 
-    function logsPage(direction) {
-      logsOffset = Math.max(0, logsOffset + direction * LOGS_LIMIT);
-      loadRequestLogs();
+    async function editAnnouncement(annId) {
+      try {
+        const r = await fetch('/admin/announcements', { headers: adminHeaders() });
+        if (!r.ok) return toast('Failed', 'error');
+        const data = await r.json();
+        const ann = data.find(a => a.id === annId);
+        if (ann) openAnnouncementModal(ann);
+        else toast('Not found', 'error');
+      } catch (e) { toast('Failed', 'error'); }
     }
 
+    async function saveAnnouncement() {
+      const editId = document.getElementById('annEditId').value;
+      const title = document.getElementById('annTitle').value.trim();
+      const content = document.getElementById('annContent').value.trim();
+      const priority = document.getElementById('annPriority').value;
+      if (!title) return toast('Title is required', 'error');
+      if (!content) return toast('Content is required', 'error');
+
+      try {
+        if (editId) {
+          const payload = { title, content, priority, status: document.getElementById('annStatus').value };
+          const r = await fetch(`/admin/announcements/${editId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+            body: JSON.stringify(payload)
+          });
+          if (r.ok) { toast('Updated', 'success'); closeModal('announcementModal'); loadAnnouncements(); }
+          else toast('Failed', 'error');
+        } else {
+          const r = await fetch('/admin/announcements', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+            body: JSON.stringify({ title, content, priority })
+          });
+          if (r.ok) { toast('Created', 'success'); closeModal('announcementModal'); loadAnnouncements(); }
+          else toast('Failed', 'error');
+        }
+      } catch (e) { toast('Failed', 'error'); }
+    }
+
+    async function archiveAnnouncement(annId) {
+      if (!confirm('Archive this announcement?')) return;
+      try {
+        const r = await fetch(`/admin/announcements/${annId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+          body: JSON.stringify({ status: 'archived' })
+        });
+        if (r.ok) { toast('Archived', 'success'); loadAnnouncements(); }
+        else toast('Failed', 'error');
+      } catch (e) { toast('Failed', 'error'); }
+    }
+
+    // ==================== Init ====================
     function loadAll() {
       loadSummary();
       loadUsers();
