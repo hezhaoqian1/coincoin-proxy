@@ -48,7 +48,7 @@ class Settings(BaseSettings):
     referral_commission_rate: float = 0.10
 
     # Payment (Alipay service)
-    pay_base_url: str = "https://web-production-bbf09.up.railway.app"
+    pay_base_url: str = "https://bird-alipay.up.railway.app"
     rmb_to_cents_rate: float = 14.0  # 1 RMB ≈ 14 cents ($0.14)
     self_base_url: str = ""  # public URL of this proxy, used for pay-notify callback
 
