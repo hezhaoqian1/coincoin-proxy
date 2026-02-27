@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import settings
 from .db import get_db
-from .models import PaymentOrder, RechargeLog, User
+from .models import PaymentOrder, RechargeLog, ReferralReward, User
 from .schemas import RechargeRequest, RechargeResponse
 from .security import generate_id
 
@@ -218,6 +218,27 @@ async def _do_confirm_order(order_no: str, db: AsyncSession) -> bool:
     order.add_balance_cents = add_cents
     order.trade_no = trade_no
     order.confirmed_at = datetime.utcnow()
+
+    # 返佣：被邀请人充值时给邀请人发佣金
+    if user.referred_by and settings.referral_commission_rate > 0:
+        reward_cents = max(1, int(add_cents * settings.referral_commission_rate))
+        referrer = (
+            await db.execute(select(User).where(User.id == user.referred_by).with_for_update())
+        ).scalar_one_or_none()
+        if referrer and referrer.status == "active":
+            referrer.balance += reward_cents
+            db.add(ReferralReward(
+                id=generate_id("rr_"),
+                referrer_id=referrer.id,
+                referred_id=user.id,
+                order_no=order_no,
+                order_amount_cents=add_cents,
+                reward_cents=reward_cents,
+            ))
+            logger.info(
+                "referral reward: referrer=%s +%dcents from user=%s order=%s",
+                referrer.id, reward_cents, user.id, order_no,
+            )
 
     try:
         await db.commit()

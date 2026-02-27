@@ -35,12 +35,16 @@ class User(Base):
     request_limit_per_minute: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     request_limit_per_day: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     
+    # 邀请体系
+    referral_code: Mapped[Optional[str]] = mapped_column(String(16), unique=True, nullable=True)
+    referred_by: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("coincoin_users.id"), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    keys = relationship("ApiKey", back_populates="user")
+    keys = relationship("ApiKey", back_populates="user", foreign_keys="[ApiKey.user_id]")
 
 
 class ApiKey(Base):
@@ -140,6 +144,19 @@ class Announcement(Base):
     content: Mapped[str] = mapped_column(String(2048), default="")
     priority: Mapped[str] = mapped_column(String(16), default="info")
     status: Mapped[str] = mapped_column(String(16), default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ReferralReward(Base):
+    """返佣记录 — 被邀请人充值时给邀请人发放佣金"""
+    __tablename__ = "coincoin_referral_rewards"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    referrer_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_users.id"), index=True)
+    referred_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_users.id"))
+    order_no: Mapped[str] = mapped_column(String(128), index=True)
+    order_amount_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    reward_cents: Mapped[int] = mapped_column(BigInteger, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

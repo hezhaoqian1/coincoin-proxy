@@ -11,7 +11,7 @@ from .db import get_db
 from .models import ApiKey, User
 from .rate_limiter import rate_limiter
 from .schemas import KeyActivateRequest, KeyActivateResponse
-from .security import generate_api_key, generate_id, hash_key
+from .security import generate_api_key, generate_id, generate_referral_code, hash_key
 
 
 router = APIRouter(prefix="/v1/keys", tags=["keys"])
@@ -57,6 +57,7 @@ async def activate_key(
                 status="active",
                 token_used=0,
                 balance=settings.default_balance,
+                referral_code=generate_referral_code(),
             )
             db.add(user)
             await db.flush()

@@ -18,6 +18,7 @@ from .schemas import AuthLoginRequest, AuthRegisterRequest, AuthResponse
 from .security import (
     generate_api_key,
     generate_id,
+    generate_referral_code,
     hash_key,
     hash_password,
     verify_password,
@@ -69,6 +70,14 @@ async def register(
     if existing:
         raise HTTPException(status.HTTP_409_CONFLICT, "username already taken")
 
+    referrer_id = None
+    if payload.referral_code:
+        referrer = (
+            await db.execute(select(User).where(User.referral_code == payload.referral_code.strip().upper()))
+        ).scalar_one_or_none()
+        if referrer:
+            referrer_id = referrer.id
+
     user = (
         await db.execute(select(User).where(User.username == payload.username))
     ).scalar_one_or_none()
@@ -80,6 +89,8 @@ async def register(
             status="active",
             token_used=0,
             balance=settings.default_balance,
+            referral_code=generate_referral_code(),
+            referred_by=referrer_id,
         )
         db.add(user)
         await db.flush()

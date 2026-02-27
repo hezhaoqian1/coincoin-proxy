@@ -16,6 +16,10 @@ def generate_id(prefix: str) -> str:
     return f"{prefix}{secrets.token_hex(12)}"
 
 
+def generate_referral_code() -> str:
+    return secrets.token_hex(4).upper()
+
+
 def generate_api_key() -> str:
     raw = secrets.token_bytes(24)
     token = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")

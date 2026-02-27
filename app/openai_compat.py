@@ -267,6 +267,61 @@ async def redeem_code(request: Request, db: AsyncSession = Depends(get_db)):
     }
 
 
+@router.get("/referral")
+async def get_referral_info(request: Request, db: AsyncSession = Depends(get_db)):
+    """查询邀请码、邀请人数和累计佣金"""
+    try:
+        cached_user = await authenticate_user(request, db)
+    except HTTPException as e:
+        if e.status_code == 401:
+            return openai_error("Invalid API key", "authentication_error", code="invalid_api_key", status_code=401)
+        raise
+
+    from .models import ReferralReward, User
+    from sqlalchemy import select, func
+
+    user = (await db.execute(select(User).where(User.id == cached_user.id))).scalar_one()
+
+    if not user.referral_code:
+        from .security import generate_referral_code
+        user.referral_code = generate_referral_code()
+        await db.commit()
+
+    invited_count = (await db.execute(
+        select(func.count()).select_from(User).where(User.referred_by == user.id)
+    )).scalar() or 0
+
+    total_reward = (await db.execute(
+        select(func.coalesce(func.sum(ReferralReward.reward_cents), 0))
+        .where(ReferralReward.referrer_id == user.id)
+    )).scalar() or 0
+
+    recent_rewards = (await db.execute(
+        select(ReferralReward)
+        .where(ReferralReward.referrer_id == user.id)
+        .order_by(ReferralReward.created_at.desc())
+        .limit(20)
+    )).scalars().all()
+
+    return {
+        "referral_code": user.referral_code,
+        "invited_count": invited_count,
+        "total_reward_cents": total_reward,
+        "total_reward_usd": total_reward / 100,
+        "commission_rate": settings.referral_commission_rate,
+        "recent_rewards": [
+            {
+                "order_no": r.order_no,
+                "order_amount_cents": r.order_amount_cents,
+                "reward_cents": r.reward_cents,
+                "reward_usd": r.reward_cents / 100,
+                "created_at": r.created_at.isoformat() + "Z" if r.created_at else None,
+            }
+            for r in recent_rewards
+        ],
+    }
+
+
 @router.get("/announcements")
 async def list_announcements(db: AsyncSession = Depends(get_db)):
     from .models import Announcement

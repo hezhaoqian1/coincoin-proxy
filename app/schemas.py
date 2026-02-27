@@ -135,6 +135,7 @@ class AnnouncementUpdate(BaseModel):
 class AuthRegisterRequest(BaseModel):
     username: str = Field(..., min_length=2, max_length=64, pattern=r'^[a-zA-Z0-9_-]+$')
     password: str = Field(..., min_length=6, max_length=128)
+    referral_code: Optional[str] = Field(default=None, description="邀请码（可选）")
 
 class AuthLoginRequest(BaseModel):
     username: str

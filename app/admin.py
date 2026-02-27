@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .db import get_db
-from .models import Announcement, ApiKey, PaymentOrder, RechargeLog, RedemptionCode, RequestLog, UsageDaily, User
+from .models import Announcement, ApiKey, PaymentOrder, RechargeLog, RedemptionCode, ReferralReward, RequestLog, UsageDaily, User
 from .schemas import (
     AdminKeyUpdate, AdminUserUpdate,
     AnnouncementCreate, AnnouncementUpdate,
@@ -54,6 +54,8 @@ async def list_users(search: Optional[str] = None, db: AsyncSession = Depends(ge
             "output_tokens_used": u.output_tokens_used,
             "request_limit_per_minute": u.request_limit_per_minute,
             "request_limit_per_day": u.request_limit_per_day,
+            "referral_code": u.referral_code,
+            "referred_by": u.referred_by,
             "created_at": u.created_at,
             "updated_at": u.updated_at,
         }
@@ -516,3 +518,55 @@ async def force_confirm_order(order_no: str, db: AsyncSession = Depends(get_db))
     if not ok:
         raise HTTPException(status_code=502, detail="payment verification failed or not paid yet")
     return {"order_no": order_no, "status": "confirmed"}
+
+
+# ============== Referral Rewards ==============
+
+@router.get("/referral-rewards", dependencies=[Depends(admin_guard)])
+async def list_referral_rewards(
+    referrer_id: Optional[str] = None,
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db),
+):
+    query = (
+        select(ReferralReward, User)
+        .join(User, ReferralReward.referrer_id == User.id)
+        .order_by(ReferralReward.created_at.desc())
+    )
+    if referrer_id:
+        query = query.where(ReferralReward.referrer_id == referrer_id)
+    result = await db.execute(query.limit(limit))
+    rows = result.all()
+    return [
+        {
+            "id": r.id,
+            "referrer_id": r.referrer_id,
+            "referrer_username": u.username,
+            "referred_id": r.referred_id,
+            "order_no": r.order_no,
+            "order_amount_cents": r.order_amount_cents,
+            "reward_cents": r.reward_cents,
+            "reward_usd": r.reward_cents / 100,
+            "created_at": r.created_at,
+        }
+        for r, u in rows
+    ]
+
+
+@router.get("/referral-stats", dependencies=[Depends(admin_guard)])
+async def referral_stats(db: AsyncSession = Depends(get_db)):
+    total_rewards = await db.scalar(
+        select(func.coalesce(func.sum(ReferralReward.reward_cents), 0))
+    ) or 0
+    total_referrals = await db.scalar(
+        select(func.count()).select_from(User).where(User.referred_by.isnot(None))
+    ) or 0
+    total_referrers = await db.scalar(
+        select(func.count(func.distinct(ReferralReward.referrer_id)))
+    ) or 0
+    return {
+        "total_rewards_cents": total_rewards,
+        "total_rewards_usd": total_rewards / 100,
+        "total_referred_users": total_referrals,
+        "total_active_referrers": total_referrers,
+    }
