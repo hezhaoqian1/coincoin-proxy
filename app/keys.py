@@ -38,7 +38,7 @@ async def activate_key(
 
     ip = _client_ip(request)
     if not await rate_limiter.allow(f"activate:{ip}", ACTIVATE_RATE_LIMIT):
-        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, "too many requests, try later")
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="too many requests, try later")
 
     user = None
     try:
