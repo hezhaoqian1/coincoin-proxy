@@ -476,10 +476,30 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                 })
                 continue
             
-            # 3. 普通消息：处理 content: null
+            # 3. 普通消息：处理 content 格式转换
             result = dict(msg)
-            if result.get("content") is None and "content" in result:
+            content = result.get("content")
+            if content is None and "content" in result:
                 result["content"] = ""
+            elif isinstance(content, list):
+                converted_parts = []
+                for part in content:
+                    if not isinstance(part, dict):
+                        converted_parts.append(part)
+                        continue
+                    part = dict(part)
+                    ptype = part.get("type")
+                    if ptype == "text":
+                        part["type"] = "output_text" if role == "assistant" else "input_text"
+                    elif ptype == "image_url":
+                        part["type"] = "input_image"
+                        url_obj = part.pop("image_url", None)
+                        if isinstance(url_obj, dict):
+                            part["image_url"] = url_obj.get("url", "")
+                        elif isinstance(url_obj, str):
+                            part["image_url"] = url_obj
+                    converted_parts.append(part)
+                result["content"] = converted_parts
             converted.append(result)
         
         return converted
