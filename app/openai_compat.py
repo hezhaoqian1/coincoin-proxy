@@ -668,6 +668,21 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                 await upstream.aclose()
             response_headers = filter_headers(dict(upstream.headers))
             response_headers.pop("content-length", None)
+            if upstream.status_code >= 400:
+                import logging
+                _logger = logging.getLogger("coincoin.compat")
+                _logger.error("upstream stream-fallback %s: %s", upstream.status_code, body[:1000])
+                if "application/json" in content_type:
+                    try:
+                        data = json.loads(body.decode("utf-8"))
+                        if "error" in data:
+                            return JSONResponse(content={"error": data["error"]}, status_code=upstream.status_code, headers=response_headers)
+                    except Exception:
+                        pass
+                return JSONResponse(
+                    content={"error": {"message": body.decode("utf-8", errors="replace")[:500] or "upstream error", "type": "upstream_error", "code": str(upstream.status_code)}},
+                    status_code=upstream.status_code, headers=response_headers,
+                )
             if "application/json" in content_type:
                 data = json.loads(body.decode("utf-8"))
                 return JSONResponse(content=build_chat_response(data), status_code=upstream.status_code, headers=response_headers)
@@ -853,6 +868,18 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
         await usage_buffer.add(
             user.id, input_tokens=input_tokens_delta, output_tokens=output_tokens_delta, requests=1,
             endpoint="chat/completions", model=settings.fixed_model, duration_ms=duration_ms, status_code=upstream.status_code,
+        )
+    else:
+        import logging
+        _logger = logging.getLogger("coincoin.compat")
+        _logger.error("upstream %s for chat/completions: %s", upstream.status_code, str(data)[:1000])
+
+    if upstream.status_code >= 400:
+        if isinstance(data, dict) and "error" in data:
+            return JSONResponse(content={"error": data["error"]}, status_code=upstream.status_code, headers=response_headers)
+        return JSONResponse(
+            content={"error": {"message": str(data)[:500] if data else "upstream error", "type": "upstream_error", "code": str(upstream.status_code)}},
+            status_code=upstream.status_code, headers=response_headers,
         )
 
     if isinstance(data, dict):
