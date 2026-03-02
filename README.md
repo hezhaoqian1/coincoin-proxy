@@ -51,8 +51,8 @@ COINCOIN_DB_USER=root
 COINCOIN_DB_PASSWORD=password
 
 # 计费配置（可选）
-COINCOIN_PRICE_INPUT_PER_MILLION=175    # Input 价格: 175 分/百万tokens = $1.75/M
-COINCOIN_PRICE_OUTPUT_PER_MILLION=1400  # Output 价格: 1400 分/百万tokens = $14/M
+COINCOIN_PRICE_INPUT_PER_MILLION=99     # Input 价格: 99 分/百万tokens = $0.99/M
+COINCOIN_PRICE_OUTPUT_PER_MILLION=699   # Output 价格: 699 分/百万tokens = $6.99/M
 COINCOIN_BILLING_MODE=balance           # 计费模式: balance(余额) / token_limit(额度) / none(不限制)
 
 # Webhook 密钥（用于充值接口）
@@ -245,8 +245,8 @@ Authorization: Bearer sk_cc_xxx
   "output_tokens_used": 41,
   "token_limit": null,
   "token_remaining": null,
-  "price_input_per_million": 1.75,
-  "price_output_per_million": 14.0
+  "price_input_per_million": 0.99,
+  "price_output_per_million": 6.99
 }
 ```
 
@@ -489,8 +489,8 @@ Content-Type: application/json
 | `COINCOIN_USAGE_FLUSH_INTERVAL` | `5` | 用量写入间隔(秒) |
 | `COINCOIN_HTTP_POOL_MAX` | `100` | HTTP 连接池大小 |
 | `COINCOIN_KEY_CACHE_TTL` | `30` | Key 缓存 TTL(秒) |
-| `COINCOIN_PRICE_INPUT_PER_MILLION` | `175` | Input 价格（分/百万Token）|
-| `COINCOIN_PRICE_OUTPUT_PER_MILLION` | `1400` | Output 价格（分/百万Token）|
+| `COINCOIN_PRICE_INPUT_PER_MILLION` | `99` | Input 价格（分/百万Token）|
+| `COINCOIN_PRICE_OUTPUT_PER_MILLION` | `699` | Output 价格（分/百万Token）|
 | `COINCOIN_BILLING_MODE` | `balance` | 计费模式：balance/token_limit/none |
 | `COINCOIN_WEBHOOK_SECRET` | - | Webhook 充值密钥 |
 
@@ -753,14 +753,14 @@ curl https://clawfather.up.railway.app/v1/chat/completions \
 
 ### 价格配置
 
-默认价格（与 OpenAI 对标）：
+默认价格：
 
 | 类型 | 价格 | 环境变量 |
 |------|------|----------|
-| Input Token | $1.75 / 百万 | `COINCOIN_PRICE_INPUT_PER_MILLION=175` |
-| Output Token | $14.00 / 百万 | `COINCOIN_PRICE_OUTPUT_PER_MILLION=1400` |
+| Input Token | $0.99 / 百万 | `COINCOIN_PRICE_INPUT_PER_MILLION=99` |
+| Output Token | $6.99 / 百万 | `COINCOIN_PRICE_OUTPUT_PER_MILLION=699` |
 
-> 注：价格单位为「分/百万Token」，175 分 = $1.75
+> 注：价格单位为「分/百万Token」，99 分 = $0.99
 
 ### 计费流程
 
@@ -776,13 +776,13 @@ curl https://clawfather.up.railway.app/v1/chat/completions \
 ### 费用计算
 
 ```
-费用(分) = ceil(input_tokens × 175 / 1000000 + output_tokens × 1400 / 1000000)
+费用(分) = round(input_tokens × 99 / 1000000 + output_tokens × 699 / 1000000)
 ```
 
 示例：
-- 100 input + 50 output = ceil(0.0175 + 0.07) = 1 分 = $0.01
-- 1000 input + 500 output = ceil(0.175 + 0.7) = 1 分 = $0.01
-- 10000 input + 5000 output = ceil(1.75 + 7) = 9 分 = $0.09
+- 100 input + 50 output = round(0.0099 + 0.035) = 0 分 = $0.00
+- 1000 input + 500 output = round(0.099 + 0.35) = 0 分 = $0.00
+- 10000 input + 5000 output = round(0.99 + 3.495) = 4 分 = $0.04
 
 ---
 

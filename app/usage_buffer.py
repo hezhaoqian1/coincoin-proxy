@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import math
 from collections import defaultdict
 from datetime import date, datetime
 from typing import Dict, List, Tuple
@@ -114,7 +113,7 @@ class UsageBuffer:
                 "model": model,
                 "input_tokens": int(input_tokens),
                 "output_tokens": int(output_tokens),
-                "cost_cents": math.ceil(cost_cents),
+                "cost_cents": round(cost_cents),
                 "duration_ms": int(duration_ms),
                 "status_code": int(status_code),
                 "created_at": datetime.utcnow(),
@@ -129,14 +128,12 @@ class UsageBuffer:
         return int(usage.get("input_tokens", 0)) + int(usage.get("output_tokens", 0))
 
     async def get_pending_cost(self, user_id: str) -> int:
-        """获取待刷新的费用（分，向上取整）
+        """获取待刷新的费用（分，四舍五入）
         
         注：无锁读取，Python dict.get() 是原子操作
         """
-        import math
         usage = self._usage_by_user.get(user_id, {})
-        # 向上取整，确保不会漏扣
-        return math.ceil(usage.get("cost_cents_f", 0.0))
+        return round(usage.get("cost_cents_f", 0.0))
 
     async def get_pending_requests_today(self, user_id: str) -> int:
         """获取今日待刷新的请求数
@@ -211,8 +208,7 @@ async def flush_once() -> None:
             for user_id, usage in usage_by_user.items():
                 input_tokens = int(usage.get("input_tokens", 0))
                 output_tokens = int(usage.get("output_tokens", 0))
-                # 向上取整，确保扣费准确
-                cost_cents = math.ceil(usage.get("cost_cents_f", 0.0))
+                cost_cents = round(usage.get("cost_cents_f", 0.0))
                 total_tokens = input_tokens + output_tokens
                 
                 if total_tokens > 0 or cost_cents > 0:
@@ -232,8 +228,7 @@ async def flush_once() -> None:
                 input_tokens = int(stats.get("input_tokens", 0))
                 output_tokens = int(stats.get("output_tokens", 0))
                 requests = int(stats.get("requests", 0))
-                # 向上取整
-                cost_cents = math.ceil(stats.get("cost_cents_f", 0.0))
+                cost_cents = round(stats.get("cost_cents_f", 0.0))
                 total_tokens = input_tokens + output_tokens
                 
                 if total_tokens == 0 and requests == 0:

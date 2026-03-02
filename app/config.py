@@ -34,9 +34,9 @@ class Settings(BaseSettings):
     key_cache_max: int = 10000
     
     # Pricing (cents per million tokens)
-    # Default: Input $1.75/M = 175 cents/M, Output $14/M = 1400 cents/M
-    price_input_per_million: int = 175  # 单位：分/百万 tokens
-    price_output_per_million: int = 1400  # 单位：分/百万 tokens
+    # Input $0.99/M = 99 cents/M, Output $6.99/M = 699 cents/M
+    price_input_per_million: int = 99  # 单位：分/百万 tokens
+    price_output_per_million: int = 699  # 单位：分/百万 tokens
     
     # Billing mode: "balance" (扣余额) or "token_limit" (扣 token 额度) or "none" (不限制)
     billing_mode: str = "balance"
