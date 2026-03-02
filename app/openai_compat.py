@@ -309,6 +309,9 @@ async def get_referral_info(request: Request, db: AsyncSession = Depends(get_db)
         "total_reward_cents": total_reward,
         "total_reward_usd": total_reward / 100,
         "commission_rate": settings.referral_commission_rate,
+        "max_rewards_per_user": settings.referral_max_rewards_per_user,
+        "reward_cap_usd": settings.referral_reward_cap_cents / 100,
+        "new_user_bonus_usd": settings.referral_new_user_bonus_cents / 100,
         "recent_rewards": [
             {
                 "order_no": r.order_no,

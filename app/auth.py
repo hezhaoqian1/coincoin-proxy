@@ -76,7 +76,10 @@ async def register(
             await db.execute(select(User).where(User.referral_code == payload.referral_code.strip().upper()))
         ).scalar_one_or_none()
         if referrer:
-            referrer_id = referrer.id
+            if getattr(referrer, "register_ip", None) and referrer.register_ip == ip:
+                logger.warning("referral blocked: same IP %s (referrer=%s)", ip, referrer.id)
+            else:
+                referrer_id = referrer.id
 
     user = (
         await db.execute(select(User).where(User.username == payload.username))
@@ -91,6 +94,7 @@ async def register(
             balance=settings.default_balance,
             referral_code=generate_referral_code(),
             referred_by=referrer_id,
+            register_ip=ip,
         )
         db.add(user)
         await db.flush()

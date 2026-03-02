@@ -39,6 +39,7 @@ async def _run_migrations(conn):
         ("coincoin_api_keys", "expires_at", "DATETIME NULL"),
         ("coincoin_users", "referral_code", "VARCHAR(16) NULL UNIQUE"),
         ("coincoin_users", "referred_by", "VARCHAR(32) NULL"),
+        ("coincoin_users", "register_ip", "VARCHAR(64) NULL"),
     ]
     for table, col, ddl in migrations:
         try:

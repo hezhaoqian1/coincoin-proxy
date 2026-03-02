@@ -44,8 +44,11 @@ class Settings(BaseSettings):
     # 新用户默认余额（分），0 = 需要充值才能使用
     default_balance: int = 0
 
-    # Referral commission rate (0.10 = 10%)
-    referral_commission_rate: float = 0.10
+    # Referral system
+    referral_commission_rate: float = 0.05  # 5%
+    referral_max_rewards_per_user: int = 3  # only first 3 orders from each referred user
+    referral_reward_cap_cents: int = 5000  # max $50 cumulative per referred user
+    referral_new_user_bonus_cents: int = 300  # $3 bonus for referred user on first purchase
 
     # Payment (Alipay service)
     pay_base_url: str = "https://bird-alipay.up.railway.app"

@@ -38,6 +38,7 @@ class User(Base):
     # 邀请体系
     referral_code: Mapped[Optional[str]] = mapped_column(String(16), unique=True, nullable=True)
     referred_by: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("coincoin_users.id"), nullable=True)
+    register_ip: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
