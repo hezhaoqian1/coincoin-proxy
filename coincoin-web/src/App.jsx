@@ -1,0 +1,55 @@
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { getApiKey } from './api/client'
+import { ThemeProvider } from './hooks/useTheme'
+import Navbar from './components/Navbar'
+import Footer from './components/Footer'
+import Landing from './pages/Landing'
+import Login from './pages/Login'
+import Register from './pages/Register'
+import Dashboard from './pages/Dashboard'
+import Usage from './pages/Usage'
+import Recharge from './pages/Recharge'
+import Docs from './pages/Docs'
+import Settings from './pages/Settings'
+import Playground from './pages/Playground'
+import PayReturn from './pages/PayReturn'
+
+function ProtectedRoute({ children }) {
+    const key = getApiKey()
+    if (!key) return <Navigate to="/login" replace />
+    return children
+}
+
+export default function App() {
+    return (
+        <ThemeProvider>
+            <BrowserRouter>
+                <Navbar />
+                <Routes>
+                    <Route path="/" element={<Landing />} />
+                    <Route path="/login" element={<Login />} />
+                    <Route path="/register" element={<Register />} />
+                    <Route path="/dashboard" element={
+                        <ProtectedRoute><Dashboard /></ProtectedRoute>
+                    } />
+                    <Route path="/usage" element={
+                        <ProtectedRoute><Usage /></ProtectedRoute>
+                    } />
+                    <Route path="/recharge" element={
+                        <ProtectedRoute><Recharge /></ProtectedRoute>
+                    } />
+                    <Route path="/docs" element={<Docs />} />
+                    <Route path="/playground" element={
+                        <ProtectedRoute><Playground /></ProtectedRoute>
+                    } />
+                    <Route path="/settings" element={
+                        <ProtectedRoute><Settings /></ProtectedRoute>
+                    } />
+                    <Route path="/pay/return" element={<PayReturn />} />
+                    <Route path="*" element={<Navigate to="/" replace />} />
+                </Routes>
+                <Footer />
+            </BrowserRouter>
+        </ThemeProvider>
+    )
+}
