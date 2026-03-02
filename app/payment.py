@@ -30,9 +30,11 @@ router = APIRouter(prefix="/v1", tags=["payment"])
 logger = logging.getLogger("coincoin.payment")
 
 PLAN_MAP: dict[Decimal, int] = {
-    Decimal("9.90"): 500,
-    Decimal("29.90"): 2000,
-    Decimal("99.90"): 10000,
+    Decimal("9.90"):   1800,   # 体验包  $18   (要发)
+    Decimal("29.90"):  6600,   # 轻量版  $66   (六六大顺)
+    Decimal("59.90"):  13800,  # 基础版  $138  (一生发)
+    Decimal("99.90"):  23800,  # 进阶版  $238  (爱生发)
+    Decimal("199.90"): 51800,  # 专业版  $518  (我要发)
 }
 
 CONFIRM_RATE_LIMIT = 6  # per user per minute
