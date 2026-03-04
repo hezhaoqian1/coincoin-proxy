@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { Line } from 'react-chartjs-2'
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler } from 'chart.js'
 import { MOCK_BALANCE, MOCK_USAGE, getApiKey, getBalance, getUsageLogs, getDailyUsage, getAnnouncements, getUsername, activateKey, getReferralInfo } from '../api/client'
+import useOrderConfirm from '../hooks/useOrderConfirm'
 import './Dashboard.css'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler)
@@ -135,6 +136,14 @@ export default function Dashboard() {
     const [referral, setReferral] = useState(null)
     const [refCopied, setRefCopied] = useState(false)
     const isDemo = getApiKey() === 'sk_cc_demo_key'
+    const { confirmResult: orderConfirmed, dismiss: dismissOrder } = useOrderConfirm()
+
+    useEffect(() => {
+        if (orderConfirmed) {
+            // refresh balance after auto-confirm
+            getBalance().then(setBalance).catch(() => {})
+        }
+    }, [orderConfirmed])
 
     useEffect(() => {
         async function load() {
@@ -264,6 +273,14 @@ export default function Dashboard() {
                     <div className="low-balance-banner warning animate-fade-in">
                         <span>&#9888; 余额不足 $1.00 (${balance.balance_usd.toFixed(2)})，建议及时充值</span>
                         <Link to="/recharge" className="btn btn-sm btn-secondary">去充值</Link>
+                    </div>
+                )}
+
+                {/* Auto-confirmed order banner */}
+                {orderConfirmed && (
+                    <div className="low-balance-banner animate-fade-in" style={{ background: 'rgba(16,185,129,0.1)', borderColor: 'rgba(16,185,129,0.3)', color: 'var(--accent-emerald)' }}>
+                        <span>&#10003; 充值到账！+${(orderConfirmed.added_cents / 100).toFixed(2)}，当前余额 ${orderConfirmed.new_balance_usd?.toFixed(2)}</span>
+                        <button className="btn btn-sm btn-secondary" onClick={dismissOrder}>知道了</button>
                     </div>
                 )}
 

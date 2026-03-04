@@ -1,7 +1,11 @@
-import { useState } from 'react'
-import { Link } from 'react-router-dom'
-import { PRICING_PLANS, redeemCode, getApiKey } from '../api/client'
+import { useState, useRef, useEffect, useCallback } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
+import { PRICING_PLANS, redeemCode, getApiKey, confirmOrder } from '../api/client'
+import useOrderConfirm from '../hooks/useOrderConfirm'
 import './Recharge.css'
+
+const POLL_INTERVAL = 2000
+const MAX_POLL_ATTEMPTS = 300
 
 export default function Recharge() {
     const [selectedPlan, setSelectedPlan] = useState(2)
@@ -12,6 +16,48 @@ export default function Recharge() {
     const [redeemInput, setRedeemInput] = useState('')
     const [redeemLoading, setRedeemLoading] = useState(false)
     const [redeemMsg, setRedeemMsg] = useState(null)
+    const { confirmResult: orderConfirmed, dismiss: dismissOrder } = useOrderConfirm()
+
+    const [polling, setPolling] = useState(false)
+    const [pollInfo, setPollInfo] = useState(null)
+    const [payResult, setPayResult] = useState(null)
+    const pollingRef = useRef(false)
+    const navigate = useNavigate()
+
+    useEffect(() => {
+        return () => { pollingRef.current = false }
+    }, [])
+
+    const startPolling = useCallback((orderNo, planName, money) => {
+        setPolling(true)
+        setPollInfo({ planName, money })
+        pollingRef.current = true
+        let attempts = 0
+
+        const poll = async () => {
+            if (!pollingRef.current) return
+            attempts++
+            try {
+                const result = await confirmOrder(orderNo)
+                if (result.success || result.message === 'order already confirmed') {
+                    pollingRef.current = false
+                    setPolling(false)
+                    setPayResult(result)
+                    localStorage.removeItem('coincoin_last_order')
+                    return
+                }
+            } catch {
+                // 402 = not paid yet
+            }
+            if (attempts < MAX_POLL_ATTEMPTS && pollingRef.current) {
+                setTimeout(poll, POLL_INTERVAL)
+            } else if (pollingRef.current) {
+                pollingRef.current = false
+                setPolling(false)
+            }
+        }
+        poll()
+    }, [])
 
     const handlePay = async () => {
         const plan = useCustom ? null : PRICING_PLANS[selectedPlan]
@@ -45,7 +91,8 @@ export default function Recharge() {
                     planName,
                     money: planMoney
                 }))
-                window.location.href = res.pay_url
+                window.open(res.pay_url, '_blank')
+                startPolling(res.order_no, planName, planMoney)
             } else {
                 alert(res.detail || '创建订单失败，请重试')
             }
@@ -82,6 +129,15 @@ export default function Recharge() {
                     <h1 className="page-title">充值中心</h1>
                     <p className="page-desc">选择套餐或自定义金额充值，按量计费用多少扣多少</p>
                 </div>
+
+                {orderConfirmed && (
+                    <div className="glass-card animate-fade-in" style={{ padding: 'var(--space-lg)', marginBottom: 'var(--space-lg)', background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.25)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={{ color: 'var(--accent-emerald)' }}>&#10003; 上笔充值已到账！+${(orderConfirmed.added_cents / 100).toFixed(2)}，当前余额 ${orderConfirmed.new_balance_usd?.toFixed(2)}</span>
+                            <button className="btn btn-sm btn-secondary" onClick={dismissOrder}>知道了</button>
+                        </div>
+                    </div>
+                )}
 
                 <div className="recharge-plans stagger-children">
                     {PRICING_PLANS.map((plan, i) => (
@@ -140,24 +196,47 @@ export default function Recharge() {
                     )}
                 </div>
 
-                <div className="pay-action animate-fade-in-up" style={{ animationDelay: '400ms' }}>
-                    <button
-                        className="btn btn-primary btn-lg pay-btn"
-                        onClick={handlePay}
-                        disabled={loading || (useCustom && (!customAmount || parseFloat(customAmount) <= 0))}
-                    >
-                        {loading ? '创建订单中...' : (
-                            <>
-                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="1" y="4" width="22" height="16" rx="2" ry="2" /><line x1="1" y1="10" x2="23" y2="10" /></svg>
-                                {useCustom
-                                    ? `支付宝支付 ¥${customAmount || '0'}`
-                                    : `支付宝支付 ${PRICING_PLANS[selectedPlan].price}`
-                                }
-                            </>
-                        )}
-                    </button>
-                    <p className="pay-note">点击后将跳转到支付宝完成支付</p>
-                </div>
+                {payResult ? (
+                    <div className="glass-card animate-fade-in" style={{ padding: 'var(--space-xl)', textAlign: 'center', marginBottom: 'var(--space-lg)' }}>
+                        <div style={{ fontSize: '3rem', marginBottom: 'var(--space-md)' }}>&#10003;</div>
+                        <h2 style={{ color: 'var(--accent-emerald)', marginBottom: 'var(--space-sm)' }}>充值成功！</h2>
+                        <p style={{ fontSize: '1.1rem', marginBottom: 'var(--space-md)' }}>
+                            +${(payResult.added_cents / 100).toFixed(2)} 已到账，当前余额 ${payResult.new_balance_usd?.toFixed(2)}
+                        </p>
+                        <div style={{ display: 'flex', gap: 'var(--space-md)', justifyContent: 'center' }}>
+                            <button className="btn btn-primary" onClick={() => navigate('/dashboard')}>前往仪表盘</button>
+                            <button className="btn btn-secondary" onClick={() => setPayResult(null)}>继续充值</button>
+                        </div>
+                    </div>
+                ) : polling ? (
+                    <div className="glass-card animate-fade-in" style={{ padding: 'var(--space-xl)', textAlign: 'center', marginBottom: 'var(--space-lg)' }}>
+                        <div className="loading-spinner" style={{ width: 48, height: 48, margin: '0 auto var(--space-md)' }}></div>
+                        <h2 style={{ marginBottom: 'var(--space-sm)' }}>等待支付完成...</h2>
+                        <p style={{ color: 'var(--text-secondary)', marginBottom: 'var(--space-md)' }}>
+                            {pollInfo?.planName} ¥{pollInfo?.money}，请在新打开的页面完成支付宝付款
+                        </p>
+                        <button className="btn btn-secondary btn-sm" onClick={() => { pollingRef.current = false; setPolling(false) }}>取消等待</button>
+                    </div>
+                ) : (
+                    <div className="pay-action animate-fade-in-up" style={{ animationDelay: '400ms' }}>
+                        <button
+                            className="btn btn-primary btn-lg pay-btn"
+                            onClick={handlePay}
+                            disabled={loading || (useCustom && (!customAmount || parseFloat(customAmount) <= 0))}
+                        >
+                            {loading ? '创建订单中...' : (
+                                <>
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="1" y="4" width="22" height="16" rx="2" ry="2" /><line x1="1" y1="10" x2="23" y2="10" /></svg>
+                                    {useCustom
+                                        ? `支付宝支付 ¥${customAmount || '0'}`
+                                        : `支付宝支付 ${PRICING_PLANS[selectedPlan].price}`
+                                    }
+                                </>
+                            )}
+                        </button>
+                        <p className="pay-note">点击后将在新窗口打开支付宝，支付完成后自动到账</p>
+                    </div>
+                )}
 
                 <div className="redeem-section glass-card animate-fade-in-up" style={{ animationDelay: '500ms' }}>
                     <h3>兑换码充值</h3>
