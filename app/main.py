@@ -18,6 +18,7 @@ from .payment import router as payment_router
 from .config import settings
 from .db import Base, engine
 from .usage_buffer import flush_loop, flush_once
+from .reconcile import reconcile_loop
 
 
 logging.basicConfig(
@@ -55,12 +56,14 @@ async def lifespan(app: FastAPI):
         await _run_migrations(conn)
 
     flush_task = asyncio.create_task(flush_loop(settings.usage_flush_interval))
+    reconcile_task = asyncio.create_task(reconcile_loop())
     logging.info("CoinCoin Proxy started")
 
     try:
         yield
     finally:
         flush_task.cancel()
+        reconcile_task.cancel()
         await flush_once()
         await close_http_client()
         logging.info("CoinCoin Proxy stopped")

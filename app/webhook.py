@@ -245,8 +245,26 @@ async def pay_notify(request: Request, db: AsyncSession = Depends(get_db)):
     标准参数：out_trade_no, trade_no, money, type, name, sign 等。
     我们不信任参数金额 — 拿 out_trade_no 二次查询支付服务确认。
     """
-    params = dict(request.query_params)
-    order_no = params.get("out_trade_no", "")
+    params: dict[str, str] = dict(request.query_params)
+
+    # Some gateways call notify_url using POST (form or JSON). Be tolerant.
+    if request.method == "POST":
+        ct = (request.headers.get("content-type") or "").lower()
+        try:
+            if "application/json" in ct:
+                body = await request.json()
+                if isinstance(body, dict):
+                    for k, v in body.items():
+                        params[str(k)] = "" if v is None else str(v)
+            else:
+                form = await request.form()
+                for k, v in form.items():
+                    params[str(k)] = "" if v is None else str(v)
+        except Exception:
+            # Ignore body parsing errors; query params may still carry the order_no.
+            pass
+
+    order_no = params.get("out_trade_no") or params.get("order_no") or ""
 
     if not order_no:
         return PlainTextResponse("fail", status_code=400)
@@ -255,3 +273,9 @@ async def pay_notify(request: Request, db: AsyncSession = Depends(get_db)):
 
     ok = await _do_confirm_order(order_no, db)
     return PlainTextResponse("success" if ok else "fail")
+
+
+# Accept POST notify as well (common for payment gateways).
+@router.post("/pay-notify")
+async def pay_notify_post(request: Request, db: AsyncSession = Depends(get_db)):
+    return await pay_notify(request, db)

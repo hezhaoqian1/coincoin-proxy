@@ -41,6 +41,32 @@ PLAN_MAP: dict[Decimal, int] = {
 CONFIRM_RATE_LIMIT = 6  # per user per minute
 
 
+def _public_base_url(request: Request) -> str:
+    """
+    Best-effort public base URL detection.
+    Prefer explicit COINCOIN_SELF_BASE_URL. Otherwise honor common reverse-proxy headers.
+    """
+    if settings.self_base_url:
+        base = settings.self_base_url.strip().rstrip("/")
+        # Be tolerant: allow users to set "example.com" and treat it as https://example.com
+        if "://" not in base:
+            base = f"https://{base}"
+        return base
+
+    # Railway / Cloudflare / Nginx commonly set these
+    xf_proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip()
+    xf_host = request.headers.get("x-forwarded-host", "").split(",")[0].strip()
+    host = xf_host or request.headers.get("host", "").strip()
+
+    scheme = xf_proto or request.url.scheme
+    if host:
+        base = f"{scheme}://{host}".rstrip("/")
+        if "://" not in base:
+            base = f"https://{host}".rstrip("/")
+        return base
+    return str(request.base_url).rstrip("/")
+
+
 def rmb_to_cents(money_str: str) -> int:
     """RMB string → balance cents.  Uses Decimal to avoid float rounding."""
     try:
@@ -76,7 +102,10 @@ async def create_order(
 
     order_no = f"CC_{int(datetime.utcnow().timestamp())}_{generate_id('')[:8]}"
 
-    base = settings.self_base_url or str(request.base_url).rstrip("/")
+    base = _public_base_url(request)
+    notify_url = f"{base}/webhook/pay-notify"
+    # Put order_no in query as a fallback for SPA return page (in case localStorage is missing).
+    return_url = f"{base}/pay/return?order_no={order_no}"
 
     async with httpx.AsyncClient(timeout=10) as client:
         try:
@@ -88,8 +117,8 @@ async def create_order(
                     "money": payload.money,
                     "type": payload.pay_type,
                     "sitename": "CoinCoin",
-                    "notify_url": f"{base}/webhook/pay-notify",
-                    "return_url": f"{base}/pay/return",
+                    "notify_url": notify_url,
+                    "return_url": return_url,
                 },
             )
             data = resp.json()
@@ -121,6 +150,7 @@ async def create_order(
         raise HTTPException(status.HTTP_409_CONFLICT, "duplicate order")
 
     logger.info("Order created: %s user=%s rmb=%s cents=%d", final_order_no, user_id, payload.money, expected_cents)
+    logger.info("Pay URLs: base=%s notify_url=%s return_url=%s", base, notify_url, return_url)
 
     return OrderCreateResponse(
         order_no=final_order_no,

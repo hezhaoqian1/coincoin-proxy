@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import { confirmOrder } from '../api/client'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { confirmOrder, getApiKey } from '../api/client'
 import './PayReturn.css'
 
 const MAX_ATTEMPTS = 300
@@ -13,6 +13,7 @@ export default function PayReturn() {
     const [countdown, setCountdown] = useState(5)
     const [attempt, setAttempt] = useState(0)
     const navigate = useNavigate()
+    const location = useLocation()
     const timerRef = useRef(null)
     const cancelledRef = useRef(false)
 
@@ -33,12 +34,24 @@ export default function PayReturn() {
 
     useEffect(() => {
         const stored = localStorage.getItem('coincoin_last_order')
-        if (!stored) {
+        const qs = new URLSearchParams(location.search || '')
+        const orderNoFromQuery = qs.get('order_no') || qs.get('out_trade_no') || ''
+
+        let order = null
+        if (stored) {
+            try { order = JSON.parse(stored) } catch { order = null }
+        }
+        if (!order && orderNoFromQuery) {
+            order = { orderNo: orderNoFromQuery, planName: '', money: '' }
+            // Save it so Dashboard can also auto-confirm later if needed.
+            localStorage.setItem('coincoin_last_order', JSON.stringify(order))
+        }
+
+        if (!order) {
             setStatus('failed')
             return
         }
 
-        const order = JSON.parse(stored)
         setOrderInfo(order)
 
         let attempts = 0
@@ -47,6 +60,11 @@ export default function PayReturn() {
             if (cancelledRef.current) return
             attempts++
             setAttempt(attempts)
+
+            if (!getApiKey()) {
+                setStatus('need_login')
+                return
+            }
 
             try {
                 const result = await confirmOrder(order.orderNo)
@@ -77,7 +95,7 @@ export default function PayReturn() {
 
         poll()
         return () => { cancelledRef.current = true }
-    }, [])
+    }, [location.search])
 
     return (
         <div className="page-wrapper pay-return-page">
@@ -109,6 +127,17 @@ export default function PayReturn() {
                             <div className="result-actions">
                                 <Link to="/dashboard" className="btn btn-primary">立即前往仪表盘</Link>
                                 <Link to="/usage" className="btn btn-secondary">查看用量</Link>
+                            </div>
+                        </div>
+                    )}
+                    {status === 'need_login' && (
+                        <div className="result-content">
+                            <div className="result-icon failed">!</div>
+                            <h2>需要登录确认</h2>
+                            <p>检测到支付回跳，但当前浏览器未登录（没有 API Key）。请先登录后再查看余额，或稍后等待系统自动到账。</p>
+                            <div className="result-actions">
+                                <Link to="/login" className="btn btn-primary">去登录</Link>
+                                <Link to="/dashboard" className="btn btn-secondary">查看仪表盘</Link>
                             </div>
                         </div>
                     )}
