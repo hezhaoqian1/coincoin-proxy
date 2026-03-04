@@ -89,7 +89,7 @@ async def create_order(
                     "type": payload.pay_type,
                     "sitename": "CoinCoin",
                     "notify_url": f"{base}/webhook/pay-notify",
-                    "return_url": f"{base}/pay-return",
+                    "return_url": f"{base}/pay/return",
                 },
             )
             data = resp.json()
