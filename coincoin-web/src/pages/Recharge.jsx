@@ -23,6 +23,7 @@ export default function Recharge() {
     const [payResult, setPayResult] = useState(null)
     const pollingRef = useRef(false)
     const [autoRedirect, setAutoRedirect] = useState(5)
+    const [popupBlocked, setPopupBlocked] = useState(false)
     const navigate = useNavigate()
 
     useEffect(() => {
@@ -36,9 +37,9 @@ export default function Recharge() {
         return () => clearTimeout(t)
     }, [payResult, autoRedirect, navigate])
 
-    const startPolling = useCallback((orderNo, planName, money) => {
+    const startPolling = useCallback((orderNo, planName, money, payUrl) => {
         setPolling(true)
-        setPollInfo({ planName, money })
+        setPollInfo({ orderNo, planName, money, payUrl })
         pollingRef.current = true
         let attempts = 0
 
@@ -76,7 +77,19 @@ export default function Recharge() {
 
         const planName = useCustom ? `自定义充值 ¥${customAmount}` : `${plan.name} 套餐`
 
+        // IMPORTANT:
+        // Open a blank tab synchronously on the click gesture. If we wait until after `await fetch`,
+        // many browsers treat it as a popup and block it, causing the payment to hijack the same tab.
+        const payWin = window.open('about:blank', '_blank')
+        if (!payWin) setPopupBlocked(true)
+        else {
+            try {
+                payWin.document.title = '正在打开支付页面...'
+            } catch { /* ignore */ }
+        }
+
         setLoading(true)
+        setPopupBlocked(false)
         try {
             const raw = await fetch('/v1/orders/create', {
                 method: 'POST',
@@ -93,6 +106,7 @@ export default function Recharge() {
                 } else {
                     alert(res.detail || `创建订单失败 (${raw.status})`)
                 }
+                if (payWin) payWin.close()
                 return
             }
             if (res.pay_url && res.order_no) {
@@ -101,13 +115,22 @@ export default function Recharge() {
                     planName,
                     money: planMoney
                 }))
-                window.open(res.pay_url, '_blank')
-                startPolling(res.order_no, planName, planMoney)
+                // Navigate the blank tab to the payment URL (if popup wasn't blocked).
+                if (payWin) {
+                    try { payWin.opener = null } catch { /* ignore */ }
+                    try { payWin.location.href = res.pay_url } catch { /* ignore */ }
+                    try { payWin.focus() } catch { /* ignore */ }
+                } else {
+                    setPopupBlocked(true)
+                }
+                startPolling(res.order_no, planName, planMoney, res.pay_url)
             } else {
                 alert(res.detail || '创建订单失败，请重试')
+                if (payWin) payWin.close()
             }
         } catch (e) {
             alert('网络错误: ' + (e.message || '请检查网络连接后重试'))
+            if (payWin) payWin.close()
         } finally {
             setLoading(false)
         }
@@ -231,6 +254,24 @@ export default function Recharge() {
                         <p style={{ color: 'var(--accent-amber)', fontSize: '0.9rem', marginBottom: 'var(--space-md)', background: 'rgba(245,158,11,0.08)', padding: 'var(--space-sm) var(--space-md)', borderRadius: 'var(--radius-sm)', border: '1px solid rgba(245,158,11,0.2)' }}>
                             请在新打开的标签页完成支付宝付款，支付成功后<strong>无需操作</strong>，本页面会自动检测到账并跳转
                         </p>
+                        {popupBlocked && pollInfo?.payUrl && (
+                            <div style={{ marginBottom: 'var(--space-md)' }}>
+                                <p style={{ color: 'var(--accent-amber)', marginBottom: 'var(--space-sm)' }}>
+                                    浏览器可能拦截了新窗口。请点击下方按钮在新标签打开支付页面，并保持此页面不要关闭。
+                                </p>
+                                <div style={{ display: 'flex', gap: 'var(--space-md)', justifyContent: 'center', flexWrap: 'wrap' }}>
+                                    <a className="btn btn-primary" href={pollInfo.payUrl} target="_blank" rel="noopener noreferrer">
+                                        打开支付页面（新标签）
+                                    </a>
+                                    <button
+                                        className="btn btn-secondary"
+                                        onClick={() => navigator.clipboard.writeText(pollInfo.payUrl).catch(() => {})}
+                                    >
+                                        复制支付链接
+                                    </button>
+                                </div>
+                            </div>
+                        )}
                         <button className="btn btn-secondary btn-sm" onClick={() => { pollingRef.current = false; setPolling(false) }}>取消等待</button>
                     </div>
                 ) : (
@@ -250,7 +291,7 @@ export default function Recharge() {
                                 </>
                             )}
                         </button>
-                        <p className="pay-note">点击后将在新窗口打开支付宝，支付完成后自动到账</p>
+                        <p className="pay-note">点击后会在新标签打开支付页面，支付完成后本页自动检测到账并跳转到仪表盘</p>
                     </div>
                 )}
 
