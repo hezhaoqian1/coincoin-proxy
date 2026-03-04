@@ -4,8 +4,8 @@ import { PRICING_PLANS, redeemCode, getApiKey, confirmOrder } from '../api/clien
 import useOrderConfirm from '../hooks/useOrderConfirm'
 import './Recharge.css'
 
-const POLL_INTERVAL = 2000
-const MAX_POLL_ATTEMPTS = 300
+const POLL_INTERVAL = 3000
+const MAX_POLL_ATTEMPTS = 200
 
 export default function Recharge() {
     const [selectedPlan, setSelectedPlan] = useState(2)
@@ -22,11 +22,19 @@ export default function Recharge() {
     const [pollInfo, setPollInfo] = useState(null)
     const [payResult, setPayResult] = useState(null)
     const pollingRef = useRef(false)
+    const [autoRedirect, setAutoRedirect] = useState(5)
     const navigate = useNavigate()
 
     useEffect(() => {
         return () => { pollingRef.current = false }
     }, [])
+
+    useEffect(() => {
+        if (!payResult) return
+        if (autoRedirect <= 0) { navigate('/dashboard'); return }
+        const t = setTimeout(() => setAutoRedirect(prev => prev - 1), 1000)
+        return () => clearTimeout(t)
+    }, [payResult, autoRedirect, navigate])
 
     const startPolling = useCallback((orderNo, planName, money) => {
         setPolling(true)
@@ -44,6 +52,8 @@ export default function Recharge() {
                     setPolling(false)
                     setPayResult(result)
                     localStorage.removeItem('coincoin_last_order')
+                    document.title = '\u2705 \u5145\u503c\u6210\u529f\uff01'
+                    setTimeout(() => { document.title = 'CoinCoin' }, 8000)
                     return
                 }
             } catch {
@@ -203,17 +213,23 @@ export default function Recharge() {
                         <p style={{ fontSize: '1.1rem', marginBottom: 'var(--space-md)' }}>
                             +${(payResult.added_cents / 100).toFixed(2)} 已到账，当前余额 ${payResult.new_balance_usd?.toFixed(2)}
                         </p>
+                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: 'var(--space-md)' }}>
+                            {autoRedirect} 秒后自动跳转到仪表盘...
+                        </p>
                         <div style={{ display: 'flex', gap: 'var(--space-md)', justifyContent: 'center' }}>
-                            <button className="btn btn-primary" onClick={() => navigate('/dashboard')}>前往仪表盘</button>
-                            <button className="btn btn-secondary" onClick={() => setPayResult(null)}>继续充值</button>
+                            <button className="btn btn-primary" onClick={() => navigate('/dashboard')}>立即前往仪表盘</button>
+                            <button className="btn btn-secondary" onClick={() => { setPayResult(null); setAutoRedirect(5) }}>继续充值</button>
                         </div>
                     </div>
                 ) : polling ? (
                     <div className="glass-card animate-fade-in" style={{ padding: 'var(--space-xl)', textAlign: 'center', marginBottom: 'var(--space-lg)' }}>
                         <div className="loading-spinner" style={{ width: 48, height: 48, margin: '0 auto var(--space-md)' }}></div>
                         <h2 style={{ marginBottom: 'var(--space-sm)' }}>等待支付完成...</h2>
-                        <p style={{ color: 'var(--text-secondary)', marginBottom: 'var(--space-md)' }}>
-                            {pollInfo?.planName} ¥{pollInfo?.money}，请在新打开的页面完成支付宝付款
+                        <p style={{ color: 'var(--text-secondary)', marginBottom: 'var(--space-sm)' }}>
+                            {pollInfo?.planName} ¥{pollInfo?.money}
+                        </p>
+                        <p style={{ color: 'var(--accent-amber)', fontSize: '0.9rem', marginBottom: 'var(--space-md)', background: 'rgba(245,158,11,0.08)', padding: 'var(--space-sm) var(--space-md)', borderRadius: 'var(--radius-sm)', border: '1px solid rgba(245,158,11,0.2)' }}>
+                            请在新打开的标签页完成支付宝付款，支付成功后<strong>无需操作</strong>，本页面会自动检测到账并跳转
                         </p>
                         <button className="btn btn-secondary btn-sm" onClick={() => { pollingRef.current = false; setPolling(false) }}>取消等待</button>
                     </div>

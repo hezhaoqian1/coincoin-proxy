@@ -38,7 +38,7 @@ PLAN_MAP: dict[Decimal, int] = {
     Decimal("199.90"): 51800,  # 专业版  $518  (我要发)
 }
 
-CONFIRM_RATE_LIMIT = 6  # per user per minute
+CONFIRM_RATE_LIMIT = 30  # per user per minute
 
 
 def _public_base_url(request: Request) -> str:
