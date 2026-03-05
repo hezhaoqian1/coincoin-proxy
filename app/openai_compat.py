@@ -356,18 +356,16 @@ async def list_announcements(db: AsyncSession = Depends(get_db)):
 
 @router.get("/models")
 async def list_models():
-    """列出可用模型"""
-    model_registry.ensure_initialized()
+    """列出可用模型 — 只暴露 premium 模型，cheap 对用户不可见"""
     return {
         "object": "list",
         "data": [
             {
-                "id": mid,
+                "id": settings.fixed_model,
                 "object": "model",
                 "created": 1700000000,
                 "owned_by": "azure-openai",
             }
-            for mid in model_registry.list_model_ids()
         ],
     }
 
@@ -375,9 +373,8 @@ async def list_models():
 @router.get("/models/{model_id}")
 async def get_model(model_id: str):
     """获取单个模型信息"""
-    model_registry.ensure_initialized()
     return {
-        "id": model_id if model_id in model_registry.list_model_ids() else settings.fixed_model,
+        "id": model_id,
         "object": "model",
         "created": 1700000000,
         "owned_by": "azure-openai",
