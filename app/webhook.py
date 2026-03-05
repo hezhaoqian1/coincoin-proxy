@@ -141,6 +141,7 @@ async def get_recharge(order_id: str, db: AsyncSession = Depends(get_db)):
         "order_id": log.order_id,
         "user_id": log.user_id,
         "amount": log.amount,
+        "balance_added": log.balance_added,
         "tokens_added": log.tokens_added,
         "daily_requests_added": log.daily_requests_added,
         "note": log.note,
