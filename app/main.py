@@ -19,6 +19,7 @@ from .config import settings
 from .db import Base, engine
 from .usage_buffer import flush_loop, flush_once
 from .reconcile import reconcile_loop
+from .router import registry as model_registry
 
 
 logging.basicConfig(
@@ -41,6 +42,8 @@ async def _run_migrations(conn):
         ("coincoin_users", "referral_code", "VARCHAR(16) NULL UNIQUE"),
         ("coincoin_users", "referred_by", "VARCHAR(32) NULL"),
         ("coincoin_users", "register_ip", "VARCHAR(64) NULL"),
+        ("coincoin_request_logs", "cached_tokens", "BIGINT DEFAULT 0"),
+        ("coincoin_request_logs", "route_reason", "VARCHAR(64) DEFAULT ''"),
     ]
     for table, col, ddl in migrations:
         try:
@@ -54,6 +57,8 @@ async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await _run_migrations(conn)
+    # Initialize router registry after settings/env are loaded and DB is ready.
+    model_registry.init_from_settings()
 
     flush_task = asyncio.create_task(flush_loop(settings.usage_flush_interval))
     reconcile_task = asyncio.create_task(reconcile_loop())

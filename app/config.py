@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     upstream_api_key: str = ""
     fixed_model: str = "gpt-5.2-codex"
 
+    # Cached tokens discount (fraction of input price charged for cached tokens)
+    # Azure Standard: typically 50% off => 0.5, Provisioned can be 100% off => 0.0
+    cache_discount_rate: float = 0.5
+
     # Database
     db_host: str = ""
     db_port: int = 4000
@@ -54,6 +58,17 @@ class Settings(BaseSettings):
     pay_base_url: str = "https://bird-alipay.up.railway.app"
     rmb_to_cents_rate: float = 14.0  # 1 RMB ≈ 14 cents ($0.14)
     self_base_url: str = ""  # public URL of this proxy, used for pay-notify callback
+
+    # Router
+    router_enabled: bool = False
+    router_tool_count_threshold: int = 2
+
+    # Cheap model (optional)
+    cheap_model: str = ""
+    cheap_upstream_url: str = ""  # empty = use main upstream
+    cheap_api_key: str = ""  # empty = use main api key
+    cheap_price_input: int = 15  # cents per million tokens
+    cheap_price_output: int = 60  # cents per million tokens
 
     class Config:
         env_prefix = "COINCOIN_"

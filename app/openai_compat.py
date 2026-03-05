@@ -4,6 +4,7 @@ import secrets
 import time
 from typing import Any, Dict, Optional
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,8 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .config import settings
 from .db import get_db
 from .proxy import authenticate_user, authorize_request, filter_headers, get_http_client, get_stream_client, proxy_responses, responses_health
+from .router import registry as model_registry
+from .router import resolve as resolve_model
 from .schemas import BalanceResponse
-from .usage_buffer import usage_buffer
+from .usage_buffer import extract_cached_tokens, usage_buffer
 
 
 router = APIRouter(prefix="/v1", tags=["openai-compat"])
@@ -163,11 +166,13 @@ async def get_usage(
                 "model": log.model,
                 "input_tokens": log.input_tokens,
                 "output_tokens": log.output_tokens,
+                "cached_tokens": getattr(log, "cached_tokens", 0),
                 "total_tokens": log.input_tokens + log.output_tokens,
                 "cost_cents": log.cost_cents,
                 "cost_usd": log.cost_cents / 100,
                 "duration_ms": log.duration_ms,
                 "status_code": log.status_code,
+                "route_reason": getattr(log, "route_reason", ""),
             }
             for log in logs
         ],
@@ -352,15 +357,17 @@ async def list_announcements(db: AsyncSession = Depends(get_db)):
 @router.get("/models")
 async def list_models():
     """列出可用模型"""
+    model_registry.ensure_initialized()
     return {
         "object": "list",
         "data": [
             {
-                "id": settings.fixed_model,
+                "id": mid,
                 "object": "model",
                 "created": 1700000000,
                 "owned_by": "azure-openai",
             }
+            for mid in model_registry.list_model_ids()
         ],
     }
 
@@ -369,8 +376,9 @@ async def list_models():
 async def get_model(model_id: str):
     """获取单个模型信息"""
     # 所有模型请求都返回固定模型
+    model_registry.ensure_initialized()
     return {
-        "id": settings.fixed_model,
+        "id": model_id if model_id in model_registry.list_model_ids() else settings.fixed_model,
         "object": "model",
         "created": 1700000000,
         "owned_by": "azure-openai",
@@ -509,9 +517,14 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
 
     converted_messages = convert_messages_for_responses_api(messages)
 
+    tools = payload.get("tools") if isinstance(payload.get("tools"), list) else None
+    model_cfg, route_reason = resolve_model(messages, tools)
+    used_cfg = model_cfg
+    used_route_reason = route_reason
+
     # ============== 构建 Responses API payload ==============
     resp_payload: Dict[str, Any] = {
-        "model": settings.fixed_model,
+        "model": used_cfg.model_id,
         "input": converted_messages,
         "stream": bool(payload.get("stream")),
     }
@@ -522,8 +535,13 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
     if "max_completion_tokens" in payload:
         resp_payload["max_output_tokens"] = payload.get("max_completion_tokens")
     
-    # 注意: gpt-5.2-codex 模型不支持 temperature, top_p, presence_penalty, frequency_penalty 等参数
-    # 只透传 stop 和 seed（如果模型支持）
+    # Codex 系列通常不支持 temperature/top_p/presence_penalty/frequency_penalty
+    if not used_cfg.strip_unsupported:
+        for field in ("temperature", "top_p", "presence_penalty", "frequency_penalty"):
+            if field in payload:
+                resp_payload[field] = payload[field]
+
+    # 透传 stop（如果模型支持）
     if "stop" in payload:
         resp_payload["stop"] = payload["stop"]
     
@@ -602,13 +620,13 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
         if field in payload:
             resp_payload[field] = payload[field]
 
-    upstream_url = f"{settings.upstream_base_url.rstrip('/')}/responses"
+    upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/responses"
     headers = {
-        "api-key": settings.upstream_api_key,
+        "api-key": used_cfg.api_key,
         "content-type": "application/json",
     }
 
-    def build_chat_response(resp: Dict) -> Dict:
+    def build_chat_response(resp: Dict, model_id: str) -> Dict:
         usage = resp.get("usage") or {}
         prompt_tokens = usage.get("input_tokens") or usage.get("prompt_tokens")
         completion_tokens = usage.get("output_tokens") or usage.get("completion_tokens")
@@ -664,7 +682,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
             "id": resp.get("id") or f"chatcmpl-{secrets.token_hex(12)}",
             "object": "chat.completion",
             "created": int(time.time()),
-            "model": settings.fixed_model,
+            "model": model_id,
             "choices": [
                 {
                     "index": 0,
@@ -680,43 +698,94 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
         }
 
     if resp_payload.get("stream"):
+        model_registry.ensure_initialized()
+        premium_cfg = model_registry.get("premium")
+        cheap_cfg = model_registry.models.get("cheap")
+        is_cheap = bool(cheap_cfg and used_cfg.model_id == cheap_cfg.model_id)
+
         stream_client = await get_stream_client()
-        request_obj = stream_client.build_request("POST", upstream_url, json=resp_payload, headers=headers)
-        upstream = await stream_client.send(request_obj, stream=True)
+
+        async def _send_stream(cfg):
+            send_payload = dict(resp_payload)
+            send_payload["model"] = cfg.model_id
+            if not cfg.strip_unsupported:
+                for field in ("temperature", "top_p", "presence_penalty", "frequency_penalty"):
+                    if field in payload:
+                        send_payload[field] = payload[field]
+            else:
+                for field in ("temperature", "top_p", "presence_penalty", "frequency_penalty"):
+                    send_payload.pop(field, None)
+            stream_upstream_url = f"{cfg.upstream_url.rstrip('/')}/responses"
+            stream_headers = {"api-key": cfg.api_key, "content-type": "application/json"}
+            req = stream_client.build_request("POST", stream_upstream_url, json=send_payload, headers=stream_headers)
+            return await stream_client.send(req, stream=True)
+
+        try:
+            upstream = await _send_stream(used_cfg)
+        except (httpx.TimeoutException, httpx.RequestError):
+            if is_cheap:
+                used_cfg = premium_cfg
+                used_route_reason = "cheap_fallback_timeout"
+                is_cheap = False
+                upstream = await _send_stream(used_cfg)
+            else:
+                raise
+
+        if is_cheap and (upstream.status_code == 429 or upstream.status_code >= 500):
+            try:
+                await upstream.aclose()
+            except Exception:
+                pass
+            used_cfg = premium_cfg
+            used_route_reason = "cheap_fallback_429" if upstream.status_code == 429 else "cheap_fallback_5xx"
+            is_cheap = False
+            upstream = await _send_stream(used_cfg)
+
         content_type = upstream.headers.get("content-type", "")
         if "text/event-stream" not in content_type:
-            try:
-                body = await upstream.aread()
-            finally:
-                await upstream.aclose()
-            response_headers = filter_headers(dict(upstream.headers))
-            response_headers.pop("content-length", None)
-            if upstream.status_code >= 400:
-                import logging
-                _logger = logging.getLogger("coincoin.compat")
-                _logger.error("upstream stream-fallback %s: %s", upstream.status_code, body[:1000])
+            if is_cheap:
+                try:
+                    await upstream.aclose()
+                except Exception:
+                    pass
+                used_cfg = premium_cfg
+                used_route_reason = "cheap_fallback_unexpected"
+                is_cheap = False
+                upstream = await _send_stream(used_cfg)
+                content_type = upstream.headers.get("content-type", "")
+            if "text/event-stream" not in content_type:
+                try:
+                    body = await upstream.aread()
+                finally:
+                    await upstream.aclose()
+                response_headers = filter_headers(dict(upstream.headers))
+                response_headers.pop("content-length", None)
+                if upstream.status_code >= 400:
+                    import logging
+                    _logger = logging.getLogger("coincoin.compat")
+                    _logger.error("upstream stream-fallback %s: %s", upstream.status_code, body[:1000])
+                    if "application/json" in content_type:
+                        try:
+                            data = json.loads(body.decode("utf-8"))
+                            if "error" in data:
+                                return JSONResponse(content={"error": data["error"]}, status_code=upstream.status_code, headers=response_headers)
+                        except Exception:
+                            pass
+                    return JSONResponse(
+                        content={"error": {"message": body.decode("utf-8", errors="replace")[:500] or "upstream error", "type": "upstream_error", "code": str(upstream.status_code)}},
+                        status_code=upstream.status_code, headers=response_headers,
+                    )
                 if "application/json" in content_type:
-                    try:
-                        data = json.loads(body.decode("utf-8"))
-                        if "error" in data:
-                            return JSONResponse(content={"error": data["error"]}, status_code=upstream.status_code, headers=response_headers)
-                    except Exception:
-                        pass
-                return JSONResponse(
-                    content={"error": {"message": body.decode("utf-8", errors="replace")[:500] or "upstream error", "type": "upstream_error", "code": str(upstream.status_code)}},
-                    status_code=upstream.status_code, headers=response_headers,
-                )
-            if "application/json" in content_type:
-                data = json.loads(body.decode("utf-8"))
-                return JSONResponse(content=build_chat_response(data), status_code=upstream.status_code, headers=response_headers)
-            return Response(content=body, status_code=upstream.status_code, headers=response_headers, media_type=content_type)
+                    data = json.loads(body.decode("utf-8"))
+                    return JSONResponse(content=build_chat_response(data, used_cfg.model_id), status_code=upstream.status_code, headers=response_headers)
+                return Response(content=body, status_code=upstream.status_code, headers=response_headers, media_type=content_type)
 
         stream_id = f"chatcmpl-{secrets.token_hex(12)}"
         tool_call_index = 0
         has_tool_calls = False
         first_content_sent = False
         compat_stream_t0 = time.monotonic()
-        _compat_stream_usage = {"input": 0, "output": 0}
+        _compat_stream_usage = {"input": 0, "output": 0, "cached": 0}
 
         async def iter_events():
             nonlocal tool_call_index, has_tool_calls, first_content_sent
@@ -737,6 +806,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                     if usage:
                         _compat_stream_usage["input"] = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
                         _compat_stream_usage["output"] = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
+                        _compat_stream_usage["cached"] = extract_cached_tokens(usage)
                     
                     # 处理文本内容
                     if event_type in ("response.output_text.delta", "response.output_text.chunk"):
@@ -755,7 +825,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                                 "id": stream_id,
                                 "object": "chat.completion.chunk",
                                 "created": int(time.time()),
-                                "model": settings.fixed_model,
+                                "model": used_cfg.model_id,
                                 "choices": [{"index": 0, "delta": delta_obj, "finish_reason": None}],
                             }
                             yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
@@ -782,7 +852,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                                 "id": stream_id,
                                 "object": "chat.completion.chunk",
                                 "created": int(time.time()),
-                                "model": settings.fixed_model,
+                                "model": used_cfg.model_id,
                                 "choices": [{"index": 0, "delta": delta_obj, "finish_reason": None}],
                             }
                             yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
@@ -795,7 +865,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                                 "id": stream_id,
                                 "object": "chat.completion.chunk",
                                 "created": int(time.time()),
-                                "model": settings.fixed_model,
+                                "model": used_cfg.model_id,
                                 "choices": [{
                                     "index": 0,
                                     "delta": {
@@ -839,7 +909,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                             "id": stream_id,
                             "object": "chat.completion.chunk",
                             "created": int(time.time()),
-                            "model": settings.fixed_model,
+                            "model": used_cfg.model_id,
                             "choices": [{"index": 0, "delta": {}, "finish_reason": finish_reason}],
                         }
                         yield f"data: {json.dumps(finish)}\n\n"
@@ -855,11 +925,15 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                         user.id,
                         input_tokens=_compat_stream_usage["input"],
                         output_tokens=_compat_stream_usage["output"],
+                        cached_tokens=_compat_stream_usage["cached"],
                         requests=1,
                         endpoint="chat/completions:stream",
-                        model=settings.fixed_model,
+                        model=used_cfg.model_id,
+                        route_reason=used_route_reason,
                         duration_ms=dur,
                         status_code=upstream.status_code,
+                        price_input_per_million=used_cfg.price_input_per_million,
+                        price_output_per_million=used_cfg.price_output_per_million,
                     ))
         stream_headers = filter_headers(dict(upstream.headers))
         stream_headers.pop("content-length", None)
@@ -867,30 +941,100 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
         stream_headers.setdefault("x-accel-buffering", "no")
         return StreamingResponse(iter_events(), status_code=upstream.status_code, headers=stream_headers, media_type=content_type)
 
+    model_registry.ensure_initialized()
+    premium_cfg = model_registry.get("premium")
+    cheap_cfg = model_registry.models.get("cheap")
+    is_cheap = bool(cheap_cfg and used_cfg.model_id == cheap_cfg.model_id)
+
     client = await get_http_client()
-    t0 = time.monotonic()
-    upstream = await client.post(upstream_url, json=resp_payload, headers=headers)
-    duration_ms = int((time.monotonic() - t0) * 1000)
+
+    async def _post_json(cfg):
+        send_payload = dict(resp_payload)
+        send_payload["model"] = cfg.model_id
+        if not cfg.strip_unsupported:
+            for field in ("temperature", "top_p", "presence_penalty", "frequency_penalty"):
+                if field in payload:
+                    send_payload[field] = payload[field]
+        else:
+            for field in ("temperature", "top_p", "presence_penalty", "frequency_penalty"):
+                send_payload.pop(field, None)
+        req_url = f"{cfg.upstream_url.rstrip('/')}/responses"
+        req_headers = {"api-key": cfg.api_key, "content-type": "application/json"}
+        t0 = time.monotonic()
+        r = await client.post(req_url, json=send_payload, headers=req_headers)
+        dur = int((time.monotonic() - t0) * 1000)
+        return r, dur
+
+    try:
+        upstream, duration_ms = await _post_json(used_cfg)
+    except (httpx.TimeoutException, httpx.RequestError):
+        if is_cheap:
+            used_cfg = premium_cfg
+            used_route_reason = "cheap_fallback_timeout"
+            is_cheap = False
+            upstream, duration_ms = await _post_json(used_cfg)
+        else:
+            return openai_error("Upstream request failed", "server_error", code="upstream_unreachable", status_code=502)
+
+    if is_cheap and (upstream.status_code == 429 or upstream.status_code >= 500):
+        used_cfg = premium_cfg
+        used_route_reason = "cheap_fallback_429" if upstream.status_code == 429 else "cheap_fallback_5xx"
+        is_cheap = False
+        upstream, duration_ms = await _post_json(used_cfg)
     response_headers = filter_headers(dict(upstream.headers))
     response_headers.pop("content-length", None)
 
     content_type = upstream.headers.get("content-type", "application/json")
+    if is_cheap and "application/json" not in content_type:
+        used_cfg = premium_cfg
+        used_route_reason = "cheap_fallback_unexpected"
+        is_cheap = False
+        upstream, duration_ms = await _post_json(used_cfg)
+        response_headers = filter_headers(dict(upstream.headers))
+        response_headers.pop("content-length", None)
+        content_type = upstream.headers.get("content-type", "application/json")
+
     if "application/json" in content_type:
-        data = upstream.json()
+        try:
+            data = upstream.json()
+        except Exception:
+            if is_cheap:
+                used_cfg = premium_cfg
+                used_route_reason = "cheap_fallback_unexpected"
+                is_cheap = False
+                upstream, duration_ms = await _post_json(used_cfg)
+                response_headers = filter_headers(dict(upstream.headers))
+                response_headers.pop("content-length", None)
+                content_type = upstream.headers.get("content-type", "application/json")
+                data = upstream.json() if "application/json" in content_type else upstream.text
+            else:
+                return openai_error("Upstream returned invalid JSON", "server_error", code="upstream_invalid_json", status_code=502)
     else:
         data = upstream.text
 
     input_tokens_delta = 0
     output_tokens_delta = 0
+    cached_tokens_delta = 0
     if upstream.status_code < 400 and isinstance(data, dict):
         usage = data.get("usage") or {}
         input_tokens_delta = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
         output_tokens_delta = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
+        cached_tokens_delta = extract_cached_tokens(usage)
 
     if upstream.status_code < 400:
         await usage_buffer.add(
-            user.id, input_tokens=input_tokens_delta, output_tokens=output_tokens_delta, requests=1,
-            endpoint="chat/completions", model=settings.fixed_model, duration_ms=duration_ms, status_code=upstream.status_code,
+            user.id,
+            input_tokens=input_tokens_delta,
+            output_tokens=output_tokens_delta,
+            cached_tokens=cached_tokens_delta,
+            requests=1,
+            endpoint="chat/completions",
+            model=used_cfg.model_id,
+            route_reason=used_route_reason,
+            duration_ms=duration_ms,
+            status_code=upstream.status_code,
+            price_input_per_million=used_cfg.price_input_per_million,
+            price_output_per_million=used_cfg.price_output_per_million,
         )
     else:
         import logging
@@ -906,7 +1050,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
         )
 
     if isinstance(data, dict):
-        return JSONResponse(content=build_chat_response(data), status_code=upstream.status_code, headers=response_headers)
+        return JSONResponse(content=build_chat_response(data, used_cfg.model_id), status_code=upstream.status_code, headers=response_headers)
 
     return Response(content=str(data), status_code=upstream.status_code, headers=response_headers, media_type=content_type)
 
@@ -932,12 +1076,16 @@ async def embeddings(request: Request, db: AsyncSession = Depends(get_db)):
     if not isinstance(payload, dict):
         return openai_error("Request body must be a JSON object", "invalid_request_error")
 
-    payload["model"] = settings.fixed_model
+    model_registry.ensure_initialized()
+    used_cfg = model_registry.get("premium")
+    used_route_reason = "embeddings_premium"
+
+    payload["model"] = used_cfg.model_id
     payload.pop("model_provider", None)
 
-    upstream_url = f"{settings.upstream_base_url.rstrip('/')}/embeddings"
+    upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/embeddings"
     headers = {
-        "api-key": settings.upstream_api_key,
+        "api-key": used_cfg.api_key,
         "content-type": "application/json",
     }
 
@@ -955,15 +1103,27 @@ async def embeddings(request: Request, db: AsyncSession = Depends(get_db)):
         data = upstream.text
 
     input_tokens_delta = 0
+    cached_tokens_delta = 0
     if upstream.status_code < 400 and isinstance(data, dict):
         usage = data.get("usage") or {}
         # Embeddings 只有 input tokens（prompt_tokens 或 total_tokens）
         input_tokens_delta = int(usage.get("prompt_tokens") or usage.get("total_tokens") or 0)
+        cached_tokens_delta = extract_cached_tokens(usage)
 
     if upstream.status_code < 400:
         await usage_buffer.add(
-            user.id, input_tokens=input_tokens_delta, output_tokens=0, requests=1,
-            endpoint="embeddings", model=settings.fixed_model, duration_ms=duration_ms, status_code=upstream.status_code,
+            user.id,
+            input_tokens=input_tokens_delta,
+            output_tokens=0,
+            cached_tokens=cached_tokens_delta,
+            requests=1,
+            endpoint="embeddings",
+            model=used_cfg.model_id,
+            route_reason=used_route_reason,
+            duration_ms=duration_ms,
+            status_code=upstream.status_code,
+            price_input_per_million=used_cfg.price_input_per_million,
+            price_output_per_million=used_cfg.price_output_per_million,
         )
 
     if isinstance(data, dict):

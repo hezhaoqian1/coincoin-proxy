@@ -342,11 +342,13 @@ async def list_user_request_logs(
                 "model": log.model,
                 "input_tokens": log.input_tokens,
                 "output_tokens": log.output_tokens,
+                "cached_tokens": getattr(log, "cached_tokens", 0),
                 "total_tokens": log.input_tokens + log.output_tokens,
                 "cost_cents": log.cost_cents,
                 "cost_usd": log.cost_cents / 100,
                 "duration_ms": log.duration_ms,
                 "status_code": log.status_code,
+                "route_reason": getattr(log, "route_reason", ""),
             }
             for log in logs
         ],

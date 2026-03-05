@@ -16,7 +16,34 @@ from .security import generate_id
 logger = logging.getLogger("coincoin.usage")
 
 
-def calculate_cost_cents(input_tokens: int, output_tokens: int) -> float:
+def extract_cached_tokens(usage: dict) -> int:
+    """Extract cached_tokens across Chat Completions and Responses API shapes."""
+    if not isinstance(usage, dict):
+        return 0
+    details = usage.get("input_tokens_details") or {}
+    ct = details.get("cached_tokens")
+    if ct is not None:
+        try:
+            return int(ct)
+        except (TypeError, ValueError):
+            return 0
+    details = usage.get("prompt_tokens_details") or {}
+    ct = details.get("cached_tokens")
+    if ct is not None:
+        try:
+            return int(ct)
+        except (TypeError, ValueError):
+            return 0
+    return 0
+
+
+def calculate_cost_cents(
+    input_tokens: int,
+    output_tokens: int,
+    cached_tokens: int = 0,
+    price_input_per_million: int = 0,
+    price_output_per_million: int = 0,
+) -> float:
     """计算消费金额（单位：分，保留小数精度）
     
     价格配置单位是 分/百万tokens
@@ -25,8 +52,29 @@ def calculate_cost_cents(input_tokens: int, output_tokens: int) -> float:
     注：返回浮点数，保留精度以避免小请求被舍入到 0
     最终在 flush 时累积后再取整
     """
-    input_cost = (input_tokens * settings.price_input_per_million) / 1_000_000
-    output_cost = (output_tokens * settings.price_output_per_million) / 1_000_000
+    price_in = int(price_input_per_million or settings.price_input_per_million)
+    price_out = int(price_output_per_million or settings.price_output_per_million)
+
+    try:
+        discount = float(settings.cache_discount_rate)
+    except Exception:
+        discount = 0.5
+    if discount < 0.0:
+        discount = 0.0
+    if discount > 1.0:
+        discount = 1.0
+
+    ct = int(cached_tokens or 0)
+    if ct < 0:
+        ct = 0
+    it = int(input_tokens or 0)
+    if ct > it:
+        ct = it
+
+    non_cached = max(0, it - ct)
+    cached_price_in = price_in * discount
+    input_cost = (non_cached * price_in + ct * cached_price_in) / 1_000_000
+    output_cost = (int(output_tokens or 0) * price_out) / 1_000_000
     return input_cost + output_cost
 
 
@@ -73,11 +121,15 @@ class UsageBuffer:
         user_id: str, 
         input_tokens: int = 0, 
         output_tokens: int = 0, 
+        cached_tokens: int = 0,
         requests: int = 0,
         endpoint: str = "",
         model: str = "",
+        route_reason: str = "",
         duration_ms: int = 0,
         status_code: int = 200,
+        price_input_per_million: int = 0,
+        price_output_per_million: int = 0,
     ) -> None:
         """添加使用量（高性能，不阻塞请求）
         
@@ -87,7 +139,13 @@ class UsageBuffer:
             return
         
         # 计算在锁外进行，减少锁持有时间
-        cost_cents = calculate_cost_cents(input_tokens, output_tokens)
+        cost_cents = calculate_cost_cents(
+            input_tokens,
+            output_tokens,
+            cached_tokens=cached_tokens,
+            price_input_per_million=price_input_per_million,
+            price_output_per_million=price_output_per_million,
+        )
         day = date.today()
         
         # 使用分片锁，减少竞争
@@ -113,9 +171,11 @@ class UsageBuffer:
                 "model": model,
                 "input_tokens": int(input_tokens),
                 "output_tokens": int(output_tokens),
+                "cached_tokens": int(cached_tokens or 0),
                 "cost_cents": round(cost_cents),
                 "duration_ms": int(duration_ms),
                 "status_code": int(status_code),
+                "route_reason": (route_reason or "")[:64],
                 "created_at": datetime.utcnow(),
             })
 
@@ -264,9 +324,11 @@ async def flush_once() -> None:
                         model=log["model"],
                         input_tokens=log["input_tokens"],
                         output_tokens=log["output_tokens"],
+                        cached_tokens=log.get("cached_tokens", 0),
                         cost_cents=log["cost_cents"],
                         duration_ms=log["duration_ms"],
                         status_code=log["status_code"],
+                        route_reason=log.get("route_reason", ""),
                         created_at=log["created_at"],
                     )
                     for log in request_logs

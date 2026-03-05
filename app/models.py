@@ -87,9 +87,11 @@ class RequestLog(Base):
     model: Mapped[str] = mapped_column(String(64), default="")
     input_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
     output_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
+    cached_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
     cost_cents: Mapped[int] = mapped_column(BigInteger, default=0)  # 费用（分）
     duration_ms: Mapped[int] = mapped_column(BigInteger, default=0)  # 响应耗时（毫秒）
     status_code: Mapped[int] = mapped_column(BigInteger, default=200)  # 上游响应状态码
+    route_reason: Mapped[str] = mapped_column(String(64), default="")  # router decision / fallback reason
 
 
 class RechargeLog(Base):
