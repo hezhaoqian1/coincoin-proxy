@@ -156,11 +156,12 @@ async def get_recharge(order_id: str, db: AsyncSession = Depends(get_db)):
 def _rmb_to_cents(money_str: str) -> int:
     """Mirror of payment.rmb_to_cents (avoid circular import)."""
     PLAN_MAP: dict[Decimal, int] = {
-        Decimal("9.90"):   1800,   # 体验包  $18   (要发)
-        Decimal("29.90"):  6600,   # 轻量版  $66   (六六大顺)
-        Decimal("59.90"):  13800,  # 基础版  $138  (一生发)
-        Decimal("99.90"):  23800,  # 进阶版  $238  (爱生发)
-        Decimal("199.90"): 51800,  # 专业版  $518  (我要发)
+        Decimal("9.90"):   1800,    # 体验包  $18    (要发)
+        Decimal("29.90"):  6600,    # 轻量版  $66    (六六大顺)
+        Decimal("59.90"):  13800,   # 基础版  $138   (一生发)
+        Decimal("99.90"):  23800,   # 进阶版  $238   (爱生发)
+        Decimal("199.90"): 51800,   # 专业版  $518   (我要发)
+        Decimal("499.90"): 138800,  # 旗舰版  $1388  (一生发发)
     }
     try:
         d = Decimal(money_str).quantize(Decimal("0.01"))

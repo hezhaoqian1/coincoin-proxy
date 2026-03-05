@@ -239,5 +239,15 @@ export const PRICING_PLANS = [
         features: ['$518.00 账户余额', '约 30,000 次 API 调用', 'gpt-5.2-codex 模型', '按量计费 · 用多少扣多少'],
         badge: null,
         highlight: false
+    },
+    {
+        name: '旗舰版',
+        price: '¥499.9',
+        priceNote: '',
+        money: '499.90',
+        balanceLabel: '$1388 余额',
+        features: ['$1,388.00 账户余额', '约 81,000 次 API 调用', 'gpt-5.2-codex 模型', '按量计费 · 用多少扣多少'],
+        badge: '最划算',
+        highlight: false
     }
 ]
