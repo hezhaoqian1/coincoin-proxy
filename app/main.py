@@ -45,11 +45,17 @@ async def _run_migrations(conn):
         ("coincoin_request_logs", "cached_tokens", "BIGINT DEFAULT 0"),
         ("coincoin_request_logs", "route_reason", "VARCHAR(64) DEFAULT ''"),
     ]
+    logger = logging.getLogger("coincoin.migrations")
     for table, col, ddl in migrations:
         try:
             await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}"))
-        except Exception:
-            pass
+            logger.info("migration OK: %s.%s", table, col)
+        except Exception as exc:
+            exc_msg = str(exc).lower()
+            if "duplicate" in exc_msg or "already exists" in exc_msg:
+                logger.debug("column %s.%s already exists, skipping", table, col)
+            else:
+                logger.warning("migration failed for %s.%s: %s", table, col, exc)
 
 
 @asynccontextmanager

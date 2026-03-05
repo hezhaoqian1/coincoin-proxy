@@ -246,6 +246,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="payload must be a json object")
 
     # Route (best-effort). If router is disabled or misconfigured, this resolves to premium.
+    display_model = str(payload.get("model") or settings.fixed_model)
     messages_for_route, tools_for_route = extract_messages_for_routing_from_responses_payload(payload)
     model_cfg, route_reason = resolve_model(messages_for_route, tools_for_route)
     used_cfg = model_cfg
@@ -282,14 +283,18 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
 
         try:
             upstream = await _send_stream(used_cfg)
-        except (httpx.TimeoutException, httpx.RequestError):
+        except (httpx.TimeoutException, httpx.RequestError) as exc:
             if is_cheap:
                 used_cfg = premium_cfg
                 used_route_reason = "cheap_fallback_timeout"
                 is_cheap = False
                 upstream = await _send_stream(used_cfg)
             else:
-                raise
+                logger.error("upstream stream connect error: %s", exc)
+                return JSONResponse(
+                    content={"error": {"message": "Upstream request failed", "type": "server_error", "code": "upstream_unreachable"}},
+                    status_code=502,
+                )
 
         if is_cheap and (upstream.status_code == 429 or upstream.status_code >= 500):
             try:
@@ -324,6 +329,8 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             if "application/json" in content_type:
                 try:
                     data = json.loads(body.decode("utf-8"))
+                    if isinstance(data, dict) and "model" in data:
+                        data["model"] = display_model
                 except Exception:
                     data = {"detail": "upstream returned non-stream response"}
                 return JSONResponse(content=data, status_code=upstream.status_code, headers=response_headers)
@@ -332,11 +339,15 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         stream_t0 = time.monotonic()
         _stream_usage = {"input": 0, "output": 0, "cached": 0}
 
+        _model_mask = None
+        if used_cfg.model_id != display_model:
+            _model_mask = (used_cfg.model_id.encode(), display_model.encode())
+
         async def iter_bytes():
             buf = b""
             try:
                 async for chunk in upstream.aiter_bytes():
-                    yield chunk
+                    yield chunk.replace(_model_mask[0], _model_mask[1]) if _model_mask else chunk
                     buf += chunk
                     while b"\n\n" in buf:
                         event_raw, buf = buf.split(b"\n\n", 1)
@@ -406,14 +417,18 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
 
     try:
         upstream, duration_ms = await _post_json(used_cfg)
-    except (httpx.TimeoutException, httpx.RequestError):
+    except (httpx.TimeoutException, httpx.RequestError) as exc:
         if is_cheap:
             used_cfg = premium_cfg
             used_route_reason = "cheap_fallback_timeout"
             is_cheap = False
             upstream, duration_ms = await _post_json(used_cfg)
         else:
-            raise
+            logger.error("upstream request error: %s", exc)
+            return JSONResponse(
+                content={"error": {"message": "Upstream request failed", "type": "server_error", "code": "upstream_unreachable"}},
+                status_code=502,
+            )
 
     if is_cheap and (upstream.status_code == 429 or upstream.status_code >= 500):
         used_cfg = premium_cfg
@@ -424,8 +439,39 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
     response_headers.pop("content-length", None)
 
     content_type = upstream.headers.get("content-type", "application/json")
+    if is_cheap and "application/json" not in content_type:
+        used_cfg = premium_cfg
+        used_route_reason = "cheap_fallback_unexpected"
+        is_cheap = False
+        upstream, duration_ms = await _post_json(used_cfg)
+        response_headers = filter_headers(dict(upstream.headers))
+        response_headers.pop("content-length", None)
+        content_type = upstream.headers.get("content-type", "application/json")
+
     if "application/json" in content_type:
-        data = upstream.json()
+        try:
+            data = upstream.json()
+        except Exception:
+            if is_cheap:
+                used_cfg = premium_cfg
+                used_route_reason = "cheap_fallback_unexpected"
+                is_cheap = False
+                upstream, duration_ms = await _post_json(used_cfg)
+                response_headers = filter_headers(dict(upstream.headers))
+                response_headers.pop("content-length", None)
+                content_type = upstream.headers.get("content-type", "application/json")
+                try:
+                    data = upstream.json() if "application/json" in content_type else upstream.text
+                except Exception:
+                    return JSONResponse(
+                        content={"error": {"message": "Upstream returned invalid JSON", "type": "server_error", "code": "upstream_invalid_json"}},
+                        status_code=502, headers=response_headers,
+                    )
+            else:
+                return JSONResponse(
+                    content={"error": {"message": "Upstream returned invalid JSON", "type": "server_error", "code": "upstream_invalid_json"}},
+                    status_code=502, headers=response_headers,
+                )
     else:
         data = upstream.text
 
@@ -457,6 +503,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         logger.error("upstream error %s: %s", upstream.status_code, str(data)[:500])
 
     if isinstance(data, dict):
+        data["model"] = display_model
         return JSONResponse(content=data, status_code=upstream.status_code, headers=response_headers)
 
     return Response(content=str(data), status_code=upstream.status_code, headers=response_headers, media_type=content_type)

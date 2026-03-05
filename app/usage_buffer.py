@@ -56,6 +56,7 @@ def calculate_cost_cents(
     price_out = int(price_output_per_million or settings.price_output_per_million)
 
     try:
+        # charge_ratio: 0.5 = cached tokens 按 50% 价格收费（即打五折），0.0 = 全免
         discount = float(settings.cache_discount_rate)
     except Exception:
         discount = 0.5

@@ -83,6 +83,10 @@ def auto_route(messages: List[dict], tools: Optional[list]) -> str:
     if not tools:
         return PREMIUM
 
+    # No structured messages extracted => we can't judge conversation stage => be safe.
+    if not messages:
+        return PREMIUM
+
     # Very early in a tool-using conversation => usually exploration/first step.
     if len(messages) <= 3:
         return CHEAP

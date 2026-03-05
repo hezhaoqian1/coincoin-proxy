@@ -375,7 +375,6 @@ async def list_models():
 @router.get("/models/{model_id}")
 async def get_model(model_id: str):
     """获取单个模型信息"""
-    # 所有模型请求都返回固定模型
     model_registry.ensure_initialized()
     return {
         "id": model_id if model_id in model_registry.list_model_ids() else settings.fixed_model,
@@ -416,6 +415,8 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
 
     if not isinstance(payload, dict):
         return openai_error("Request body must be a JSON object", "invalid_request_error")
+
+    display_model = str(payload.get("model") or settings.fixed_model)
 
     messages = payload.get("messages") or []
     if not isinstance(messages, list):
@@ -722,14 +723,16 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
 
         try:
             upstream = await _send_stream(used_cfg)
-        except (httpx.TimeoutException, httpx.RequestError):
+        except (httpx.TimeoutException, httpx.RequestError) as exc:
             if is_cheap:
                 used_cfg = premium_cfg
                 used_route_reason = "cheap_fallback_timeout"
                 is_cheap = False
                 upstream = await _send_stream(used_cfg)
             else:
-                raise
+                import logging as _logging
+                _logging.getLogger("coincoin.compat").error("upstream stream connect error: %s", exc)
+                return openai_error("Upstream request failed", "server_error", code="upstream_unreachable", status_code=502)
 
         if is_cheap and (upstream.status_code == 429 or upstream.status_code >= 500):
             try:
@@ -777,7 +780,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                     )
                 if "application/json" in content_type:
                     data = json.loads(body.decode("utf-8"))
-                    return JSONResponse(content=build_chat_response(data, used_cfg.model_id), status_code=upstream.status_code, headers=response_headers)
+                    return JSONResponse(content=build_chat_response(data, display_model), status_code=upstream.status_code, headers=response_headers)
                 return Response(content=body, status_code=upstream.status_code, headers=response_headers, media_type=content_type)
 
         stream_id = f"chatcmpl-{secrets.token_hex(12)}"
@@ -825,7 +828,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                                 "id": stream_id,
                                 "object": "chat.completion.chunk",
                                 "created": int(time.time()),
-                                "model": used_cfg.model_id,
+                                "model": display_model,
                                 "choices": [{"index": 0, "delta": delta_obj, "finish_reason": None}],
                             }
                             yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
@@ -852,7 +855,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                                 "id": stream_id,
                                 "object": "chat.completion.chunk",
                                 "created": int(time.time()),
-                                "model": used_cfg.model_id,
+                                "model": display_model,
                                 "choices": [{"index": 0, "delta": delta_obj, "finish_reason": None}],
                             }
                             yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
@@ -865,7 +868,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                                 "id": stream_id,
                                 "object": "chat.completion.chunk",
                                 "created": int(time.time()),
-                                "model": used_cfg.model_id,
+                                "model": display_model,
                                 "choices": [{
                                     "index": 0,
                                     "delta": {
@@ -909,7 +912,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                             "id": stream_id,
                             "object": "chat.completion.chunk",
                             "created": int(time.time()),
-                            "model": used_cfg.model_id,
+                            "model": display_model,
                             "choices": [{"index": 0, "delta": {}, "finish_reason": finish_reason}],
                         }
                         yield f"data: {json.dumps(finish)}\n\n"
@@ -1050,7 +1053,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
         )
 
     if isinstance(data, dict):
-        return JSONResponse(content=build_chat_response(data, used_cfg.model_id), status_code=upstream.status_code, headers=response_headers)
+        return JSONResponse(content=build_chat_response(data, display_model), status_code=upstream.status_code, headers=response_headers)
 
     return Response(content=str(data), status_code=upstream.status_code, headers=response_headers, media_type=content_type)
 
@@ -1098,7 +1101,10 @@ async def embeddings(request: Request, db: AsyncSession = Depends(get_db)):
 
     content_type = upstream.headers.get("content-type", "application/json")
     if "application/json" in content_type:
-        data = upstream.json()
+        try:
+            data = upstream.json()
+        except Exception:
+            return openai_error("Upstream returned invalid JSON", "server_error", code="upstream_invalid_json", status_code=502)
     else:
         data = upstream.text
 
@@ -1106,7 +1112,6 @@ async def embeddings(request: Request, db: AsyncSession = Depends(get_db)):
     cached_tokens_delta = 0
     if upstream.status_code < 400 and isinstance(data, dict):
         usage = data.get("usage") or {}
-        # Embeddings 只有 input tokens（prompt_tokens 或 total_tokens）
         input_tokens_delta = int(usage.get("prompt_tokens") or usage.get("total_tokens") or 0)
         cached_tokens_delta = extract_cached_tokens(usage)
 
