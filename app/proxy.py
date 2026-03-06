@@ -37,27 +37,39 @@ def _sanitize_encrypted_ids(payload: dict) -> None:
     The ChatGPT backend scans the ENTIRE JSON body for encrypted content,
     including substrings like 'fc_gAAA...' or 'msg_gAAA...'.  We use
     'contains' not 'startswith' to catch prefixed IDs (fc_, msg_, resp_).
+
+    Replacement IDs use the correct prefix per item type so the downstream
+    API accepts them (e.g. fc_ for function_call, msg_ for message).
     """
+    _PREFIX_BY_TYPE = {
+        "function_call": "fc",
+        "function_call_output": "fco",
+        "message": "msg",
+    }
     id_map: dict[str, str] = {}
     counter = [0]
 
-    def _stable_id(original: str) -> str:
+    def _next_id(prefix: str, original: str) -> str:
         if original not in id_map:
             counter[0] += 1
-            id_map[original] = f"call_{counter[0]:04d}"
+            id_map[original] = f"{prefix}_{counter[0]:04d}"
         return id_map[original]
 
-    def _walk(obj):
+    def _walk(obj, item_type: str = ""):
         if isinstance(obj, dict):
+            cur_type = obj.get("type", "") or item_type
             to_delete: list[str] = []
             for k, v in obj.items():
                 if isinstance(v, str) and _has_encrypted(v):
-                    if k in ("call_id", "id"):
-                        obj[k] = _stable_id(v)
+                    if k == "call_id":
+                        obj[k] = _next_id("call", v)
+                    elif k == "id":
+                        prefix = _PREFIX_BY_TYPE.get(cur_type, "id")
+                        obj[k] = _next_id(prefix, v)
                     else:
                         to_delete.append(k)
                 elif isinstance(v, (dict, list)):
-                    _walk(v)
+                    _walk(v, cur_type)
             for k in to_delete:
                 del obj[k]
         elif isinstance(obj, list):
