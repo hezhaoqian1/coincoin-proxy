@@ -45,9 +45,7 @@ def _sanitize_encrypted_ids(payload: dict) -> None:
                 counter[0] += 1
                 id_map[val] = f"call_{counter[0]:04d}"
             return id_map[val]
-        if key in ("id", "previous_response_id"):
-            return None
-        return ""
+        return None
 
     def _walk(obj):
         if isinstance(obj, dict):
