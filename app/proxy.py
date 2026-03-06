@@ -348,14 +348,15 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                     status_code=502,
                 )
 
-        if can_fallback and (upstream.status_code == 429 or upstream.status_code >= 500):
+        if can_fallback and upstream.status_code >= 400:
+            _fb = "cheap" if is_cheap else "premium"
+            _code = upstream.status_code
             try:
                 await upstream.aclose()
             except Exception:
                 pass
-            _fb = "cheap" if is_cheap else "premium"
             used_cfg = fallback_cfg
-            used_route_reason = f"{_fb}_fallback_429" if upstream.status_code == 429 else f"{_fb}_fallback_5xx"
+            used_route_reason = f"{_fb}_fallback_{_code}"
             can_fallback = False
             is_cheap = False
             upstream = await _send_stream(used_cfg)
@@ -489,10 +490,10 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 status_code=502,
             )
 
-    if can_fallback and (upstream.status_code == 429 or upstream.status_code >= 500):
+    if can_fallback and upstream.status_code >= 400:
         _fb = "cheap" if is_cheap else "premium"
         used_cfg = fallback_cfg
-        used_route_reason = f"{_fb}_fallback_429" if upstream.status_code == 429 else f"{_fb}_fallback_5xx"
+        used_route_reason = f"{_fb}_fallback_{upstream.status_code}"
         can_fallback = False
         is_cheap = False
         upstream, duration_ms = await _post_json(used_cfg)
