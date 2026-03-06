@@ -63,24 +63,12 @@ class Settings(BaseSettings):
     router_enabled: bool = False
     router_tool_count_threshold: int = 2
 
-    # Force strip unsupported params (temperature, top_p, etc.) on primary model
-    # even when model name doesn't contain 'codex'. Needed for upstream proxies
-    # backed by ChatGPT that reject these params.
-    primary_strip_unsupported: bool = False
-
     # Cheap model (optional)
     cheap_model: str = ""
     cheap_upstream_url: str = ""  # empty = use main upstream
     cheap_api_key: str = ""  # empty = use main api key
     cheap_price_input: int = 15  # cents per million tokens
     cheap_price_output: int = 60  # cents per million tokens
-
-    # Fallback model (reliable backend used when primary or cheap upstream fails)
-    fallback_model: str = ""
-    fallback_upstream_url: str = ""  # empty = use main upstream
-    fallback_api_key: str = ""  # empty = use main api key
-    fallback_price_input: int = 99  # cents per million tokens
-    fallback_price_output: int = 699  # cents per million tokens
 
     class Config:
         env_prefix = "COINCOIN_"

@@ -24,55 +24,6 @@ from .router import resolve as resolve_model
 from .usage_buffer import extract_cached_tokens, usage_buffer
 
 _KEY_KIND_ATTR = "_key_kind"
-_ENCRYPTED_PREFIXES = ("gAAA", "gBAA")
-
-
-def _has_encrypted(v: str) -> bool:
-    return any(p in v for p in _ENCRYPTED_PREFIXES)
-
-
-def _sanitize_encrypted_ids(payload: dict) -> None:
-    """Recursively strip all ChatGPT-encrypted blobs from the request.
-
-    The ChatGPT backend scans the ENTIRE JSON body for encrypted content,
-    including substrings like 'fc_gAAA...' or 'msg_gAAA...'.  We use
-    'contains' not 'startswith' to catch prefixed IDs (fc_, msg_, resp_).
-    """
-    id_map: dict[str, str] = {}
-    counter = [0]
-
-    def _stable_id(original: str) -> str:
-        if original not in id_map:
-            counter[0] += 1
-            id_map[original] = f"call_{counter[0]:04d}"
-        return id_map[original]
-
-    def _walk(obj):
-        if isinstance(obj, dict):
-            to_delete: list[str] = []
-            for k, v in obj.items():
-                if isinstance(v, str) and _has_encrypted(v):
-                    if k in ("call_id", "id"):
-                        obj[k] = _stable_id(v)
-                    else:
-                        to_delete.append(k)
-                elif isinstance(v, (dict, list)):
-                    _walk(v)
-            for k in to_delete:
-                del obj[k]
-        elif isinstance(obj, list):
-            i = 0
-            while i < len(obj):
-                item = obj[i]
-                if isinstance(item, str) and _has_encrypted(item):
-                    del obj[i]
-                elif isinstance(item, (dict, list)):
-                    _walk(item)
-                    i += 1
-                else:
-                    i += 1
-
-    _walk(payload)
 
 
 router = APIRouter(prefix="/openai/v1", tags=["proxy"])
@@ -303,9 +254,6 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
 
     payload["model"] = used_cfg.model_id
     payload.pop("model_provider", None)
-    payload.pop("previous_response_id", None)
-    if used_cfg.strip_unsupported:
-        _sanitize_encrypted_ids(payload)
     base_payload = dict(payload)
 
     upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/responses"
@@ -314,15 +262,11 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         "content-type": "application/json",
     }
 
-    _STRIP_PARAMS = ("temperature", "top_p", "presence_penalty", "frequency_penalty",
-                     "max_output_tokens", "n", "logprobs", "top_logprobs", "seed")
-
     if base_payload.get("stream"):
         model_registry.ensure_initialized()
-        fallback_cfg = model_registry.models.get("fallback") or model_registry.get("premium")
+        premium_cfg = model_registry.get("premium")
         cheap_cfg = model_registry.models.get("cheap")
         is_cheap = bool(cheap_cfg and used_cfg.model_id == cheap_cfg.model_id)
-        can_fallback = (used_cfg.model_id != fallback_cfg.model_id)
 
         stream_client = await get_stream_client()
 
@@ -330,7 +274,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             send_payload = dict(base_payload)
             send_payload["model"] = cfg.model_id
             if cfg.strip_unsupported:
-                for param in _STRIP_PARAMS:
+                for param in ("temperature", "top_p", "presence_penalty", "frequency_penalty", "n", "logprobs", "top_logprobs"):
                     send_payload.pop(param, None)
             req_url = f"{cfg.upstream_url.rstrip('/')}/responses"
             req_headers = {"api-key": cfg.api_key, "content-type": "application/json"}
@@ -340,11 +284,9 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         try:
             upstream = await _send_stream(used_cfg)
         except (httpx.TimeoutException, httpx.RequestError) as exc:
-            if can_fallback:
-                _fb = "cheap" if is_cheap else "premium"
-                used_cfg = fallback_cfg
-                used_route_reason = f"{_fb}_fallback_timeout"
-                can_fallback = False
+            if is_cheap:
+                used_cfg = premium_cfg
+                used_route_reason = "cheap_fallback_timeout"
                 is_cheap = False
                 upstream = await _send_stream(used_cfg)
             else:
@@ -354,30 +296,25 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                     status_code=502,
                 )
 
-        if can_fallback and upstream.status_code >= 400:
-            _fb = "cheap" if is_cheap else "premium"
-            _code = upstream.status_code
+        if is_cheap and (upstream.status_code == 429 or upstream.status_code >= 500):
             try:
                 await upstream.aclose()
             except Exception:
                 pass
-            used_cfg = fallback_cfg
-            used_route_reason = f"{_fb}_fallback_{_code}"
-            can_fallback = False
+            used_cfg = premium_cfg
+            used_route_reason = "cheap_fallback_429" if upstream.status_code == 429 else "cheap_fallback_5xx"
             is_cheap = False
             upstream = await _send_stream(used_cfg)
 
         content_type = upstream.headers.get("content-type", "")
         if "text/event-stream" not in content_type:
-            if can_fallback:
+            if is_cheap:
                 try:
                     await upstream.aclose()
                 except Exception:
                     pass
-                _fb = "cheap" if is_cheap else "premium"
-                used_cfg = fallback_cfg
-                used_route_reason = f"{_fb}_fallback_unexpected"
-                can_fallback = False
+                used_cfg = premium_cfg
+                used_route_reason = "cheap_fallback_unexpected"
                 is_cheap = False
                 upstream = await _send_stream(used_cfg)
                 content_type = upstream.headers.get("content-type", "")
@@ -459,10 +396,9 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         )
 
     model_registry.ensure_initialized()
-    fallback_cfg = model_registry.models.get("fallback") or model_registry.get("premium")
+    premium_cfg = model_registry.get("premium")
     cheap_cfg = model_registry.models.get("cheap")
     is_cheap = bool(cheap_cfg and used_cfg.model_id == cheap_cfg.model_id)
-    can_fallback = (used_cfg.model_id != fallback_cfg.model_id)
 
     client = await get_http_client()
 
@@ -470,7 +406,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         send_payload = dict(base_payload)
         send_payload["model"] = cfg.model_id
         if cfg.strip_unsupported:
-            for param in _STRIP_PARAMS:
+            for param in ("temperature", "top_p", "presence_penalty", "frequency_penalty", "n", "logprobs", "top_logprobs"):
                 send_payload.pop(param, None)
         req_url = f"{cfg.upstream_url.rstrip('/')}/responses"
         req_headers = {"api-key": cfg.api_key, "content-type": "application/json"}
@@ -482,11 +418,9 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
     try:
         upstream, duration_ms = await _post_json(used_cfg)
     except (httpx.TimeoutException, httpx.RequestError) as exc:
-        if can_fallback:
-            _fb = "cheap" if is_cheap else "premium"
-            used_cfg = fallback_cfg
-            used_route_reason = f"{_fb}_fallback_timeout"
-            can_fallback = False
+        if is_cheap:
+            used_cfg = premium_cfg
+            used_route_reason = "cheap_fallback_timeout"
             is_cheap = False
             upstream, duration_ms = await _post_json(used_cfg)
         else:
@@ -496,22 +430,18 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 status_code=502,
             )
 
-    if can_fallback and upstream.status_code >= 400:
-        _fb = "cheap" if is_cheap else "premium"
-        used_cfg = fallback_cfg
-        used_route_reason = f"{_fb}_fallback_{upstream.status_code}"
-        can_fallback = False
+    if is_cheap and (upstream.status_code == 429 or upstream.status_code >= 500):
+        used_cfg = premium_cfg
+        used_route_reason = "cheap_fallback_429" if upstream.status_code == 429 else "cheap_fallback_5xx"
         is_cheap = False
         upstream, duration_ms = await _post_json(used_cfg)
     response_headers = filter_headers(dict(upstream.headers))
     response_headers.pop("content-length", None)
 
     content_type = upstream.headers.get("content-type", "application/json")
-    if can_fallback and "application/json" not in content_type:
-        _fb = "cheap" if is_cheap else "premium"
-        used_cfg = fallback_cfg
-        used_route_reason = f"{_fb}_fallback_unexpected"
-        can_fallback = False
+    if is_cheap and "application/json" not in content_type:
+        used_cfg = premium_cfg
+        used_route_reason = "cheap_fallback_unexpected"
         is_cheap = False
         upstream, duration_ms = await _post_json(used_cfg)
         response_headers = filter_headers(dict(upstream.headers))
@@ -522,11 +452,9 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         try:
             data = upstream.json()
         except Exception:
-            if can_fallback:
-                _fb = "cheap" if is_cheap else "premium"
-                used_cfg = fallback_cfg
-                used_route_reason = f"{_fb}_fallback_unexpected"
-                can_fallback = False
+            if is_cheap:
+                used_cfg = premium_cfg
+                used_route_reason = "cheap_fallback_unexpected"
                 is_cheap = False
                 upstream, duration_ms = await _post_json(used_cfg)
                 response_headers = filter_headers(dict(upstream.headers))
