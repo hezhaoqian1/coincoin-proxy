@@ -262,11 +262,15 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         "content-type": "application/json",
     }
 
+    _STRIP_PARAMS = ("temperature", "top_p", "presence_penalty", "frequency_penalty",
+                     "max_output_tokens", "n", "logprobs", "top_logprobs", "seed")
+
     if base_payload.get("stream"):
         model_registry.ensure_initialized()
-        premium_cfg = model_registry.get("premium")
+        fallback_cfg = model_registry.models.get("fallback") or model_registry.get("premium")
         cheap_cfg = model_registry.models.get("cheap")
         is_cheap = bool(cheap_cfg and used_cfg.model_id == cheap_cfg.model_id)
+        can_fallback = (used_cfg.model_id != fallback_cfg.model_id)
 
         stream_client = await get_stream_client()
 
@@ -274,7 +278,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             send_payload = dict(base_payload)
             send_payload["model"] = cfg.model_id
             if cfg.strip_unsupported:
-                for param in ("temperature", "top_p", "presence_penalty", "frequency_penalty", "n", "logprobs", "top_logprobs"):
+                for param in _STRIP_PARAMS:
                     send_payload.pop(param, None)
             req_url = f"{cfg.upstream_url.rstrip('/')}/responses"
             req_headers = {"api-key": cfg.api_key, "content-type": "application/json"}
@@ -284,9 +288,11 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         try:
             upstream = await _send_stream(used_cfg)
         except (httpx.TimeoutException, httpx.RequestError) as exc:
-            if is_cheap:
-                used_cfg = premium_cfg
-                used_route_reason = "cheap_fallback_timeout"
+            if can_fallback:
+                _fb = "cheap" if is_cheap else "premium"
+                used_cfg = fallback_cfg
+                used_route_reason = f"{_fb}_fallback_timeout"
+                can_fallback = False
                 is_cheap = False
                 upstream = await _send_stream(used_cfg)
             else:
@@ -296,25 +302,29 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                     status_code=502,
                 )
 
-        if is_cheap and (upstream.status_code == 429 or upstream.status_code >= 500):
+        if can_fallback and (upstream.status_code == 429 or upstream.status_code >= 500):
             try:
                 await upstream.aclose()
             except Exception:
                 pass
-            used_cfg = premium_cfg
-            used_route_reason = "cheap_fallback_429" if upstream.status_code == 429 else "cheap_fallback_5xx"
+            _fb = "cheap" if is_cheap else "premium"
+            used_cfg = fallback_cfg
+            used_route_reason = f"{_fb}_fallback_429" if upstream.status_code == 429 else f"{_fb}_fallback_5xx"
+            can_fallback = False
             is_cheap = False
             upstream = await _send_stream(used_cfg)
 
         content_type = upstream.headers.get("content-type", "")
         if "text/event-stream" not in content_type:
-            if is_cheap:
+            if can_fallback:
                 try:
                     await upstream.aclose()
                 except Exception:
                     pass
-                used_cfg = premium_cfg
-                used_route_reason = "cheap_fallback_unexpected"
+                _fb = "cheap" if is_cheap else "premium"
+                used_cfg = fallback_cfg
+                used_route_reason = f"{_fb}_fallback_unexpected"
+                can_fallback = False
                 is_cheap = False
                 upstream = await _send_stream(used_cfg)
                 content_type = upstream.headers.get("content-type", "")
@@ -396,9 +406,10 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         )
 
     model_registry.ensure_initialized()
-    premium_cfg = model_registry.get("premium")
+    fallback_cfg = model_registry.models.get("fallback") or model_registry.get("premium")
     cheap_cfg = model_registry.models.get("cheap")
     is_cheap = bool(cheap_cfg and used_cfg.model_id == cheap_cfg.model_id)
+    can_fallback = (used_cfg.model_id != fallback_cfg.model_id)
 
     client = await get_http_client()
 
@@ -406,7 +417,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         send_payload = dict(base_payload)
         send_payload["model"] = cfg.model_id
         if cfg.strip_unsupported:
-            for param in ("temperature", "top_p", "presence_penalty", "frequency_penalty", "n", "logprobs", "top_logprobs"):
+            for param in _STRIP_PARAMS:
                 send_payload.pop(param, None)
         req_url = f"{cfg.upstream_url.rstrip('/')}/responses"
         req_headers = {"api-key": cfg.api_key, "content-type": "application/json"}
@@ -418,9 +429,11 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
     try:
         upstream, duration_ms = await _post_json(used_cfg)
     except (httpx.TimeoutException, httpx.RequestError) as exc:
-        if is_cheap:
-            used_cfg = premium_cfg
-            used_route_reason = "cheap_fallback_timeout"
+        if can_fallback:
+            _fb = "cheap" if is_cheap else "premium"
+            used_cfg = fallback_cfg
+            used_route_reason = f"{_fb}_fallback_timeout"
+            can_fallback = False
             is_cheap = False
             upstream, duration_ms = await _post_json(used_cfg)
         else:
@@ -430,18 +443,22 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 status_code=502,
             )
 
-    if is_cheap and (upstream.status_code == 429 or upstream.status_code >= 500):
-        used_cfg = premium_cfg
-        used_route_reason = "cheap_fallback_429" if upstream.status_code == 429 else "cheap_fallback_5xx"
+    if can_fallback and (upstream.status_code == 429 or upstream.status_code >= 500):
+        _fb = "cheap" if is_cheap else "premium"
+        used_cfg = fallback_cfg
+        used_route_reason = f"{_fb}_fallback_429" if upstream.status_code == 429 else f"{_fb}_fallback_5xx"
+        can_fallback = False
         is_cheap = False
         upstream, duration_ms = await _post_json(used_cfg)
     response_headers = filter_headers(dict(upstream.headers))
     response_headers.pop("content-length", None)
 
     content_type = upstream.headers.get("content-type", "application/json")
-    if is_cheap and "application/json" not in content_type:
-        used_cfg = premium_cfg
-        used_route_reason = "cheap_fallback_unexpected"
+    if can_fallback and "application/json" not in content_type:
+        _fb = "cheap" if is_cheap else "premium"
+        used_cfg = fallback_cfg
+        used_route_reason = f"{_fb}_fallback_unexpected"
+        can_fallback = False
         is_cheap = False
         upstream, duration_ms = await _post_json(used_cfg)
         response_headers = filter_headers(dict(upstream.headers))
@@ -452,9 +469,11 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         try:
             data = upstream.json()
         except Exception:
-            if is_cheap:
-                used_cfg = premium_cfg
-                used_route_reason = "cheap_fallback_unexpected"
+            if can_fallback:
+                _fb = "cheap" if is_cheap else "premium"
+                used_cfg = fallback_cfg
+                used_route_reason = f"{_fb}_fallback_unexpected"
+                can_fallback = False
                 is_cheap = False
                 upstream, duration_ms = await _post_json(used_cfg)
                 response_headers = filter_headers(dict(upstream.headers))

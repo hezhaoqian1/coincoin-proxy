@@ -18,6 +18,7 @@ class ModelConfig:
 
 PREMIUM = "premium"
 CHEAP = "cheap"
+FALLBACK = "fallback"
 
 
 def _is_codex_like(model_id: str) -> bool:
@@ -36,13 +37,17 @@ class ModelRegistry:
         self.router_enabled = bool(getattr(settings, "router_enabled", False))
         self.tool_count_threshold = int(getattr(settings, "router_tool_count_threshold", 2) or 2)
 
+        primary_strip = bool(
+            getattr(settings, "primary_strip_unsupported", False)
+        ) or _is_codex_like(settings.fixed_model)
+
         premium = ModelConfig(
             model_id=settings.fixed_model,
             upstream_url=settings.upstream_base_url,
             api_key=settings.upstream_api_key,
             price_input_per_million=settings.price_input_per_million,
             price_output_per_million=settings.price_output_per_million,
-            strip_unsupported=_is_codex_like(settings.fixed_model),
+            strip_unsupported=primary_strip,
         )
         self.models = {PREMIUM: premium}
 
@@ -55,6 +60,17 @@ class ModelRegistry:
                 price_input_per_million=int(getattr(settings, "cheap_price_input", 0) or 0),
                 price_output_per_million=int(getattr(settings, "cheap_price_output", 0) or 0),
                 strip_unsupported=_is_codex_like(cheap_model),
+            )
+
+        fallback_model = (getattr(settings, "fallback_model", "") or "").strip()
+        if fallback_model:
+            self.models[FALLBACK] = ModelConfig(
+                model_id=fallback_model,
+                upstream_url=(getattr(settings, "fallback_upstream_url", "") or settings.upstream_base_url),
+                api_key=(getattr(settings, "fallback_api_key", "") or settings.upstream_api_key),
+                price_input_per_million=int(getattr(settings, "fallback_price_input", 0) or 0),
+                price_output_per_million=int(getattr(settings, "fallback_price_output", 0) or 0),
+                strip_unsupported=_is_codex_like(fallback_model),
             )
         self._initialized = True
 
