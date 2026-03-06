@@ -25,21 +25,30 @@ from .usage_buffer import extract_cached_tokens, usage_buffer
 
 _KEY_KIND_ATTR = "_key_kind"
 _ENCRYPTED_PREFIXES = ("gAAA", "gBAA")
+_ID_STRIP_PREFIXES = ("resp_", "msg_", "fc_", "fco_", "rs_")
+_CONTENT_KEYS = frozenset({
+    "text", "content", "output", "arguments", "instructions",
+    "description", "name", "url", "title",
+})
 
 
-def _has_encrypted(v: str) -> bool:
-    return any(p in v for p in _ENCRYPTED_PREFIXES)
+def _is_encrypted_blob(v: str) -> bool:
+    """Check if a string IS an encrypted blob, not just contains one."""
+    if v.startswith(_ENCRYPTED_PREFIXES):
+        return True
+    for p in _ID_STRIP_PREFIXES:
+        if v.startswith(p) and v[len(p):].startswith(_ENCRYPTED_PREFIXES):
+            return True
+    return False
 
 
 def _sanitize_encrypted_ids(payload: dict) -> None:
-    """Recursively strip all ChatGPT-encrypted blobs from the request.
+    """Recursively replace/remove ChatGPT-encrypted ID blobs from the request.
 
-    The ChatGPT backend scans the ENTIRE JSON body for encrypted content,
-    including substrings like 'fc_gAAA...' or 'msg_gAAA...'.  We use
-    'contains' not 'startswith' to catch prefixed IDs (fc_, msg_, resp_).
-
-    Replacement IDs use the correct prefix per item type so the downstream
-    API accepts them (e.g. fc_ for function_call, msg_ for message).
+    Only touches fields whose ENTIRE value is an encrypted blob (with optional
+    API prefix like fc_, msg_, resp_).  Content fields (text, output,
+    arguments, etc.) are never modified — they may legitimately contain the
+    substring 'gAAA' in user text, code, or error messages.
     """
     _PREFIX_BY_TYPE = {
         "function_call": "fc",
@@ -60,8 +69,10 @@ def _sanitize_encrypted_ids(payload: dict) -> None:
             cur_type = obj.get("type", "") or item_type
             to_delete: list[str] = []
             for k, v in obj.items():
-                if isinstance(v, str) and _has_encrypted(v):
-                    if k == "call_id":
+                if isinstance(v, str) and _is_encrypted_blob(v):
+                    if k in _CONTENT_KEYS:
+                        pass
+                    elif k == "call_id":
                         obj[k] = _next_id("call", v)
                     elif k == "id":
                         prefix = _PREFIX_BY_TYPE.get(cur_type, "id")
@@ -76,7 +87,7 @@ def _sanitize_encrypted_ids(payload: dict) -> None:
             i = 0
             while i < len(obj):
                 item = obj[i]
-                if isinstance(item, str) and _has_encrypted(item):
+                if isinstance(item, str) and _is_encrypted_blob(item):
                     del obj[i]
                 elif isinstance(item, (dict, list)):
                     _walk(item)
