@@ -423,17 +423,6 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
     if not isinstance(messages, list):
         return openai_error("'messages' must be an array", "invalid_request_error", param="messages")
 
-    if not messages:
-        import time as _time
-        return JSONResponse(content={
-            "id": f"chatcmpl-ping-{int(_time.time())}",
-            "object": "chat.completion",
-            "created": int(_time.time()),
-            "model": display_model,
-            "choices": [{"index": 0, "message": {"role": "assistant", "content": ""}, "finish_reason": "stop"}],
-            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
-        })
-
     # ============== 处理 messages 格式兼容性 ==============
     # Azure Responses API 使用与 OpenAI Chat Completions 完全不同的消息格式
     # 
