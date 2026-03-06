@@ -20,7 +20,9 @@ class Settings(BaseSettings):
     # Azure Standard: typically 50% off => 0.5, Provisioned can be 100% off => 0.0
     cache_discount_rate: float = 0.5
 
-    # Database
+    # Database — prefer database_url (Railway ${{MySQL.MYSQL_URL}});
+    # falls back to individual db_host/port/name/user/password fields.
+    database_url: str = ""
     db_host: str = ""
     db_port: int = 4000
     db_name: str = ""
