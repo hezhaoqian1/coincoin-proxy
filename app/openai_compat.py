@@ -11,7 +11,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import settings
 from .db import get_db
-from .proxy import authenticate_user, authorize_request, filter_headers, get_http_client, get_stream_client, proxy_responses, responses_health
+from .proxy import (
+    _sanitize_encrypted_ids, authenticate_user, authorize_request,
+    filter_headers, get_http_client, get_stream_client, proxy_responses,
+    responses_health,
+)
 from .router import registry as model_registry
 from .router import resolve as resolve_model
 from .schemas import BalanceResponse
@@ -526,7 +530,9 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
         "input": converted_messages,
         "stream": bool(payload.get("stream")),
     }
-    
+    if used_cfg.strip_unsupported:
+        _sanitize_encrypted_ids(resp_payload)
+
     # max_tokens -> max_output_tokens (will be stripped later if model doesn't support it)
     if "max_tokens" in payload:
         resp_payload["max_output_tokens"] = payload.get("max_tokens")
