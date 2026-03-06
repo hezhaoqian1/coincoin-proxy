@@ -71,7 +71,7 @@ def _sanitize_encrypted_ids(payload: dict) -> None:
             for k, v in obj.items():
                 if isinstance(v, str) and _is_encrypted_blob(v):
                     if k in _CONTENT_KEYS:
-                        pass
+                        obj[k] = ""
                     elif k == "call_id":
                         obj[k] = _next_id("call", v)
                     elif k == "id":
@@ -98,6 +98,31 @@ def _sanitize_encrypted_ids(payload: dict) -> None:
     _walk(payload)
 
 
+def _ensure_content_text(payload: dict) -> None:
+    """Ensure every content item has 'text'; drop unsupported types (reasoning/thinking)."""
+    inp = payload.get("input")
+    if not isinstance(inp, list):
+        return
+    for msg in inp:
+        if not isinstance(msg, dict):
+            continue
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        cleaned = []
+        for c in content:
+            if not isinstance(c, dict):
+                cleaned.append(c)
+                continue
+            ct = c.get("type", "")
+            if ct in ("reasoning", "thinking"):
+                continue
+            if ct in ("input_text", "output_text", "text", "") and ("text" not in c or c.get("text") is None):
+                c["text"] = ""
+            cleaned.append(c)
+        msg["content"] = cleaned if cleaned else [{"type": "input_text", "text": ""}]
+
+
 router = APIRouter(prefix="/openai/v1", tags=["proxy"])
 logger = logging.getLogger("coincoin.proxy")
 
@@ -117,7 +142,7 @@ async def get_http_client() -> httpx.AsyncClient:
             max_connections=settings.http_pool_max,
             max_keepalive_connections=settings.http_pool_keepalive,
         )
-        _http_client = httpx.AsyncClient(limits=limits, timeout=httpx.Timeout(60.0))
+        _http_client = httpx.AsyncClient(limits=limits, timeout=httpx.Timeout(60.0), trust_env=False)
         return _http_client
 
 
@@ -133,7 +158,7 @@ async def get_stream_client() -> httpx.AsyncClient:
             max_keepalive_connections=settings.http_pool_keepalive,
         )
         stream_timeout = httpx.Timeout(connect=5.0, read=None, write=60.0, pool=60.0)
-        _http_stream_client = httpx.AsyncClient(limits=limits, timeout=stream_timeout)
+        _http_stream_client = httpx.AsyncClient(limits=limits, timeout=stream_timeout, trust_env=False)
         return _http_stream_client
 
 
@@ -326,9 +351,9 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
 
     payload["model"] = used_cfg.model_id
     payload.pop("model_provider", None)
-    payload.pop("previous_response_id", None)
     if used_cfg.strip_unsupported:
         _sanitize_encrypted_ids(payload)
+    _ensure_content_text(payload)
     base_payload = dict(payload)
 
     upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/responses"
@@ -352,6 +377,10 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         async def _send_stream(cfg):
             send_payload = dict(base_payload)
             send_payload["model"] = cfg.model_id
+            if "cognitiveservices.azure.com" in (cfg.upstream_url or ""):
+                send_payload.pop("previous_response_id", None)
+                if "codex" not in (cfg.model_id or "").lower():
+                    send_payload.pop("reasoning", None)
             if cfg.strip_unsupported:
                 for param in _STRIP_PARAMS:
                     send_payload.pop(param, None)
@@ -492,6 +521,10 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
     async def _post_json(cfg):
         send_payload = dict(base_payload)
         send_payload["model"] = cfg.model_id
+        if "cognitiveservices.azure.com" in (cfg.upstream_url or ""):
+            send_payload.pop("previous_response_id", None)
+            if "codex" not in (cfg.model_id or "").lower():
+                send_payload.pop("reasoning", None)
         if cfg.strip_unsupported:
             for param in _STRIP_PARAMS:
                 send_payload.pop(param, None)
