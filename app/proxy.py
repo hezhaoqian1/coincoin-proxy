@@ -254,6 +254,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
 
     payload["model"] = used_cfg.model_id
     payload.pop("model_provider", None)
+    payload.pop("previous_response_id", None)
     base_payload = dict(payload)
 
     upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/responses"
