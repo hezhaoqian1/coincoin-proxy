@@ -463,9 +463,31 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
 
         async def iter_bytes():
             buf = b""
-            try:
+            keepalive_comment = b": keepalive\n\n"
+            keepalive_interval = 15
+            last_yield = time.monotonic()
+
+            async def _upstream_chunks():
                 async for chunk in upstream.aiter_bytes():
+                    yield chunk
+
+            chunk_iter = _upstream_chunks().__aiter__()
+            try:
+                while True:
+                    try:
+                        chunk = await asyncio.wait_for(
+                            chunk_iter.__anext__(),
+                            timeout=keepalive_interval,
+                        )
+                    except asyncio.TimeoutError:
+                        yield keepalive_comment
+                        last_yield = time.monotonic()
+                        continue
+                    except StopAsyncIteration:
+                        break
+
                     yield chunk.replace(_model_mask[0], _model_mask[1]) if _model_mask else chunk
+                    last_yield = time.monotonic()
                     buf += chunk
                     while b"\n\n" in buf:
                         event_raw, buf = buf.split(b"\n\n", 1)
