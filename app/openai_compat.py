@@ -810,8 +810,26 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
 
         async def iter_events():
             nonlocal tool_call_index, has_tool_calls, first_content_sent
-            try:
+            keepalive_interval = 15
+
+            async def _upstream_lines():
                 async for line in upstream.aiter_lines():
+                    yield line
+
+            line_iter = _upstream_lines().__aiter__()
+            try:
+                while True:
+                    try:
+                        line = await asyncio.wait_for(
+                            line_iter.__anext__(),
+                            timeout=keepalive_interval,
+                        )
+                    except asyncio.TimeoutError:
+                        yield ": keepalive\n\n"
+                        continue
+                    except StopAsyncIteration:
+                        break
+
                     if not line or not line.startswith("data:"):
                         continue
                     data = line[5:].strip()
