@@ -126,6 +126,22 @@ def _ensure_content_text(payload: dict) -> None:
         msg["content"] = cleaned if cleaned else [{"type": "input_text", "text": ""}]
 
 
+def _strip_reasoning_items(payload: dict) -> None:
+    """Remove top-level reasoning/thinking items from input.
+
+    Non-reasoning models (e.g. gpt-4o-mini) reject these; reasoning models
+    (gpt-5.2-codex) accept them.  Called per-model in _send_stream/_post_json
+    so that reasoning context is preserved for models that can use it.
+    """
+    inp = payload.get("input")
+    if not isinstance(inp, list):
+        return
+    payload["input"] = [
+        item for item in inp
+        if not (isinstance(item, dict) and item.get("type") in ("reasoning", "thinking"))
+    ]
+
+
 router = APIRouter(prefix="/openai/v1", tags=["proxy"])
 logger = logging.getLogger("coincoin.proxy")
 
@@ -384,6 +400,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 send_payload.pop("previous_response_id", None)
                 if "codex" not in (cfg.model_id or "").lower():
                     send_payload.pop("reasoning", None)
+                    _strip_reasoning_items(send_payload)
             if cfg.strip_unsupported:
                 for param in _STRIP_PARAMS:
                     send_payload.pop(param, None)
@@ -412,6 +429,11 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         if can_fallback and upstream.status_code >= 400:
             _fb = "cheap" if is_cheap else "premium"
             _code = upstream.status_code
+            try:
+                _err = await upstream.aread()
+                logger.warning("%s upstream returned %d: %s", _fb, _code, _err[:500])
+            except Exception:
+                pass
             try:
                 await upstream.aclose()
             except Exception:
@@ -550,6 +572,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             send_payload.pop("previous_response_id", None)
             if "codex" not in (cfg.model_id or "").lower():
                 send_payload.pop("reasoning", None)
+                _strip_reasoning_items(send_payload)
         if cfg.strip_unsupported:
             for param in _STRIP_PARAMS:
                 send_payload.pop(param, None)
@@ -579,8 +602,13 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
 
     if can_fallback and upstream.status_code >= 400:
         _fb = "cheap" if is_cheap else "premium"
+        _code = upstream.status_code
+        try:
+            logger.warning("%s upstream returned %d: %s", _fb, _code, upstream.text[:500])
+        except Exception:
+            pass
         used_cfg = fallback_cfg
-        used_route_reason = f"{_fb}_fallback_{upstream.status_code}"
+        used_route_reason = f"{_fb}_fallback_{_code}"
         can_fallback = False
         is_cheap = False
         upstream, duration_ms = await _post_json(used_cfg)

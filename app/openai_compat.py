@@ -12,9 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .config import settings
 from .db import get_db
 from .proxy import (
-    _ensure_content_text, _sanitize_encrypted_ids, authenticate_user,
-    authorize_request, filter_headers, get_http_client, get_stream_client,
-    proxy_responses, responses_health,
+    _ensure_content_text, _sanitize_encrypted_ids, _strip_reasoning_items,
+    authenticate_user, authorize_request, filter_headers, get_http_client,
+    get_stream_client, proxy_responses, responses_health,
 )
 from .router import registry as model_registry
 from .router import resolve as resolve_model
@@ -720,6 +720,11 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
         async def _send_stream(cfg):
             send_payload = dict(resp_payload)
             send_payload["model"] = cfg.model_id
+            if "cognitiveservices.azure.com" in (cfg.upstream_url or ""):
+                send_payload.pop("previous_response_id", None)
+                if "codex" not in (cfg.model_id or "").lower():
+                    send_payload.pop("reasoning", None)
+                    _strip_reasoning_items(send_payload)
             if cfg.strip_unsupported:
                 for field in _STRIP_PARAMS:
                     send_payload.pop(field, None)
@@ -991,6 +996,11 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
     async def _post_json(cfg):
         send_payload = dict(resp_payload)
         send_payload["model"] = cfg.model_id
+        if "cognitiveservices.azure.com" in (cfg.upstream_url or ""):
+            send_payload.pop("previous_response_id", None)
+            if "codex" not in (cfg.model_id or "").lower():
+                send_payload.pop("reasoning", None)
+                _strip_reasoning_items(send_payload)
         if cfg.strip_unsupported:
             for field in _STRIP_PARAMS:
                 send_payload.pop(field, None)
