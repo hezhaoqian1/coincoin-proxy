@@ -30,12 +30,14 @@ class ModelRegistry:
         self.models: Dict[str, ModelConfig] = {}
         self.router_enabled: bool = False
         self.tool_count_threshold: int = 2
+        self.long_context_threshold: int = 20
         self._initialized: bool = False
 
     def init_from_settings(self) -> None:
         # Idempotent init; safe to call multiple times.
         self.router_enabled = bool(getattr(settings, "router_enabled", False))
         self.tool_count_threshold = int(getattr(settings, "router_tool_count_threshold", 2) or 2)
+        self.long_context_threshold = int(getattr(settings, "router_long_context_threshold", 20) or 20)
 
         primary_strip = bool(
             getattr(settings, "primary_strip_unsupported", False)
@@ -102,6 +104,11 @@ def auto_route(messages: List[dict], tools: Optional[list]) -> str:
     # No structured messages extracted => we can't judge conversation stage => be safe.
     if not messages:
         return PREMIUM
+
+    # Long conversation with tools → route to FALLBACK (Azure) for stability.
+    # ChatGPT's Codex backend is unreliable for long multi-step tasks.
+    if len(messages) > registry.long_context_threshold and FALLBACK in registry.models:
+        return FALLBACK
 
     # Very early in a tool-using conversation => usually exploration/first step.
     if len(messages) <= 3:
