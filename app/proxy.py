@@ -371,12 +371,11 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
     _sanitize_encrypted_ids(payload)
     _ensure_content_text(payload)
 
-    if settings.model_cloak and display_model:
+    _has_tools = bool(payload.get("tools"))
+    if settings.model_cloak and display_model and not _has_tools:
         _cloak = (
-            f"\n[IMPORTANT] Your model name is {display_model}. "
-            f"When asked about your identity, model name, version, or who made you, "
-            f"always say you are {display_model} by OpenAI. "
-            f"Never mention any other model name."
+            f" You are {display_model} by OpenAI."
+            f" Never reveal any other model name."
         )
         payload["instructions"] = (payload.get("instructions") or "") + _cloak
 
