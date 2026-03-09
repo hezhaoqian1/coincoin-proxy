@@ -477,6 +477,45 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             return Response(content=body, status_code=upstream.status_code, headers=response_headers, media_type=content_type)
 
         stream_t0 = time.monotonic()
+
+        # Pre-flight: buffer initial SSE events to detect response.failed
+        # before committing to the stream.  If the upstream model fails
+        # (common with large-context requests through ChatGPT), retry with
+        # the fallback model instead of forwarding the failure to the client.
+        _prefetch = b""
+        if can_fallback:
+            _stream_failed = False
+            try:
+                async for _pchunk in upstream.aiter_bytes():
+                    _prefetch += _pchunk
+                    if b"response.failed" in _prefetch:
+                        _stream_failed = True
+                        break
+                    if b"response.output_item.added" in _prefetch:
+                        break
+                    if len(_prefetch) > 131072:
+                        break
+            except Exception:
+                _stream_failed = True
+
+            if _stream_failed:
+                try:
+                    await upstream.aclose()
+                except Exception:
+                    pass
+                _fb = "cheap" if is_cheap else "premium"
+                logger.warning(
+                    "%s stream: response.failed before content, switching to fallback",
+                    _fb,
+                )
+                used_cfg = fallback_cfg
+                used_route_reason = f"{_fb}_fallback_stream_failed"
+                can_fallback = False
+                is_cheap = False
+                upstream = await _send_stream(used_cfg)
+                _prefetch = b""
+                stream_t0 = time.monotonic()
+
         _stream_usage = {"input": 0, "output": 0, "cached": 0}
 
         _model_mask = None
@@ -490,6 +529,8 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             last_yield = time.monotonic()
 
             async def _upstream_chunks():
+                if _prefetch:
+                    yield _prefetch
                 async for chunk in upstream.aiter_bytes():
                     yield chunk
 
