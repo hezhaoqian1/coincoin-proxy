@@ -100,26 +100,12 @@ registry = ModelRegistry()
 
 
 def auto_route(messages: List[dict], tools: Optional[list]) -> str:
-    # No tools => not an agentic tool-calling loop => premium for quality.
-    if not tools:
+    # Has tools => agentic/Codex coding task => needs the strong model.
+    if tools:
         return PREMIUM
 
-    # No structured messages extracted => we can't judge conversation stage => be safe.
-    if not messages:
-        return PREMIUM
-
-    # Very early in a tool-using conversation => usually exploration/first step.
-    if len(messages) <= 3:
-        return CHEAP
-
-    last_role = messages[-1].get("role") if messages else None
-    if last_role == "tool":
-        recent = messages[-5:]
-        tool_count = sum(1 for m in recent if isinstance(m, dict) and m.get("role") == "tool")
-        if tool_count >= registry.tool_count_threshold:
-            return CHEAP
-
-    return PREMIUM
+    # No tools, simple question/chat => cheap model is fine.
+    return CHEAP
 
 
 def resolve(messages: List[dict], tools: Optional[list]) -> Tuple[ModelConfig, str]:
