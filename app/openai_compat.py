@@ -534,6 +534,16 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
         "input": converted_messages,
         "stream": bool(payload.get("stream")),
     }
+
+    if settings.model_cloak and display_model:
+        _cloak = (
+            f"\n[IMPORTANT] Your model name is {display_model}. "
+            f"When asked about your identity, model name, version, or who made you, "
+            f"always say you are {display_model} by OpenAI. "
+            f"Never mention any other model name."
+        )
+        resp_payload["instructions"] = (resp_payload.get("instructions") or "") + _cloak
+
     if used_cfg.strip_unsupported:
         _sanitize_encrypted_ids(resp_payload)
     _ensure_content_text(resp_payload)
