@@ -553,6 +553,8 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                             _retry_ok = False
                             chunk = _held
                             _held = b""
+                        else:
+                            continue
 
                     yield chunk.replace(_model_mask[0], _model_mask[1]) if _model_mask else chunk
                     last_yield = time.monotonic()
