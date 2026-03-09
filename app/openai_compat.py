@@ -12,9 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .config import settings
 from .db import get_db
 from .proxy import (
-    _sanitize_encrypted_ids, authenticate_user, authorize_request,
-    filter_headers, get_http_client, get_stream_client, proxy_responses,
-    responses_health,
+    _ensure_content_text, _sanitize_encrypted_ids, authenticate_user,
+    authorize_request, filter_headers, get_http_client, get_stream_client,
+    proxy_responses, responses_health,
 )
 from .router import registry as model_registry
 from .router import resolve as resolve_model
@@ -451,6 +451,10 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                 
                 # 如果有文本内容，先添加 assistant 消息
                 if content:
+                    if isinstance(content, list):
+                        for part in content:
+                            if isinstance(part, dict) and part.get("type") == "text":
+                                part["type"] = "output_text"
                     converted.append({"role": "assistant", "content": content})
                 
                 # 将每个 tool_call 转换为 function_call item
@@ -532,6 +536,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
     }
     if used_cfg.strip_unsupported:
         _sanitize_encrypted_ids(resp_payload)
+    _ensure_content_text(resp_payload)
 
     # max_tokens -> max_output_tokens (will be stripped later if model doesn't support it)
     if "max_tokens" in payload:
