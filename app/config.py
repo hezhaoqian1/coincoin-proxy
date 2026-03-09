@@ -70,6 +70,9 @@ class Settings(BaseSettings):
     # backed by ChatGPT that reject these params.
     primary_strip_unsupported: bool = False
 
+    # Auth style: "azure" uses api-key header, "bearer" uses Authorization: Bearer
+    primary_auth_style: str = "azure"
+
     # Cheap model (optional)
     cheap_model: str = ""
     cheap_upstream_url: str = ""  # empty = use main upstream
@@ -83,6 +86,7 @@ class Settings(BaseSettings):
     fallback_api_key: str = ""  # empty = use main api key
     fallback_price_input: int = 99  # cents per million tokens
     fallback_price_output: int = 699  # cents per million tokens
+    fallback_auth_style: str = ""  # empty = inherit primary_auth_style
 
     class Config:
         env_prefix = "COINCOIN_"
