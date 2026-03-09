@@ -113,7 +113,7 @@ def auto_route(messages: List[dict], tools: Optional[list]) -> str:
 def resolve(messages: List[dict], tools: Optional[list]) -> Tuple[ModelConfig, str]:
     """Return (model_config, route_reason)."""
     registry.ensure_initialized()
-    if not registry.router_enabled or CHEAP not in registry.models:
+    if not registry.router_enabled:
         return registry.get(PREMIUM), "router_disabled"
 
     slot = auto_route(messages, tools)
