@@ -239,7 +239,13 @@ def filter_headers(headers: Dict[str, str]) -> Dict[str, str]:
 
 @router.get("/responses")
 async def responses_health():
-    return {"status": "ok"}
+    model_registry.ensure_initialized()
+    return {
+        "status": "ok",
+        "version": "2024-03-09-v3",
+        "router_enabled": model_registry.router_enabled,
+        "models": {k: v.model_id for k, v in model_registry.models.items()},
+    }
 
 
 async def _resolve_user(request: Request, db: AsyncSession):
@@ -602,6 +608,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         stream_headers.pop("content-length", None)
         stream_headers.setdefault("cache-control", "no-cache")
         stream_headers.setdefault("x-accel-buffering", "no")
+        stream_headers["x-cc-route"] = f"{used_route_reason}|{used_cfg.model_id}"
         return StreamingResponse(
             iter_bytes(),
             status_code=upstream.status_code,
@@ -735,6 +742,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
     elif isinstance(data, (dict, str)):
         logger.error("upstream error %s: %s", upstream.status_code, str(data)[:500])
 
+    response_headers["x-cc-route"] = f"{used_route_reason}|{used_cfg.model_id}"
     if isinstance(data, dict):
         data["model"] = display_model
         return JSONResponse(content=data, status_code=upstream.status_code, headers=response_headers)
