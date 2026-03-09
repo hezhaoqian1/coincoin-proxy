@@ -807,42 +807,6 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                 return Response(content=body, status_code=upstream.status_code, headers=response_headers, media_type=content_type)
 
         compat_stream_t0 = time.monotonic()
-
-        _prefetch_lines: list = []
-        if can_fallback:
-            _stream_failed = False
-            try:
-                async for _line in upstream.aiter_lines():
-                    _prefetch_lines.append(_line)
-                    if "response.failed" in _line:
-                        _stream_failed = True
-                        break
-                    if "response.output_item.added" in _line:
-                        break
-                    if len(_prefetch_lines) > 200:
-                        break
-            except Exception:
-                _stream_failed = True
-
-            if _stream_failed:
-                try:
-                    await upstream.aclose()
-                except Exception:
-                    pass
-                _fb = "cheap" if is_cheap else "premium"
-                import logging as _logging
-                _logging.getLogger("coincoin.compat").warning(
-                    "%s stream: response.failed before content, switching to fallback",
-                    _fb,
-                )
-                used_cfg = fallback_cfg
-                used_route_reason = f"{_fb}_fallback_stream_failed"
-                can_fallback = False
-                is_cheap = False
-                upstream = await _send_stream(used_cfg)
-                _prefetch_lines = []
-                compat_stream_t0 = time.monotonic()
-
         stream_id = f"chatcmpl-{secrets.token_hex(12)}"
         tool_call_index = 0
         has_tool_calls = False
@@ -851,11 +815,11 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
 
         async def iter_events():
             nonlocal tool_call_index, has_tool_calls, first_content_sent
+            nonlocal upstream, used_cfg, used_route_reason, is_cheap, compat_stream_t0
             keepalive_interval = 15
+            _retry_ok = can_fallback
 
             async def _upstream_lines():
-                for line in _prefetch_lines:
-                    yield line
                 async for line in upstream.aiter_lines():
                     yield line
 
@@ -883,6 +847,30 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                     except Exception:
                         continue
                     event_type = event.get("type")
+
+                    # Pre-flight retry: if upstream fails before any content,
+                    # silently switch to fallback instead of forwarding the error.
+                    if _retry_ok and event_type in ("response.failed", "response.error"):
+                        try:
+                            await upstream.aclose()
+                        except Exception:
+                            pass
+                        _fb = "cheap" if is_cheap else "premium"
+                        import logging as _logging
+                        _logging.getLogger("coincoin.compat").warning(
+                            "%s stream: %s before content, switching to fallback",
+                            _fb, event_type,
+                        )
+                        used_cfg = fallback_cfg
+                        used_route_reason = f"{_fb}_fallback_stream_failed"
+                        is_cheap = False
+                        upstream = await _send_stream(used_cfg)
+                        compat_stream_t0 = time.monotonic()
+                        _retry_ok = False
+                        line_iter = _upstream_lines().__aiter__()
+                        continue
+                    if event_type and "output" in event_type:
+                        _retry_ok = False
 
                     usage = event.get("usage") or (event.get("response") or {}).get("usage")
                     if usage:
