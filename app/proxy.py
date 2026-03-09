@@ -244,7 +244,7 @@ async def responses_health():
     model_registry.ensure_initialized()
     return {
         "status": "ok",
-        "version": "2024-03-09-v3",
+        "version": "2024-03-09-v4-pool-fix",
         "router_enabled": model_registry.router_enabled,
         "models": {k: v.model_id for k, v in model_registry.models.items()},
     }
