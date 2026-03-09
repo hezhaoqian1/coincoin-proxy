@@ -160,7 +160,6 @@ async def get_http_client() -> httpx.AsyncClient:
         limits = httpx.Limits(
             max_connections=settings.http_pool_max,
             max_keepalive_connections=settings.http_pool_keepalive,
-            keepalive_expiry=5,
         )
         _http_client = httpx.AsyncClient(limits=limits, timeout=httpx.Timeout(60.0), trust_env=False)
         return _http_client
@@ -176,9 +175,8 @@ async def get_stream_client() -> httpx.AsyncClient:
         limits = httpx.Limits(
             max_connections=settings.http_pool_max,
             max_keepalive_connections=settings.http_pool_keepalive,
-            keepalive_expiry=5,
         )
-        stream_timeout = httpx.Timeout(connect=10.0, read=None, write=60.0, pool=60.0)
+        stream_timeout = httpx.Timeout(connect=5.0, read=None, write=60.0, pool=60.0)
         _http_stream_client = httpx.AsyncClient(limits=limits, timeout=stream_timeout, trust_env=False)
         return _http_stream_client
 
@@ -241,13 +239,7 @@ def filter_headers(headers: Dict[str, str]) -> Dict[str, str]:
 
 @router.get("/responses")
 async def responses_health():
-    model_registry.ensure_initialized()
-    return {
-        "status": "ok",
-        "version": "2024-03-09-v4-pool-fix",
-        "router_enabled": model_registry.router_enabled,
-        "models": {k: v.model_id for k, v in model_registry.models.items()},
-    }
+    return {"status": "ok"}
 
 
 async def _resolve_user(request: Request, db: AsyncSession):
@@ -401,8 +393,6 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
 
         stream_client = await get_stream_client()
 
-        _SEND_RETRIES = 2
-
         async def _send_stream(cfg):
             send_payload = dict(base_payload)
             send_payload["model"] = cfg.model_id
@@ -416,16 +406,8 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                     send_payload.pop(param, None)
             req_url = f"{cfg.upstream_url.rstrip('/')}/responses"
             req_headers = {"api-key": cfg.api_key, "content-type": "application/json"}
-            last_exc = None
-            for attempt in range(_SEND_RETRIES):
-                try:
-                    req = stream_client.build_request("POST", req_url, json=send_payload, headers=req_headers)
-                    return await stream_client.send(req, stream=True)
-                except (httpx.ConnectError, httpx.RemoteProtocolError, ConnectionError, OSError) as exc:
-                    last_exc = exc
-                    logger.warning("stream connect attempt %d failed: %s", attempt + 1, exc)
-                    await asyncio.sleep(0.5)
-            raise last_exc
+            req = stream_client.build_request("POST", req_url, json=send_payload, headers=req_headers)
+            return await stream_client.send(req, stream=True)
 
         try:
             upstream = await _send_stream(used_cfg)
@@ -540,9 +522,6 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                             yield chunk.replace(_model_mask[0], _model_mask[1]) if _model_mask else chunk
                             buf += chunk
                         break
-                    except Exception as exc:
-                        logger.error("stream read error: %s", exc)
-                        break
 
                     if _retry_ok:
                         _held += chunk
@@ -623,7 +602,6 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         stream_headers.pop("content-length", None)
         stream_headers.setdefault("cache-control", "no-cache")
         stream_headers.setdefault("x-accel-buffering", "no")
-        stream_headers["x-cc-route"] = f"{used_route_reason}|{used_cfg.model_id}"
         return StreamingResponse(
             iter_bytes(),
             status_code=upstream.status_code,
@@ -757,7 +735,6 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
     elif isinstance(data, (dict, str)):
         logger.error("upstream error %s: %s", upstream.status_code, str(data)[:500])
 
-    response_headers["x-cc-route"] = f"{used_route_reason}|{used_cfg.model_id}"
     if isinstance(data, dict):
         data["model"] = display_model
         return JSONResponse(content=data, status_code=upstream.status_code, headers=response_headers)
