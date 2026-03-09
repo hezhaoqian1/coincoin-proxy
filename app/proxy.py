@@ -117,7 +117,10 @@ def _ensure_content_text(payload: dict) -> None:
             ct = c.get("type", "")
             if ct in ("reasoning", "thinking"):
                 continue
-            if ct in ("input_text", "output_text", "text", "") and ("text" not in c or c.get("text") is None):
+            role = msg.get("role", "user")
+            if ct == "text" or ct == "":
+                c["type"] = "output_text" if role == "assistant" else "input_text"
+            if c.get("type") in ("input_text", "output_text") and ("text" not in c or c.get("text") is None):
                 c["text"] = ""
             cleaned.append(c)
         msg["content"] = cleaned if cleaned else [{"type": "input_text", "text": ""}]
