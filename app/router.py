@@ -30,14 +30,12 @@ class ModelRegistry:
         self.models: Dict[str, ModelConfig] = {}
         self.router_enabled: bool = False
         self.tool_count_threshold: int = 2
-        self.long_context_threshold: int = 20
         self._initialized: bool = False
 
     def init_from_settings(self) -> None:
         # Idempotent init; safe to call multiple times.
         self.router_enabled = bool(getattr(settings, "router_enabled", False))
         self.tool_count_threshold = int(getattr(settings, "router_tool_count_threshold", 2) or 2)
-        self.long_context_threshold = int(getattr(settings, "router_long_context_threshold", 20) or 20)
 
         primary_strip = bool(
             getattr(settings, "primary_strip_unsupported", False)
@@ -97,15 +95,24 @@ registry = ModelRegistry()
 
 
 def auto_route(messages: List[dict], tools: Optional[list]) -> str:
-    # No tools → pure conversation → PREMIUM (zhuceji gpt-5.4) for quality.
+    # No tools => not an agentic tool-calling loop => premium for quality.
     if not tools:
         return PREMIUM
 
-    # Has tools → agentic coding workflow → always use Azure for reliability.
-    # ChatGPT's Codex backend randomly returns response.failed or drops
-    # streams mid-conversation, making multi-step tool use unreliable.
-    if FALLBACK in registry.models:
-        return FALLBACK
+    # No structured messages extracted => we can't judge conversation stage => be safe.
+    if not messages:
+        return PREMIUM
+
+    # Very early in a tool-using conversation => usually exploration/first step.
+    if len(messages) <= 3:
+        return CHEAP
+
+    last_role = messages[-1].get("role") if messages else None
+    if last_role == "tool":
+        recent = messages[-5:]
+        tool_count = sum(1 for m in recent if isinstance(m, dict) and m.get("role") == "tool")
+        if tool_count >= registry.tool_count_threshold:
+            return CHEAP
 
     return PREMIUM
 
@@ -113,7 +120,7 @@ def auto_route(messages: List[dict], tools: Optional[list]) -> str:
 def resolve(messages: List[dict], tools: Optional[list]) -> Tuple[ModelConfig, str]:
     """Return (model_config, route_reason)."""
     registry.ensure_initialized()
-    if not registry.router_enabled:
+    if not registry.router_enabled or CHEAP not in registry.models:
         return registry.get(PREMIUM), "router_disabled"
 
     slot = auto_route(messages, tools)
