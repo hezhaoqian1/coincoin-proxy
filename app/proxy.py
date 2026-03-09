@@ -145,7 +145,11 @@ async def get_http_client() -> httpx.AsyncClient:
             max_connections=settings.http_pool_max,
             max_keepalive_connections=settings.http_pool_keepalive,
         )
-        _http_client = httpx.AsyncClient(limits=limits, timeout=httpx.Timeout(60.0), trust_env=False)
+        _http_client = httpx.AsyncClient(
+            limits=limits,
+            timeout=httpx.Timeout(connect=10.0, read=60.0, write=60.0, pool=60.0),
+            trust_env=False,
+        )
         return _http_client
 
 

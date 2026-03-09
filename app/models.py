@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, CheckConstraint, Date, DateTime, ForeignKey, String
+from sqlalchemy import BigInteger, CheckConstraint, Date, DateTime, ForeignKey, Index, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
@@ -92,6 +92,9 @@ class RequestLog(Base):
     duration_ms: Mapped[int] = mapped_column(BigInteger, default=0)  # 响应耗时（毫秒）
     status_code: Mapped[int] = mapped_column(BigInteger, default=200)  # 上游响应状态码
     route_reason: Mapped[str] = mapped_column(String(64), default="")  # router decision / fallback reason
+
+
+Index("ix_request_logs_user_created", RequestLog.user_id, RequestLog.created_at.desc())
 
 
 class RechargeLog(Base):

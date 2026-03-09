@@ -102,7 +102,7 @@ async def register(
     account = Account(
         id=generate_id("acc_"),
         username=payload.username,
-        password_hash=hash_password(payload.password),
+        password_hash=await hash_password(payload.password),
         linked_user_id=user.id,
     )
     db.add(account)
@@ -138,7 +138,7 @@ async def login(
         remaining = int((account.locked_until - now).total_seconds() / 60) + 1
         raise HTTPException(status.HTTP_423_LOCKED, f"account locked, try again in {remaining} min")
 
-    if not verify_password(payload.password, account.password_hash):
+    if not await verify_password(payload.password, account.password_hash):
         account.failed_attempts = (account.failed_attempts or 0) + 1
         if account.failed_attempts >= MAX_FAILED_ATTEMPTS:
             account.locked_until = now + timedelta(minutes=LOCKOUT_MINUTES)

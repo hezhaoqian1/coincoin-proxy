@@ -43,7 +43,7 @@ async def reconcile_once(max_orders: int = 20, lookback_hours: int = 72) -> int:
     return confirmed
 
 
-async def reconcile_loop(interval_seconds: int = 60) -> None:
+async def reconcile_loop(interval_seconds: int = 300) -> None:
     """
     Periodically reconcile pending orders. This is a safety net for missed callbacks
     and for users closing the browser before the frontend confirms the payment.
