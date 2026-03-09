@@ -117,29 +117,10 @@ def _ensure_content_text(payload: dict) -> None:
             ct = c.get("type", "")
             if ct in ("reasoning", "thinking"):
                 continue
-            role = msg.get("role", "user")
-            if ct == "text" or ct == "":
-                c["type"] = "output_text" if role == "assistant" else "input_text"
-            if c.get("type") in ("input_text", "output_text") and ("text" not in c or c.get("text") is None):
+            if ct in ("input_text", "output_text", "text", "") and ("text" not in c or c.get("text") is None):
                 c["text"] = ""
             cleaned.append(c)
         msg["content"] = cleaned if cleaned else [{"type": "input_text", "text": ""}]
-
-
-def _strip_reasoning_items(payload: dict) -> None:
-    """Remove top-level reasoning/thinking items from input.
-
-    Non-reasoning models (e.g. gpt-4o-mini) reject these; reasoning models
-    (gpt-5.2-codex) accept them.  Called per-model in _send_stream/_post_json
-    so that reasoning context is preserved for models that can use it.
-    """
-    inp = payload.get("input")
-    if not isinstance(inp, list):
-        return
-    payload["input"] = [
-        item for item in inp
-        if not (isinstance(item, dict) and item.get("type") in ("reasoning", "thinking"))
-    ]
 
 
 router = APIRouter(prefix="/openai/v1", tags=["proxy"])
@@ -400,7 +381,6 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 send_payload.pop("previous_response_id", None)
                 if "codex" not in (cfg.model_id or "").lower():
                     send_payload.pop("reasoning", None)
-                    _strip_reasoning_items(send_payload)
             if cfg.strip_unsupported:
                 for param in _STRIP_PARAMS:
                     send_payload.pop(param, None)
@@ -429,11 +409,6 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         if can_fallback and upstream.status_code >= 400:
             _fb = "cheap" if is_cheap else "premium"
             _code = upstream.status_code
-            try:
-                _err = await upstream.aread()
-                logger.warning("%s upstream returned %d: %s", _fb, _code, _err[:500])
-            except Exception:
-                pass
             try:
                 await upstream.aclose()
             except Exception:
@@ -484,84 +459,10 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             _model_mask = (used_cfg.model_id.encode(), display_model.encode())
 
         async def iter_bytes():
-            nonlocal upstream, used_cfg, used_route_reason, is_cheap, _model_mask, stream_t0
-
             buf = b""
-            keepalive_comment = b": keepalive\n\n"
-            keepalive_interval = 15
-            last_yield = time.monotonic()
-
-            # Pre-flight: buffer SSE events before any output content.
-            # If we see response.failed, close stream and retry with
-            # fallback — the client only sees keepalive comments during
-            # the wait, so the switch is transparent.
-            _retry_ok = can_fallback
-            _held = b""
-
-            async def _upstream_chunks():
-                async for chunk in upstream.aiter_bytes():
-                    yield chunk
-
-            chunk_iter = _upstream_chunks().__aiter__()
             try:
-                while True:
-                    try:
-                        chunk = await asyncio.wait_for(
-                            chunk_iter.__anext__(),
-                            timeout=keepalive_interval,
-                        )
-                    except asyncio.TimeoutError:
-                        yield keepalive_comment
-                        last_yield = time.monotonic()
-                        continue
-                    except StopAsyncIteration:
-                        if _retry_ok and _held:
-                            _retry_ok = False
-                            chunk = _held
-                            _held = b""
-                            yield chunk.replace(_model_mask[0], _model_mask[1]) if _model_mask else chunk
-                            buf += chunk
-                        break
-
-                    if _retry_ok:
-                        _held += chunk
-                        if b"response.failed" in _held:
-                            try:
-                                await upstream.aclose()
-                            except Exception:
-                                pass
-                            _fb = "cheap" if is_cheap else "premium"
-                            logger.warning(
-                                "%s stream: response.failed before content, switching to fallback",
-                                _fb,
-                            )
-                            used_cfg = fallback_cfg
-                            used_route_reason = f"{_fb}_fallback_stream_failed"
-                            is_cheap = False
-                            upstream = await _send_stream(used_cfg)
-                            if used_cfg.model_id != display_model:
-                                _model_mask = (used_cfg.model_id.encode(), display_model.encode())
-                            else:
-                                _model_mask = None
-                            stream_t0 = time.monotonic()
-                            _retry_ok = False
-                            _held = b""
-                            chunk_iter = _upstream_chunks().__aiter__()
-                            continue
-
-                        if b"response.output_item.added" in _held or len(_held) > 131072:
-                            _retry_ok = False
-                            chunk = _held
-                            _held = b""
-                        else:
-                            continue
-
-                    if not _retry_ok and b"response.failed" in chunk:
-                        logger.warning("response.failed after content started, closing stream gracefully")
-                        break
-
+                async for chunk in upstream.aiter_bytes():
                     yield chunk.replace(_model_mask[0], _model_mask[1]) if _model_mask else chunk
-                    last_yield = time.monotonic()
                     buf += chunk
                     while b"\n\n" in buf:
                         event_raw, buf = buf.split(b"\n\n", 1)
@@ -624,7 +525,6 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             send_payload.pop("previous_response_id", None)
             if "codex" not in (cfg.model_id or "").lower():
                 send_payload.pop("reasoning", None)
-                _strip_reasoning_items(send_payload)
         if cfg.strip_unsupported:
             for param in _STRIP_PARAMS:
                 send_payload.pop(param, None)
@@ -654,13 +554,8 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
 
     if can_fallback and upstream.status_code >= 400:
         _fb = "cheap" if is_cheap else "premium"
-        _code = upstream.status_code
-        try:
-            logger.warning("%s upstream returned %d: %s", _fb, _code, upstream.text[:500])
-        except Exception:
-            pass
         used_cfg = fallback_cfg
-        used_route_reason = f"{_fb}_fallback_{_code}"
+        used_route_reason = f"{_fb}_fallback_{upstream.status_code}"
         can_fallback = False
         is_cheap = False
         upstream, duration_ms = await _post_json(used_cfg)
