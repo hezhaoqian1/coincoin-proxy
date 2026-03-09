@@ -872,6 +872,13 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                     if event_type and "output" in event_type:
                         _retry_ok = False
 
+                    if not _retry_ok and event_type in ("response.failed", "response.error"):
+                        import logging as _logging
+                        _logging.getLogger("coincoin.compat").warning(
+                            "response.failed after content started, closing stream gracefully",
+                        )
+                        break
+
                     usage = event.get("usage") or (event.get("response") or {}).get("usage")
                     if usage:
                         _compat_stream_usage["input"] = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
