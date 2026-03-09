@@ -12,9 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .config import settings
 from .db import get_db
 from .proxy import (
-    _ensure_content_text, _sanitize_encrypted_ids, _strip_reasoning_items,
-    authenticate_user, authorize_request, filter_headers, get_http_client,
-    get_stream_client, proxy_responses, responses_health,
+    _sanitize_encrypted_ids, authenticate_user, authorize_request,
+    filter_headers, get_http_client, get_stream_client, proxy_responses,
+    responses_health,
 )
 from .router import registry as model_registry
 from .router import resolve as resolve_model
@@ -451,10 +451,6 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                 
                 # 如果有文本内容，先添加 assistant 消息
                 if content:
-                    if isinstance(content, list):
-                        for part in content:
-                            if isinstance(part, dict) and part.get("type") == "text":
-                                part["type"] = "output_text"
                     converted.append({"role": "assistant", "content": content})
                 
                 # 将每个 tool_call 转换为 function_call item
@@ -536,7 +532,6 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
     }
     if used_cfg.strip_unsupported:
         _sanitize_encrypted_ids(resp_payload)
-    _ensure_content_text(resp_payload)
 
     # max_tokens -> max_output_tokens (will be stripped later if model doesn't support it)
     if "max_tokens" in payload:
@@ -720,11 +715,6 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
         async def _send_stream(cfg):
             send_payload = dict(resp_payload)
             send_payload["model"] = cfg.model_id
-            if "cognitiveservices.azure.com" in (cfg.upstream_url or ""):
-                send_payload.pop("previous_response_id", None)
-                if "codex" not in (cfg.model_id or "").lower():
-                    send_payload.pop("reasoning", None)
-                    _strip_reasoning_items(send_payload)
             if cfg.strip_unsupported:
                 for field in _STRIP_PARAMS:
                     send_payload.pop(field, None)
@@ -806,37 +796,17 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                     return JSONResponse(content=build_chat_response(data, display_model), status_code=upstream.status_code, headers=response_headers)
                 return Response(content=body, status_code=upstream.status_code, headers=response_headers, media_type=content_type)
 
-        compat_stream_t0 = time.monotonic()
         stream_id = f"chatcmpl-{secrets.token_hex(12)}"
         tool_call_index = 0
         has_tool_calls = False
         first_content_sent = False
+        compat_stream_t0 = time.monotonic()
         _compat_stream_usage = {"input": 0, "output": 0, "cached": 0}
 
         async def iter_events():
             nonlocal tool_call_index, has_tool_calls, first_content_sent
-            nonlocal upstream, used_cfg, used_route_reason, is_cheap, compat_stream_t0
-            keepalive_interval = 15
-            _retry_ok = can_fallback
-
-            async def _upstream_lines():
-                async for line in upstream.aiter_lines():
-                    yield line
-
-            line_iter = _upstream_lines().__aiter__()
             try:
-                while True:
-                    try:
-                        line = await asyncio.wait_for(
-                            line_iter.__anext__(),
-                            timeout=keepalive_interval,
-                        )
-                    except asyncio.TimeoutError:
-                        yield ": keepalive\n\n"
-                        continue
-                    except StopAsyncIteration:
-                        break
-
+                async for line in upstream.aiter_lines():
                     if not line or not line.startswith("data:"):
                         continue
                     data = line[5:].strip()
@@ -847,37 +817,6 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                     except Exception:
                         continue
                     event_type = event.get("type")
-
-                    # Pre-flight retry: if upstream fails before any content,
-                    # silently switch to fallback instead of forwarding the error.
-                    if _retry_ok and event_type in ("response.failed", "response.error"):
-                        try:
-                            await upstream.aclose()
-                        except Exception:
-                            pass
-                        _fb = "cheap" if is_cheap else "premium"
-                        import logging as _logging
-                        _logging.getLogger("coincoin.compat").warning(
-                            "%s stream: %s before content, switching to fallback",
-                            _fb, event_type,
-                        )
-                        used_cfg = fallback_cfg
-                        used_route_reason = f"{_fb}_fallback_stream_failed"
-                        is_cheap = False
-                        upstream = await _send_stream(used_cfg)
-                        compat_stream_t0 = time.monotonic()
-                        _retry_ok = False
-                        line_iter = _upstream_lines().__aiter__()
-                        continue
-                    if event_type and "output" in event_type:
-                        _retry_ok = False
-
-                    if not _retry_ok and event_type in ("response.failed", "response.error"):
-                        import logging as _logging
-                        _logging.getLogger("coincoin.compat").warning(
-                            "response.failed after content started, closing stream gracefully",
-                        )
-                        break
 
                     usage = event.get("usage") or (event.get("response") or {}).get("usage")
                     if usage:
@@ -1029,11 +968,6 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
     async def _post_json(cfg):
         send_payload = dict(resp_payload)
         send_payload["model"] = cfg.model_id
-        if "cognitiveservices.azure.com" in (cfg.upstream_url or ""):
-            send_payload.pop("previous_response_id", None)
-            if "codex" not in (cfg.model_id or "").lower():
-                send_payload.pop("reasoning", None)
-                _strip_reasoning_items(send_payload)
         if cfg.strip_unsupported:
             for field in _STRIP_PARAMS:
                 send_payload.pop(field, None)

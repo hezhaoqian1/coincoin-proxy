@@ -64,7 +64,6 @@ class Settings(BaseSettings):
     # Router
     router_enabled: bool = False
     router_tool_count_threshold: int = 2
-    router_long_context_threshold: int = 20
 
     # Force strip unsupported params (temperature, top_p, etc.) on primary model
     # even when model name doesn't contain 'codex'. Needed for upstream proxies
