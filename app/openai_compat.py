@@ -12,9 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .config import settings
 from .db import get_db
 from .proxy import (
-    _ensure_content_text, _sanitize_encrypted_ids, authenticate_user,
-    authorize_request, filter_headers, get_http_client, get_stream_client,
-    proxy_responses, responses_health,
+    _build_upstream_headers, _ensure_content_text, _sanitize_encrypted_ids,
+    authenticate_user, authorize_request, filter_headers, get_http_client,
+    get_stream_client, proxy_responses, responses_health,
 )
 from .router import registry as model_registry
 from .router import resolve as resolve_model
@@ -629,10 +629,6 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
             resp_payload[field] = payload[field]
 
     upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/responses"
-    headers = {
-        "api-key": used_cfg.api_key,
-        "content-type": "application/json",
-    }
 
     def build_chat_response(resp: Dict, model_id: str) -> Dict:
         usage = resp.get("usage") or {}
@@ -728,7 +724,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                     if field in payload:
                         send_payload[field] = payload[field]
             stream_upstream_url = f"{cfg.upstream_url.rstrip('/')}/responses"
-            stream_headers = {"api-key": cfg.api_key, "content-type": "application/json"}
+            stream_headers = _build_upstream_headers(cfg)
             req = stream_client.build_request("POST", stream_upstream_url, json=send_payload, headers=stream_headers)
             return await stream_client.send(req, stream=True)
 
@@ -981,7 +977,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                 if field in payload:
                     send_payload[field] = payload[field]
         req_url = f"{cfg.upstream_url.rstrip('/')}/responses"
-        req_headers = {"api-key": cfg.api_key, "content-type": "application/json"}
+        req_headers = _build_upstream_headers(cfg)
         t0 = time.monotonic()
         r = await client.post(req_url, json=send_payload, headers=req_headers)
         dur = int((time.monotonic() - t0) * 1000)
@@ -1114,10 +1110,7 @@ async def embeddings(request: Request, db: AsyncSession = Depends(get_db)):
     payload.pop("model_provider", None)
 
     upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/embeddings"
-    headers = {
-        "api-key": used_cfg.api_key,
-        "content-type": "application/json",
-    }
+    headers = _build_upstream_headers(used_cfg)
 
     client = await get_http_client()
     t0 = time.monotonic()

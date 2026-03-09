@@ -14,6 +14,7 @@ class ModelConfig:
     price_input_per_million: int
     price_output_per_million: int
     strip_unsupported: bool
+    auth_style: str = "azure"  # "azure" → api-key header; "bearer" → Authorization: Bearer
 
 
 PREMIUM = "premium"
@@ -48,6 +49,7 @@ class ModelRegistry:
             price_input_per_million=settings.price_input_per_million,
             price_output_per_million=settings.price_output_per_million,
             strip_unsupported=primary_strip,
+            auth_style=settings.primary_auth_style,
         )
         self.models = {PREMIUM: premium}
 
@@ -60,10 +62,12 @@ class ModelRegistry:
                 price_input_per_million=int(getattr(settings, "cheap_price_input", 0) or 0),
                 price_output_per_million=int(getattr(settings, "cheap_price_output", 0) or 0),
                 strip_unsupported=_is_codex_like(cheap_model),
+                auth_style=settings.primary_auth_style,
             )
 
         fallback_model = (getattr(settings, "fallback_model", "") or "").strip()
         if fallback_model:
+            fb_auth = (getattr(settings, "fallback_auth_style", "") or "").strip()
             self.models[FALLBACK] = ModelConfig(
                 model_id=fallback_model,
                 upstream_url=(getattr(settings, "fallback_upstream_url", "") or settings.upstream_base_url),
@@ -71,6 +75,7 @@ class ModelRegistry:
                 price_input_per_million=int(getattr(settings, "fallback_price_input", 0) or 0),
                 price_output_per_million=int(getattr(settings, "fallback_price_output", 0) or 0),
                 strip_unsupported=_is_codex_like(fallback_model),
+                auth_style=fb_auth or settings.primary_auth_style,
             )
         self._initialized = True
 

@@ -221,6 +221,16 @@ def filter_headers(headers: Dict[str, str]) -> Dict[str, str]:
     return {k: v for k, v in headers.items() if k.lower() not in HOP_BY_HOP_HEADERS}
 
 
+def _build_upstream_headers(cfg) -> Dict[str, str]:
+    """Build upstream request headers with auth style from ModelConfig."""
+    headers = {"content-type": "application/json"}
+    if getattr(cfg, "auth_style", "azure") == "bearer":
+        headers["authorization"] = f"Bearer {cfg.api_key}"
+    else:
+        headers["api-key"] = cfg.api_key
+    return headers
+
+
 @router.get("/responses")
 async def responses_health():
     return {"status": "ok"}
@@ -360,10 +370,6 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
     base_payload = dict(payload)
 
     upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/responses"
-    headers = {
-        "api-key": used_cfg.api_key,
-        "content-type": "application/json",
-    }
 
     _STRIP_PARAMS = ("temperature", "top_p", "presence_penalty", "frequency_penalty",
                      "max_output_tokens", "n", "logprobs", "top_logprobs", "seed")
@@ -388,7 +394,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 for param in _STRIP_PARAMS:
                     send_payload.pop(param, None)
             req_url = f"{cfg.upstream_url.rstrip('/')}/responses"
-            req_headers = {"api-key": cfg.api_key, "content-type": "application/json"}
+            req_headers = _build_upstream_headers(cfg)
             req = stream_client.build_request("POST", req_url, json=send_payload, headers=req_headers)
             return await stream_client.send(req, stream=True)
 
@@ -532,7 +538,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             for param in _STRIP_PARAMS:
                 send_payload.pop(param, None)
         req_url = f"{cfg.upstream_url.rstrip('/')}/responses"
-        req_headers = {"api-key": cfg.api_key, "content-type": "application/json"}
+        req_headers = _build_upstream_headers(cfg)
         t0 = time.monotonic()
         r = await client.post(req_url, json=send_payload, headers=req_headers)
         dur = int((time.monotonic() - t0) * 1000)
