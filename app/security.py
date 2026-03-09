@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import hashlib
 import hmac as _hmac
@@ -31,19 +32,23 @@ def hash_key(key: str) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def hash_password(password: str) -> str:
+def _pbkdf2_derive(password_bytes: bytes, salt: bytes, iterations: int) -> bytes:
+    return hashlib.pbkdf2_hmac("sha256", password_bytes, salt, iterations)
+
+
+async def hash_password(password: str) -> str:
     salt = os.urandom(16)
-    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, PBKDF2_ITERATIONS)
+    dk = await asyncio.to_thread(_pbkdf2_derive, password.encode(), salt, PBKDF2_ITERATIONS)
     return f"pbkdf2_sha256${PBKDF2_ITERATIONS}${salt.hex()}${dk.hex()}"
 
 
-def verify_password(password: str, stored: str) -> bool:
+async def verify_password(password: str, stored: str) -> bool:
     parts = stored.split("$")
     if len(parts) != 4 or parts[0] != "pbkdf2_sha256":
         return False
     iterations = int(parts[1])
     salt = bytes.fromhex(parts[2])
-    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, iterations)
+    dk = await asyncio.to_thread(_pbkdf2_derive, password.encode(), salt, iterations)
     return _hmac.compare_digest(dk.hex(), parts[3])
 
 
