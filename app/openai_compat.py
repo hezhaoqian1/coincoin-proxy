@@ -144,19 +144,19 @@ async def get_usage(
 
     where = and_(*conditions)
 
-    from sqlalchemy import over, literal_column
-    count_col = over(func.count(), partition_by=literal_column("1")).label("_total")
+    count_result = await db.execute(
+        select(func.count()).select_from(RequestLog).where(where)
+    )
+    total = count_result.scalar() or 0
 
     result = await db.execute(
-        select(RequestLog, count_col)
+        select(RequestLog)
         .where(where)
         .order_by(RequestLog.created_at.desc())
         .limit(limit)
         .offset(offset)
     )
-    rows = result.all()
-    total = rows[0]._total if rows else 0
-    logs = [row[0] for row in rows]
+    logs = result.scalars().all()
 
     return {
         "user_id": cached_user.id,
