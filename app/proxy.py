@@ -364,8 +364,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
 
     payload["model"] = used_cfg.model_id
     payload.pop("model_provider", None)
-    if used_cfg.strip_unsupported:
-        _sanitize_encrypted_ids(payload)
+    _sanitize_encrypted_ids(payload)
     _ensure_content_text(payload)
     base_payload = dict(payload)
 
