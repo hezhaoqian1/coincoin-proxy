@@ -97,29 +97,15 @@ registry = ModelRegistry()
 
 
 def auto_route(messages: List[dict], tools: Optional[list]) -> str:
-    # No tools => not an agentic tool-calling loop => premium for quality.
+    # No tools → pure conversation → PREMIUM (zhuceji gpt-5.4) for quality.
     if not tools:
         return PREMIUM
 
-    # No structured messages extracted => we can't judge conversation stage => be safe.
-    if not messages:
-        return PREMIUM
-
-    # Long conversation with tools → route to FALLBACK (Azure) for stability.
-    # ChatGPT's Codex backend is unreliable for long multi-step tasks.
-    if len(messages) > registry.long_context_threshold and FALLBACK in registry.models:
+    # Has tools → agentic coding workflow → always use Azure for reliability.
+    # ChatGPT's Codex backend randomly returns response.failed or drops
+    # streams mid-conversation, making multi-step tool use unreliable.
+    if FALLBACK in registry.models:
         return FALLBACK
-
-    # Very early in a tool-using conversation => usually exploration/first step.
-    if len(messages) <= 3:
-        return CHEAP
-
-    last_role = messages[-1].get("role") if messages else None
-    if last_role == "tool":
-        recent = messages[-5:]
-        tool_count = sum(1 for m in recent if isinstance(m, dict) and m.get("role") == "tool")
-        if tool_count >= registry.tool_count_threshold:
-            return CHEAP
 
     return PREMIUM
 
