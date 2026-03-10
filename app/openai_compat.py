@@ -718,7 +718,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
         fallback_cfg = model_registry.models.get("fallback") or model_registry.get("premium")
         cheap_cfg = model_registry.models.get("cheap")
         is_cheap = bool(cheap_cfg and used_cfg.model_id == cheap_cfg.model_id)
-        can_fallback = (used_cfg.model_id != fallback_cfg.model_id)
+        can_fallback = (used_cfg.upstream_url != fallback_cfg.upstream_url) or (used_cfg.model_id != fallback_cfg.model_id)
 
         stream_client = await get_stream_client()
 
@@ -971,7 +971,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
     fallback_cfg = model_registry.models.get("fallback") or model_registry.get("premium")
     cheap_cfg = model_registry.models.get("cheap")
     is_cheap = bool(cheap_cfg and used_cfg.model_id == cheap_cfg.model_id)
-    can_fallback = (used_cfg.model_id != fallback_cfg.model_id)
+    can_fallback = (used_cfg.upstream_url != fallback_cfg.upstream_url) or (used_cfg.model_id != fallback_cfg.model_id)
 
     client = await get_http_client()
 
