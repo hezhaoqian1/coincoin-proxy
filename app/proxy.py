@@ -383,6 +383,13 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
     if isinstance(_text, dict) and "verbosity" in _text:
         _text["verbosity"] = "medium"
 
+    _input = payload.get("input")
+    if isinstance(_input, list):
+        payload["input"] = [
+            item for item in _input
+            if not (isinstance(item, dict) and item.get("type") == "item_reference")
+        ]
+
     base_payload = dict(payload)
 
     upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/responses"
