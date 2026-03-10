@@ -437,6 +437,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         except (httpx.TimeoutException, httpx.RequestError) as exc:
             if can_fallback:
                 _fb = "cheap" if is_cheap else "premium"
+                logger.warning("primary %s failed (%s: %s), falling back", _fb, type(exc).__name__, exc)
                 used_cfg = fallback_cfg
                 used_route_reason = f"{_fb}_fallback_timeout"
                 can_fallback = False
@@ -452,10 +453,16 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         if can_fallback and upstream.status_code >= 400:
             _fb = "cheap" if is_cheap else "premium"
             _code = upstream.status_code
+            _err_body = b""
+            try:
+                _err_body = await upstream.aread()
+            except Exception:
+                pass
             try:
                 await upstream.aclose()
             except Exception:
                 pass
+            logger.warning("primary %s returned %s: %s — falling back", _fb, _code, _err_body[:500])
             used_cfg = fallback_cfg
             used_route_reason = f"{_fb}_fallback_{_code}"
             can_fallback = False
@@ -587,6 +594,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
     except (httpx.TimeoutException, httpx.RequestError) as exc:
         if can_fallback:
             _fb = "cheap" if is_cheap else "premium"
+            logger.warning("primary %s failed (%s: %s), falling back", _fb, type(exc).__name__, exc)
             used_cfg = fallback_cfg
             used_route_reason = f"{_fb}_fallback_timeout"
             can_fallback = False
@@ -601,6 +609,8 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
 
     if can_fallback and upstream.status_code >= 400:
         _fb = "cheap" if is_cheap else "premium"
+        logger.warning("primary %s returned %s: %s — falling back",
+                       _fb, upstream.status_code, str(upstream.text)[:500])
         used_cfg = fallback_cfg
         used_route_reason = f"{_fb}_fallback_{upstream.status_code}"
         can_fallback = False
