@@ -390,6 +390,8 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             if not (isinstance(item, dict) and item.get("type") == "item_reference")
         ]
 
+    payload["store"] = True
+
     base_payload = dict(payload)
 
     upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/responses"
@@ -410,6 +412,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             send_payload = dict(base_payload)
             send_payload["model"] = cfg.model_id
             send_payload.pop("previous_response_id", None)
+            send_payload["store"] = True
             if "cognitiveservices.azure.com" in (cfg.upstream_url or ""):
                 if "codex" not in (cfg.model_id or "").lower():
                     send_payload.pop("reasoning", None)
@@ -418,6 +421,10 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                     send_payload.pop(param, None)
             req_url = f"{cfg.upstream_url.rstrip('/')}/responses"
             req_headers = _build_upstream_headers(cfg)
+            logger.info("stream → %s  model=%s  store=%s  has_prev_resp=%s  input_types=%s",
+                        req_url, send_payload.get("model"), send_payload.get("store"),
+                        "previous_response_id" in send_payload,
+                        [i.get("type") for i in send_payload.get("input", []) if isinstance(i, dict)])
             req = stream_client.build_request("POST", req_url, json=send_payload, headers=req_headers)
             return await stream_client.send(req, stream=True)
 
@@ -554,6 +561,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         send_payload = dict(base_payload)
         send_payload["model"] = cfg.model_id
         send_payload.pop("previous_response_id", None)
+        send_payload["store"] = True
         if "cognitiveservices.azure.com" in (cfg.upstream_url or ""):
             if "codex" not in (cfg.model_id or "").lower():
                 send_payload.pop("reasoning", None)
@@ -562,6 +570,9 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 send_payload.pop(param, None)
         req_url = f"{cfg.upstream_url.rstrip('/')}/responses"
         req_headers = _build_upstream_headers(cfg)
+        logger.info("json → %s  model=%s  store=%s  has_prev_resp=%s",
+                    req_url, send_payload.get("model"), send_payload.get("store"),
+                    "previous_response_id" in send_payload)
         t0 = time.monotonic()
         r = await client.post(req_url, json=send_payload, headers=req_headers)
         dur = int((time.monotonic() - t0) * 1000)
