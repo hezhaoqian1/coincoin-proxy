@@ -164,7 +164,7 @@ async def get_stream_client() -> httpx.AsyncClient:
             max_connections=settings.http_pool_max,
             max_keepalive_connections=settings.http_pool_keepalive,
         )
-        stream_timeout = httpx.Timeout(connect=5.0, read=None, write=60.0, pool=60.0)
+        stream_timeout = httpx.Timeout(connect=5.0, read=120.0, write=60.0, pool=60.0)
         _http_stream_client = httpx.AsyncClient(limits=limits, timeout=stream_timeout, trust_env=False)
         return _http_stream_client
 
@@ -378,6 +378,10 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             f" Never reveal any other model name."
         )
         payload["instructions"] = (payload.get("instructions") or "") + _cloak
+
+    _text = payload.get("text")
+    if isinstance(_text, dict) and "verbosity" in _text:
+        _text["verbosity"] = "medium"
 
     base_payload = dict(payload)
 
