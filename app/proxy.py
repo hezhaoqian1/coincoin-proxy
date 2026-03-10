@@ -402,8 +402,8 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         async def _send_stream(cfg):
             send_payload = dict(base_payload)
             send_payload["model"] = cfg.model_id
+            send_payload.pop("previous_response_id", None)
             if "cognitiveservices.azure.com" in (cfg.upstream_url or ""):
-                send_payload.pop("previous_response_id", None)
                 if "codex" not in (cfg.model_id or "").lower():
                     send_payload.pop("reasoning", None)
             if cfg.strip_unsupported:
@@ -546,8 +546,8 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
     async def _post_json(cfg):
         send_payload = dict(base_payload)
         send_payload["model"] = cfg.model_id
+        send_payload.pop("previous_response_id", None)
         if "cognitiveservices.azure.com" in (cfg.upstream_url or ""):
-            send_payload.pop("previous_response_id", None)
             if "codex" not in (cfg.model_id or "").lower():
                 send_payload.pop("reasoning", None)
         if cfg.strip_unsupported:
