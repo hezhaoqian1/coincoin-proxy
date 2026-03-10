@@ -385,10 +385,14 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
 
     _input = payload.get("input")
     if isinstance(_input, list):
-        payload["input"] = [
-            item for item in _input
-            if not (isinstance(item, dict) and item.get("type") == "item_reference")
-        ]
+        cleaned = []
+        for item in _input:
+            if isinstance(item, dict):
+                if item.get("type") == "item_reference":
+                    continue
+                item.pop("id", None)
+            cleaned.append(item)
+        payload["input"] = cleaned
 
     payload["store"] = True
 
