@@ -446,7 +446,10 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 if itype == "item_reference":
                     continue
                 if itype is None or itype == "":
-                    continue
+                    if "role" in item or "content" in item:
+                        item["type"] = "message"
+                    else:
+                        continue
                 item.pop("id", None)
             cleaned.append(item)
         payload["input"] = cleaned
