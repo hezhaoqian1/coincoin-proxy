@@ -427,7 +427,9 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         if _cached_conv:
             _prev_input, _prev_output = _cached_conv
             _cur_input = payload.get("input") or []
-            if not isinstance(_cur_input, list):
+            if isinstance(_cur_input, str):
+                _cur_input = [{"type": "message", "role": "user", "content": _cur_input}]
+            elif not isinstance(_cur_input, list):
                 _cur_input = []
             payload["input"] = list(_prev_input) + list(_prev_output) + list(_cur_input)
             logger.info("polyfill: expanded from %s (%d+%d+%d items)",
