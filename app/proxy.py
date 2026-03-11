@@ -209,6 +209,44 @@ class KeyCache:
 key_cache = KeyCache(settings.key_cache_ttl, settings.key_cache_max)
 
 
+class ResponseConversationCache:
+    """Polyfill cache: stores expanded input + response output per response ID.
+
+    Enables multi-turn conversation expansion for Responses API by replaying
+    previous context when previous_response_id is referenced.
+    """
+
+    _TTL = 1800  # 30 min
+    _MAX = 10000
+
+    def __init__(self) -> None:
+        self._data: Dict[str, Tuple[float, list, list]] = {}
+
+    def get(self, response_id: str) -> Optional[Tuple[list, list]]:
+        item = self._data.get(response_id)
+        if not item:
+            return None
+        expires_at, expanded_input, response_output = item
+        if expires_at <= time.time():
+            self._data.pop(response_id, None)
+            return None
+        return expanded_input, response_output
+
+    def set(self, response_id: str, expanded_input: list, response_output: list) -> None:
+        now = time.time()
+        if len(self._data) >= self._MAX:
+            cutoff = now
+            stale = [k for k, (exp, _, _) in self._data.items() if exp <= cutoff]
+            for k in stale:
+                self._data.pop(k, None)
+            if len(self._data) >= self._MAX:
+                self._data.pop(next(iter(self._data)), None)
+        self._data[response_id] = (now + self._TTL, expanded_input, response_output)
+
+
+_conv_cache = ResponseConversationCache()
+
+
 HOP_BY_HOP_HEADERS = {
     "connection",
     "keep-alive",
@@ -383,6 +421,20 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
     if isinstance(_text, dict) and "verbosity" in _text:
         _text["verbosity"] = "medium"
 
+    _prev_resp_id = payload.get("previous_response_id")
+    if _prev_resp_id:
+        _cached_conv = _conv_cache.get(_prev_resp_id)
+        if _cached_conv:
+            _prev_input, _prev_output = _cached_conv
+            _cur_input = payload.get("input") or []
+            if not isinstance(_cur_input, list):
+                _cur_input = []
+            payload["input"] = list(_prev_input) + list(_prev_output) + list(_cur_input)
+            logger.info("polyfill: expanded from %s (%d+%d+%d items)",
+                        _prev_resp_id, len(_prev_input), len(_prev_output), len(_cur_input))
+        else:
+            logger.warning("polyfill: %s not in cache, sending current input only", _prev_resp_id)
+
     _input = payload.get("input")
     if isinstance(_input, list):
         cleaned = []
@@ -393,6 +445,8 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 item.pop("id", None)
             cleaned.append(item)
         payload["input"] = cleaned
+
+    _expanded_input = list(payload.get("input") or [])
 
     payload["store"] = True
 
@@ -412,10 +466,11 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
 
         stream_client = await get_stream_client()
 
-        async def _send_stream(cfg):
+        async def _send_stream(cfg, *, is_fallback=False):
             send_payload = dict(base_payload)
             send_payload["model"] = cfg.model_id
-            send_payload.pop("previous_response_id", None)
+            if is_fallback:
+                send_payload.pop("previous_response_id", None)
             send_payload["store"] = True
             if "cognitiveservices.azure.com" in (cfg.upstream_url or ""):
                 if "codex" not in (cfg.model_id or "").lower():
@@ -442,7 +497,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 used_route_reason = f"{_fb}_fallback_timeout"
                 can_fallback = False
                 is_cheap = False
-                upstream = await _send_stream(used_cfg)
+                upstream = await _send_stream(used_cfg, is_fallback=True)
             else:
                 logger.error("upstream stream connect error: %s", exc)
                 return JSONResponse(
@@ -467,7 +522,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             used_route_reason = f"{_fb}_fallback_{_code}"
             can_fallback = False
             is_cheap = False
-            upstream = await _send_stream(used_cfg)
+            upstream = await _send_stream(used_cfg, is_fallback=True)
 
         content_type = upstream.headers.get("content-type", "")
         if "text/event-stream" not in content_type:
@@ -481,7 +536,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 used_route_reason = f"{_fb}_fallback_unexpected"
                 can_fallback = False
                 is_cheap = False
-                upstream = await _send_stream(used_cfg)
+                upstream = await _send_stream(used_cfg, is_fallback=True)
                 content_type = upstream.headers.get("content-type", "")
             try:
                 body = await upstream.aread()
@@ -510,6 +565,8 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
 
         async def iter_bytes():
             buf = b""
+            _resp_id_cap = None
+            _resp_out_cap = None
             try:
                 async for chunk in upstream.aiter_bytes():
                     yield chunk.replace(_model_mask[0], _model_mask[1]) if _model_mask else chunk
@@ -528,11 +585,25 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                                         _stream_usage["input"] = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
                                         _stream_usage["output"] = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
                                         _stream_usage["cached"] = extract_cached_tokens(usage)
+                                    _etype = evt.get("type", "")
+                                    if _etype == "response.completed":
+                                        _r = evt.get("response") or evt
+                                        _resp_id_cap = _r.get("id")
+                                        _resp_out_cap = _r.get("output", [])
+                                    elif not _resp_id_cap and _etype == "response.created":
+                                        _r = evt.get("response") or evt
+                                        _rid = _r.get("id", "")
+                                        if isinstance(_rid, str) and _rid:
+                                            _resp_id_cap = _rid
                                 except (json.JSONDecodeError, ValueError):
                                     pass
             finally:
                 await upstream.aclose()
                 if upstream.status_code < 400:
+                    if _resp_id_cap:
+                        _conv_cache.set(_resp_id_cap, _expanded_input, _resp_out_cap or [])
+                        logger.info("polyfill: cached stream resp %s (%d in, %d out)",
+                                    _resp_id_cap, len(_expanded_input), len(_resp_out_cap or []))
                     dur = int((time.monotonic() - stream_t0) * 1000)
                     asyncio.create_task(usage_buffer.add(
                         user.id,
@@ -568,10 +639,11 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
 
     client = await get_http_client()
 
-    async def _post_json(cfg):
+    async def _post_json(cfg, *, is_fallback=False):
         send_payload = dict(base_payload)
         send_payload["model"] = cfg.model_id
-        send_payload.pop("previous_response_id", None)
+        if is_fallback:
+            send_payload.pop("previous_response_id", None)
         send_payload["store"] = True
         if "cognitiveservices.azure.com" in (cfg.upstream_url or ""):
             if "codex" not in (cfg.model_id or "").lower():
@@ -599,7 +671,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             used_route_reason = f"{_fb}_fallback_timeout"
             can_fallback = False
             is_cheap = False
-            upstream, duration_ms = await _post_json(used_cfg)
+            upstream, duration_ms = await _post_json(used_cfg, is_fallback=True)
         else:
             logger.error("upstream request error: %s", exc)
             return JSONResponse(
@@ -615,7 +687,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         used_route_reason = f"{_fb}_fallback_{upstream.status_code}"
         can_fallback = False
         is_cheap = False
-        upstream, duration_ms = await _post_json(used_cfg)
+        upstream, duration_ms = await _post_json(used_cfg, is_fallback=True)
     response_headers = filter_headers(dict(upstream.headers))
     response_headers.pop("content-length", None)
 
@@ -626,7 +698,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         used_route_reason = f"{_fb}_fallback_unexpected"
         can_fallback = False
         is_cheap = False
-        upstream, duration_ms = await _post_json(used_cfg)
+        upstream, duration_ms = await _post_json(used_cfg, is_fallback=True)
         response_headers = filter_headers(dict(upstream.headers))
         response_headers.pop("content-length", None)
         content_type = upstream.headers.get("content-type", "application/json")
@@ -641,7 +713,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 used_route_reason = f"{_fb}_fallback_unexpected"
                 can_fallback = False
                 is_cheap = False
-                upstream, duration_ms = await _post_json(used_cfg)
+                upstream, duration_ms = await _post_json(used_cfg, is_fallback=True)
                 response_headers = filter_headers(dict(upstream.headers))
                 response_headers.pop("content-length", None)
                 content_type = upstream.headers.get("content-type", "application/json")
@@ -668,6 +740,12 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         input_tokens_delta = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
         output_tokens_delta = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
         cached_tokens_delta = extract_cached_tokens(usage)
+        _resp_id = data.get("id")
+        _resp_output = data.get("output")
+        if _resp_id and isinstance(_resp_output, list):
+            _conv_cache.set(_resp_id, _expanded_input, _resp_output)
+            logger.info("polyfill: cached json resp %s (%d in, %d out)",
+                        _resp_id, len(_expanded_input), len(_resp_output))
 
     if upstream.status_code < 400:
         await usage_buffer.add(
