@@ -440,7 +440,10 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         cleaned = []
         for item in _input:
             if isinstance(item, dict):
-                if item.get("type") == "item_reference":
+                itype = item.get("type")
+                if itype == "item_reference":
+                    continue
+                if itype is None or itype == "":
                     continue
                 item.pop("id", None)
             cleaned.append(item)
