@@ -36,7 +36,7 @@ async def admin_ui(token: str = ""):
 
 @router.get("/users", dependencies=[Depends(admin_guard)])
 async def list_users(search: Optional[str] = None, db: AsyncSession = Depends(get_db)):
-    query = select(User)
+    query = select(User).order_by(User.created_at.desc())
     if search:
         query = query.where((User.username == search) | (User.external_id == search))
     result = await db.execute(query.limit(200))
