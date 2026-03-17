@@ -15,6 +15,7 @@ from .schemas import (
     AnnouncementCreate, AnnouncementUpdate,
     RedemptionGenerateRequest, RedemptionGenerateResponse,
 )
+from .config import settings as _settings
 from .security import generate_api_key, generate_id, hash_key, require_admin
 
 
@@ -27,8 +28,7 @@ def admin_guard(request: Request):
 
 @router.get("/ui")
 async def admin_ui(token: str = ""):
-    from .config import settings as _s
-    if token != _s.admin_token:
+    if token != _settings.admin_token:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
     ui_path = Path(__file__).parent / "static" / "admin.html"
     return FileResponse(ui_path)
@@ -38,12 +38,22 @@ async def admin_ui(token: str = ""):
 async def list_users(search: Optional[str] = None, db: AsyncSession = Depends(get_db)):
     query = select(User).order_by(User.created_at.desc())
     if search:
-        pat = f"%{search}%"
-        query = query.where(
-            User.username.ilike(pat)
-            | User.external_id.ilike(pat)
-            | User.id.ilike(pat)
-        )
+        if search.startswith(_settings.key_prefix):
+            key_hash_val = hash_key(search)
+            key_row = (await db.execute(
+                select(ApiKey.user_id).where(ApiKey.key_hash == key_hash_val)
+            )).scalar_one_or_none()
+            if key_row:
+                query = query.where(User.id == key_row)
+            else:
+                return []
+        else:
+            pat = f"%{search}%"
+            query = query.where(
+                User.username.ilike(pat)
+                | User.external_id.ilike(pat)
+                | User.id.ilike(pat)
+            )
     result = await db.execute(query.limit(200))
     users = result.scalars().all()
     return [
