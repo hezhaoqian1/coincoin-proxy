@@ -38,7 +38,12 @@ async def admin_ui(token: str = ""):
 async def list_users(search: Optional[str] = None, db: AsyncSession = Depends(get_db)):
     query = select(User).order_by(User.created_at.desc())
     if search:
-        query = query.where((User.username == search) | (User.external_id == search))
+        pat = f"%{search}%"
+        query = query.where(
+            User.username.ilike(pat)
+            | User.external_id.ilike(pat)
+            | User.id.ilike(pat)
+        )
     result = await db.execute(query.limit(200))
     users = result.scalars().all()
     return [
