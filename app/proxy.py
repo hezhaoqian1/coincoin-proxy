@@ -126,141 +126,6 @@ def _ensure_content_text(payload: dict) -> None:
         msg["content"] = cleaned if cleaned else [{"type": "input_text", "text": ""}]
 
 
-def _response_reasoning_requested(payload: dict) -> bool:
-    """Treat reasoning as opt-in for raw Responses clients like OpenClaw."""
-    if not isinstance(payload, dict) or "reasoning" not in payload:
-        return False
-    reasoning = payload.get("reasoning")
-    if isinstance(reasoning, bool):
-        return reasoning
-    if isinstance(reasoning, str):
-        return reasoning.strip().lower() not in {"", "0", "false", "off", "none", "disabled"}
-    if isinstance(reasoning, dict):
-        enabled = reasoning.get("enabled")
-        if isinstance(enabled, bool):
-            return enabled
-        effort = reasoning.get("effort")
-        if isinstance(effort, str) and effort.strip().lower() in {"0", "false", "off", "none", "disabled"}:
-            return False
-        if not reasoning:
-            return False
-        return True
-    return bool(reasoning)
-
-
-def _is_reasoning_like(value) -> bool:
-    text = str(value or "").strip().lower()
-    return "reasoning" in text or "thinking" in text
-
-
-def _strip_reasoning_from_output_item(item):
-    if not isinstance(item, dict):
-        return item
-    if _is_reasoning_like(item.get("type")):
-        return None
-
-    cleaned = dict(item)
-    changed = False
-
-    for field in ("reasoning", "thinking"):
-        if field in cleaned:
-            cleaned.pop(field, None)
-            changed = True
-
-    content = cleaned.get("content")
-    if isinstance(content, list):
-        filtered_content = []
-        for part in content:
-            if isinstance(part, dict) and _is_reasoning_like(part.get("type")):
-                changed = True
-                continue
-            filtered_content.append(part)
-        cleaned["content"] = filtered_content
-        if not filtered_content and cleaned.get("type") == "message":
-            return None
-
-    return cleaned if changed else item
-
-
-def _strip_reasoning_from_response_payload(payload):
-    if not isinstance(payload, dict):
-        return payload
-
-    event_type = payload.get("type")
-    if _is_reasoning_like(event_type):
-        return None
-
-    cleaned = dict(payload)
-    changed = False
-
-    for field in ("reasoning", "thinking"):
-        if field in cleaned:
-            cleaned.pop(field, None)
-            changed = True
-
-    part = cleaned.get("part")
-    if isinstance(part, dict) and _is_reasoning_like(part.get("type")):
-        return None
-
-    item = cleaned.get("item")
-    if isinstance(item, dict):
-        filtered_item = _strip_reasoning_from_output_item(item)
-        if filtered_item is None:
-            return None
-        if filtered_item is not item:
-            cleaned["item"] = filtered_item
-            changed = True
-
-    output = cleaned.get("output")
-    if isinstance(output, list):
-        filtered_output = []
-        for output_item in output:
-            filtered_item = _strip_reasoning_from_output_item(output_item)
-            if filtered_item is None:
-                changed = True
-                continue
-            filtered_output.append(filtered_item)
-            if filtered_item is not output_item:
-                changed = True
-        cleaned["output"] = filtered_output
-
-    response = cleaned.get("response")
-    if isinstance(response, dict):
-        filtered_response = _strip_reasoning_from_response_payload(response)
-        if filtered_response is not response:
-            cleaned["response"] = filtered_response or {}
-            changed = True
-
-    return cleaned if changed else payload
-
-
-def _rewrite_responses_sse_event(event_raw: bytes, *, strip_reasoning: bool) -> Tuple[Optional[bytes], Optional[dict]]:
-    lines = []
-    parsed_event = None
-
-    for line in event_raw.split(b"\n"):
-        if line.startswith(b"data: "):
-            payload_str = line[6:].strip()
-            if payload_str and payload_str != b"[DONE]":
-                try:
-                    event = json.loads(payload_str)
-                except Exception:
-                    lines.append(line)
-                    continue
-                if strip_reasoning:
-                    event = _strip_reasoning_from_response_payload(event)
-                    if event is None:
-                        continue
-                if isinstance(event, dict):
-                    parsed_event = event
-                line = b"data: " + json.dumps(event, ensure_ascii=False).encode()
-        lines.append(line)
-
-    if not lines:
-        return None, parsed_event
-    return b"\n".join(lines), parsed_event
-
-
 router = APIRouter(prefix="/openai/v1", tags=["proxy"])
 logger = logging.getLogger("coincoin.proxy")
 
@@ -534,7 +399,6 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
 
     # Route (best-effort). If router is disabled or misconfigured, this resolves to premium.
     display_model = str(payload.get("model") or settings.fixed_model)
-    strip_reasoning = not _response_reasoning_requested(payload)
     messages_for_route, tools_for_route = extract_messages_for_routing_from_responses_payload(payload)
     model_cfg, route_reason = resolve_model(messages_for_route, tools_for_route)
     used_cfg = model_cfg
@@ -693,10 +557,6 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             if "application/json" in content_type:
                 try:
                     data = json.loads(body.decode("utf-8"))
-                    if strip_reasoning:
-                        filtered_data = _strip_reasoning_from_response_payload(data)
-                        if filtered_data is not None:
-                            data = filtered_data
                     if isinstance(data, dict) and "model" in data:
                         data["model"] = display_model
                 except Exception:
@@ -715,46 +575,36 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             buf = b""
             _resp_id_cap = None
             _resp_out_cap = None
-
-            def _capture_event(evt: dict) -> None:
-                nonlocal _resp_id_cap, _resp_out_cap
-                if not isinstance(evt, dict):
-                    return
-                usage = evt.get("usage") or (evt.get("response") or {}).get("usage")
-                if usage:
-                    _stream_usage["input"] = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
-                    _stream_usage["output"] = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
-                    _stream_usage["cached"] = extract_cached_tokens(usage)
-                _etype = evt.get("type", "")
-                if _etype == "response.completed":
-                    _r = evt.get("response") or evt
-                    _resp_id_cap = _r.get("id")
-                    _resp_out_cap = _r.get("output", [])
-                elif not _resp_id_cap and _etype == "response.created":
-                    _r = evt.get("response") or evt
-                    _rid = _r.get("id", "")
-                    if isinstance(_rid, str) and _rid:
-                        _resp_id_cap = _rid
-
             try:
                 async for chunk in upstream.aiter_bytes():
+                    yield chunk.replace(_model_mask[0], _model_mask[1]) if _model_mask else chunk
                     buf += chunk
                     while b"\n\n" in buf:
                         event_raw, buf = buf.split(b"\n\n", 1)
-                        rewritten, evt = _rewrite_responses_sse_event(event_raw, strip_reasoning=strip_reasoning)
-                        _capture_event(evt)
-                        if rewritten is None:
-                            continue
-                        if _model_mask:
-                            rewritten = rewritten.replace(_model_mask[0], _model_mask[1])
-                        yield rewritten + b"\n\n"
-                if buf.strip():
-                    rewritten, evt = _rewrite_responses_sse_event(buf, strip_reasoning=strip_reasoning)
-                    _capture_event(evt)
-                    if rewritten is not None:
-                        if _model_mask:
-                            rewritten = rewritten.replace(_model_mask[0], _model_mask[1])
-                        yield rewritten + b"\n\n"
+                        for line in event_raw.split(b"\n"):
+                            if line.startswith(b"data: "):
+                                payload_str = line[6:].strip()
+                                if payload_str == b"[DONE]":
+                                    continue
+                                try:
+                                    evt = json.loads(payload_str)
+                                    usage = evt.get("usage") or (evt.get("response") or {}).get("usage")
+                                    if usage:
+                                        _stream_usage["input"] = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
+                                        _stream_usage["output"] = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
+                                        _stream_usage["cached"] = extract_cached_tokens(usage)
+                                    _etype = evt.get("type", "")
+                                    if _etype == "response.completed":
+                                        _r = evt.get("response") or evt
+                                        _resp_id_cap = _r.get("id")
+                                        _resp_out_cap = _r.get("output", [])
+                                    elif not _resp_id_cap and _etype == "response.created":
+                                        _r = evt.get("response") or evt
+                                        _rid = _r.get("id", "")
+                                        if isinstance(_rid, str) and _rid:
+                                            _resp_id_cap = _rid
+                                except (json.JSONDecodeError, ValueError):
+                                    pass
             finally:
                 await upstream.aclose()
                 if upstream.status_code < 400:
@@ -889,11 +739,6 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 )
     else:
         data = upstream.text
-
-    if strip_reasoning and isinstance(data, dict):
-        filtered_data = _strip_reasoning_from_response_payload(data)
-        if filtered_data is not None:
-            data = filtered_data
 
     input_tokens_delta = 0
     output_tokens_delta = 0

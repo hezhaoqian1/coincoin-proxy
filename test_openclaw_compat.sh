@@ -399,6 +399,7 @@ if [[ "$FAIL" -eq 0 ]]; then
             "id": "gpt-5.2-codex",
             "name": "GPT 5.2 Codex (CoinCoin)",
             "api": "openai-responses",
+            "reasoning": true,
             "input": ["text", "image"],
             "contextWindow": 1048576,
             "maxTokens": 65536,
