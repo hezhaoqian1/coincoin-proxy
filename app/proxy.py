@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import time
+from copy import deepcopy
 from datetime import date, datetime
 from types import SimpleNamespace
 from typing import Dict, Optional, Tuple
@@ -124,6 +125,62 @@ def _ensure_content_text(payload: dict) -> None:
                 c["text"] = ""
             cleaned.append(c)
         msg["content"] = cleaned if cleaned else [{"type": "input_text", "text": ""}]
+
+
+def _responses_text_input_item(text: str) -> dict:
+    return {
+        "type": "message",
+        "role": "user",
+        "content": [{"type": "input_text", "text": text or ""}],
+    }
+
+
+def _clone_responses_items(raw_items) -> list:
+    if not isinstance(raw_items, list):
+        return []
+    return [deepcopy(item) for item in raw_items if isinstance(item, dict)]
+
+
+def _normalize_responses_input_items(raw_input) -> list:
+    """Normalize Responses API input into a list of input items for cache/polyfill use."""
+    if isinstance(raw_input, str):
+        return [_responses_text_input_item(raw_input)]
+    if not isinstance(raw_input, list):
+        return []
+
+    normalized = []
+    text_parts = []
+
+    def _flush_text_parts() -> None:
+        if text_parts:
+            normalized.append(_responses_text_input_item("".join(text_parts)))
+            text_parts.clear()
+
+    for item in raw_input:
+        if isinstance(item, dict):
+            _flush_text_parts()
+            normalized.append(deepcopy(item))
+        elif isinstance(item, str):
+            # Heal legacy bad cache entries where a string input was split into chars.
+            text_parts.append(item)
+        else:
+            _flush_text_parts()
+
+    _flush_text_parts()
+    return normalized
+
+
+def _expand_previous_response_input(payload: dict, cached_conv: Optional[Tuple[list, list]]) -> Optional[Tuple[int, int, int]]:
+    if not cached_conv:
+        return None
+
+    prev_input, prev_output = cached_conv
+    prev_input_items = _normalize_responses_input_items(prev_input)
+    prev_output_items = _clone_responses_items(prev_output)
+    cur_input_items = _normalize_responses_input_items(payload.get("input"))
+
+    payload["input"] = prev_input_items + prev_output_items + cur_input_items
+    return len(prev_input_items), len(prev_output_items), len(cur_input_items)
 
 
 router = APIRouter(prefix="/openai/v1", tags=["proxy"])
@@ -425,15 +482,9 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
     if _prev_resp_id:
         _cached_conv = _conv_cache.get(_prev_resp_id)
         if _cached_conv:
-            _prev_input, _prev_output = _cached_conv
-            _cur_input = payload.get("input") or []
-            if isinstance(_cur_input, str):
-                _cur_input = [{"type": "message", "role": "user", "content": _cur_input}]
-            elif not isinstance(_cur_input, list):
-                _cur_input = []
-            payload["input"] = list(_prev_input) + list(_prev_output) + list(_cur_input)
+            _expanded_counts = _expand_previous_response_input(payload, _cached_conv)
             logger.info("polyfill: expanded from %s (%d+%d+%d items)",
-                        _prev_resp_id, len(_prev_input), len(_prev_output), len(_cur_input))
+                        _prev_resp_id, *_expanded_counts)
         else:
             logger.warning("polyfill: %s not in cache, sending current input only", _prev_resp_id)
 
@@ -454,7 +505,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             cleaned.append(item)
         payload["input"] = cleaned
 
-    _expanded_input = list(payload.get("input") or [])
+    _expanded_input = _normalize_responses_input_items(payload.get("input"))
 
     payload["store"] = True
 
