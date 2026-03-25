@@ -14,10 +14,14 @@ from .db import get_db
 from .proxy import (
     _build_upstream_headers, _ensure_content_text, _sanitize_encrypted_ids,
     authenticate_user, authorize_request, filter_headers, get_http_client,
-    get_stream_client, proxy_responses, responses_health,
+    get_stream_client, proxy_images_generations, proxy_responses, responses_health,
 )
-from .router import registry as model_registry
-from .router import resolve as resolve_model
+from .router import (
+    ModelCapabilityError,
+    UnknownModelError,
+    build_model_cloak,
+    registry as model_registry,
+)
 from .schemas import BalanceResponse
 from .usage_buffer import extract_cached_tokens, usage_buffer
 
@@ -41,6 +45,38 @@ def openai_error(message: str, error_type: str = "invalid_request_error",
             }
         }
     )
+
+
+def _model_resolution_to_openai_error(exc: Exception) -> JSONResponse:
+    if isinstance(exc, UnknownModelError):
+        return openai_error(str(exc), "invalid_request_error", param="model", code="model_not_found", status_code=400)
+    if isinstance(exc, ModelCapabilityError):
+        return openai_error(str(exc), "invalid_request_error", param="model", code="model_capability_mismatch", status_code=400)
+    return openai_error("Unable to resolve model", "server_error", code="model_resolution_failed", status_code=500)
+
+
+def _serialize_public_model(public_model) -> Dict[str, Any]:
+    default_for = []
+    if public_model.public_id == model_registry.default_text_model_id:
+        default_for.append("text")
+    if public_model.public_id == model_registry.default_image_model_id:
+        default_for.append("image")
+    return {
+        "id": public_model.public_id,
+        "object": "model",
+        "created": public_model.created,
+        "owned_by": public_model.owned_by,
+        "coincoin_provider": public_model.provider_name,
+        "coincoin_provider_model": public_model.provider_model or public_model.upstream_model,
+        "coincoin_capabilities": list(public_model.capabilities),
+        "coincoin_billable_sku": public_model.billable_sku,
+        "coincoin_routing_mode": public_model.routing_mode,
+        "coincoin_default_for": default_for,
+        "coincoin_metadata": dict(public_model.metadata or {}),
+        "coincoin_price_input_per_million": public_model.price_input_per_million,
+        "coincoin_price_output_per_million": public_model.price_output_per_million,
+        "coincoin_price_per_image_cents": public_model.price_per_image_cents,
+    }
 
 
 @router.get("/balance", response_model=BalanceResponse)
@@ -167,10 +203,15 @@ async def get_usage(
             {
                 "created_at": (log.created_at.isoformat() + "Z") if log.created_at else None,
                 "endpoint": log.endpoint,
-                "model": log.model,
+                "model": getattr(log, "customer_model_alias", "") or log.model,
+                "provider_model": getattr(log, "provider_model", "") or log.model,
                 "input_tokens": log.input_tokens,
                 "output_tokens": log.output_tokens,
                 "cached_tokens": getattr(log, "cached_tokens", 0),
+                "image_count": getattr(log, "image_count", 0),
+                "usage_unit_type": getattr(log, "usage_unit_type", "tokens"),
+                "usage_unit_count": getattr(log, "usage_unit_count", 0),
+                "billable_sku": getattr(log, "billable_sku", "") or (getattr(log, "customer_model_alias", "") or log.model),
                 "total_tokens": log.input_tokens + log.output_tokens,
                 "cost_cents": log.cost_cents,
                 "cost_usd": log.cost_cents / 100,
@@ -211,6 +252,7 @@ async def get_daily_usage(request: Request, db: AsyncSession = Depends(get_db), 
             "input_tokens": r.input_tokens,
             "output_tokens": r.output_tokens,
             "tokens_total": r.tokens_total,
+            "images_total": getattr(r, "images_total", 0),
             "cost_cents": r.cost_cents,
             "cost_usd": r.cost_cents / 100,
             "requests_total": r.requests_total,
@@ -360,29 +402,21 @@ async def list_announcements(db: AsyncSession = Depends(get_db)):
 
 @router.get("/models")
 async def list_models():
-    """列出可用模型 — 只暴露 premium 模型，cheap 对用户不可见"""
+    """列出可用模型目录。"""
+    models = [_serialize_public_model(public_model) for public_model in model_registry.list_public_models()]
     return {
         "object": "list",
-        "data": [
-            {
-                "id": settings.fixed_model,
-                "object": "model",
-                "created": 1700000000,
-                "owned_by": "azure-openai",
-            }
-        ],
+        "data": models,
     }
 
 
 @router.get("/models/{model_id}")
 async def get_model(model_id: str):
-    """获取单个模型信息"""
-    return {
-        "id": model_id,
-        "object": "model",
-        "created": 1700000000,
-        "owned_by": "azure-openai",
-    }
+    """获取单个模型信息。"""
+    public_model = model_registry.get_public_model(model_id)
+    if public_model is None:
+        return openai_error(f"Model '{model_id}' is not available", "invalid_request_error", param="model", code="model_not_found", status_code=404)
+    return _serialize_public_model(public_model)
 
 
 @router.get("/responses")
@@ -393,6 +427,11 @@ async def responses_alias_health():
 @router.post("/responses")
 async def responses_alias(request: Request, db: AsyncSession = Depends(get_db)):
     return await proxy_responses(request, db)
+
+
+@router.post("/images/generations")
+async def images_generations(request: Request, db: AsyncSession = Depends(get_db)):
+    return await proxy_images_generations(request, db)
 
 
 @router.post("/chat/completions")
@@ -416,8 +455,6 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
 
     if not isinstance(payload, dict):
         return openai_error("Request body must be a JSON object", "invalid_request_error")
-
-    display_model = str(payload.get("model") or settings.fixed_model)
 
     messages = payload.get("messages") or []
     if not isinstance(messages, list):
@@ -523,10 +560,16 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
 
     converted_messages = convert_messages_for_responses_api(messages)
 
+    requested_model = str(payload.get("model") or "").strip()
     tools = payload.get("tools") if isinstance(payload.get("tools"), list) else None
-    model_cfg, route_reason = resolve_model(messages, tools)
-    used_cfg = model_cfg
-    used_route_reason = route_reason
+    try:
+        resolved_model = model_registry.resolve_public_model(requested_model, "chat/completions", messages, tools)
+    except Exception as exc:
+        return _model_resolution_to_openai_error(exc)
+    public_model = resolved_model.public_model
+    display_model = public_model.public_id
+    used_cfg = resolved_model.backend
+    used_route_reason = resolved_model.route_reason
 
     # ============== 构建 Responses API payload ==============
     resp_payload: Dict[str, Any] = {
@@ -535,12 +578,9 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
         "stream": bool(payload.get("stream")),
     }
 
-    _has_tools = bool(resp_payload.get("tools"))
+    _has_tools = bool(payload.get("tools"))
     if settings.model_cloak and display_model and not _has_tools:
-        _cloak = (
-            f" You are {display_model} by OpenAI."
-            f" Never reveal any other model name."
-        )
+        _cloak = build_model_cloak(display_model, public_model)
         resp_payload["instructions"] = (resp_payload.get("instructions") or "") + _cloak
 
     if used_cfg.strip_unsupported:
@@ -717,8 +757,11 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
         model_registry.ensure_initialized()
         fallback_cfg = model_registry.models.get("fallback") or model_registry.get("premium")
         cheap_cfg = model_registry.models.get("cheap")
-        is_cheap = bool(cheap_cfg and used_cfg.model_id == cheap_cfg.model_id)
-        can_fallback = (used_cfg.upstream_url != fallback_cfg.upstream_url) or (used_cfg.model_id != fallback_cfg.model_id)
+        allow_fallback = public_model.routing_mode == "legacy_auto"
+        is_cheap = bool(allow_fallback and cheap_cfg and used_cfg.model_id == cheap_cfg.model_id)
+        can_fallback = allow_fallback and (
+            (used_cfg.upstream_url != fallback_cfg.upstream_url) or (used_cfg.model_id != fallback_cfg.model_id)
+        )
 
         stream_client = await get_stream_client()
 
@@ -954,12 +997,16 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                         cached_tokens=_compat_stream_usage["cached"],
                         requests=1,
                         endpoint="chat/completions:stream",
-                        model=used_cfg.model_id,
+                        model=display_model,
+                        customer_model_alias=display_model,
+                        provider_model=public_model.provider_model or used_cfg.model_id,
                         route_reason=used_route_reason,
                         duration_ms=dur,
                         status_code=upstream.status_code,
                         price_input_per_million=used_cfg.price_input_per_million,
                         price_output_per_million=used_cfg.price_output_per_million,
+                        usage_unit_type="tokens",
+                        billable_sku=public_model.billable_sku or display_model,
                     ))
         stream_headers = filter_headers(dict(upstream.headers))
         stream_headers.pop("content-length", None)
@@ -970,8 +1017,11 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
     model_registry.ensure_initialized()
     fallback_cfg = model_registry.models.get("fallback") or model_registry.get("premium")
     cheap_cfg = model_registry.models.get("cheap")
-    is_cheap = bool(cheap_cfg and used_cfg.model_id == cheap_cfg.model_id)
-    can_fallback = (used_cfg.upstream_url != fallback_cfg.upstream_url) or (used_cfg.model_id != fallback_cfg.model_id)
+    allow_fallback = public_model.routing_mode == "legacy_auto"
+    is_cheap = bool(allow_fallback and cheap_cfg and used_cfg.model_id == cheap_cfg.model_id)
+    can_fallback = allow_fallback and (
+        (used_cfg.upstream_url != fallback_cfg.upstream_url) or (used_cfg.model_id != fallback_cfg.model_id)
+    )
 
     client = await get_http_client()
 
@@ -1064,12 +1114,16 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
             cached_tokens=cached_tokens_delta,
             requests=1,
             endpoint="chat/completions",
-            model=used_cfg.model_id,
+            model=display_model,
+            customer_model_alias=display_model,
+            provider_model=public_model.provider_model or used_cfg.model_id,
             route_reason=used_route_reason,
             duration_ms=duration_ms,
             status_code=upstream.status_code,
             price_input_per_million=used_cfg.price_input_per_million,
             price_output_per_million=used_cfg.price_output_per_million,
+            usage_unit_type="tokens",
+            billable_sku=public_model.billable_sku or display_model,
         )
     else:
         import logging
@@ -1111,9 +1165,16 @@ async def embeddings(request: Request, db: AsyncSession = Depends(get_db)):
     if not isinstance(payload, dict):
         return openai_error("Request body must be a JSON object", "invalid_request_error")
 
-    model_registry.ensure_initialized()
-    used_cfg = model_registry.get("premium")
-    used_route_reason = "embeddings_premium"
+    requested_model = str(payload.get("model") or "").strip()
+    try:
+        resolved_model = model_registry.resolve_public_model(requested_model, "embeddings")
+    except Exception as exc:
+        return _model_resolution_to_openai_error(exc)
+
+    public_model = resolved_model.public_model
+    display_model = public_model.public_id
+    used_cfg = resolved_model.backend
+    used_route_reason = resolved_model.route_reason
 
     payload["model"] = used_cfg.model_id
     payload.pop("model_provider", None)
@@ -1152,12 +1213,16 @@ async def embeddings(request: Request, db: AsyncSession = Depends(get_db)):
             cached_tokens=cached_tokens_delta,
             requests=1,
             endpoint="embeddings",
-            model=used_cfg.model_id,
+            model=display_model,
+            customer_model_alias=display_model,
+            provider_model=public_model.provider_model or used_cfg.model_id,
             route_reason=used_route_reason,
             duration_ms=duration_ms,
             status_code=upstream.status_code,
             price_input_per_million=used_cfg.price_input_per_million,
             price_output_per_million=used_cfg.price_output_per_million,
+            usage_unit_type="tokens",
+            billable_sku=public_model.billable_sku or display_model,
         )
 
     if isinstance(data, dict):

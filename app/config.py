@@ -15,6 +15,13 @@ class Settings(BaseSettings):
     upstream_base_url: str = "https://hc-instance-eastus2.cognitiveservices.azure.com/openai/v1"
     upstream_api_key: str = ""
     fixed_model: str = "gpt-5.2-codex"
+    model_catalog_path: str = "config/model_catalog.json"
+    model_catalog_json: str = ""
+
+    # Gateway-backed public models (LiteLLM / internal OpenAI-compatible gateway)
+    gateway_base_url: str = ""
+    gateway_api_key: str = ""
+    gateway_auth_style: str = "bearer"
 
     # Cached tokens discount (fraction of input price charged for cached tokens)
     # Azure Standard: typically 50% off => 0.5, Provisioned can be 100% off => 0.0

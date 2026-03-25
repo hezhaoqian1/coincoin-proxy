@@ -242,6 +242,7 @@ async def list_daily_usage(
             "tokens_total": usage.tokens_total,
             "input_tokens": usage.input_tokens,
             "output_tokens": usage.output_tokens,
+            "images_total": getattr(usage, "images_total", 0),
             "cost_cents": usage.cost_cents,
             "cost_usd": usage.cost_cents / 100,  # 分转美元
             "requests_total": usage.requests_total,
@@ -262,12 +263,16 @@ async def summary_metrics(db: AsyncSession = Depends(get_db)):
     total_requests_today = await db.scalar(
         select(func.coalesce(func.sum(UsageDaily.requests_total), 0)).where(UsageDaily.day == today)
     )
+    total_images_today = await db.scalar(
+        select(func.coalesce(func.sum(UsageDaily.images_total), 0)).where(UsageDaily.day == today)
+    )
 
     return {
         "total_users": int(total_users or 0),
         "active_users": int(active_users or 0),
         "total_tokens": int(total_tokens or 0),
         "total_requests_today": int(total_requests_today or 0),
+        "total_images_today": int(total_images_today or 0),
     }
 
 
@@ -354,10 +359,16 @@ async def list_user_request_logs(
             {
                 "created_at": (log.created_at.isoformat() + "Z") if log.created_at else None,
                 "endpoint": log.endpoint,
-                "model": log.model,
+                "model": getattr(log, "customer_model_alias", "") or log.model,
+                "provider_model": getattr(log, "provider_model", "") or log.model,
+                "customer_model_alias": getattr(log, "customer_model_alias", "") or log.model,
                 "input_tokens": log.input_tokens,
                 "output_tokens": log.output_tokens,
                 "cached_tokens": getattr(log, "cached_tokens", 0),
+                "image_count": getattr(log, "image_count", 0),
+                "usage_unit_type": getattr(log, "usage_unit_type", "tokens"),
+                "usage_unit_count": getattr(log, "usage_unit_count", 0),
+                "billable_sku": getattr(log, "billable_sku", "") or (getattr(log, "customer_model_alias", "") or log.model),
                 "total_tokens": log.input_tokens + log.output_tokens,
                 "cost_cents": log.cost_cents,
                 "cost_usd": log.cost_cents / 100,

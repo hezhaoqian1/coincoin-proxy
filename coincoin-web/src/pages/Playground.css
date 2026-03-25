@@ -29,6 +29,29 @@
     text-transform: none;
 }
 
+.pg-select {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: var(--bg-glass);
+    color: var(--text-primary);
+    font-size: 0.88rem;
+    margin-bottom: var(--space-sm);
+}
+
+.pg-select:focus {
+    border-color: var(--accent-indigo);
+    outline: none;
+}
+
+.pg-model-note {
+    font-size: 0.82rem;
+    color: var(--text-tertiary);
+    line-height: 1.6;
+    margin: 0;
+}
+
 .pg-textarea {
     width: 100%;
     padding: var(--space-md);

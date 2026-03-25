@@ -35,9 +35,10 @@ export default function Usage() {
 
     const exportCSV = () => {
         if (!usage?.data?.length) return
-        const headers = ['时间', '端点', '模型', 'Input Token', 'Output Token', '总 Token', '花费($)', '耗时(ms)', '状态码']
+        const headers = ['时间', '端点', '公开模型', '上游模型', '计量类型', '计量值', 'Input Token', 'Output Token', '总 Token', '花费($)', '耗时(ms)', '状态码']
         const rows = usage.data.map(d => [
-            d.created_at, d.endpoint, d.model,
+            d.created_at, d.endpoint, d.model, d.provider_model,
+            d.usage_unit_type, d.usage_unit_type === 'images' ? (d.image_count || d.usage_unit_count) : d.usage_unit_count,
             d.input_tokens, d.output_tokens, d.total_tokens,
             d.cost_usd.toFixed(4), d.duration_ms, d.status_code
         ])
@@ -66,14 +67,14 @@ export default function Usage() {
 
     const totalCost = usage.data.reduce((s, d) => s + d.cost_usd, 0)
     const totalTokens = usage.data.reduce((s, d) => s + d.total_tokens, 0)
-    const avgDuration = usage.data.length > 0 ? usage.data.reduce((s, d) => s + d.duration_ms, 0) / usage.data.length : 0
+    const totalImages = usage.data.reduce((s, d) => s + (d.image_count || 0), 0)
 
     return (
         <div className="page-wrapper">
             <div className="container">
                 <div className="page-header">
                     <h1 className="page-title">使用明细</h1>
-                    <p className="page-desc">详细查看每次 API 请求的 Token 消耗和费用</p>
+                    <p className="page-desc">详细查看每次 API 请求的模型 alias、上游模型、Token / 图片计量和费用</p>
                 </div>
 
                 <div className="stats-grid stagger-children">
@@ -106,11 +107,11 @@ export default function Usage() {
                     </div>
                     <div className="stat-card glass-card animate-fade-in-up">
                         <div className="stat-icon" style={{ background: 'rgba(245,158,11,0.12)' }}>
-                            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent-amber)" strokeWidth="2"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>
+                            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent-amber)" strokeWidth="2"><path d="M4 7h16M4 17h16M7 4v16M17 4v16" /></svg>
                         </div>
                         <div className="stat-info">
-                            <span className="stat-label">平均耗时</span>
-                            <span className="stat-value">{(avgDuration / 1000).toFixed(1)}s</span>
+                            <span className="stat-label">页内图片</span>
+                            <span className="stat-value">{totalImages}</span>
                         </div>
                     </div>
                 </div>
@@ -124,6 +125,7 @@ export default function Usage() {
                             <option value="responses:stream">responses:stream</option>
                             <option value="chat/completions">chat/completions</option>
                             <option value="chat/completions:stream">chat/completions:stream</option>
+                            <option value="images/generations">images/generations</option>
                             <option value="embeddings">embeddings</option>
                         </select>
                         <select className="filter-select" value={filters.status_code} onChange={e => applyFilter('status_code', e.target.value)}>
@@ -146,7 +148,9 @@ export default function Usage() {
                                 <tr>
                                     <th>请求时间</th>
                                     <th>端点</th>
-                                    <th>模型</th>
+                                    <th>公开模型</th>
+                                    <th>上游模型</th>
+                                    <th>计量</th>
                                     <th>Input Token</th>
                                     <th>Output Token</th>
                                     <th>总 Token</th>
@@ -161,6 +165,14 @@ export default function Usage() {
                                         <td>{new Date(log.created_at).toLocaleString('zh-CN')}</td>
                                         <td><code className="endpoint-tag">{log.endpoint}</code></td>
                                         <td><span className="model-tag-sm">{log.model}</span></td>
+                                        <td><span className="provider-tag-sm">{log.provider_model || '-'}</span></td>
+                                        <td>
+                                            <span className={`usage-pill ${log.usage_unit_type === 'images' ? 'images' : 'tokens'}`}>
+                                                {log.usage_unit_type === 'images'
+                                                    ? `${log.image_count || log.usage_unit_count || 0} images`
+                                                    : `${(log.usage_unit_count || log.total_tokens || 0).toLocaleString()} tokens`}
+                                            </span>
+                                        </td>
                                         <td>{log.input_tokens.toLocaleString()}</td>
                                         <td>{log.output_tokens.toLocaleString()}</td>
                                         <td><strong>{log.total_tokens.toLocaleString()}</strong></td>
@@ -170,7 +182,7 @@ export default function Usage() {
                                     </tr>
                                 ))}
                                 {usage.data.length === 0 && (
-                                    <tr><td colSpan="9" style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-tertiary)' }}>暂无数据</td></tr>
+                                    <tr><td colSpan="11" style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-tertiary)' }}>暂无数据</td></tr>
                                 )}
                             </tbody>
                         </table>

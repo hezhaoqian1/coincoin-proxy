@@ -4,6 +4,7 @@ import { Line } from 'react-chartjs-2'
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler } from 'chart.js'
 import { MOCK_BALANCE, MOCK_USAGE, getApiKey, getBalance, getUsageLogs, getDailyUsage, getAnnouncements, getUsername, activateKey, getReferralInfo } from '../api/client'
 import useOrderConfirm from '../hooks/useOrderConfirm'
+import { usePublicModels } from '../hooks/usePublicModels'
 import './Dashboard.css'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler)
@@ -124,6 +125,7 @@ function KeyManagement({ copied, copy }) {
 }
 
 export default function Dashboard() {
+    const { defaultTextModel, defaultImageModel } = usePublicModels()
     const [balance, setBalance] = useState(null)
     const [usage, setUsage] = useState(null)
     const [dailyData, setDailyData] = useState(null)
@@ -198,6 +200,7 @@ export default function Dashboard() {
     const todayUsage = usage?.data?.filter(d => d.created_at?.startsWith(todayStr)) || []
     const todayCost = todayUsage.reduce((sum, d) => sum + d.cost_cents, 0) / 100
     const todayTokens = todayUsage.reduce((sum, d) => sum + (d.total_tokens || d.input_tokens + d.output_tokens), 0)
+    const todayImages = todayUsage.reduce((sum, d) => sum + (d.image_count || 0), 0)
     const todayRequests = todayUsage.length
 
     const chartData = dailyData && dailyData.length > 0 ? {
@@ -315,7 +318,7 @@ export default function Dashboard() {
                         <div className="stat-info">
                             <span className="stat-label">今日消费</span>
                             <span className="stat-value">${todayCost.toFixed(2)}</span>
-                            <span className="stat-sub">{todayRequests} 次请求 &middot; {todayTokens.toLocaleString()} Tokens</span>
+                            <span className="stat-sub">{todayRequests} 次请求 &middot; {todayTokens.toLocaleString()} Tokens &middot; {todayImages} Images</span>
                         </div>
                     </div>
                 </div>
@@ -410,8 +413,12 @@ export default function Dashboard() {
                             <span className="price-val">${balance.price_output_per_million} <small>/ 百万</small></span>
                         </div>
                         <div className="price-item">
-                            <span className="price-label">模型</span>
-                            <span className="price-val model-tag">gpt-5.2-codex</span>
+                            <span className="price-label">默认文本</span>
+                            <span className="price-val model-tag">{defaultTextModel?.id || 'gpt-5.2-codex'}</span>
+                        </div>
+                        <div className="price-item">
+                            <span className="price-label">默认图片</span>
+                            <span className="price-val model-tag">{defaultImageModel?.id || 'gemini-image'}</span>
                         </div>
                     </div>
                 </div>
@@ -429,8 +436,8 @@ export default function Dashboard() {
                                     <tr>
                                         <th>时间</th>
                                         <th>端点</th>
-                                        <th>Input</th>
-                                        <th>Output</th>
+                                        <th>模型</th>
+                                        <th>计量</th>
                                         <th>花费</th>
                                         <th>耗时</th>
                                         <th>状态</th>
@@ -441,8 +448,8 @@ export default function Dashboard() {
                                         <tr key={i}>
                                             <td>{new Date(log.created_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
                                             <td><code className="endpoint-tag">{log.endpoint}</code></td>
-                                            <td>{log.input_tokens.toLocaleString()}</td>
-                                            <td>{log.output_tokens.toLocaleString()}</td>
+                                            <td><span className="model-tag-sm">{log.model}</span></td>
+                                            <td>{log.usage_unit_type === 'images' ? `${log.image_count || log.usage_unit_count || 0} images` : `${(log.total_tokens || 0).toLocaleString()} tokens`}</td>
                                             <td className="cost-cell">${log.cost_usd.toFixed(2)}</td>
                                             <td>{(log.duration_ms / 1000).toFixed(1)}s</td>
                                             <td><span className={`badge ${log.status_code === 200 ? 'badge-success' : 'badge-error'}`}>{log.status_code}</span></td>

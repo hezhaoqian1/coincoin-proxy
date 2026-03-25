@@ -13,7 +13,7 @@ export default function Footer() {
                         </div>
                         <p className="footer-desc">
                             高性能 AI API 中转站<br />
-                            全球加速 · 按量计费 · OpenAI 兼容
+                            公开模型目录 · 按量计费 · OpenAI 兼容
                         </p>
                     </div>
 
@@ -33,8 +33,8 @@ export default function Footer() {
 
                     <div className="footer-col">
                         <h4>模型</h4>
-                        <span className="footer-model">gpt-5.2-codex</span>
-                        <span className="footer-model-note">更多模型即将上线</span>
+                        <span className="footer-model">gpt-5.2-codex / gemini-fast</span>
+                        <span className="footer-model-note">支持 Gemini 文本与生图</span>
                     </div>
                 </div>
 

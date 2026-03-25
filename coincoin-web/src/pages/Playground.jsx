@@ -1,9 +1,12 @@
-import { useState, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { getApiKey } from '../api/client'
+import { describePublicModel, getApiKey } from '../api/client'
+import { usePublicModels } from '../hooks/usePublicModels'
 import './Playground.css'
 
 export default function Playground() {
+    const { textModels, defaultTextModel, loading: loadingModels } = usePublicModels()
+    const [selectedModel, setSelectedModel] = useState(defaultTextModel?.id || 'gpt-5.2-codex')
     const [systemPrompt, setSystemPrompt] = useState('')
     const [userPrompt, setUserPrompt] = useState('')
     const [temperature, setTemperature] = useState(0.7)
@@ -12,6 +15,14 @@ export default function Playground() {
     const [loading, setLoading] = useState(false)
     const [stats, setStats] = useState(null)
     const abortRef = useRef(null)
+
+    useEffect(() => {
+        if (!textModels.find((model) => model.id === selectedModel) && defaultTextModel?.id) {
+            setSelectedModel(defaultTextModel.id)
+        }
+    }, [defaultTextModel, selectedModel, textModels])
+
+    const selectedModelInfo = textModels.find((model) => model.id === selectedModel) || defaultTextModel
 
     const handleSend = async () => {
         if (!userPrompt.trim() || loading) return
@@ -31,11 +42,11 @@ export default function Playground() {
             const res = await fetch('/v1/chat/completions', {
                 method: 'POST',
                 headers: {
-                    'Authorization': `Bearer ${getApiKey()}`,
+                    Authorization: `Bearer ${getApiKey()}`,
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
-                    model: 'gpt-5.2-codex',
+                    model: selectedModel,
                     messages,
                     temperature: parseFloat(temperature),
                     max_tokens: parseInt(maxTokens),
@@ -77,7 +88,9 @@ export default function Playground() {
                             setResponse(fullText)
                         }
                         if (evt.usage) usage = evt.usage
-                    } catch { /* ignore parse errors */ }
+                    } catch {
+                        // ignore partial SSE fragments
+                    }
                 }
             }
 
@@ -86,6 +99,7 @@ export default function Playground() {
                 duration: elapsed,
                 input_tokens: usage?.prompt_tokens || usage?.input_tokens || 0,
                 output_tokens: usage?.completion_tokens || usage?.output_tokens || 0,
+                model: selectedModel,
             })
         } catch (e) {
             if (e.name !== 'AbortError') {
@@ -106,11 +120,21 @@ export default function Playground() {
             <div className="container">
                 <div className="page-header">
                     <h1 className="page-title">API Playground</h1>
-                    <p className="page-desc">在线测试 API 调用，实时查看流式响应</p>
+                    <p className="page-desc">在线测试真实公开模型目录，验证只改 <code>model</code> 的实际效果</p>
                 </div>
 
                 <div className="playground-layout">
                     <div className="playground-input glass-card animate-fade-in-up">
+                        <div className="pg-section">
+                            <label className="pg-label">Text Model</label>
+                            <select className="pg-select" value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)} disabled={loadingModels || loading}>
+                                {textModels.map((model) => (
+                                    <option key={model.id} value={model.id}>{model.id}</option>
+                                ))}
+                            </select>
+                            {selectedModelInfo && <p className="pg-model-note">{describePublicModel(selectedModelInfo)}</p>}
+                        </div>
+
                         <div className="pg-section">
                             <label className="pg-label">System Prompt <small>(可选)</small></label>
                             <textarea
@@ -174,6 +198,7 @@ export default function Playground() {
                         </div>
                         {stats && (
                             <div className="pg-stats">
+                                <span>{stats.model}</span>
                                 <span>&#9201; {(stats.duration / 1000).toFixed(1)}s</span>
                                 <span>&#8593; {stats.input_tokens.toLocaleString()} tokens</span>
                                 <span>&#8595; {stats.output_tokens.toLocaleString()} tokens</span>
