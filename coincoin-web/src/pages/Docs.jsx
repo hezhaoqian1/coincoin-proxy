@@ -64,7 +64,7 @@ function QuickStart({ primaryTextModel, primaryImageModel }) {
     return (
         <div className="doc-section animate-fade-in">
             <h2>🚀 快速开始</h2>
-            <p className="doc-intro">CoinCoin 对外保持 OpenAI 兼容协议，但公开模型目录现在已经支持 GPT 文本、Gemini 文本和 Gemini 生图能力。</p>
+            <p className="doc-intro">CoinCoin 对外保持 OpenAI 兼容协议，但公开模型目录现在已经支持 GPT 文本、Gemini 文本和 Gemini 图片能力。</p>
 
             <div className="doc-callout">
                 <strong>模型切换规则</strong>
@@ -143,6 +143,7 @@ source ~/.zshrc`}</pre>
                 <li>只需要把请求或客户端配置中的 <code>model</code> 改成公开 alias，例如 <code>gemini-fast</code>、<code>gemini-reasoning</code>、<code>gemini-image</code>。</li>
                 <li>Base URL 和 API Key 不需要改，仍然走同一个 CoinCoin 入口。</li>
                 <li>文本请求推荐走 <code>/v1/chat/completions</code> 或 <code>/v1/responses</code>，图片请求走 <code>/v1/images/generations</code> 或 <code>/v1/images/edits</code>，并使用 <code>{imageModelId}</code> 这类图片 alias。</li>
+                <li>Gemini 图片请求当前统一由 CoinCoin 控制面直连 Vertex 处理，而不是让终端用户直连内部 gateway。</li>
             </ul>
         </div>
     )
@@ -281,13 +282,14 @@ function ApiReference({ primaryTextModel, primaryImageModel }) {
   -H "Authorization: Bearer sk_cc_xxxxx" \\
   -F "model=${imageModelId}" \\
   -F "prompt=Turn this into a clean pixel-art icon" \\
-  -F "n=2" \\
+  -F "n=1" \\
   -F "size=1024x1024" \\
   -F "image=@./input.png"`}</pre>
 
             <ul className="doc-list">
-                <li>当前 Gemini 图生图支持 1 张或多张输入图，并支持通过 <code>n</code> 返回多张候选图。</li>
+                <li>当前 Gemini 图生图支持 1 张或多张输入图，但输出候选数当前只支持 <code>n=1</code>。</li>
                 <li>当前 Gemini 图生图不支持 <code>mask</code> 上传；如果传了掩码，会返回 <code>mask_not_supported</code>。</li>
+                <li>如果平台运营侧没有配置好 Vertex 图片变量，Gemini 图片请求会返回配置错误，而不是偷偷回退到别的模型。</li>
             </ul>
 
             <h3>默认兼容规则</h3>
@@ -308,6 +310,7 @@ function ApiReference({ primaryTextModel, primaryImageModel }) {
                     <tr><td>402</td><td>余额不足</td><td>请充值后重试</td></tr>
                     <tr><td>403</td><td>禁止访问</td><td>Key 被禁用、用户被封禁，或使用了 session key 访问 API</td></tr>
                     <tr><td>429</td><td>请求过多</td><td>超出速率或额度限制</td></tr>
+                    <tr><td>503</td><td>平台未配置 Gemini 图片运行时</td><td>例如 <code>vertex_image_generation_not_configured</code>、<code>vertex_image_edit_not_configured</code></td></tr>
                 </tbody>
             </table>
         </div>
@@ -321,7 +324,7 @@ function CodeExamples({ primaryTextModel, primaryImageModel }) {
     return (
         <div className="doc-section animate-fade-in">
             <h2>💻 代码示例</h2>
-            <p className="doc-intro">核心原则只有一条：Base URL 不变，只改 <code>model</code> 就能切换到 CoinCoin 公开目录里的不同模型。</p>
+            <p className="doc-intro">核心原则只有一条：Base URL 不变，只改 <code>model</code> 就能切换到 CoinCoin 公开目录里的不同模型。图片能力的上游细节由平台控制，不需要终端用户理解内部 gateway。</p>
 
             <div className="doc-callout">
                 <strong>关于 Gemini CLI</strong>
