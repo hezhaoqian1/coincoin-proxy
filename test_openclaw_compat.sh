@@ -40,6 +40,20 @@ fi
 echo "    user_id=$USER_ID"
 echo "    api_key=${API_KEY:0:20}..."
 
+TEXT_MODEL=$(curl -s "$BASE/v1/models" \
+  -H "Authorization: Bearer $API_KEY" | python3 -c '
+import json, sys
+data = json.load(sys.stdin).get("data", [])
+ids = [item.get("id") for item in data if isinstance(item, dict)]
+for preferred in ("gpt-5.4", "gpt-5.2-codex", "gpt-5.2"):
+    if preferred in ids:
+        print(preferred)
+        raise SystemExit(0)
+print(ids[0] if ids else "gpt-5.4")
+' 2>/dev/null)
+TEXT_MODEL="${TEXT_MODEL:-gpt-5.4}"
+echo "    text_model=$TEXT_MODEL"
+
 curl -s -o /dev/null -X PATCH "$BASE/admin/users/$USER_ID" \
   -H "Authorization: Bearer $ADMIN" \
   -H "Content-Type: application/json" \
@@ -56,11 +70,7 @@ HTTP=$(curl -s -o /tmp/oc_resp.json -w '%{http_code}' --max-time 120 \
   -X POST "$BASE/v1/responses" \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{
-    "model": "gpt-5.2-codex",
-    "input": "Reply with exactly: hello openclaw",
-    "stream": false
-  }')
+  -d "{\"model\":\"$TEXT_MODEL\",\"input\":\"Reply with exactly: hello openclaw\",\"stream\":false}")
 BODY=$(cat /tmp/oc_resp.json)
 
 if [[ "$HTTP" == "200" ]]; then
@@ -87,11 +97,7 @@ HTTP=$(curl -s -o /tmp/oc_stream.txt -w '%{http_code}' --max-time 120 \
   -X POST "$BASE/v1/responses" \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{
-    "model": "gpt-5.2-codex",
-    "input": "Say ok",
-    "stream": true
-  }')
+  -d "{\"model\":\"$TEXT_MODEL\",\"input\":\"Say ok\",\"stream\":true}")
 
 if [[ "$HTTP" == "200" ]]; then
   # OpenClaw parses SSE events — check for expected event types
@@ -120,12 +126,7 @@ HTTP=$(curl -s -o /tmp/oc_resp.json -w '%{http_code}' --max-time 120 \
   -X POST "$BASE/v1/responses" \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{
-    "model": "gpt-5.2-codex",
-    "instructions": "You are a helpful coding assistant. Always respond in JSON format.",
-    "input": "What is 2+2? Return {\"answer\": N}",
-    "stream": false
-  }')
+  -d "{\"model\":\"$TEXT_MODEL\",\"instructions\":\"You are a helpful coding assistant. Always respond in JSON format.\",\"input\":\"What is 2+2? Return {\\\"answer\\\": N}\",\"stream\":false}")
 BODY=$(cat /tmp/oc_resp.json)
 if [[ "$HTTP" == "200" ]]; then
   report "PASS" "responses: instructions" "instructions field accepted"
@@ -142,25 +143,7 @@ HTTP=$(curl -s -o /tmp/oc_resp.json -w '%{http_code}' --max-time 120 \
   -X POST "$BASE/v1/responses" \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{
-    "model": "gpt-5.2-codex",
-    "input": "What is the weather in Tokyo?",
-    "tools": [
-      {
-        "type": "function",
-        "name": "get_weather",
-        "description": "Get weather for a city",
-        "parameters": {
-          "type": "object",
-          "properties": {
-            "city": {"type": "string", "description": "City name"}
-          },
-          "required": ["city"]
-        }
-      }
-    ],
-    "stream": false
-  }')
+  -d "{\"model\":\"$TEXT_MODEL\",\"input\":\"What is the weather in Tokyo?\",\"tools\":[{\"type\":\"function\",\"name\":\"get_weather\",\"description\":\"Get weather for a city\",\"parameters\":{\"type\":\"object\",\"properties\":{\"city\":{\"type\":\"string\",\"description\":\"City name\"}},\"required\":[\"city\"]}}],\"stream\":false}")
 BODY=$(cat /tmp/oc_resp.json)
 if [[ "$HTTP" == "200" ]]; then
   HAS_FC=$(echo "$BODY" | python3 -c "
@@ -194,7 +177,7 @@ if [[ -n "$CALL_ID" && "$CALL_ID" != "?" ]]; then
     -H "Authorization: Bearer $API_KEY" \
     -H "Content-Type: application/json" \
     -d "{
-      \"model\": \"gpt-5.2-codex\",
+      \"model\": \"$TEXT_MODEL\",
       \"input\": [
         {\"type\": \"message\", \"role\": \"user\", \"content\": \"What is the weather in Tokyo?\"},
         {\"type\": \"function_call\", \"name\": \"get_weather\", \"arguments\": \"{\\\"city\\\":\\\"Tokyo\\\"}\", \"call_id\": \"$CALL_ID\"},
@@ -242,14 +225,7 @@ HTTP=$(curl -s -o /tmp/oc_resp.json -w '%{http_code}' --max-time 120 \
   -X POST "$BASE/v1/chat/completions" \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{
-    "model": "gpt-5.2-codex",
-    "messages": [
-      {"role": "system", "content": "You are a helpful assistant."},
-      {"role": "user", "content": "Say hello"}
-    ],
-    "stream": false
-  }')
+  -d "{\"model\":\"$TEXT_MODEL\",\"messages\":[{\"role\":\"system\",\"content\":\"You are a helpful assistant.\"},{\"role\":\"user\",\"content\":\"Say hello\"}],\"stream\":false}")
 BODY=$(cat /tmp/oc_resp.json)
 if [[ "$HTTP" == "200" ]]; then
   HAS_CHOICES=$(echo "$BODY" | python3 -c "
@@ -272,11 +248,7 @@ HTTP=$(curl -s -o /tmp/oc_stream2.txt -w '%{http_code}' --max-time 120 \
   -X POST "$BASE/v1/chat/completions" \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{
-    "model": "gpt-5.2-codex",
-    "messages": [{"role": "user", "content": "Say ok"}],
-    "stream": true
-  }')
+  -d "{\"model\":\"$TEXT_MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Say ok\"}],\"stream\":true}")
 if [[ "$HTTP" == "200" ]]; then
   HAS_DELTA=$(grep -c '"delta"' /tmp/oc_stream2.txt 2>/dev/null || echo 0)
   HAS_DONE=$(grep -c "\[DONE\]" /tmp/oc_stream2.txt 2>/dev/null || echo 0)
@@ -297,27 +269,7 @@ HTTP=$(curl -s -o /tmp/oc_resp.json -w '%{http_code}' --max-time 120 \
   -X POST "$BASE/v1/chat/completions" \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{
-    "model": "gpt-5.2-codex",
-    "messages": [{"role": "user", "content": "Get the weather in Paris"}],
-    "tools": [
-      {
-        "type": "function",
-        "function": {
-          "name": "get_weather",
-          "description": "Get weather for a city",
-          "parameters": {
-            "type": "object",
-            "properties": {
-              "city": {"type": "string"}
-            },
-            "required": ["city"]
-          }
-        }
-      }
-    ],
-    "stream": false
-  }')
+  -d "{\"model\":\"$TEXT_MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Get the weather in Paris\"}],\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"description\":\"Get weather for a city\",\"parameters\":{\"type\":\"object\",\"properties\":{\"city\":{\"type\":\"string\"}},\"required\":[\"city\"]}}}],\"stream\":false}")
 BODY=$(cat /tmp/oc_resp.json)
 if [[ "$HTTP" == "200" ]]; then
   HAS_TC=$(echo "$BODY" | python3 -c "
@@ -345,12 +297,7 @@ HTTP=$(curl -s -o /tmp/oc_resp.json -w '%{http_code}' --max-time 120 \
   -X POST "$BASE/v1/responses" \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{
-    "model": "gpt-5.2-codex",
-    "input": "Count from 1 to 1000",
-    "max_output_tokens": 50,
-    "stream": false
-  }')
+  -d "{\"model\":\"$TEXT_MODEL\",\"input\":\"Count from 1 to 1000\",\"max_output_tokens\":50,\"stream\":false}")
 BODY=$(cat /tmp/oc_resp.json)
 if [[ "$HTTP" == "200" ]]; then
   report "PASS" "responses: max_output_tokens" "param accepted and processed"
@@ -385,19 +332,19 @@ if [[ "$FAIL" -eq 0 ]]; then
   echo ""
   echo "Sample OpenClaw config (~/.openclaw/openclaw.json):"
   echo ""
-  cat <<'JSONEOF'
+  cat <<JSONEOF
 {
   "models": {
     "mode": "merge",
     "providers": {
       "coincoin": {
         "baseUrl": "https://clawfather.up.railway.app/v1",
-        "apiKey": "${COINCOIN_API_KEY}",
+        "apiKey": "\${COINCOIN_API_KEY}",
         "api": "openai-responses",
         "models": [
           {
-            "id": "gpt-5.2-codex",
-            "name": "GPT 5.2 Codex (CoinCoin)",
+            "id": "${TEXT_MODEL}",
+            "name": "${TEXT_MODEL} (CoinCoin)",
             "api": "openai-responses",
             "reasoning": true,
             "input": ["text", "image"],
@@ -417,10 +364,10 @@ if [[ "$FAIL" -eq 0 ]]; then
   "agents": {
     "defaults": {
       "model": {
-        "primary": "coincoin/gpt-5.2-codex"
+        "primary": "coincoin/${TEXT_MODEL}"
       },
       "models": {
-        "coincoin/gpt-5.2-codex": {
+        "coincoin/${TEXT_MODEL}": {
           "alias": "codex",
           "params": {
             "transport": "sse"

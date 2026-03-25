@@ -328,6 +328,13 @@ def filter_headers(headers: Dict[str, str]) -> Dict[str, str]:
     return {k: v for k, v in headers.items() if k.lower() not in HOP_BY_HOP_HEADERS}
 
 
+def extract_upstream_request_id(headers) -> str:
+    for key, value in (headers or {}).items():
+        if key.lower() in {"x-request-id", "request-id", "apim-request-id", "x-ms-request-id"}:
+            return str(value or "").strip()
+    return ""
+
+
 def _build_upstream_headers(cfg) -> Dict[str, str]:
     """Build upstream request headers with auth style from ModelConfig."""
     headers = {"content-type": "application/json"}
@@ -643,6 +650,10 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
     if isinstance(_text, dict) and "verbosity" in _text:
         _text["verbosity"] = "medium"
 
+    if public_model.routing_mode == "legacy_auto" or used_cfg.strip_unsupported:
+        if payload.pop("context_management", None) is not None:
+            logger.info("responses compat: dropped context_management for legacy upstream")
+
     _prev_resp_id = payload.get("previous_response_id")
     if _prev_resp_id:
         _cached_conv = _conv_cache.get(_prev_resp_id)
@@ -651,7 +662,8 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             logger.info("polyfill: expanded from %s (%d+%d+%d items)",
                         _prev_resp_id, *_expanded_counts)
         else:
-            logger.warning("polyfill: %s not in cache, sending current input only", _prev_resp_id)
+            payload.pop("previous_response_id", None)
+            logger.warning("polyfill: %s not in cache, dropping previous_response_id and sending current input only", _prev_resp_id)
 
     _input = payload.get("input")
     if isinstance(_input, list):
@@ -752,6 +764,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             upstream = await _send_stream(used_cfg, is_fallback=True)
 
         content_type = upstream.headers.get("content-type", "")
+        upstream_request_id = extract_upstream_request_id(upstream.headers)
         if "text/event-stream" not in content_type:
             if can_fallback:
                 try:
@@ -765,6 +778,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 is_cheap = False
                 upstream = await _send_stream(used_cfg, is_fallback=True)
                 content_type = upstream.headers.get("content-type", "")
+                upstream_request_id = extract_upstream_request_id(upstream.headers)
             try:
                 body = await upstream.aread()
             finally:
@@ -849,6 +863,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                         price_output_per_million=used_cfg.price_output_per_million,
                         usage_unit_type="tokens",
                         billable_sku=public_model.billable_sku or display_model,
+                        upstream_request_id=upstream_request_id,
                     ))
 
         stream_headers = filter_headers(dict(upstream.headers))
@@ -926,6 +941,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
     response_headers.pop("content-length", None)
 
     content_type = upstream.headers.get("content-type", "application/json")
+    upstream_request_id = extract_upstream_request_id(upstream.headers)
     if can_fallback and "application/json" not in content_type:
         _fb = "cheap" if is_cheap else "premium"
         used_cfg = fallback_cfg
@@ -936,6 +952,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         response_headers = filter_headers(dict(upstream.headers))
         response_headers.pop("content-length", None)
         content_type = upstream.headers.get("content-type", "application/json")
+        upstream_request_id = extract_upstream_request_id(upstream.headers)
 
     if "application/json" in content_type:
         try:
@@ -951,6 +968,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 response_headers = filter_headers(dict(upstream.headers))
                 response_headers.pop("content-length", None)
                 content_type = upstream.headers.get("content-type", "application/json")
+                upstream_request_id = extract_upstream_request_id(upstream.headers)
                 try:
                     data = upstream.json() if "application/json" in content_type else upstream.text
                 except Exception:
@@ -999,6 +1017,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             price_output_per_million=used_cfg.price_output_per_million,
             usage_unit_type="tokens",
             billable_sku=public_model.billable_sku or display_model,
+            upstream_request_id=upstream_request_id,
         )
     elif isinstance(data, (dict, str)):
         logger.error("upstream error %s: %s", upstream.status_code, str(data)[:500])
@@ -1046,6 +1065,7 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
 
     response_headers = filter_headers(dict(upstream.headers))
     response_headers.pop("content-length", None)
+    upstream_request_id = extract_upstream_request_id(upstream.headers)
     content_type = upstream.headers.get("content-type", "application/json")
 
     if "application/json" in content_type:
@@ -1084,6 +1104,7 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
             usage_unit_type="images",
             usage_unit_count=image_count,
             billable_sku=public_model.billable_sku or display_model,
+            upstream_request_id=upstream_request_id,
             image_count=image_count,
             price_per_image_cents=public_model.price_per_image_cents,
         )
@@ -1146,6 +1167,7 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
         duration_ms = int((time.monotonic() - t0) * 1000)
         response_headers = filter_headers(dict(upstream.headers))
         response_headers.pop("content-length", None)
+        upstream_request_id = extract_upstream_request_id(upstream.headers)
         try:
             upstream_data = upstream.json()
         except Exception:
@@ -1189,6 +1211,7 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
         response_headers = filter_headers(dict(upstream.headers))
         response_headers.pop("content-length", None)
         content_type = upstream.headers.get("content-type", "application/json")
+        upstream_request_id = extract_upstream_request_id(upstream.headers)
 
         if "application/json" in content_type:
             try:
@@ -1223,6 +1246,7 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
             usage_unit_type="images",
             usage_unit_count=image_count,
             billable_sku=public_model.billable_sku or display_model,
+            upstream_request_id=upstream_request_id,
             image_count=image_count,
             price_per_image_cents=public_model.price_per_image_cents,
         )

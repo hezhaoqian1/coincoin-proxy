@@ -51,6 +51,7 @@ async def _run_migrations(conn):
         ("coincoin_request_logs", "usage_unit_type", "VARCHAR(32) DEFAULT 'tokens'"),
         ("coincoin_request_logs", "usage_unit_count", "BIGINT DEFAULT 0"),
         ("coincoin_request_logs", "billable_sku", "VARCHAR(128) DEFAULT ''"),
+        ("coincoin_request_logs", "upstream_request_id", "VARCHAR(128) DEFAULT ''"),
     ]
     logger = logging.getLogger("coincoin.migrations")
     for table, col, ddl in migrations:

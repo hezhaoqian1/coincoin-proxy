@@ -105,6 +105,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             usage_unit_type="images",
             usage_unit_count=2,
             billable_sku="gemini-image",
+            upstream_request_id="req_img_123",
             cost_cents=14,
             duration_ms=2100,
             status_code=200,
@@ -137,6 +138,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(item["usage_unit_count"], 2)
         self.assertEqual(item["image_count"], 2)
         self.assertEqual(item["billable_sku"], "gemini-image")
+        self.assertEqual(item["upstream_request_id"], "req_img_123")
 
     async def test_summary_metrics_expose_images_today(self) -> None:
         fake_db = _FakeDB(scalar_results=[12, 10, 987654, 45, 6])

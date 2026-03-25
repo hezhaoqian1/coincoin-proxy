@@ -369,6 +369,7 @@ async def list_user_request_logs(
                 "usage_unit_type": getattr(log, "usage_unit_type", "tokens"),
                 "usage_unit_count": getattr(log, "usage_unit_count", 0),
                 "billable_sku": getattr(log, "billable_sku", "") or (getattr(log, "customer_model_alias", "") or log.model),
+                "upstream_request_id": getattr(log, "upstream_request_id", ""),
                 "total_tokens": log.input_tokens + log.output_tokens,
                 "cost_cents": log.cost_cents,
                 "cost_usd": log.cost_cents / 100,

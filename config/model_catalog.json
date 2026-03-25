@@ -11,6 +11,22 @@
       "billable_sku": "legacy-default-text"
     },
     {
+      "id": "gpt-5.2",
+      "owned_by": "openai",
+      "provider_name": "OpenAI",
+      "capabilities": ["chat/completions", "responses", "embeddings"],
+      "routing_mode": "legacy_auto",
+      "billable_sku": "legacy-gpt-5.2-text"
+    },
+    {
+      "id": "gpt-5.2-codex",
+      "owned_by": "openai",
+      "provider_name": "OpenAI",
+      "capabilities": ["chat/completions", "responses", "embeddings"],
+      "routing_mode": "legacy_auto",
+      "billable_sku": "legacy-gpt-5.2-codex-text"
+    },
+    {
       "id": "gemini-balanced",
       "owned_by": "google",
       "provider_name": "Google",
