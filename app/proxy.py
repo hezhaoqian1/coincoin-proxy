@@ -1139,10 +1139,16 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
     client = await get_http_client()
     response_headers: Dict[str, str] = {}
 
-    should_use_direct_vertex = (
-        public_model.provider_name.strip().lower() == "google"
-        and bool(settings.vertex_api_key)
-    )
+    is_google_image_edit = public_model.provider_name.strip().lower() == "google"
+    should_use_direct_vertex = is_google_image_edit and bool(settings.vertex_api_key)
+
+    if is_google_image_edit and not settings.vertex_api_key:
+        return _openai_error_response(
+            "Gemini image edits require COINCOIN_VERTEX_API_KEY on the CoinCoin control plane.",
+            error_type="server_error",
+            code="vertex_image_edit_not_configured",
+            status_code=503,
+        )
 
     if should_use_direct_vertex:
         if any(key in {"mask", "mask[]"} for key, _ in file_fields):
