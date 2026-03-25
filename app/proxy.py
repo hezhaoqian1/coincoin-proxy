@@ -2,6 +2,7 @@ import asyncio
 import base64
 import json
 import logging
+import secrets
 import time
 from copy import deepcopy
 from datetime import date, datetime
@@ -495,6 +496,40 @@ def _map_image_size_to_aspect_ratio(size: str) -> str:
         "896x1280": "3:4",
     }
     return aspect_ratio_map.get(size, "1:1")
+
+
+def _encode_multipart_form_data(
+    form_fields: List[Tuple[str, str]],
+    file_fields: List[Tuple[str, Tuple[str, bytes, str]]],
+) -> Tuple[bytes, str]:
+    boundary = f"coincoin-{secrets.token_hex(16)}"
+    body = bytearray()
+
+    def _append_text_part(name: str, value: str) -> None:
+        body.extend(f"--{boundary}\r\n".encode("utf-8"))
+        body.extend(f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode("utf-8"))
+        body.extend((value or "").encode("utf-8"))
+        body.extend(b"\r\n")
+
+    def _append_file_part(name: str, filename: str, content: bytes, content_type: str) -> None:
+        safe_filename = filename or "upload.bin"
+        safe_content_type = content_type or "application/octet-stream"
+        body.extend(f"--{boundary}\r\n".encode("utf-8"))
+        body.extend(
+            f'Content-Disposition: form-data; name="{name}"; filename="{safe_filename}"\r\n'.encode("utf-8")
+        )
+        body.extend(f"Content-Type: {safe_content_type}\r\n\r\n".encode("utf-8"))
+        body.extend(content)
+        body.extend(b"\r\n")
+
+    for key, value in form_fields:
+        _append_text_part(str(key), str(value))
+
+    for key, (filename, content, content_type) in file_fields:
+        _append_file_part(str(key), str(filename), content, str(content_type))
+
+    body.extend(f"--{boundary}--\r\n".encode("utf-8"))
+    return bytes(body), f"multipart/form-data; boundary={boundary}"
 
 
 async def _parse_image_edit_form(
@@ -1453,18 +1488,18 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
 
         upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/images/edits"
         headers = _build_upstream_headers(used_cfg)
-        headers.pop("content-type", None)
 
         upstream_form_fields = [(key, value) for key, value in form_fields if key != "model"]
         upstream_form_fields.append(("model", used_cfg.model_id))
+        multipart_body, multipart_content_type = _encode_multipart_form_data(upstream_form_fields, file_fields)
+        headers["content-type"] = multipart_content_type
 
         t0 = time.monotonic()
         upstream = await _send_stream_request(
             stream_client,
             "POST",
             upstream_url,
-            data=upstream_form_fields,
-            files=file_fields,
+            content=multipart_body,
             headers=headers,
         )
         duration_ms = int((time.monotonic() - t0) * 1000)

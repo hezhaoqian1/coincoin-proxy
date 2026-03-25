@@ -779,8 +779,10 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             upstream_client.calls[0]["url"],
             "https://gateway.example/v1/images/edits",
         )
-        posted_fields = dict(upstream_client.calls[0]["data"])
-        self.assertEqual(posted_fields["model"], "vertex-gemini-3.1-flash-image-preview")
+        self.assertIn("multipart/form-data; boundary=", upstream_client.calls[0]["headers"]["content-type"])
+        posted_body = upstream_client.calls[0]["content"].decode("utf-8", errors="replace")
+        self.assertIn('name="model"', posted_body)
+        self.assertIn("vertex-gemini-3.1-flash-image-preview", posted_body)
         self.assertEqual(
             upstream_client.calls[0]["headers"]["authorization"],
             "Bearer gateway-key",
