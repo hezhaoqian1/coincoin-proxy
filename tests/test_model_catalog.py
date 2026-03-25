@@ -62,6 +62,7 @@ class ModelCatalogTests(unittest.TestCase):
                         "provider_name": "OpenAI",
                         "capabilities": ["chat/completions", "responses", "embeddings"],
                         "routing_mode": "legacy_auto",
+                        "delivery_lane": "legacy",
                     },
                     {
                         "id": "gpt-5.2",
@@ -69,6 +70,7 @@ class ModelCatalogTests(unittest.TestCase):
                         "provider_name": "OpenAI",
                         "capabilities": ["chat/completions", "responses", "embeddings"],
                         "routing_mode": "legacy_auto",
+                        "delivery_lane": "legacy",
                     },
                     {
                         "id": "gpt-5.2-codex",
@@ -76,6 +78,7 @@ class ModelCatalogTests(unittest.TestCase):
                         "provider_name": "OpenAI",
                         "capabilities": ["chat/completions", "responses", "embeddings"],
                         "routing_mode": "legacy_auto",
+                        "delivery_lane": "legacy",
                     },
                     {
                         "id": "gemini-fast",
@@ -84,6 +87,7 @@ class ModelCatalogTests(unittest.TestCase):
                         "provider_model": "gemini-2.5-flash",
                         "capabilities": ["chat/completions", "responses"],
                         "routing_mode": "direct",
+                        "delivery_lane": "gateway",
                         "upstream_model": "gemini-fast",
                         "upstream_url": "https://gateway.example/v1",
                         "api_key": "gateway-key",
@@ -97,6 +101,7 @@ class ModelCatalogTests(unittest.TestCase):
                         "provider_model": "gemini-3.1-flash-image-preview",
                         "capabilities": ["images/generations", "images/edits"],
                         "routing_mode": "direct",
+                        "delivery_lane": "gateway",
                         "upstream_model": "vertex-gemini-3.1-flash-image-preview",
                         "upstream_url": "https://gateway.example/v1",
                         "api_key": "gateway-key",
@@ -132,9 +137,11 @@ class ModelCatalogTests(unittest.TestCase):
 
         self.assertEqual(resolved.public_model.public_id, "gemini-fast")
         self.assertEqual(resolved.public_model.provider_name, "Google")
+        self.assertEqual(resolved.public_model.delivery_lane, "gateway")
         self.assertEqual(resolved.backend.model_id, "gemini-fast")
         self.assertEqual(resolved.backend.upstream_url, "https://gateway.example/v1")
         self.assertEqual(resolved.backend.auth_style, "bearer")
+        self.assertEqual(resolved.route_reason, "catalog:gemini-fast:gateway")
 
     def test_explicit_legacy_public_model_keeps_legacy_lane(self) -> None:
         resolved = registry.resolve_public_model(
@@ -164,15 +171,19 @@ class ModelCatalogTests(unittest.TestCase):
         resolved = registry.resolve_public_model(None, "images/generations")
 
         self.assertEqual(resolved.public_model.public_id, "gemini-image")
+        self.assertEqual(resolved.public_model.delivery_lane, "gateway")
         self.assertEqual(resolved.backend.model_id, "vertex-gemini-3.1-flash-image-preview")
         self.assertEqual(resolved.backend.upstream_url, "https://gateway.example/v1")
+        self.assertEqual(resolved.route_reason, "catalog:gemini-image:gateway")
 
     def test_default_image_model_supports_image_edits(self) -> None:
         resolved = registry.resolve_public_model(None, "images/edits")
 
         self.assertEqual(resolved.public_model.public_id, "gemini-image")
+        self.assertEqual(resolved.public_model.delivery_lane, "gateway")
         self.assertEqual(resolved.backend.model_id, "vertex-gemini-3.1-flash-image-preview")
         self.assertEqual(resolved.backend.upstream_url, "https://gateway.example/v1")
+        self.assertEqual(resolved.route_reason, "catalog:gemini-image:gateway")
 
     def test_image_model_rejects_chat_endpoint(self) -> None:
         with self.assertRaises(ModelCapabilityError):

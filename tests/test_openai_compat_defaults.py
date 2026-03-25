@@ -112,6 +112,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                         "provider_name": "OpenAI",
                         "capabilities": ["chat/completions", "responses", "embeddings"],
                         "routing_mode": "legacy_auto",
+                        "delivery_lane": "legacy",
                     },
                     {
                         "id": "gpt-5.2",
@@ -119,6 +120,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                         "provider_name": "OpenAI",
                         "capabilities": ["chat/completions", "responses", "embeddings"],
                         "routing_mode": "legacy_auto",
+                        "delivery_lane": "legacy",
                     },
                     {
                         "id": "gpt-5.2-codex",
@@ -126,6 +128,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                         "provider_name": "OpenAI",
                         "capabilities": ["chat/completions", "responses", "embeddings"],
                         "routing_mode": "legacy_auto",
+                        "delivery_lane": "legacy",
                     },
                     {
                         "id": "gemini-fast",
@@ -134,6 +137,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                         "provider_model": "gemini-2.5-flash",
                         "capabilities": ["chat/completions", "responses"],
                         "routing_mode": "direct",
+                        "delivery_lane": "gateway",
                         "upstream_model": "gemini-fast",
                         "upstream_url": "https://gateway.example/v1",
                         "api_key": "gateway-key",
@@ -146,6 +150,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                         "provider_model": "gemini-3.1-flash-image-preview",
                         "capabilities": ["images/generations", "images/edits"],
                         "routing_mode": "direct",
+                        "delivery_lane": "gateway",
                         "upstream_model": "vertex-gemini-3.1-flash-image-preview",
                         "upstream_url": "https://gateway.example/v1",
                         "api_key": "gateway-key",
@@ -163,6 +168,16 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
 
         app.dependency_overrides[proxy_module.get_db] = fake_get_db
         app.dependency_overrides[openai_module.get_db] = fake_get_db
+
+    def _set_model_delivery_lane(self, model_id: str, delivery_lane: str) -> None:
+        catalog = json.loads(settings.model_catalog_json)
+        for model in catalog.get("models") or []:
+            if model.get("id") == model_id:
+                model["delivery_lane"] = delivery_lane
+                break
+        settings.model_catalog_json = json.dumps(catalog)
+        registry._initialized = False
+        registry.init_from_settings()
 
     def tearDown(self) -> None:
         for key, value in self._originals.items():
@@ -397,8 +412,17 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(add_usage.await_args.kwargs["upstream_request_id"], "req_123")
 
-    async def test_image_generation_without_vertex_key_fails_closed_for_google_models(self) -> None:
-        upstream_client = _RecordingClient([])
+    async def test_image_generation_uses_gateway_lane_without_vertex_key(self) -> None:
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "created": 1774449999,
+                        "data": [{"b64_json": "from-gateway"}],
+                    }
+                )
+            ]
+        )
 
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
@@ -413,10 +437,10 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                     json={"prompt": "A blue coin mascot", "n": 1, "size": "1024x1024"},
                 )
 
-        self.assertEqual(response.status_code, 503, response.text)
-        payload = response.json()
-        self.assertEqual(payload["error"]["code"], "vertex_image_generation_not_configured")
-        self.assertEqual(len(upstream_client.calls), 0)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["data"][0]["b64_json"], "from-gateway")
+        self.assertEqual(len(upstream_client.calls), 1)
+        self.assertEqual(upstream_client.calls[0]["url"], "https://gateway.example/v1/images/generations")
 
     async def test_image_generation_prefers_gateway_lane_when_gateway_is_configured(self) -> None:
         settings.gateway_base_url = "https://gateway.example"
@@ -463,6 +487,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_image_generation_without_model_uses_default_image_alias_on_direct_vertex_lane(self) -> None:
+        self._set_model_delivery_lane("gemini-image", "vertex_direct")
         settings.vertex_api_key = "vertex-direct-key"
         settings.vertex_gemini_api_base = "https://aiplatform.googleapis.com/v1/publishers/google"
 
@@ -517,6 +542,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(upstream_client.calls[0]["json"]["generationConfig"]["imageConfig"]["aspectRatio"], "1:1")
 
     async def test_image_generation_can_call_vertex_directly_when_vertex_key_is_configured(self) -> None:
+        self._set_model_delivery_lane("gemini-image", "vertex_direct")
         settings.vertex_api_key = "vertex-direct-key"
         settings.vertex_gemini_api_base = "https://aiplatform.googleapis.com/v1/publishers/google"
 
@@ -576,6 +602,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(upstream_client.calls[0]["json"]["generationConfig"]["imageConfig"]["aspectRatio"], "16:9")
 
     async def test_image_generation_rejects_candidate_count_above_one_on_direct_vertex_lane(self) -> None:
+        self._set_model_delivery_lane("gemini-image", "vertex_direct")
         settings.vertex_api_key = "vertex-direct-key"
         settings.vertex_gemini_api_base = "https://aiplatform.googleapis.com/v1/publishers/google"
 
@@ -600,6 +627,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(upstream_client.calls), 0)
 
     async def test_image_generation_retries_transport_errors_on_direct_vertex_lane(self) -> None:
+        self._set_model_delivery_lane("gemini-image", "vertex_direct")
         settings.vertex_api_key = "vertex-direct-key"
         settings.vertex_gemini_api_base = "https://aiplatform.googleapis.com/v1/publishers/google"
 
@@ -646,8 +674,17 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["data"][0]["b64_json"], "generated-after-retry")
         self.assertEqual(len(upstream_client.calls), 3)
 
-    async def test_image_edit_without_vertex_key_fails_closed_for_google_models(self) -> None:
-        upstream_client = _RecordingClient([])
+    async def test_image_edit_uses_gateway_lane_without_vertex_key(self) -> None:
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "created": 1774449999,
+                        "data": [{"b64_json": "edited-by-gateway"}],
+                    }
+                )
+            ]
+        )
 
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
@@ -663,10 +700,10 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                     files={"image": ("input.png", b"fake_image_data", "image/png")},
                 )
 
-        self.assertEqual(response.status_code, 503, response.text)
-        payload = response.json()
-        self.assertEqual(payload["error"]["code"], "vertex_image_edit_not_configured")
-        self.assertEqual(len(upstream_client.calls), 0)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["data"][0]["b64_json"], "edited-by-gateway")
+        self.assertEqual(len(upstream_client.calls), 1)
+        self.assertEqual(upstream_client.calls[0]["url"], "https://gateway.example/v1/images/edits")
 
     async def test_image_edit_prefers_gateway_lane_when_gateway_is_configured(self) -> None:
         settings.gateway_base_url = "https://gateway.example"
@@ -712,6 +749,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_image_edit_without_model_uses_default_image_alias_on_direct_vertex_lane(self) -> None:
+        self._set_model_delivery_lane("gemini-image", "vertex_direct")
         settings.vertex_api_key = "vertex-direct-key"
         settings.vertex_gemini_api_base = "https://aiplatform.googleapis.com/v1/publishers/google"
 
@@ -763,6 +801,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(upstream_client.calls[0]["json"]["contents"][0]["role"], "user")
 
     async def test_image_edit_can_call_vertex_directly_when_vertex_key_is_configured(self) -> None:
+        self._set_model_delivery_lane("gemini-image", "vertex_direct")
         settings.vertex_api_key = "vertex-direct-key"
         settings.vertex_gemini_api_base = "https://aiplatform.googleapis.com/v1/publishers/google"
 
@@ -831,6 +870,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(upstream_client.calls[0]["json"]["generationConfig"]["imageConfig"]["aspectRatio"], "1:1")
 
     async def test_image_edit_rejects_candidate_count_above_one_on_direct_vertex_lane(self) -> None:
+        self._set_model_delivery_lane("gemini-image", "vertex_direct")
         settings.vertex_api_key = "vertex-direct-key"
         settings.vertex_gemini_api_base = "https://aiplatform.googleapis.com/v1/publishers/google"
 
@@ -856,6 +896,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(upstream_client.calls), 0)
 
     async def test_image_edit_rejects_mask_on_direct_vertex_lane(self) -> None:
+        self._set_model_delivery_lane("gemini-image", "vertex_direct")
         settings.vertex_api_key = "vertex-direct-key"
         settings.vertex_gemini_api_base = "https://aiplatform.googleapis.com/v1/publishers/google"
 
@@ -884,6 +925,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(upstream_client.calls), 0)
 
     async def test_image_edit_retries_transport_errors_on_direct_vertex_lane(self) -> None:
+        self._set_model_delivery_lane("gemini-image", "vertex_direct")
         settings.vertex_api_key = "vertex-direct-key"
         settings.vertex_gemini_api_base = "https://aiplatform.googleapis.com/v1/publishers/google"
 
@@ -983,8 +1025,10 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["data"][3]["coincoin_provider_model"], "gemini-2.5-flash")
         self.assertEqual(payload["data"][3]["coincoin_capabilities"], ["chat/completions", "responses"])
         self.assertEqual(payload["data"][3]["coincoin_billable_sku"], "gemini-fast")
+        self.assertEqual(payload["data"][3]["coincoin_delivery_lane"], "gateway")
         self.assertEqual(payload["data"][4]["coincoin_capabilities"], ["images/generations", "images/edits"])
         self.assertEqual(payload["data"][4]["coincoin_default_for"], ["image"])
+        self.assertEqual(payload["data"][4]["coincoin_delivery_lane"], "gateway")
 
     async def test_model_detail_endpoint_returns_curated_metadata(self) -> None:
         transport = httpx.ASGITransport(app=app)
@@ -1001,6 +1045,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["coincoin_capabilities"], ["chat/completions", "responses"])
         self.assertEqual(payload["coincoin_billable_sku"], "gemini-fast")
         self.assertEqual(payload["coincoin_routing_mode"], "direct")
+        self.assertEqual(payload["coincoin_delivery_lane"], "gateway")
 
     async def test_model_detail_endpoint_returns_openai_error_for_unknown_model(self) -> None:
         transport = httpx.ASGITransport(app=app)

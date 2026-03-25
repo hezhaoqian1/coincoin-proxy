@@ -109,7 +109,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             cost_cents=14,
             duration_ms=2100,
             status_code=200,
-            route_reason="catalog:gemini-image:direct",
+            route_reason="catalog:gemini-image:gateway",
         )
         fake_db = _FakeDB(
             execute_results=[

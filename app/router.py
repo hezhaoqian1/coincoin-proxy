@@ -32,6 +32,7 @@ class PublicModelConfig:
     provider_name: str = ""
     capabilities: Tuple[str, ...] = ()
     routing_mode: str = "direct"  # direct | legacy_auto
+    delivery_lane: str = "upstream_direct"  # legacy | gateway | vertex_direct | upstream_direct
     upstream_model: str = ""
     provider_model: str = ""
     upstream_url: str = ""
@@ -71,6 +72,7 @@ FALLBACK = "fallback"
 
 TEXT_ENDPOINTS = frozenset({"chat/completions", "responses", "embeddings"})
 IMAGE_ENDPOINTS = frozenset({"images/generations", "images/edits"})
+DELIVERY_LANES = frozenset({"legacy", "gateway", "vertex_direct", "upstream_direct"})
 _ENV_PATTERN = re.compile(r"\$\{([A-Z0-9_]+)(:-([^}]*))?\}")
 _ROOT_DIR = Path(__file__).resolve().parent.parent
 
@@ -235,6 +237,16 @@ class ModelRegistry:
             if cap
         )
         routing_mode = str(raw.get("routing_mode") or "direct").strip().lower()
+        default_delivery_lane = "legacy" if routing_mode == "legacy_auto" else "upstream_direct"
+        delivery_lane = str(raw.get("delivery_lane") or default_delivery_lane).strip().lower()
+        if delivery_lane not in DELIVERY_LANES:
+            logger.warning(
+                "public model %s has unsupported delivery_lane=%r; falling back to %s",
+                public_id,
+                delivery_lane,
+                default_delivery_lane,
+            )
+            delivery_lane = default_delivery_lane
         provider_name = str(raw.get("provider_name") or "").strip()
         provider_model = str(raw.get("provider_model") or "").strip()
         upstream_model = str(raw.get("upstream_model") or "").strip()
@@ -248,6 +260,7 @@ class ModelRegistry:
             provider_name=provider_name,
             capabilities=capabilities,
             routing_mode=routing_mode,
+            delivery_lane=delivery_lane,
             upstream_model=upstream_model,
             provider_model=provider_model,
             upstream_url=upstream_url,
@@ -391,7 +404,7 @@ class ModelRegistry:
         return ResolvedModel(
             public_model=public_model,
             backend=backend,
-            route_reason=f"catalog:{public_model.public_id}:direct",
+            route_reason=f"catalog:{public_model.public_id}:{public_model.delivery_lane}",
         )
 
 
