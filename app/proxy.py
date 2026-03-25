@@ -195,6 +195,7 @@ logger = logging.getLogger("coincoin.proxy")
 _http_client: Optional[httpx.AsyncClient] = None
 _http_stream_client: Optional[httpx.AsyncClient] = None
 _http_lock = asyncio.Lock()
+IMAGE_UPSTREAM_TIMEOUT = httpx.Timeout(connect=10.0, read=300.0, write=300.0, pool=60.0)
 
 
 async def get_http_client() -> httpx.AsyncClient:
@@ -1159,7 +1160,12 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
         upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/images/generations"
         headers = _build_upstream_headers(used_cfg)
         t0 = time.monotonic()
-        upstream = await client.post(upstream_url, json=payload, headers=headers)
+        upstream = await client.post(
+            upstream_url,
+            json=payload,
+            headers=headers,
+            timeout=IMAGE_UPSTREAM_TIMEOUT,
+        )
         duration_ms = int((time.monotonic() - t0) * 1000)
     elif should_use_direct_vertex:
         upstream_payload = _build_vertex_image_generation_payload(payload)
@@ -1188,7 +1194,12 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
         upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/images/generations"
         headers = _build_upstream_headers(used_cfg)
         t0 = time.monotonic()
-        upstream = await client.post(upstream_url, json=payload, headers=headers)
+        upstream = await client.post(
+            upstream_url,
+            json=payload,
+            headers=headers,
+            timeout=IMAGE_UPSTREAM_TIMEOUT,
+        )
         duration_ms = int((time.monotonic() - t0) * 1000)
 
     response_headers = filter_headers(dict(upstream.headers))
@@ -1312,6 +1323,7 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
             data=upstream_form_fields,
             files=file_fields,
             headers=headers,
+            timeout=IMAGE_UPSTREAM_TIMEOUT,
         )
         duration_ms = int((time.monotonic() - t0) * 1000)
 
