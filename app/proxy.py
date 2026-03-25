@@ -334,6 +334,8 @@ _conv_cache = ResponseConversationCache()
 
 HOP_BY_HOP_HEADERS = {
     "connection",
+    "content-encoding",
+    "content-length",
     "keep-alive",
     "proxy-authenticate",
     "proxy-authorization",
@@ -365,6 +367,12 @@ def _build_upstream_headers(cfg) -> Dict[str, str]:
     else:
         headers["api-key"] = cfg.api_key
     return headers
+
+
+def _is_gateway_upstream(url: str) -> bool:
+    gateway_base = (settings.gateway_base_url or "").rstrip("/")
+    upstream_url = (url or "").rstrip("/")
+    return bool(gateway_base and upstream_url.startswith(gateway_base))
 
 
 def _requested_image_count_from_pairs(pairs: List[Tuple[str, str]]) -> int:
@@ -1122,8 +1130,9 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
 
     client = await get_http_client()
     is_google_image_generation = public_model.provider_name.strip().lower() == "google"
+    should_use_gateway_image_generation = is_google_image_generation and _is_gateway_upstream(used_cfg.upstream_url)
 
-    if is_google_image_generation and not settings.vertex_api_key:
+    if is_google_image_generation and not should_use_gateway_image_generation and not settings.vertex_api_key:
         return _openai_error_response(
             "Gemini image generation requires COINCOIN_VERTEX_API_KEY on the CoinCoin control plane.",
             error_type="server_error",
@@ -1134,7 +1143,15 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
     if is_google_image_generation and _requested_image_count_from_json(payload) > 1:
         return _vertex_image_candidate_count_error()
 
-    if is_google_image_generation:
+    if should_use_gateway_image_generation:
+        payload["model"] = used_cfg.model_id
+        payload.pop("model_provider", None)
+        upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/images/generations"
+        headers = _build_upstream_headers(used_cfg)
+        t0 = time.monotonic()
+        upstream = await client.post(upstream_url, json=payload, headers=headers)
+        duration_ms = int((time.monotonic() - t0) * 1000)
+    elif is_google_image_generation:
         upstream_payload = _build_vertex_image_generation_payload(payload)
         upstream_url = (
             f"{settings.vertex_gemini_api_base.rstrip('/')}/models/"
@@ -1178,7 +1195,7 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
                 status_code=502,
                 headers=response_headers,
             )
-        if is_google_image_generation and upstream.status_code < 400:
+        if is_google_image_generation and not should_use_gateway_image_generation and upstream.status_code < 400:
             data = _translate_vertex_image_response(upstream_json if isinstance(upstream_json, dict) else {})
         else:
             data = upstream_json
@@ -1245,9 +1262,10 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
     response_headers: Dict[str, str] = {}
 
     is_google_image_edit = public_model.provider_name.strip().lower() == "google"
-    should_use_direct_vertex = is_google_image_edit and bool(settings.vertex_api_key)
+    should_use_gateway_image_edit = is_google_image_edit and _is_gateway_upstream(used_cfg.upstream_url)
+    should_use_direct_vertex = is_google_image_edit and not should_use_gateway_image_edit and bool(settings.vertex_api_key)
 
-    if is_google_image_edit and not settings.vertex_api_key:
+    if is_google_image_edit and not should_use_gateway_image_edit and not settings.vertex_api_key:
         return _openai_error_response(
             "Gemini image edits require COINCOIN_VERTEX_API_KEY on the CoinCoin control plane.",
             error_type="server_error",
@@ -1258,7 +1276,47 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
     if is_google_image_edit and _requested_image_count_from_pairs(form_fields) > 1:
         return _vertex_image_candidate_count_error()
 
-    if should_use_direct_vertex:
+    if should_use_gateway_image_edit:
+        if any(key in {"mask", "mask[]"} for key, _ in file_fields):
+            return _openai_error_response(
+                "Gemini image edits via the current gateway lane do not support mask uploads.",
+                code="mask_not_supported",
+                param="mask",
+                status_code=400,
+            )
+
+        upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/images/edits"
+        headers = _build_upstream_headers(used_cfg)
+        headers.pop("content-type", None)
+
+        upstream_form_fields = [(key, value) for key, value in form_fields if key != "model"]
+        upstream_form_fields.append(("model", used_cfg.model_id))
+
+        t0 = time.monotonic()
+        upstream = await client.post(
+            upstream_url,
+            data=upstream_form_fields,
+            files=file_fields,
+            headers=headers,
+        )
+        duration_ms = int((time.monotonic() - t0) * 1000)
+
+        response_headers = filter_headers(dict(upstream.headers))
+        upstream_request_id = extract_upstream_request_id(upstream.headers)
+        content_type = upstream.headers.get("content-type", "application/json")
+
+        if "application/json" in content_type:
+            try:
+                data = upstream.json()
+            except Exception:
+                return JSONResponse(
+                    content={"error": {"message": "Upstream returned invalid JSON", "type": "server_error", "code": "upstream_invalid_json"}},
+                    status_code=502,
+                    headers=response_headers,
+                )
+        else:
+            data = upstream.text
+    elif should_use_direct_vertex:
         if any(key in {"mask", "mask[]"} for key, _ in file_fields):
             return _openai_error_response(
                 "Gemini image edits via the current Vertex API-key lane do not support mask uploads.",

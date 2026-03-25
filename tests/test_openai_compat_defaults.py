@@ -69,6 +69,8 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             "fallback_price_input": settings.fallback_price_input,
             "fallback_price_output": settings.fallback_price_output,
             "fallback_auth_style": settings.fallback_auth_style,
+            "gateway_base_url": settings.gateway_base_url,
+            "gateway_api_key": settings.gateway_api_key,
             "gateway_auth_style": settings.gateway_auth_style,
             "vertex_api_key": settings.vertex_api_key,
             "vertex_gemini_api_base": settings.vertex_gemini_api_base,
@@ -94,6 +96,8 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         settings.fallback_price_input = 99
         settings.fallback_price_output = 699
         settings.fallback_auth_style = "azure"
+        settings.gateway_base_url = ""
+        settings.gateway_api_key = ""
         settings.gateway_auth_style = "bearer"
         settings.vertex_api_key = ""
         settings.vertex_gemini_api_base = "https://aiplatform.googleapis.com/v1/publishers/google"
@@ -139,10 +143,10 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                         "id": "gemini-image",
                         "owned_by": "google",
                         "provider_name": "Google",
-                        "provider_model": "gemini-2.5-flash-image",
+                        "provider_model": "gemini-3.1-flash-image-preview",
                         "capabilities": ["images/generations", "images/edits"],
                         "routing_mode": "direct",
-                        "upstream_model": "vertex-gemini-2.5-flash-image",
+                        "upstream_model": "vertex-gemini-3.1-flash-image-preview",
                         "upstream_url": "https://gateway.example/v1",
                         "api_key": "gateway-key",
                         "auth_style": "bearer",
@@ -414,6 +418,50 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["error"]["code"], "vertex_image_generation_not_configured")
         self.assertEqual(len(upstream_client.calls), 0)
 
+    async def test_image_generation_prefers_gateway_lane_when_gateway_is_configured(self) -> None:
+        settings.gateway_base_url = "https://gateway.example"
+        settings.gateway_api_key = "gateway-key"
+
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "created": 1774449999,
+                        "data": [{"b64_json": "from-gateway"}],
+                    }
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ):
+                response = await client.post(
+                    "/v1/images/generations",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"model": "gemini-image", "prompt": "A blue coin mascot", "n": 1, "size": "1024x1024"},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["data"][0]["b64_json"], "from-gateway")
+        self.assertEqual(len(upstream_client.calls), 1)
+        self.assertEqual(
+            upstream_client.calls[0]["url"],
+            "https://gateway.example/v1/images/generations",
+        )
+        self.assertEqual(
+            upstream_client.calls[0]["json"]["model"],
+            "vertex-gemini-3.1-flash-image-preview",
+        )
+        self.assertEqual(
+            upstream_client.calls[0]["headers"]["authorization"],
+            "Bearer gateway-key",
+        )
+
     async def test_image_generation_without_model_uses_default_image_alias_on_direct_vertex_lane(self) -> None:
         settings.vertex_api_key = "vertex-direct-key"
         settings.vertex_gemini_api_base = "https://aiplatform.googleapis.com/v1/publishers/google"
@@ -460,7 +508,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(upstream_client.calls), 1)
         self.assertEqual(
             upstream_client.calls[0]["url"],
-            "https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-2.5-flash-image:generateContent",
+            "https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-3.1-flash-image-preview:generateContent",
         )
         self.assertEqual(upstream_client.calls[0]["headers"]["x-goog-api-key"], "vertex-direct-key")
         self.assertEqual(upstream_client.calls[0]["json"]["contents"][0]["role"], "user")
@@ -519,7 +567,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(upstream_client.calls), 1)
         self.assertEqual(
             upstream_client.calls[0]["url"],
-            "https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-2.5-flash-image:generateContent",
+            "https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-3.1-flash-image-preview:generateContent",
         )
         self.assertEqual(upstream_client.calls[0]["headers"]["x-goog-api-key"], "vertex-direct-key")
         self.assertEqual(upstream_client.calls[0]["json"]["contents"][0]["role"], "user")
@@ -620,6 +668,49 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["error"]["code"], "vertex_image_edit_not_configured")
         self.assertEqual(len(upstream_client.calls), 0)
 
+    async def test_image_edit_prefers_gateway_lane_when_gateway_is_configured(self) -> None:
+        settings.gateway_base_url = "https://gateway.example"
+        settings.gateway_api_key = "gateway-key"
+
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "created": 1774449999,
+                        "data": [{"b64_json": "edited-by-gateway"}],
+                    }
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ):
+                response = await client.post(
+                    "/v1/images/edits",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    data={"model": "gemini-image", "prompt": "Turn this into pixel art", "n": "1", "size": "1024x1024"},
+                    files={"image": ("input.png", b"fake_image_data", "image/png")},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["data"][0]["b64_json"], "edited-by-gateway")
+        self.assertEqual(len(upstream_client.calls), 1)
+        self.assertEqual(
+            upstream_client.calls[0]["url"],
+            "https://gateway.example/v1/images/edits",
+        )
+        posted_fields = dict(upstream_client.calls[0]["data"])
+        self.assertEqual(posted_fields["model"], "vertex-gemini-3.1-flash-image-preview")
+        self.assertEqual(
+            upstream_client.calls[0]["headers"]["authorization"],
+            "Bearer gateway-key",
+        )
+
     async def test_image_edit_without_model_uses_default_image_alias_on_direct_vertex_lane(self) -> None:
         settings.vertex_api_key = "vertex-direct-key"
         settings.vertex_gemini_api_base = "https://aiplatform.googleapis.com/v1/publishers/google"
@@ -667,7 +758,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(upstream_client.calls), 1)
         self.assertEqual(
             upstream_client.calls[0]["url"],
-            "https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-2.5-flash-image:generateContent",
+            "https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-3.1-flash-image-preview:generateContent",
         )
         self.assertEqual(upstream_client.calls[0]["json"]["contents"][0]["role"], "user")
 
@@ -730,7 +821,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(upstream_client.calls), 1)
         self.assertEqual(
             upstream_client.calls[0]["url"],
-            "https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-2.5-flash-image:generateContent",
+            "https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-3.1-flash-image-preview:generateContent",
         )
         self.assertEqual(upstream_client.calls[0]["headers"]["x-goog-api-key"], "vertex-direct-key")
         self.assertEqual(upstream_client.calls[0]["json"]["contents"][0]["role"], "user")

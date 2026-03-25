@@ -94,10 +94,10 @@ class ModelCatalogTests(unittest.TestCase):
                         "id": "gemini-image",
                         "owned_by": "google",
                         "provider_name": "Google",
-                        "provider_model": "gemini-2.5-flash-image",
+                        "provider_model": "gemini-3.1-flash-image-preview",
                         "capabilities": ["images/generations", "images/edits"],
                         "routing_mode": "direct",
-                        "upstream_model": "vertex-gemini-2.5-flash-image",
+                        "upstream_model": "vertex-gemini-3.1-flash-image-preview",
                         "upstream_url": "https://gateway.example/v1",
                         "api_key": "gateway-key",
                         "auth_style": "bearer",
@@ -164,14 +164,14 @@ class ModelCatalogTests(unittest.TestCase):
         resolved = registry.resolve_public_model(None, "images/generations")
 
         self.assertEqual(resolved.public_model.public_id, "gemini-image")
-        self.assertEqual(resolved.backend.model_id, "vertex-gemini-2.5-flash-image")
+        self.assertEqual(resolved.backend.model_id, "vertex-gemini-3.1-flash-image-preview")
         self.assertEqual(resolved.backend.upstream_url, "https://gateway.example/v1")
 
     def test_default_image_model_supports_image_edits(self) -> None:
         resolved = registry.resolve_public_model(None, "images/edits")
 
         self.assertEqual(resolved.public_model.public_id, "gemini-image")
-        self.assertEqual(resolved.backend.model_id, "vertex-gemini-2.5-flash-image")
+        self.assertEqual(resolved.backend.model_id, "vertex-gemini-3.1-flash-image-preview")
         self.assertEqual(resolved.backend.upstream_url, "https://gateway.example/v1")
 
     def test_image_model_rejects_chat_endpoint(self) -> None:
