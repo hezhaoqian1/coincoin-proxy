@@ -41,7 +41,10 @@ class _RecordingClient:
         self.calls.append({"url": url, **kwargs})
         if not self.responses:
             raise AssertionError("unexpected upstream call")
-        return self.responses.pop(0)
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
 
 
 class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
@@ -390,11 +393,50 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(add_usage.await_args.kwargs["upstream_request_id"], "req_123")
 
-    async def test_image_without_model_uses_default_image_alias(self) -> None:
+    async def test_image_generation_without_vertex_key_fails_closed_for_google_models(self) -> None:
+        upstream_client = _RecordingClient([])
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ):
+                response = await client.post(
+                    "/v1/images/generations",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"prompt": "A blue coin mascot", "n": 1, "size": "1024x1024"},
+                )
+
+        self.assertEqual(response.status_code, 503, response.text)
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "vertex_image_generation_not_configured")
+        self.assertEqual(len(upstream_client.calls), 0)
+
+    async def test_image_generation_without_model_uses_default_image_alias_on_direct_vertex_lane(self) -> None:
+        settings.vertex_api_key = "vertex-direct-key"
+        settings.vertex_gemini_api_base = "https://aiplatform.googleapis.com/v1/publishers/google"
+
         upstream_client = _RecordingClient(
             [
                 _FakeUpstreamResponse(
-                    {"created": 1774380000, "data": [{"b64_json": "abc"}]}
+                    {
+                        "candidates": [
+                            {
+                                "content": {
+                                    "parts": [
+                                        {
+                                            "inlineData": {
+                                                "mimeType": "image/png",
+                                                "data": "abc",
+                                            }
+                                        }
+                                    ]
+                                }
+                            }
+                        ]
+                    }
                 )
             ]
         )
@@ -416,9 +458,145 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         payload = response.json()
         self.assertEqual(len(payload["data"]), 1)
         self.assertEqual(len(upstream_client.calls), 1)
-        self.assertEqual(upstream_client.calls[0]["url"], "https://gateway.example/v1/images/generations")
-        self.assertEqual(upstream_client.calls[0]["json"]["model"], "vertex-gemini-2.5-flash-image")
-        self.assertEqual(upstream_client.calls[0]["headers"]["authorization"], "Bearer gateway-key")
+        self.assertEqual(
+            upstream_client.calls[0]["url"],
+            "https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-2.5-flash-image:generateContent",
+        )
+        self.assertEqual(upstream_client.calls[0]["headers"]["x-goog-api-key"], "vertex-direct-key")
+        self.assertEqual(upstream_client.calls[0]["json"]["contents"][0]["role"], "user")
+        self.assertEqual(upstream_client.calls[0]["json"]["contents"][0]["parts"][0]["text"], "A blue coin mascot")
+        self.assertEqual(upstream_client.calls[0]["json"]["generationConfig"]["candidateCount"], 1)
+        self.assertEqual(upstream_client.calls[0]["json"]["generationConfig"]["imageConfig"]["aspectRatio"], "1:1")
+
+    async def test_image_generation_can_call_vertex_directly_when_vertex_key_is_configured(self) -> None:
+        settings.vertex_api_key = "vertex-direct-key"
+        settings.vertex_gemini_api_base = "https://aiplatform.googleapis.com/v1/publishers/google"
+
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "candidates": [
+                            {
+                                "content": {
+                                    "parts": [
+                                        {
+                                            "inlineData": {
+                                                "mimeType": "image/png",
+                                                "data": "generated-1",
+                                            }
+                                        }
+                                    ]
+                                }
+                            }
+                        ]
+                    }
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ):
+                response = await client.post(
+                    "/v1/images/generations",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={
+                        "model": "gemini-image",
+                        "prompt": "A clean blue coin mascot",
+                        "n": 1,
+                        "size": "1792x1024",
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["data"][0]["b64_json"], "generated-1")
+        self.assertEqual(len(upstream_client.calls), 1)
+        self.assertEqual(
+            upstream_client.calls[0]["url"],
+            "https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-2.5-flash-image:generateContent",
+        )
+        self.assertEqual(upstream_client.calls[0]["headers"]["x-goog-api-key"], "vertex-direct-key")
+        self.assertEqual(upstream_client.calls[0]["json"]["contents"][0]["role"], "user")
+        self.assertEqual(upstream_client.calls[0]["json"]["contents"][0]["parts"][0]["text"], "A clean blue coin mascot")
+        self.assertEqual(upstream_client.calls[0]["json"]["generationConfig"]["candidateCount"], 1)
+        self.assertEqual(upstream_client.calls[0]["json"]["generationConfig"]["imageConfig"]["aspectRatio"], "16:9")
+
+    async def test_image_generation_rejects_candidate_count_above_one_on_direct_vertex_lane(self) -> None:
+        settings.vertex_api_key = "vertex-direct-key"
+        settings.vertex_gemini_api_base = "https://aiplatform.googleapis.com/v1/publishers/google"
+
+        upstream_client = _RecordingClient([])
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ):
+                response = await client.post(
+                    "/v1/images/generations",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"model": "gemini-image", "prompt": "A clean blue coin mascot", "n": 2},
+                )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "image_candidate_count_not_supported")
+        self.assertEqual(len(upstream_client.calls), 0)
+
+    async def test_image_generation_retries_transport_errors_on_direct_vertex_lane(self) -> None:
+        settings.vertex_api_key = "vertex-direct-key"
+        settings.vertex_gemini_api_base = "https://aiplatform.googleapis.com/v1/publishers/google"
+
+        upstream_client = _RecordingClient(
+            [
+                httpx.RemoteProtocolError("Server disconnected without sending a response."),
+                httpx.RemoteProtocolError("Server disconnected without sending a response."),
+                _FakeUpstreamResponse(
+                    {
+                        "candidates": [
+                            {
+                                "content": {
+                                    "parts": [
+                                        {
+                                            "inlineData": {
+                                                "mimeType": "image/png",
+                                                "data": "generated-after-retry",
+                                            }
+                                        }
+                                    ]
+                                }
+                            }
+                        ]
+                    }
+                ),
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ):
+                response = await client.post(
+                    "/v1/images/generations",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"model": "gemini-image", "prompt": "Retry image generation", "n": 1, "size": "1024x1024"},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["data"][0]["b64_json"], "generated-after-retry")
+        self.assertEqual(len(upstream_client.calls), 3)
 
     async def test_image_edit_without_vertex_key_fails_closed_for_google_models(self) -> None:
         upstream_client = _RecordingClient([])
@@ -491,6 +669,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             upstream_client.calls[0]["url"],
             "https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-2.5-flash-image:generateContent",
         )
+        self.assertEqual(upstream_client.calls[0]["json"]["contents"][0]["role"], "user")
 
     async def test_image_edit_can_call_vertex_directly_when_vertex_key_is_configured(self) -> None:
         settings.vertex_api_key = "vertex-direct-key"
@@ -541,24 +720,49 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                 response = await client.post(
                     "/v1/images/edits",
                     headers={"Authorization": "Bearer sk_cc_test"},
-                    data={"model": "gemini-image", "prompt": "Make it monochrome", "size": "1024x1024", "n": "2"},
+                    data={"model": "gemini-image", "prompt": "Make it monochrome", "size": "1024x1024", "n": "1"},
                     files={"image": ("input.png", b"fake_image_data", "image/png")},
                 )
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
         self.assertEqual(payload["data"][0]["b64_json"], "edited-directly")
-        self.assertEqual(payload["data"][1]["b64_json"], "edited-directly-2")
         self.assertEqual(len(upstream_client.calls), 1)
         self.assertEqual(
             upstream_client.calls[0]["url"],
             "https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-2.5-flash-image:generateContent",
         )
         self.assertEqual(upstream_client.calls[0]["headers"]["x-goog-api-key"], "vertex-direct-key")
+        self.assertEqual(upstream_client.calls[0]["json"]["contents"][0]["role"], "user")
         self.assertEqual(upstream_client.calls[0]["json"]["contents"][0]["parts"][-1]["text"], "Make it monochrome")
         self.assertEqual(upstream_client.calls[0]["json"]["generationConfig"]["responseModalities"], ["IMAGE"])
-        self.assertEqual(upstream_client.calls[0]["json"]["generationConfig"]["candidateCount"], 2)
+        self.assertEqual(upstream_client.calls[0]["json"]["generationConfig"]["candidateCount"], 1)
         self.assertEqual(upstream_client.calls[0]["json"]["generationConfig"]["imageConfig"]["aspectRatio"], "1:1")
+
+    async def test_image_edit_rejects_candidate_count_above_one_on_direct_vertex_lane(self) -> None:
+        settings.vertex_api_key = "vertex-direct-key"
+        settings.vertex_gemini_api_base = "https://aiplatform.googleapis.com/v1/publishers/google"
+
+        upstream_client = _RecordingClient([])
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ):
+                response = await client.post(
+                    "/v1/images/edits",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    data={"model": "gemini-image", "prompt": "Make it monochrome", "n": "2"},
+                    files={"image": ("input.png", b"fake_image_data", "image/png")},
+                )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "image_candidate_count_not_supported")
+        self.assertEqual(len(upstream_client.calls), 0)
 
     async def test_image_edit_rejects_mask_on_direct_vertex_lane(self) -> None:
         settings.vertex_api_key = "vertex-direct-key"
@@ -587,6 +791,54 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         payload = response.json()
         self.assertEqual(payload["error"]["code"], "mask_not_supported")
         self.assertEqual(len(upstream_client.calls), 0)
+
+    async def test_image_edit_retries_transport_errors_on_direct_vertex_lane(self) -> None:
+        settings.vertex_api_key = "vertex-direct-key"
+        settings.vertex_gemini_api_base = "https://aiplatform.googleapis.com/v1/publishers/google"
+
+        upstream_client = _RecordingClient(
+            [
+                httpx.RemoteProtocolError("Server disconnected without sending a response."),
+                httpx.RemoteProtocolError("Server disconnected without sending a response."),
+                _FakeUpstreamResponse(
+                    {
+                        "candidates": [
+                            {
+                                "content": {
+                                    "parts": [
+                                        {
+                                            "inlineData": {
+                                                "mimeType": "image/png",
+                                                "data": "edited-after-retry",
+                                            }
+                                        }
+                                    ]
+                                }
+                            }
+                        ]
+                    }
+                ),
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ):
+                response = await client.post(
+                    "/v1/images/edits",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    data={"model": "gemini-image", "prompt": "Recover after transport error"},
+                    files={"image": ("input.png", b"fake_image_data", "image/png")},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["data"][0]["b64_json"], "edited-after-retry")
+        self.assertEqual(len(upstream_client.calls), 3)
 
     async def test_direct_gemini_error_does_not_fall_back_to_legacy_lane(self) -> None:
         upstream_client = _RecordingClient(

@@ -242,6 +242,28 @@ async def close_http_client() -> None:
     _http_stream_client = None
 
 
+async def _post_with_retries(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    json_body: Dict[str, object],
+    headers: Dict[str, str],
+    attempts: int = 3,
+    backoff_seconds: float = 1.0,
+) -> httpx.Response:
+    last_error: Optional[Exception] = None
+    for attempt in range(1, max(1, attempts) + 1):
+        try:
+            return await client.post(url, json=json_body, headers=headers)
+        except httpx.TransportError as exc:
+            last_error = exc
+            if attempt >= attempts:
+                break
+            await asyncio.sleep(backoff_seconds * attempt)
+    assert last_error is not None
+    raise last_error
+
+
 class KeyCache:
     def __init__(self, ttl_seconds: int, max_size: int) -> None:
         self._ttl = max(1, int(ttl_seconds))
@@ -356,6 +378,22 @@ def _requested_image_count_from_pairs(pairs: List[Tuple[str, str]]) -> int:
     return 1
 
 
+def _requested_image_count_from_json(payload: Dict[str, object]) -> int:
+    try:
+        return max(1, int(payload.get("n") or 1))
+    except (AttributeError, TypeError, ValueError):
+        return 1
+
+
+def _vertex_image_candidate_count_error() -> JSONResponse:
+    return _openai_error_response(
+        "Gemini image requests currently support only n=1.",
+        code="image_candidate_count_not_supported",
+        param="n",
+        status_code=400,
+    )
+
+
 def _map_image_size_to_aspect_ratio(size: str) -> str:
     aspect_ratio_map = {
         "1024x1024": "1:1",
@@ -442,12 +480,42 @@ def _build_vertex_image_edit_payload(
         }
 
     return {
-        "contents": [{"parts": parts}],
+        "contents": [{
+            "role": "user",
+            "parts": parts,
+        }],
         "generationConfig": generation_config,
     }
 
 
-def _translate_vertex_image_edit_response(data: Dict[str, object]) -> Dict[str, object]:
+def _build_vertex_image_generation_payload(payload: Dict[str, object]) -> Dict[str, object]:
+    prompt = str(payload.get("prompt") or "").strip()
+    size = str(payload.get("size") or "").strip()
+    requested_image_count = _requested_image_count_from_json(payload)
+
+    parts = []
+    if prompt:
+        parts.append({"text": prompt})
+
+    generation_config: Dict[str, object] = {
+        "responseModalities": ["IMAGE"],
+        "candidateCount": requested_image_count,
+    }
+    if size:
+        generation_config["imageConfig"] = {
+            "aspectRatio": _map_image_size_to_aspect_ratio(size),
+        }
+
+    return {
+        "contents": [{
+            "role": "user",
+            "parts": parts,
+        }],
+        "generationConfig": generation_config,
+    }
+
+
+def _translate_vertex_image_response(data: Dict[str, object]) -> Dict[str, object]:
     output_images = []
     for candidate in data.get("candidates") or []:
         if not isinstance(candidate, dict):
@@ -1052,16 +1120,49 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
     used_cfg = resolved_model.backend
     used_route_reason = resolved_model.route_reason
 
-    payload["model"] = used_cfg.model_id
-    payload.pop("model_provider", None)
-
-    upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/images/generations"
-    headers = _build_upstream_headers(used_cfg)
-
     client = await get_http_client()
-    t0 = time.monotonic()
-    upstream = await client.post(upstream_url, json=payload, headers=headers)
-    duration_ms = int((time.monotonic() - t0) * 1000)
+    is_google_image_generation = public_model.provider_name.strip().lower() == "google"
+
+    if is_google_image_generation and not settings.vertex_api_key:
+        return _openai_error_response(
+            "Gemini image generation requires COINCOIN_VERTEX_API_KEY on the CoinCoin control plane.",
+            error_type="server_error",
+            code="vertex_image_generation_not_configured",
+            status_code=503,
+        )
+
+    if is_google_image_generation and _requested_image_count_from_json(payload) > 1:
+        return _vertex_image_candidate_count_error()
+
+    if is_google_image_generation:
+        upstream_payload = _build_vertex_image_generation_payload(payload)
+        upstream_url = (
+            f"{settings.vertex_gemini_api_base.rstrip('/')}/models/"
+            f"{public_model.provider_model or used_cfg.model_id}:generateContent"
+        )
+        headers = {
+            "x-goog-api-key": settings.vertex_api_key,
+            "content-type": "application/json",
+        }
+        t0 = time.monotonic()
+        try:
+            upstream = await _post_with_retries(client, upstream_url, json_body=upstream_payload, headers=headers)
+        except httpx.TransportError as exc:
+            return _openai_error_response(
+                f"Vertex image generation transport error: {exc}",
+                error_type="server_error",
+                code="vertex_image_generation_transport_error",
+                status_code=502,
+            )
+        duration_ms = int((time.monotonic() - t0) * 1000)
+    else:
+        payload["model"] = used_cfg.model_id
+        payload.pop("model_provider", None)
+        upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/images/generations"
+        headers = _build_upstream_headers(used_cfg)
+        t0 = time.monotonic()
+        upstream = await client.post(upstream_url, json=payload, headers=headers)
+        duration_ms = int((time.monotonic() - t0) * 1000)
 
     response_headers = filter_headers(dict(upstream.headers))
     response_headers.pop("content-length", None)
@@ -1070,13 +1171,17 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
 
     if "application/json" in content_type:
         try:
-            data = upstream.json()
+            upstream_json = upstream.json()
         except Exception:
             return JSONResponse(
                 content={"error": {"message": "Upstream returned invalid JSON", "type": "server_error", "code": "upstream_invalid_json"}},
                 status_code=502,
                 headers=response_headers,
             )
+        if is_google_image_generation and upstream.status_code < 400:
+            data = _translate_vertex_image_response(upstream_json if isinstance(upstream_json, dict) else {})
+        else:
+            data = upstream_json
     else:
         data = upstream.text
 
@@ -1150,6 +1255,9 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
             status_code=503,
         )
 
+    if is_google_image_edit and _requested_image_count_from_pairs(form_fields) > 1:
+        return _vertex_image_candidate_count_error()
+
     if should_use_direct_vertex:
         if any(key in {"mask", "mask[]"} for key, _ in file_fields):
             return _openai_error_response(
@@ -1169,7 +1277,15 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
             "content-type": "application/json",
         }
         t0 = time.monotonic()
-        upstream = await client.post(upstream_url, json=payload, headers=headers)
+        try:
+            upstream = await _post_with_retries(client, upstream_url, json_body=payload, headers=headers)
+        except httpx.TransportError as exc:
+            return _openai_error_response(
+                f"Vertex image edit transport error: {exc}",
+                error_type="server_error",
+                code="vertex_image_edit_transport_error",
+                status_code=502,
+            )
         duration_ms = int((time.monotonic() - t0) * 1000)
         response_headers = filter_headers(dict(upstream.headers))
         response_headers.pop("content-length", None)
@@ -1184,7 +1300,7 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
             )
 
         if upstream.status_code < 400:
-            data = _translate_vertex_image_edit_response(upstream_data if isinstance(upstream_data, dict) else {})
+            data = _translate_vertex_image_response(upstream_data if isinstance(upstream_data, dict) else {})
         else:
             error_message = str(upstream_data)
             if isinstance(upstream_data, dict):
