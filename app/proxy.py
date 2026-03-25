@@ -1,15 +1,17 @@
 import asyncio
+import base64
 import json
 import logging
 import time
 from copy import deepcopy
 from datetime import date, datetime
 from types import SimpleNamespace
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse, StreamingResponse
+from starlette.datastructures import UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -319,6 +321,8 @@ HOP_BY_HOP_HEADERS = {
     "upgrade",
 }
 
+IMAGE_EDIT_FILE_FIELDS = frozenset({"image", "image[]", "mask", "mask[]"})
+
 
 def filter_headers(headers: Dict[str, str]) -> Dict[str, str]:
     return {k: v for k, v in headers.items() if k.lower() not in HOP_BY_HOP_HEADERS}
@@ -332,6 +336,132 @@ def _build_upstream_headers(cfg) -> Dict[str, str]:
     else:
         headers["api-key"] = cfg.api_key
     return headers
+
+
+def _requested_image_count_from_pairs(pairs: List[Tuple[str, str]]) -> int:
+    for key, value in reversed(pairs):
+        if key != "n":
+            continue
+        try:
+            return max(1, int(value or "1"))
+        except (TypeError, ValueError):
+            break
+    return 1
+
+
+def _map_image_size_to_aspect_ratio(size: str) -> str:
+    aspect_ratio_map = {
+        "1024x1024": "1:1",
+        "1792x1024": "16:9",
+        "1024x1792": "9:16",
+        "1280x896": "4:3",
+        "896x1280": "3:4",
+    }
+    return aspect_ratio_map.get(size, "1:1")
+
+
+async def _parse_image_edit_form(
+    request: Request,
+) -> Tuple[str, List[Tuple[str, str]], List[Tuple[str, Tuple[str, bytes, str]]]]:
+    form = await request.form()
+
+    requested_model = ""
+    scalar_fields: List[Tuple[str, str]] = []
+    file_fields: List[Tuple[str, Tuple[str, bytes, str]]] = []
+
+    for key, value in form.multi_items():
+        if key == "model_provider":
+            continue
+        if isinstance(value, UploadFile):
+            if key not in IMAGE_EDIT_FILE_FIELDS:
+                continue
+            filename = value.filename or "upload.bin"
+            content_type = value.content_type or "application/octet-stream"
+            file_fields.append((key, (filename, await value.read(), content_type)))
+            continue
+
+        text_value = "" if value is None else str(value)
+        if key == "model":
+            if text_value.strip():
+                requested_model = text_value.strip()
+            continue
+
+        scalar_fields.append((key, text_value))
+
+    return requested_model, scalar_fields, file_fields
+
+
+def _build_vertex_image_edit_payload(
+    form_fields: List[Tuple[str, str]],
+    file_fields: List[Tuple[str, Tuple[str, bytes, str]]],
+) -> Dict[str, object]:
+    prompt = ""
+    size = ""
+    requested_image_count = _requested_image_count_from_pairs(form_fields)
+    image_parts = []
+
+    for key, value in form_fields:
+        if key == "prompt":
+            prompt = value
+        elif key == "size":
+            size = value
+
+    for key, (_, content, content_type) in file_fields:
+        if key not in {"image", "image[]"}:
+            continue
+        image_parts.append(
+            {
+                "inlineData": {
+                    "mimeType": content_type or "application/octet-stream",
+                    "data": base64.b64encode(content).decode("utf-8"),
+                }
+            }
+        )
+
+    if not image_parts:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="image file is required")
+
+    parts = list(image_parts)
+    if prompt:
+        parts.append({"text": prompt})
+
+    generation_config: Dict[str, object] = {
+        "responseModalities": ["IMAGE"],
+        "candidateCount": requested_image_count,
+    }
+    if size:
+        generation_config["imageConfig"] = {
+            "aspectRatio": _map_image_size_to_aspect_ratio(size),
+        }
+
+    return {
+        "contents": [{"parts": parts}],
+        "generationConfig": generation_config,
+    }
+
+
+def _translate_vertex_image_edit_response(data: Dict[str, object]) -> Dict[str, object]:
+    output_images = []
+    for candidate in data.get("candidates") or []:
+        if not isinstance(candidate, dict):
+            continue
+        content = candidate.get("content") or {}
+        if not isinstance(content, dict):
+            continue
+        for part in content.get("parts") or []:
+            if not isinstance(part, dict):
+                continue
+            inline = part.get("inlineData") or {}
+            if not isinstance(inline, dict):
+                continue
+            image_b64 = inline.get("data")
+            if image_b64:
+                output_images.append({"b64_json": image_b64})
+
+    return {
+        "created": int(time.time()),
+        "data": output_images,
+    }
 
 
 def _openai_error_response(
@@ -959,6 +1089,145 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
         )
     elif isinstance(data, (dict, str)):
         logger.error("image upstream error %s: %s", upstream.status_code, str(data)[:500])
+
+    if isinstance(data, dict):
+        return JSONResponse(content=data, status_code=upstream.status_code, headers=response_headers)
+
+    return Response(content=str(data), status_code=upstream.status_code, headers=response_headers, media_type=content_type)
+
+
+@router.post("/images/edits")
+async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db)):
+    user = await authorize_request(request, db)
+
+    try:
+        requested_model, form_fields, file_fields = await _parse_image_edit_form(request)
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid multipart payload") from exc
+
+    try:
+        resolved_model = model_registry.resolve_public_model(requested_model, "images/edits")
+    except Exception as exc:
+        return _model_resolution_error_response(exc)
+
+    public_model = resolved_model.public_model
+    display_model = public_model.public_id
+    used_cfg = resolved_model.backend
+    used_route_reason = resolved_model.route_reason
+
+    client = await get_http_client()
+    response_headers: Dict[str, str] = {}
+
+    should_use_direct_vertex = (
+        public_model.provider_name.strip().lower() == "google"
+        and bool(settings.vertex_api_key)
+    )
+
+    if should_use_direct_vertex:
+        if any(key in {"mask", "mask[]"} for key, _ in file_fields):
+            return _openai_error_response(
+                "Gemini image edits via the current Vertex API-key lane do not support mask uploads.",
+                code="mask_not_supported",
+                param="mask",
+                status_code=400,
+            )
+
+        payload = _build_vertex_image_edit_payload(form_fields, file_fields)
+        upstream_url = (
+            f"{settings.vertex_gemini_api_base.rstrip('/')}/models/"
+            f"{public_model.provider_model or used_cfg.model_id}:generateContent"
+        )
+        headers = {
+            "x-goog-api-key": settings.vertex_api_key,
+            "content-type": "application/json",
+        }
+        t0 = time.monotonic()
+        upstream = await client.post(upstream_url, json=payload, headers=headers)
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        response_headers = filter_headers(dict(upstream.headers))
+        response_headers.pop("content-length", None)
+        try:
+            upstream_data = upstream.json()
+        except Exception:
+            return JSONResponse(
+                content={"error": {"message": "Vertex returned invalid JSON", "type": "server_error", "code": "upstream_invalid_json"}},
+                status_code=502,
+                headers=response_headers,
+            )
+
+        if upstream.status_code < 400:
+            data = _translate_vertex_image_edit_response(upstream_data if isinstance(upstream_data, dict) else {})
+        else:
+            error_message = str(upstream_data)
+            if isinstance(upstream_data, dict):
+                err = upstream_data.get("error")
+                if isinstance(err, dict):
+                    error_message = str(err.get("message") or err)
+            return _openai_error_response(
+                error_message,
+                error_type="server_error",
+                code="vertex_image_edit_failed",
+                status_code=upstream.status_code,
+            )
+    else:
+        upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/images/edits"
+        headers = _build_upstream_headers(used_cfg)
+        headers.pop("content-type", None)
+
+        upstream_form_fields = [(key, value) for key, value in form_fields if key != "model"]
+        upstream_form_fields.append(("model", used_cfg.model_id))
+
+        t0 = time.monotonic()
+        upstream = await client.post(
+            upstream_url,
+            data=upstream_form_fields,
+            files=file_fields,
+            headers=headers,
+        )
+        duration_ms = int((time.monotonic() - t0) * 1000)
+
+        response_headers = filter_headers(dict(upstream.headers))
+        response_headers.pop("content-length", None)
+        content_type = upstream.headers.get("content-type", "application/json")
+
+        if "application/json" in content_type:
+            try:
+                data = upstream.json()
+            except Exception:
+                return JSONResponse(
+                    content={"error": {"message": "Upstream returned invalid JSON", "type": "server_error", "code": "upstream_invalid_json"}},
+                    status_code=502,
+                    headers=response_headers,
+                )
+        else:
+            data = upstream.text
+
+    image_count = 0
+    if upstream.status_code < 400 and isinstance(data, dict):
+        data_items = data.get("data")
+        if isinstance(data_items, list) and data_items:
+            image_count = len(data_items)
+        else:
+            image_count = _requested_image_count_from_pairs(form_fields)
+
+        await usage_buffer.add(
+            user.id,
+            requests=1,
+            endpoint="images/edits",
+            model=display_model,
+            customer_model_alias=display_model,
+            provider_model=public_model.provider_model or used_cfg.model_id,
+            route_reason=used_route_reason,
+            duration_ms=duration_ms,
+            status_code=upstream.status_code,
+            usage_unit_type="images",
+            usage_unit_count=image_count,
+            billable_sku=public_model.billable_sku or display_model,
+            image_count=image_count,
+            price_per_image_cents=public_model.price_per_image_cents,
+        )
+    elif isinstance(data, (dict, str)):
+        logger.error("image edit upstream error %s: %s", upstream.status_code, str(data)[:500])
 
     if isinstance(data, dict):
         return JSONResponse(content=data, status_code=upstream.status_code, headers=response_headers)

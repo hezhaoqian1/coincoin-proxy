@@ -81,7 +81,7 @@ class ModelCatalogTests(unittest.TestCase):
                         "owned_by": "google",
                         "provider_name": "Google",
                         "provider_model": "gemini-2.5-flash-image",
-                        "capabilities": ["images/generations"],
+                        "capabilities": ["images/generations", "images/edits"],
                         "routing_mode": "direct",
                         "upstream_model": "vertex-gemini-2.5-flash-image",
                         "upstream_url": "https://gateway.example/v1",
@@ -136,6 +136,13 @@ class ModelCatalogTests(unittest.TestCase):
 
     def test_default_image_model_is_used_when_model_is_omitted(self) -> None:
         resolved = registry.resolve_public_model(None, "images/generations")
+
+        self.assertEqual(resolved.public_model.public_id, "gemini-image")
+        self.assertEqual(resolved.backend.model_id, "vertex-gemini-2.5-flash-image")
+        self.assertEqual(resolved.backend.upstream_url, "https://gateway.example/v1")
+
+    def test_default_image_model_supports_image_edits(self) -> None:
+        resolved = registry.resolve_public_model(None, "images/edits")
 
         self.assertEqual(resolved.public_model.public_id, "gemini-image")
         self.assertEqual(resolved.backend.model_id, "vertex-gemini-2.5-flash-image")

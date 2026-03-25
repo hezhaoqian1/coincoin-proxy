@@ -166,9 +166,9 @@ export const PUBLIC_MODEL_CATALOG_FALLBACK = [
     { id: 'vertex-gemini-3.1-flash-lite-preview', object: 'model', owned_by: 'google', coincoin_provider: 'Google', coincoin_provider_model: 'gemini-3.1-flash-lite-preview', coincoin_capabilities: ['chat/completions', 'responses'], coincoin_billable_sku: 'vertex-gemini-3.1-flash-lite-preview-text', coincoin_routing_mode: 'direct', coincoin_default_for: [], coincoin_metadata: { tier: 'preview' }, coincoin_price_input_per_million: 0, coincoin_price_output_per_million: 0, coincoin_price_per_image_cents: 0 },
     { id: 'vertex-gemini-3-flash-preview', object: 'model', owned_by: 'google', coincoin_provider: 'Google', coincoin_provider_model: 'gemini-3-flash-preview', coincoin_capabilities: ['chat/completions', 'responses'], coincoin_billable_sku: 'vertex-gemini-3-flash-preview-text', coincoin_routing_mode: 'direct', coincoin_default_for: [], coincoin_metadata: { tier: 'preview' }, coincoin_price_input_per_million: 0, coincoin_price_output_per_million: 0, coincoin_price_per_image_cents: 0 },
     { id: 'vertex-gemini-3.1-pro-preview', object: 'model', owned_by: 'google', coincoin_provider: 'Google', coincoin_provider_model: 'gemini-3.1-pro-preview', coincoin_capabilities: ['chat/completions', 'responses'], coincoin_billable_sku: 'vertex-gemini-3.1-pro-preview-text', coincoin_routing_mode: 'direct', coincoin_default_for: [], coincoin_metadata: { tier: 'preview' }, coincoin_price_input_per_million: 0, coincoin_price_output_per_million: 0, coincoin_price_per_image_cents: 0 },
-    { id: 'gemini-image', object: 'model', owned_by: 'google', coincoin_provider: 'Google', coincoin_provider_model: 'gemini-2.5-flash-image', coincoin_capabilities: ['images/generations'], coincoin_billable_sku: 'gemini-image', coincoin_routing_mode: 'direct', coincoin_default_for: ['image'], coincoin_metadata: { tier: 'stable' }, coincoin_price_input_per_million: 0, coincoin_price_output_per_million: 0, coincoin_price_per_image_cents: 0 },
-    { id: 'vertex-gemini-2.5-flash-image', object: 'model', owned_by: 'google', coincoin_provider: 'Google', coincoin_provider_model: 'gemini-2.5-flash-image', coincoin_capabilities: ['images/generations'], coincoin_billable_sku: 'vertex-gemini-2.5-flash-image', coincoin_routing_mode: 'direct', coincoin_default_for: [], coincoin_metadata: { tier: 'explicit' }, coincoin_price_input_per_million: 0, coincoin_price_output_per_million: 0, coincoin_price_per_image_cents: 0 },
-    { id: 'vertex-gemini-3.1-flash-image-preview', object: 'model', owned_by: 'google', coincoin_provider: 'Google', coincoin_provider_model: 'gemini-3.1-flash-image-preview', coincoin_capabilities: ['images/generations'], coincoin_billable_sku: 'vertex-gemini-3.1-flash-image-preview', coincoin_routing_mode: 'direct', coincoin_default_for: [], coincoin_metadata: { tier: 'preview' }, coincoin_price_input_per_million: 0, coincoin_price_output_per_million: 0, coincoin_price_per_image_cents: 0 },
+    { id: 'gemini-image', object: 'model', owned_by: 'google', coincoin_provider: 'Google', coincoin_provider_model: 'gemini-2.5-flash-image', coincoin_capabilities: ['images/generations', 'images/edits'], coincoin_billable_sku: 'gemini-image', coincoin_routing_mode: 'direct', coincoin_default_for: ['image'], coincoin_metadata: { tier: 'stable' }, coincoin_price_input_per_million: 0, coincoin_price_output_per_million: 0, coincoin_price_per_image_cents: 0 },
+    { id: 'vertex-gemini-2.5-flash-image', object: 'model', owned_by: 'google', coincoin_provider: 'Google', coincoin_provider_model: 'gemini-2.5-flash-image', coincoin_capabilities: ['images/generations', 'images/edits'], coincoin_billable_sku: 'vertex-gemini-2.5-flash-image', coincoin_routing_mode: 'direct', coincoin_default_for: [], coincoin_metadata: { tier: 'explicit' }, coincoin_price_input_per_million: 0, coincoin_price_output_per_million: 0, coincoin_price_per_image_cents: 0 },
+    { id: 'vertex-gemini-3.1-flash-image-preview', object: 'model', owned_by: 'google', coincoin_provider: 'Google', coincoin_provider_model: 'gemini-3.1-flash-image-preview', coincoin_capabilities: ['images/generations', 'images/edits'], coincoin_billable_sku: 'vertex-gemini-3.1-flash-image-preview', coincoin_routing_mode: 'direct', coincoin_default_for: [], coincoin_metadata: { tier: 'preview' }, coincoin_price_input_per_million: 0, coincoin_price_output_per_million: 0, coincoin_price_per_image_cents: 0 },
 ]
 
 export async function getPublicModels() {
@@ -191,7 +191,8 @@ export function isTextCapableModel(model) {
 }
 
 export function isImageCapableModel(model) {
-    return (model?.coincoin_capabilities || []).includes('images/generations')
+    const capabilities = model?.coincoin_capabilities || []
+    return capabilities.includes('images/generations') || capabilities.includes('images/edits')
 }
 
 export function getDefaultTextModel(models = PUBLIC_MODEL_CATALOG_FALLBACK) {
@@ -209,9 +210,9 @@ export function getDefaultImageModel(models = PUBLIC_MODEL_CATALOG_FALLBACK) {
 export function describePublicModel(model) {
     const id = model?.id || ''
     const capabilities = model?.coincoin_capabilities || []
-    if (capabilities.includes('images/generations')) {
+    if (capabilities.includes('images/generations') || capabilities.includes('images/edits')) {
         if (id.includes('3.1')) return 'Gemini 图片生成预览模型，适合更强视觉创作和风格探索'
-        return 'Gemini 生图模型，适合营销图、插画和快速视觉草稿'
+        return 'Gemini 图片模型，支持文生图和图生图，适合营销图、插画和快速视觉草稿'
     }
     if (id === 'gpt-5.2-codex') {
         return '默认兼容文本模型，保留给旧客户端和 Codex 风格工作流'

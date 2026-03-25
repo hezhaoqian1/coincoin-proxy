@@ -14,7 +14,7 @@ from .db import get_db
 from .proxy import (
     _build_upstream_headers, _ensure_content_text, _sanitize_encrypted_ids,
     authenticate_user, authorize_request, filter_headers, get_http_client,
-    get_stream_client, proxy_images_generations, proxy_responses, responses_health,
+    get_stream_client, proxy_images_edits, proxy_images_generations, proxy_responses, responses_health,
 )
 from .router import (
     ModelCapabilityError,
@@ -432,6 +432,11 @@ async def responses_alias(request: Request, db: AsyncSession = Depends(get_db)):
 @router.post("/images/generations")
 async def images_generations(request: Request, db: AsyncSession = Depends(get_db)):
     return await proxy_images_generations(request, db)
+
+
+@router.post("/images/edits")
+async def images_edits(request: Request, db: AsyncSession = Depends(get_db)):
+    return await proxy_images_edits(request, db)
 
 
 @router.post("/chat/completions")

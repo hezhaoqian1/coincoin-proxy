@@ -4,6 +4,8 @@ from pathlib import Path
 
 import yaml
 
+IMAGE_CAPABILITIES = {"images/generations", "images/edits"}
+
 
 class GatewayCatalogSyncTests(unittest.TestCase):
     @classmethod
@@ -51,7 +53,7 @@ class GatewayCatalogSyncTests(unittest.TestCase):
     def test_text_models_match_gemini_gateway_shape(self) -> None:
         for model in self.direct_models:
             capabilities = set(model.get("capabilities") or [])
-            if "images/generations" in capabilities:
+            if capabilities.intersection(IMAGE_CAPABILITIES):
                 continue
 
             alias_name = model["upstream_model"]
@@ -74,21 +76,23 @@ class GatewayCatalogSyncTests(unittest.TestCase):
     def test_image_models_match_vertex_image_gateway_shape(self) -> None:
         for model in self.direct_models:
             capabilities = set(model.get("capabilities") or [])
-            if "images/generations" not in capabilities:
+            if not capabilities.intersection(IMAGE_CAPABILITIES):
                 continue
 
             alias_name = model["upstream_model"]
             litellm_params = self.gateway_aliases[alias_name]
-            extra_headers = litellm_params.get("extra_headers") or {}
 
             with self.subTest(model=model["id"]):
                 self.assertEqual(
                     litellm_params.get("model"),
-                    f"vertex_ai/{model['provider_model']}",
+                    f"gemini/{model['provider_model']}",
                 )
-                self.assertIn(f"/models/{model['provider_model']}:generateContent", litellm_params.get("api_base", ""))
                 self.assertEqual(
-                    extra_headers.get("x-goog-api-key"),
+                    litellm_params.get("api_base"),
+                    "os.environ/VERTEX_GEMINI_API_BASE",
+                )
+                self.assertEqual(
+                    litellm_params.get("api_key"),
                     "os.environ/VERTEX_API_KEY",
                 )
 

@@ -31,8 +31,8 @@ class _RecordingClient:
         self.responses = list(responses)
         self.calls = []
 
-    async def post(self, url, json=None, headers=None):
-        self.calls.append({"url": url, "json": json, "headers": headers})
+    async def post(self, url, **kwargs):
+        self.calls.append({"url": url, **kwargs})
         if not self.responses:
             raise AssertionError("unexpected upstream call")
         return self.responses.pop(0)
@@ -61,6 +61,8 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             "fallback_price_output": settings.fallback_price_output,
             "fallback_auth_style": settings.fallback_auth_style,
             "gateway_auth_style": settings.gateway_auth_style,
+            "vertex_api_key": settings.vertex_api_key,
+            "vertex_gemini_api_base": settings.vertex_gemini_api_base,
             "model_catalog_json": settings.model_catalog_json,
         }
 
@@ -84,6 +86,8 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         settings.fallback_price_output = 699
         settings.fallback_auth_style = "azure"
         settings.gateway_auth_style = "bearer"
+        settings.vertex_api_key = ""
+        settings.vertex_gemini_api_base = "https://aiplatform.googleapis.com/v1/publishers/google"
         settings.model_catalog_json = json.dumps(
             {
                 "default_text_model": "gpt-5.2-codex",
@@ -113,7 +117,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                         "owned_by": "google",
                         "provider_name": "Google",
                         "provider_model": "gemini-2.5-flash-image",
-                        "capabilities": ["images/generations"],
+                        "capabilities": ["images/generations", "images/edits"],
                         "routing_mode": "direct",
                         "upstream_model": "vertex-gemini-2.5-flash-image",
                         "upstream_url": "https://gateway.example/v1",
@@ -251,6 +255,143 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(upstream_client.calls[0]["json"]["model"], "vertex-gemini-2.5-flash-image")
         self.assertEqual(upstream_client.calls[0]["headers"]["authorization"], "Bearer gateway-key")
 
+    async def test_image_edit_without_model_uses_default_image_alias(self) -> None:
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {"created": 1774380000, "data": [{"b64_json": "edited"}]}
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ):
+                response = await client.post(
+                    "/v1/images/edits",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    data={"prompt": "Turn this into pixel art", "n": "1", "size": "1024x1024"},
+                    files={"image": ("input.png", b"fake_image_data", "image/png")},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(len(payload["data"]), 1)
+        self.assertEqual(len(upstream_client.calls), 1)
+        self.assertEqual(upstream_client.calls[0]["url"], "https://gateway.example/v1/images/edits")
+        self.assertEqual(upstream_client.calls[0]["headers"]["authorization"], "Bearer gateway-key")
+
+        forwarded_fields = dict(upstream_client.calls[0]["data"])
+        self.assertEqual(forwarded_fields["model"], "vertex-gemini-2.5-flash-image")
+        self.assertEqual(forwarded_fields["prompt"], "Turn this into pixel art")
+
+        forwarded_files = upstream_client.calls[0]["files"]
+        self.assertEqual(len(forwarded_files), 1)
+        self.assertEqual(forwarded_files[0][0], "image")
+        self.assertEqual(forwarded_files[0][1][0], "input.png")
+        self.assertEqual(forwarded_files[0][1][1], b"fake_image_data")
+        self.assertEqual(forwarded_files[0][1][2], "image/png")
+
+    async def test_image_edit_can_call_vertex_directly_when_vertex_key_is_configured(self) -> None:
+        settings.vertex_api_key = "vertex-direct-key"
+        settings.vertex_gemini_api_base = "https://aiplatform.googleapis.com/v1/publishers/google"
+
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "candidates": [
+                            {
+                                "content": {
+                                    "parts": [
+                                        {
+                                            "inlineData": {
+                                                "mimeType": "image/png",
+                                                "data": "edited-directly",
+                                            }
+                                        }
+                                    ]
+                                }
+                            },
+                            {
+                                "content": {
+                                    "parts": [
+                                        {
+                                            "inlineData": {
+                                                "mimeType": "image/png",
+                                                "data": "edited-directly-2",
+                                            }
+                                        }
+                                    ]
+                                }
+                            }
+                        ]
+                    }
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ):
+                response = await client.post(
+                    "/v1/images/edits",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    data={"model": "gemini-image", "prompt": "Make it monochrome", "size": "1024x1024", "n": "2"},
+                    files={"image": ("input.png", b"fake_image_data", "image/png")},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["data"][0]["b64_json"], "edited-directly")
+        self.assertEqual(payload["data"][1]["b64_json"], "edited-directly-2")
+        self.assertEqual(len(upstream_client.calls), 1)
+        self.assertEqual(
+            upstream_client.calls[0]["url"],
+            "https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-2.5-flash-image:generateContent",
+        )
+        self.assertEqual(upstream_client.calls[0]["headers"]["x-goog-api-key"], "vertex-direct-key")
+        self.assertEqual(upstream_client.calls[0]["json"]["contents"][0]["parts"][-1]["text"], "Make it monochrome")
+        self.assertEqual(upstream_client.calls[0]["json"]["generationConfig"]["responseModalities"], ["IMAGE"])
+        self.assertEqual(upstream_client.calls[0]["json"]["generationConfig"]["candidateCount"], 2)
+        self.assertEqual(upstream_client.calls[0]["json"]["generationConfig"]["imageConfig"]["aspectRatio"], "1:1")
+
+    async def test_image_edit_rejects_mask_on_direct_vertex_lane(self) -> None:
+        settings.vertex_api_key = "vertex-direct-key"
+        settings.vertex_gemini_api_base = "https://aiplatform.googleapis.com/v1/publishers/google"
+
+        upstream_client = _RecordingClient([])
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ):
+                response = await client.post(
+                    "/v1/images/edits",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    data={"model": "gemini-image", "prompt": "Replace the background"},
+                    files={
+                        "image": ("input.png", b"fake_image_data", "image/png"),
+                        "mask": ("mask.png", b"fake_mask_data", "image/png"),
+                    },
+                )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "mask_not_supported")
+        self.assertEqual(len(upstream_client.calls), 0)
+
     async def test_direct_gemini_error_does_not_fall_back_to_legacy_lane(self) -> None:
         upstream_client = _RecordingClient(
             [
@@ -301,7 +442,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["data"][1]["coincoin_provider_model"], "gemini-2.5-flash")
         self.assertEqual(payload["data"][1]["coincoin_capabilities"], ["chat/completions", "responses"])
         self.assertEqual(payload["data"][1]["coincoin_billable_sku"], "gemini-fast")
-        self.assertEqual(payload["data"][2]["coincoin_capabilities"], ["images/generations"])
+        self.assertEqual(payload["data"][2]["coincoin_capabilities"], ["images/generations", "images/edits"])
         self.assertEqual(payload["data"][2]["coincoin_default_for"], ["image"])
 
     async def test_model_detail_endpoint_returns_curated_metadata(self) -> None:
