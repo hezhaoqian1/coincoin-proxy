@@ -369,12 +369,6 @@ def _build_upstream_headers(cfg) -> Dict[str, str]:
     return headers
 
 
-def _is_gateway_upstream(url: str) -> bool:
-    gateway_base = (settings.gateway_base_url or "").rstrip("/")
-    upstream_url = (url or "").rstrip("/")
-    return bool(gateway_base and upstream_url.startswith(gateway_base))
-
-
 def _requested_image_count_from_pairs(pairs: List[Tuple[str, str]]) -> int:
     for key, value in reversed(pairs):
         if key != "n":
@@ -399,6 +393,17 @@ def _vertex_image_candidate_count_error() -> JSONResponse:
         code="image_candidate_count_not_supported",
         param="n",
         status_code=400,
+    )
+
+
+def _unsupported_google_image_lane_error(delivery_lane: str) -> JSONResponse:
+    lane = (delivery_lane or "").strip() or "unknown"
+    return _openai_error_response(
+        f"Unsupported Gemini image delivery lane: {lane}.",
+        error_type="server_error",
+        code="unsupported_image_delivery_lane",
+        param="model",
+        status_code=503,
     )
 
 
@@ -1130,9 +1135,14 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
 
     client = await get_http_client()
     is_google_image_generation = public_model.provider_name.strip().lower() == "google"
-    should_use_gateway_image_generation = is_google_image_generation and _is_gateway_upstream(used_cfg.upstream_url)
+    delivery_lane = (public_model.delivery_lane or "").strip().lower()
+    should_use_gateway_image_generation = is_google_image_generation and delivery_lane == "gateway"
+    should_use_direct_vertex = is_google_image_generation and delivery_lane == "vertex_direct"
 
-    if is_google_image_generation and not should_use_gateway_image_generation and not settings.vertex_api_key:
+    if is_google_image_generation and not should_use_gateway_image_generation and not should_use_direct_vertex:
+        return _unsupported_google_image_lane_error(delivery_lane)
+
+    if should_use_direct_vertex and not settings.vertex_api_key:
         return _openai_error_response(
             "Gemini image generation requires COINCOIN_VERTEX_API_KEY on the CoinCoin control plane.",
             error_type="server_error",
@@ -1151,7 +1161,7 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
         t0 = time.monotonic()
         upstream = await client.post(upstream_url, json=payload, headers=headers)
         duration_ms = int((time.monotonic() - t0) * 1000)
-    elif is_google_image_generation:
+    elif should_use_direct_vertex:
         upstream_payload = _build_vertex_image_generation_payload(payload)
         upstream_url = (
             f"{settings.vertex_gemini_api_base.rstrip('/')}/models/"
@@ -1262,10 +1272,14 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
     response_headers: Dict[str, str] = {}
 
     is_google_image_edit = public_model.provider_name.strip().lower() == "google"
-    should_use_gateway_image_edit = is_google_image_edit and _is_gateway_upstream(used_cfg.upstream_url)
-    should_use_direct_vertex = is_google_image_edit and not should_use_gateway_image_edit and bool(settings.vertex_api_key)
+    delivery_lane = (public_model.delivery_lane or "").strip().lower()
+    should_use_gateway_image_edit = is_google_image_edit and delivery_lane == "gateway"
+    should_use_direct_vertex = is_google_image_edit and delivery_lane == "vertex_direct"
 
-    if is_google_image_edit and not should_use_gateway_image_edit and not settings.vertex_api_key:
+    if is_google_image_edit and not should_use_gateway_image_edit and not should_use_direct_vertex:
+        return _unsupported_google_image_lane_error(delivery_lane)
+
+    if should_use_direct_vertex and not settings.vertex_api_key:
         return _openai_error_response(
             "Gemini image edits require COINCOIN_VERTEX_API_KEY on the CoinCoin control plane.",
             error_type="server_error",

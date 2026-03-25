@@ -23,10 +23,8 @@ class Settings(BaseSettings):
     gateway_api_key: str = ""
     gateway_auth_style: str = "bearer"
 
-    # Direct Vertex lane for Gemini image edits.
-    # This is used because the current LiteLLM API-key path is stable for
-    # image generation, but image edits still need a direct official call in
-    # the API-key-only deployment shape.
+    # Optional direct Vertex lane for explicit ops/debug fallback.
+    # Long-term production Gemini traffic should prefer the internal gateway.
     vertex_api_key: str = ""
     vertex_gemini_api_base: str = "https://aiplatform.googleapis.com/v1/publishers/google"
 

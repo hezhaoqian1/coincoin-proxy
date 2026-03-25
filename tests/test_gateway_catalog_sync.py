@@ -35,6 +35,14 @@ class GatewayCatalogSyncTests(unittest.TestCase):
         )
         self.assertEqual(missing_aliases, [])
 
+    def test_every_direct_public_model_declares_delivery_lane(self) -> None:
+        invalid_models = sorted(
+            model["id"]
+            for model in self.direct_models
+            if model.get("delivery_lane") != "gateway"
+        )
+        self.assertEqual(invalid_models, [])
+
     def test_default_models_exist_and_match_capabilities(self) -> None:
         public_models = {
             item["id"]: item

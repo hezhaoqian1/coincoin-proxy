@@ -71,6 +71,7 @@ def _serialize_public_model(public_model) -> Dict[str, Any]:
         "coincoin_capabilities": list(public_model.capabilities),
         "coincoin_billable_sku": public_model.billable_sku,
         "coincoin_routing_mode": public_model.routing_mode,
+        "coincoin_delivery_lane": public_model.delivery_lane,
         "coincoin_default_for": default_for,
         "coincoin_metadata": dict(public_model.metadata or {}),
         "coincoin_price_input_per_million": public_model.price_input_per_million,
