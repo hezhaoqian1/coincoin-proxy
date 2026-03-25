@@ -142,7 +142,7 @@ source ~/.zshrc`}</pre>
             <ul className="doc-list">
                 <li>只需要把请求或客户端配置中的 <code>model</code> 改成公开 alias，例如 <code>gemini-fast</code>、<code>gemini-reasoning</code>、<code>gemini-image</code>。</li>
                 <li>Base URL 和 API Key 不需要改，仍然走同一个 CoinCoin 入口。</li>
-                <li>文本请求推荐走 <code>/v1/chat/completions</code> 或 <code>/v1/responses</code>，图片请求走 <code>/v1/images/generations</code> 并使用 <code>{imageModelId}</code> 这类图片 alias。</li>
+                <li>文本请求推荐走 <code>/v1/chat/completions</code> 或 <code>/v1/responses</code>，图片请求走 <code>/v1/images/generations</code> 或 <code>/v1/images/edits</code>，并使用 <code>{imageModelId}</code> 这类图片 alias。</li>
             </ul>
         </div>
     )
@@ -261,7 +261,7 @@ function ApiReference({ primaryTextModel, primaryImageModel }) {
   "input": "Hello"
 }`}</pre>
 
-            <h3>Images</h3>
+            <h3>Images: 生成</h3>
             <div className="endpoint-block">
                 <span className="method post">POST</span>
                 <code>/v1/images/generations</code>
@@ -271,6 +271,24 @@ function ApiReference({ primaryTextModel, primaryImageModel }) {
   "prompt": "A futuristic coin mascot in a glass city",
   "size": "1024x1024"
 }`}</pre>
+
+            <h3>Images: 编辑 / 图生图</h3>
+            <div className="endpoint-block">
+                <span className="method post">POST</span>
+                <code>/v1/images/edits</code>
+            </div>
+            <pre className="code-block">{`curl ${SITE}/v1/images/edits \\
+  -H "Authorization: Bearer sk_cc_xxxxx" \\
+  -F "model=${imageModelId}" \\
+  -F "prompt=Turn this into a clean pixel-art icon" \\
+  -F "n=2" \\
+  -F "size=1024x1024" \\
+  -F "image=@./input.png"`}</pre>
+
+            <ul className="doc-list">
+                <li>当前 Gemini 图生图支持 1 张或多张输入图，并支持通过 <code>n</code> 返回多张候选图。</li>
+                <li>当前 Gemini 图生图不支持 <code>mask</code> 上传；如果传了掩码，会返回 <code>mask_not_supported</code>。</li>
+            </ul>
 
             <h3>默认兼容规则</h3>
             <ul className="doc-list">

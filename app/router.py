@@ -70,7 +70,7 @@ CHEAP = "cheap"
 FALLBACK = "fallback"
 
 TEXT_ENDPOINTS = frozenset({"chat/completions", "responses", "embeddings"})
-IMAGE_ENDPOINTS = frozenset({"images/generations"})
+IMAGE_ENDPOINTS = frozenset({"images/generations", "images/edits"})
 _ENV_PATTERN = re.compile(r"\$\{([A-Z0-9_]+)(:-([^}]*))?\}")
 _ROOT_DIR = Path(__file__).resolve().parent.parent
 
