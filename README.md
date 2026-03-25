@@ -1,13 +1,15 @@
 # CoinCoin Proxy
 
-OpenAI 兼容的 API 代理服务，将 Azure OpenAI Responses API 转换为标准 OpenAI Chat Completions 格式。
+OpenAI 兼容的 API 控制平面，负责客户密钥、余额与用量控制，并把公开模型目录路由到旧 GPT 链路或内部 LiteLLM gateway。
 
 ## 功能特性
 
 - **OpenAI 兼容** - 完全兼容 OpenAI Chat Completions API 格式
+- **公开模型目录** - `/v1/models` 暴露受控模型别名而不是单一固定模型
 - **Tools/Function Calling** - 支持工具调用，自动转换格式
 - **用户管理** - 多用户 API Key 管理
 - **余额计费** - 支持按 Input/Output Token 分别计费，实时扣费
+- **图片能力** - 支持 `/v1/images/generations` 并为图片请求记录独立 usage unit
 - **用量统计** - 分项统计 Input/Output Token 和消费金额
 - **限流控制** - 支持每分钟/每日请求限制
 - **管理后台** - Web UI 管理界面
@@ -38,10 +40,17 @@ cp env.example .env
 # Admin Token (用于管理后台)
 COINCOIN_ADMIN_TOKEN=your-admin-token
 
-# 上游 Azure OpenAI 配置
+# 旧 GPT 链路（默认公共模型）
 COINCOIN_UPSTREAM_BASE_URL=https://your-instance.cognitiveservices.azure.com/openai/v1
 COINCOIN_UPSTREAM_API_KEY=your-azure-api-key
-COINCOIN_FIXED_MODEL=gpt-4o
+COINCOIN_FIXED_MODEL=gpt-5.2-codex
+COINCOIN_MODEL_CATALOG_PATH=config/model_catalog.json
+
+# 内部 LiteLLM gateway（Gemini text / images）
+# 注意：这里填 gateway 根地址，不要带结尾斜杠；catalog 会自动补 /v1
+COINCOIN_GATEWAY_BASE_URL=https://transfer-station-litellm-gateway-production.up.railway.app
+COINCOIN_GATEWAY_API_KEY=your-internal-gateway-key
+COINCOIN_GATEWAY_AUTH_STYLE=bearer
 
 # 数据库配置 (MySQL/TiDB)
 COINCOIN_DB_HOST=localhost
@@ -54,6 +63,15 @@ COINCOIN_DB_PASSWORD=password
 COINCOIN_PRICE_INPUT_PER_MILLION=99     # Input 价格: 99 分/百万tokens = $0.99/M
 COINCOIN_PRICE_OUTPUT_PER_MILLION=699   # Output 价格: 699 分/百万tokens = $6.99/M
 COINCOIN_BILLING_MODE=balance           # 计费模式: balance(余额) / token_limit(额度) / none(不限制)
+
+# Gemini 计费（可选；不填时默认 0）
+COINCOIN_GEMINI_BALANCED_INPUT_PRICE=0
+COINCOIN_GEMINI_BALANCED_OUTPUT_PRICE=0
+COINCOIN_GEMINI_FAST_INPUT_PRICE=0
+COINCOIN_GEMINI_FAST_OUTPUT_PRICE=0
+COINCOIN_GEMINI_REASONING_INPUT_PRICE=0
+COINCOIN_GEMINI_REASONING_OUTPUT_PRICE=0
+COINCOIN_GEMINI_IMAGE_PRICE=0
 
 # Webhook 密钥（用于充值接口）
 COINCOIN_WEBHOOK_SECRET=your-webhook-secret
@@ -71,6 +89,15 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 uvicorn app.main:app --reload --port 8000
 ```
 
+## 模型兼容规则
+
+- 终端客户只看 CoinCoin 的公开模型目录，不直接感知 LiteLLM 或 Vertex 的内部模型名
+- 老用户如果不传 `model`，仍然走默认 GPT 公共模型
+- 新增 Gemini 能力是增量暴露；显式传入 Gemini alias 时，会真实路由到内部 LiteLLM gateway
+- 图片模型只支持 `/v1/images/generations`，不会伪装成文本模型
+- 公开目录的 source of truth 是 `config/model_catalog.json`
+- 后续扩模型时，按 [Add Public Model Runbook](/Users/hezhaoqian/Desktop/codex_transfer_station/docs/operations/add-public-model-runbook.md) 同步修改 LiteLLM、CoinCoin、测试与文档
+
 ---
 
 ## API 文档
@@ -80,10 +107,11 @@ uvicorn app.main:app --reload --port 8000
 | 端点 | 方法 | 描述 |
 |------|------|------|
 | `/health` | GET | 健康检查 |
-| `/v1/models` | GET | 列出可用模型 |
+| `/v1/models` | GET | 列出公开模型目录 |
 | `/v1/models/{model_id}` | GET | 获取模型信息 |
 | `/v1/balance` | GET | 查询账户余额和用量 |
 | `/v1/usage` | GET | 查询请求明细（支持分页） |
+| `/v1/images/generations` | POST | 生成图片 |
 
 ### OpenAI 兼容端点
 
@@ -95,6 +123,7 @@ Authorization: Bearer sk_cc_xxx
 Content-Type: application/json
 
 {
+  "model": "gemini-fast",
   "messages": [
     {"role": "system", "content": "You are a helpful assistant."},
     {"role": "user", "content": "Hello!"}
@@ -112,7 +141,7 @@ Content-Type: application/json
   "id": "chatcmpl-xxx",
   "object": "chat.completion",
   "created": 1234567890,
-  "model": "gpt-4o",
+  "model": "gemini-fast",
   "choices": [
     {
       "index": 0,
@@ -223,6 +252,28 @@ POST /v1/chat/completions
 ```
 
 返回 Server-Sent Events (SSE) 格式。
+
+#### Image Generations
+
+```bash
+POST /v1/images/generations
+Authorization: Bearer sk_cc_xxx
+Content-Type: application/json
+
+{
+  "model": "gemini-image",
+  "prompt": "A clean product illustration of a blue coin mascot on white background",
+  "n": 1,
+  "size": "1024x1024"
+}
+```
+
+## 模型目录规则
+
+- 老用户如果不传 `model`，仍然走默认 GPT 公共模型
+- 新用户可以通过修改 `model` 在公开目录中切换
+- 公开目录的 source of truth 是 `config/model_catalog.json`
+- Gemini text / images 通过内部 LiteLLM gateway 提供，不直接暴露 gateway master key 给终端客户
 
 ### 余额查询
 
@@ -478,6 +529,10 @@ Content-Type: application/json
 | `COINCOIN_UPSTREAM_BASE_URL` | - | Azure OpenAI API 地址 |
 | `COINCOIN_UPSTREAM_API_KEY` | - | Azure OpenAI API Key |
 | `COINCOIN_FIXED_MODEL` | `gpt-5.2-codex` | 固定使用的模型名 |
+| `COINCOIN_MODEL_CATALOG_PATH` | `config/model_catalog.json` | 公开模型目录配置文件 |
+| `COINCOIN_GATEWAY_BASE_URL` | - | 内部 LiteLLM gateway 根地址 |
+| `COINCOIN_GATEWAY_API_KEY` | - | 内部 LiteLLM gateway 访问密钥 |
+| `COINCOIN_GATEWAY_AUTH_STYLE` | `bearer` | 访问内部 gateway 的认证方式 |
 | `COINCOIN_DB_HOST` | - | 数据库主机 |
 | `COINCOIN_DB_PORT` | `3306` | 数据库端口 |
 | `COINCOIN_DB_NAME` | - | 数据库名 |
@@ -493,6 +548,45 @@ Content-Type: application/json
 | `COINCOIN_PRICE_OUTPUT_PER_MILLION` | `699` | Output 价格（分/百万Token）|
 | `COINCOIN_BILLING_MODE` | `balance` | 计费模式：balance/token_limit/none |
 | `COINCOIN_WEBHOOK_SECRET` | - | Webhook 充值密钥 |
+
+## 本地验证
+
+### 单元测试
+
+```bash
+cd /Users/hezhaoqian/Desktop/codex_transfer_station
+
+env \
+  PYTHONPATH=coincoin-proxy \
+  PYTHONPYCACHEPREFIX=/tmp/pycache \
+  COINCOIN_DB_HOST=localhost \
+  COINCOIN_DB_NAME=test \
+  COINCOIN_DB_USER=test \
+  COINCOIN_DB_PASSWORD=test \
+  python3 -m unittest discover -s coincoin-proxy/tests -p 'test_*.py'
+```
+
+### Live Vertex E2E
+
+先启动本地 LiteLLM gateway，再运行可选 live 测试：
+
+```bash
+cd /Users/hezhaoqian/Desktop/codex_transfer_station
+
+env \
+  PYTHONPATH=coincoin-proxy \
+  PYTHONPYCACHEPREFIX=/tmp/pycache \
+  COINCOIN_RUN_LIVE_VERTEX_TESTS=1 \
+  COINCOIN_LIVE_GATEWAY_URL='http://127.0.0.1:4010' \
+  COINCOIN_LIVE_GATEWAY_KEY='replace-with-internal-gateway-key' \
+  python3 -m unittest discover -s coincoin-proxy/tests -p 'test_live_coincoin_vertex_gateway.py'
+```
+
+这组 live 测试会：
+
+- 真实请求 `coincoin-proxy -> local LiteLLM -> Vertex`
+- 使用 checked-in `config/model_catalog.json`
+- mock 掉 CoinCoin 的 DB/auth 依赖，因此不要求本地 MySQL
 
 ---
 

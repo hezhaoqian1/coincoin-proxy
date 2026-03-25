@@ -2,7 +2,7 @@ import asyncio
 import logging
 from collections import defaultdict
 from datetime import date, datetime
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy import update
 from sqlalchemy.dialects.mysql import insert as mysql_insert
@@ -79,6 +79,10 @@ def calculate_cost_cents(
     return input_cost + output_cost
 
 
+def calculate_image_cost_cents(image_count: int, price_per_image_cents: int = 0) -> float:
+    return int(image_count or 0) * int(price_per_image_cents or 0)
+
+
 class UsageBuffer:
     """高性能使用量缓冲区
     
@@ -98,14 +102,25 @@ class UsageBuffer:
     def __init__(self) -> None:
         # 分片锁：减少高并发时的锁竞争
         self._locks = [asyncio.Lock() for _ in range(self.SHARD_COUNT)]
-        # 每日统计: (user_id, date) -> {input_tokens, output_tokens, requests, cost_cents_f}
+        # 每日统计: (user_id, date) -> {input_tokens, output_tokens, images_total, requests, cost_cents_f}
         # cost_cents_f 使用 float 保留精度
         self._daily: Dict[Tuple[str, date], Dict[str, float]] = defaultdict(
-            lambda: {"input_tokens": 0, "output_tokens": 0, "requests": 0, "cost_cents_f": 0.0}
+            lambda: {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "images_total": 0,
+                "requests": 0,
+                "cost_cents_f": 0.0,
+            }
         )
-        # 用户累计: user_id -> {input_tokens, output_tokens, cost_cents_f}
+        # 用户累计: user_id -> {input_tokens, output_tokens, images_total, cost_cents_f}
         self._usage_by_user: Dict[str, Dict[str, float]] = defaultdict(
-            lambda: {"input_tokens": 0, "output_tokens": 0, "cost_cents_f": 0.0}
+            lambda: {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "images_total": 0,
+                "cost_cents_f": 0.0,
+            }
         )
         # 请求日志缓冲（每次 API 调用一条）
         self._request_logs: List[dict] = []
@@ -126,26 +141,56 @@ class UsageBuffer:
         requests: int = 0,
         endpoint: str = "",
         model: str = "",
+        customer_model_alias: str = "",
+        provider_model: str = "",
         route_reason: str = "",
         duration_ms: int = 0,
         status_code: int = 200,
         price_input_per_million: int = 0,
         price_output_per_million: int = 0,
+        usage_unit_type: str = "tokens",
+        usage_unit_count: int = 0,
+        billable_sku: str = "",
+        image_count: int = 0,
+        cost_cents_override: Optional[float] = None,
+        price_per_image_cents: int = 0,
     ) -> None:
         """添加使用量（高性能，不阻塞请求）
         
         性能：< 1ms，锁内操作 < 100μs
         """
-        if input_tokens == 0 and output_tokens == 0 and requests == 0:
+        if (
+            input_tokens == 0
+            and output_tokens == 0
+            and requests == 0
+            and image_count == 0
+            and usage_unit_count == 0
+            and not cost_cents_override
+        ):
             return
         
         # 计算在锁外进行，减少锁持有时间
-        cost_cents = calculate_cost_cents(
-            input_tokens,
-            output_tokens,
-            cached_tokens=cached_tokens,
-            price_input_per_million=price_input_per_million,
-            price_output_per_million=price_output_per_million,
+        if cost_cents_override is None:
+            if (usage_unit_type or "tokens") == "images":
+                cost_cents = calculate_image_cost_cents(
+                    image_count=image_count or usage_unit_count,
+                    price_per_image_cents=price_per_image_cents,
+                )
+            else:
+                cost_cents = calculate_cost_cents(
+                    input_tokens,
+                    output_tokens,
+                    cached_tokens=cached_tokens,
+                    price_input_per_million=price_input_per_million,
+                    price_output_per_million=price_output_per_million,
+                )
+        else:
+            cost_cents = float(cost_cents_override)
+
+        resolved_usage_unit_type = (usage_unit_type or "tokens").strip() or "tokens"
+        resolved_usage_unit_count = int(
+            usage_unit_count
+            or (image_count if resolved_usage_unit_type == "images" else (input_tokens + output_tokens))
         )
         day = date.today()
         
@@ -156,6 +201,7 @@ class UsageBuffer:
             bucket = self._daily[(user_id, day)]
             bucket["input_tokens"] += int(input_tokens)
             bucket["output_tokens"] += int(output_tokens)
+            bucket["images_total"] += int(image_count or 0)
             bucket["requests"] += int(requests)
             bucket["cost_cents_f"] += cost_cents  # 保留浮点精度
             
@@ -163,16 +209,23 @@ class UsageBuffer:
             user_bucket = self._usage_by_user[user_id]
             user_bucket["input_tokens"] += int(input_tokens)
             user_bucket["output_tokens"] += int(output_tokens)
+            user_bucket["images_total"] += int(image_count or 0)
             user_bucket["cost_cents_f"] += cost_cents  # 保留浮点精度
             
             # 请求日志（append 到 list，纳秒级）
             self._request_logs.append({
                 "user_id": user_id,
                 "endpoint": endpoint,
-                "model": model,
+                "model": customer_model_alias or model,
                 "input_tokens": int(input_tokens),
                 "output_tokens": int(output_tokens),
                 "cached_tokens": int(cached_tokens or 0),
+                "image_count": int(image_count or 0),
+                "provider_model": (provider_model or model)[:128],
+                "customer_model_alias": (customer_model_alias or model)[:128],
+                "usage_unit_type": resolved_usage_unit_type[:32],
+                "usage_unit_count": resolved_usage_unit_count,
+                "billable_sku": (billable_sku or model)[:128],
                 "cost_cents": round(cost_cents),
                 "duration_ms": int(duration_ms),
                 "status_code": int(status_code),
@@ -242,12 +295,14 @@ class UsageBuffer:
                     bucket = self._daily[key]
                     bucket["input_tokens"] += int(stats.get("input_tokens", 0))
                     bucket["output_tokens"] += int(stats.get("output_tokens", 0))
+                    bucket["images_total"] += int(stats.get("images_total", 0))
                     bucket["requests"] += int(stats.get("requests", 0))
                     bucket["cost_cents_f"] += float(stats.get("cost_cents_f", 0))
                 for user_id, usage in usage_by_user.items():
                     user_bucket = self._usage_by_user[user_id]
                     user_bucket["input_tokens"] += int(usage.get("input_tokens", 0))
                     user_bucket["output_tokens"] += int(usage.get("output_tokens", 0))
+                    user_bucket["images_total"] += int(usage.get("images_total", 0))
                     user_bucket["cost_cents_f"] += float(usage.get("cost_cents_f", 0))
             finally:
                 for lock in self._locks:
@@ -288,11 +343,12 @@ async def flush_once() -> None:
             for (user_id, day), stats in daily.items():
                 input_tokens = int(stats.get("input_tokens", 0))
                 output_tokens = int(stats.get("output_tokens", 0))
+                images_total = int(stats.get("images_total", 0))
                 requests = int(stats.get("requests", 0))
                 cost_cents = round(stats.get("cost_cents_f", 0.0))
                 total_tokens = input_tokens + output_tokens
                 
-                if total_tokens == 0 and requests == 0:
+                if total_tokens == 0 and images_total == 0 and requests == 0:
                     continue
                     
                 stmt = mysql_insert(UsageDaily).values(
@@ -301,6 +357,7 @@ async def flush_once() -> None:
                     tokens_total=total_tokens,
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
+                    images_total=images_total,
                     cost_cents=cost_cents,
                     requests_total=requests,
                     updated_at=datetime.utcnow(),
@@ -309,6 +366,7 @@ async def flush_once() -> None:
                     tokens_total=UsageDaily.tokens_total + total_tokens,
                     input_tokens=UsageDaily.input_tokens + input_tokens,
                     output_tokens=UsageDaily.output_tokens + output_tokens,
+                    images_total=UsageDaily.images_total + images_total,
                     cost_cents=UsageDaily.cost_cents + cost_cents,
                     requests_total=UsageDaily.requests_total + requests,
                     updated_at=datetime.utcnow(),
@@ -326,6 +384,12 @@ async def flush_once() -> None:
                         input_tokens=log["input_tokens"],
                         output_tokens=log["output_tokens"],
                         cached_tokens=log.get("cached_tokens", 0),
+                        image_count=log.get("image_count", 0),
+                        provider_model=log.get("provider_model", ""),
+                        customer_model_alias=log.get("customer_model_alias", ""),
+                        usage_unit_type=log.get("usage_unit_type", "tokens"),
+                        usage_unit_count=log.get("usage_unit_count", 0),
+                        billable_sku=log.get("billable_sku", ""),
                         cost_cents=log["cost_cents"],
                         duration_ms=log["duration_ms"],
                         status_code=log["status_code"],

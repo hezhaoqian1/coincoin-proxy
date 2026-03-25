@@ -1,0 +1,80 @@
+import asyncio
+import unittest
+from datetime import date
+
+from app.usage_buffer import UsageBuffer
+
+
+class UsageBufferUnitsTests(unittest.TestCase):
+    def test_tracks_image_generation_units_and_cost(self) -> None:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        buffer = UsageBuffer()
+
+        async def scenario():
+            await buffer.add(
+                "u_image",
+                requests=1,
+                endpoint="images/generations",
+                model="gemini-image",
+                customer_model_alias="gemini-image",
+                provider_model="gemini-2.5-flash-image",
+                usage_unit_type="images",
+                usage_unit_count=2,
+                image_count=2,
+                price_per_image_cents=7,
+                billable_sku="gemini-image",
+            )
+            return await buffer.snapshot_and_reset()
+
+        try:
+            daily, usage_by_user, request_logs = loop.run_until_complete(scenario())
+        finally:
+            asyncio.set_event_loop(None)
+            loop.close()
+
+        self.assertEqual(daily[("u_image", date.today())]["images_total"], 2)
+        self.assertEqual(round(usage_by_user["u_image"]["cost_cents_f"]), 14)
+        self.assertEqual(request_logs[0]["usage_unit_type"], "images")
+        self.assertEqual(request_logs[0]["usage_unit_count"], 2)
+        self.assertEqual(request_logs[0]["provider_model"], "gemini-2.5-flash-image")
+
+    def test_tracks_text_alias_and_provider_model_separately(self) -> None:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        buffer = UsageBuffer()
+
+        async def scenario():
+            await buffer.add(
+                "u_text",
+                input_tokens=1_000_000,
+                output_tokens=500_000,
+                requests=1,
+                endpoint="responses",
+                model="gemini-fast",
+                customer_model_alias="gemini-fast",
+                provider_model="gemini-2.5-flash",
+                usage_unit_type="tokens",
+                billable_sku="gemini-fast-text",
+                price_input_per_million=100,
+                price_output_per_million=200,
+            )
+            return await buffer.snapshot_and_reset()
+
+        try:
+            daily, usage_by_user, request_logs = loop.run_until_complete(scenario())
+        finally:
+            asyncio.set_event_loop(None)
+            loop.close()
+
+        self.assertEqual(daily[("u_text", date.today())]["input_tokens"], 1_000_000)
+        self.assertEqual(daily[("u_text", date.today())]["output_tokens"], 500_000)
+        self.assertEqual(round(usage_by_user["u_text"]["cost_cents_f"]), 200)
+        self.assertEqual(request_logs[0]["customer_model_alias"], "gemini-fast")
+        self.assertEqual(request_logs[0]["provider_model"], "gemini-2.5-flash")
+        self.assertEqual(request_logs[0]["usage_unit_type"], "tokens")
+        self.assertEqual(request_logs[0]["usage_unit_count"], 1_500_000)
+
+
+if __name__ == "__main__":
+    unittest.main()

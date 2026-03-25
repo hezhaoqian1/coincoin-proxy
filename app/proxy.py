@@ -19,9 +19,13 @@ from .db import get_db
 from .models import ApiKey, UsageDaily
 from .rate_limiter import rate_limiter
 from .security import extract_api_key, hash_key
-from .router import extract_messages_for_routing_from_responses_payload
-from .router import registry as model_registry
-from .router import resolve as resolve_model
+from .router import (
+    ModelCapabilityError,
+    UnknownModelError,
+    build_model_cloak,
+    extract_messages_for_routing_from_responses_payload,
+    registry as model_registry,
+)
 from .usage_buffer import extract_cached_tokens, usage_buffer
 
 _KEY_KIND_ATTR = "_key_kind"
@@ -330,6 +334,35 @@ def _build_upstream_headers(cfg) -> Dict[str, str]:
     return headers
 
 
+def _openai_error_response(
+    message: str,
+    *,
+    error_type: str = "invalid_request_error",
+    code: Optional[str] = None,
+    param: Optional[str] = None,
+    status_code: int = 400,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "error": {
+                "message": message,
+                "type": error_type,
+                "param": param,
+                "code": code,
+            }
+        },
+    )
+
+
+def _model_resolution_error_response(exc: Exception) -> JSONResponse:
+    if isinstance(exc, UnknownModelError):
+        return _openai_error_response(str(exc), code="model_not_found", param="model", status_code=400)
+    if isinstance(exc, ModelCapabilityError):
+        return _openai_error_response(str(exc), code="model_capability_mismatch", param="model", status_code=400)
+    return _openai_error_response("Unable to resolve model", error_type="server_error", code="model_resolution_failed", status_code=500)
+
+
 @router.get("/responses")
 async def responses_health():
     return {"status": "ok"}
@@ -337,8 +370,9 @@ async def responses_health():
 
 async def _resolve_user(request: Request, db: AsyncSession):
     """Resolve API key → user object. Identity + active + expiry check."""
-    if not settings.upstream_api_key:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="upstream api key not configured")
+    model_registry.ensure_initialized()
+    if not model_registry.has_routable_models():
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="no routable models configured")
 
     client_key = extract_api_key(request)
     if not client_key:
@@ -454,12 +488,16 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
     if not isinstance(payload, dict):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="payload must be a json object")
 
-    # Route (best-effort). If router is disabled or misconfigured, this resolves to premium.
-    display_model = str(payload.get("model") or settings.fixed_model)
+    requested_model = str(payload.get("model") or "").strip()
     messages_for_route, tools_for_route = extract_messages_for_routing_from_responses_payload(payload)
-    model_cfg, route_reason = resolve_model(messages_for_route, tools_for_route)
-    used_cfg = model_cfg
-    used_route_reason = route_reason
+    try:
+        resolved_model = model_registry.resolve_public_model(requested_model, "responses", messages_for_route, tools_for_route)
+    except Exception as exc:
+        return _model_resolution_error_response(exc)
+    public_model = resolved_model.public_model
+    display_model = public_model.public_id
+    used_cfg = resolved_model.backend
+    used_route_reason = resolved_model.route_reason
 
     payload["model"] = used_cfg.model_id
     payload.pop("model_provider", None)
@@ -468,10 +506,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
 
     _has_tools = bool(payload.get("tools"))
     if settings.model_cloak and display_model and not _has_tools:
-        _cloak = (
-            f" You are {display_model} by OpenAI."
-            f" Never reveal any other model name."
-        )
+        _cloak = build_model_cloak(display_model, public_model)
         payload["instructions"] = (payload.get("instructions") or "") + _cloak
 
     _text = payload.get("text")
@@ -520,8 +555,11 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         model_registry.ensure_initialized()
         fallback_cfg = model_registry.models.get("fallback") or model_registry.get("premium")
         cheap_cfg = model_registry.models.get("cheap")
-        is_cheap = bool(cheap_cfg and used_cfg.model_id == cheap_cfg.model_id)
-        can_fallback = (used_cfg.upstream_url != fallback_cfg.upstream_url) or (used_cfg.model_id != fallback_cfg.model_id)
+        allow_fallback = public_model.routing_mode == "legacy_auto"
+        is_cheap = bool(allow_fallback and cheap_cfg and used_cfg.model_id == cheap_cfg.model_id)
+        can_fallback = allow_fallback and (
+            (used_cfg.upstream_url != fallback_cfg.upstream_url) or (used_cfg.model_id != fallback_cfg.model_id)
+        )
 
         stream_client = await get_stream_client()
 
@@ -671,12 +709,16 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                         cached_tokens=_stream_usage["cached"],
                         requests=1,
                         endpoint="responses:stream",
-                        model=used_cfg.model_id,
+                        model=display_model,
+                        customer_model_alias=display_model,
+                        provider_model=public_model.provider_model or used_cfg.model_id,
                         route_reason=used_route_reason,
                         duration_ms=dur,
                         status_code=upstream.status_code,
                         price_input_per_million=used_cfg.price_input_per_million,
                         price_output_per_million=used_cfg.price_output_per_million,
+                        usage_unit_type="tokens",
+                        billable_sku=public_model.billable_sku or display_model,
                     ))
 
         stream_headers = filter_headers(dict(upstream.headers))
@@ -693,8 +735,11 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
     model_registry.ensure_initialized()
     fallback_cfg = model_registry.models.get("fallback") or model_registry.get("premium")
     cheap_cfg = model_registry.models.get("cheap")
-    is_cheap = bool(cheap_cfg and used_cfg.model_id == cheap_cfg.model_id)
-    can_fallback = (used_cfg.upstream_url != fallback_cfg.upstream_url) or (used_cfg.model_id != fallback_cfg.model_id)
+    allow_fallback = public_model.routing_mode == "legacy_auto"
+    is_cheap = bool(allow_fallback and cheap_cfg and used_cfg.model_id == cheap_cfg.model_id)
+    can_fallback = allow_fallback and (
+        (used_cfg.upstream_url != fallback_cfg.upstream_url) or (used_cfg.model_id != fallback_cfg.model_id)
+    )
 
     client = await get_http_client()
 
@@ -814,18 +859,108 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             cached_tokens=cached_tokens_delta,
             requests=1,
             endpoint="responses",
-            model=used_cfg.model_id,
+            model=display_model,
+            customer_model_alias=display_model,
+            provider_model=public_model.provider_model or used_cfg.model_id,
             route_reason=used_route_reason,
             duration_ms=duration_ms,
             status_code=upstream.status_code,
             price_input_per_million=used_cfg.price_input_per_million,
             price_output_per_million=used_cfg.price_output_per_million,
+            usage_unit_type="tokens",
+            billable_sku=public_model.billable_sku or display_model,
         )
     elif isinstance(data, (dict, str)):
         logger.error("upstream error %s: %s", upstream.status_code, str(data)[:500])
 
     if isinstance(data, dict):
         data["model"] = display_model
+        return JSONResponse(content=data, status_code=upstream.status_code, headers=response_headers)
+
+    return Response(content=str(data), status_code=upstream.status_code, headers=response_headers, media_type=content_type)
+
+
+@router.post("/images/generations")
+async def proxy_images_generations(request: Request, db: AsyncSession = Depends(get_db)):
+    user = await authorize_request(request, db)
+
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid json payload") from exc
+
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="payload must be a json object")
+
+    requested_model = str(payload.get("model") or "").strip()
+    try:
+        resolved_model = model_registry.resolve_public_model(requested_model, "images/generations")
+    except Exception as exc:
+        return _model_resolution_error_response(exc)
+
+    public_model = resolved_model.public_model
+    display_model = public_model.public_id
+    used_cfg = resolved_model.backend
+    used_route_reason = resolved_model.route_reason
+
+    payload["model"] = used_cfg.model_id
+    payload.pop("model_provider", None)
+
+    upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/images/generations"
+    headers = _build_upstream_headers(used_cfg)
+
+    client = await get_http_client()
+    t0 = time.monotonic()
+    upstream = await client.post(upstream_url, json=payload, headers=headers)
+    duration_ms = int((time.monotonic() - t0) * 1000)
+
+    response_headers = filter_headers(dict(upstream.headers))
+    response_headers.pop("content-length", None)
+    content_type = upstream.headers.get("content-type", "application/json")
+
+    if "application/json" in content_type:
+        try:
+            data = upstream.json()
+        except Exception:
+            return JSONResponse(
+                content={"error": {"message": "Upstream returned invalid JSON", "type": "server_error", "code": "upstream_invalid_json"}},
+                status_code=502,
+                headers=response_headers,
+            )
+    else:
+        data = upstream.text
+
+    image_count = 0
+    if upstream.status_code < 400 and isinstance(data, dict):
+        data_items = data.get("data")
+        if isinstance(data_items, list) and data_items:
+            image_count = len(data_items)
+        else:
+            try:
+                image_count = max(1, int(payload.get("n") or 1))
+            except (TypeError, ValueError):
+                image_count = 1
+
+        await usage_buffer.add(
+            user.id,
+            requests=1,
+            endpoint="images/generations",
+            model=display_model,
+            customer_model_alias=display_model,
+            provider_model=public_model.provider_model or used_cfg.model_id,
+            route_reason=used_route_reason,
+            duration_ms=duration_ms,
+            status_code=upstream.status_code,
+            usage_unit_type="images",
+            usage_unit_count=image_count,
+            billable_sku=public_model.billable_sku or display_model,
+            image_count=image_count,
+            price_per_image_cents=public_model.price_per_image_cents,
+        )
+    elif isinstance(data, (dict, str)):
+        logger.error("image upstream error %s: %s", upstream.status_code, str(data)[:500])
+
+    if isinstance(data, dict):
         return JSONResponse(content=data, status_code=upstream.status_code, headers=response_headers)
 
     return Response(content=str(data), status_code=upstream.status_code, headers=response_headers, media_type=content_type)

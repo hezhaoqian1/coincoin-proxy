@@ -16,14 +16,14 @@ export default function Landing() {
                 <div className="container hero-content">
                     <div className="hero-badge animate-fade-in">
                         <span className="hero-badge-dot"></span>
-                        gpt-5.2-codex 已上线
+                        GPT + Gemini 文本与生图已上线
                     </div>
                     <h1 className="hero-title animate-fade-in-up">
                         高性能 AI API<br />
                         <span className="hero-gradient">中转加速平台</span>
                     </h1>
                     <p className="hero-desc animate-fade-in-up" style={{ animationDelay: '100ms' }}>
-                        OpenAI 兼容接口 · 全球加速 · 按量计费 · 一个 Key 调用顶级模型
+                        OpenAI 兼容入口 · 公开模型目录 · 按量计费 · 一个 Key 调用 GPT 与 Gemini
                     </p>
                     <div className="hero-actions animate-fade-in-up" style={{ animationDelay: '200ms' }}>
                         <Link to="/register" className="btn btn-primary btn-lg">
@@ -64,21 +64,21 @@ export default function Landing() {
                                 <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" /><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" /></svg>
                             </div>
                             <h3>全球加速</h3>
-                            <p>专线优化，国内直连 OpenAI、Azure 节点，延迟低至 100ms，告别卡顿</p>
+                            <p>专线优化，统一承接 GPT 与 Gemini 上游，请求入口不变，模型目录可持续扩展</p>
                         </div>
                         <div className="feature-card glass-card animate-fade-in-up">
                             <div className="feature-icon" style={{ background: 'rgba(16,185,129,0.12)', color: 'var(--accent-emerald)' }}>
                                 <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" /></svg>
                             </div>
                             <h3>按量计费</h3>
-                            <p>余额制扣费，用多少付多少。Input $0.99/M · Output $6.99/M，透明无隐藏费用</p>
+                            <p>余额制扣费，用多少付多少。文本按 Token，生图按张数，计费维度清晰可追踪</p>
                         </div>
                         <div className="feature-card glass-card animate-fade-in-up">
                             <div className="feature-icon" style={{ background: 'rgba(6,182,212,0.12)', color: 'var(--accent-cyan)' }}>
                                 <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" /></svg>
                             </div>
                             <h3>完全兼容</h3>
-                            <p>100% OpenAI API 兼容，支持 Chat Completions 和 Responses 接口，无缝切换</p>
+                            <p>兼容 Chat Completions、Responses 和 Images 接口，老客户端不改也能继续用</p>
                         </div>
                         <div className="feature-card glass-card animate-fade-in-up">
                             <div className="feature-icon" style={{ background: 'rgba(139,92,246,0.12)', color: 'var(--accent-violet)' }}>
@@ -92,14 +92,14 @@ export default function Landing() {
                                 <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></svg>
                             </div>
                             <h3>一键接入</h3>
-                            <p>注册即用，支持 Codex CLI、Continue、Aider 等主流工具，3 分钟完成配置</p>
+                            <p>注册即用，支持 Codex CLI、OpenClaw、Continue、Aider 等主流工具，3 分钟完成配置</p>
                         </div>
                         <div className="feature-card glass-card animate-fade-in-up">
                             <div className="feature-icon" style={{ background: 'rgba(244,63,94,0.12)', color: 'var(--accent-rose)' }}>
                                 <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2" /></svg>
                             </div>
                             <h3>实时监控</h3>
-                            <p>详细的请求日志、Token 消费统计、费用分析，数据一目了然</p>
+                            <p>详细的请求日志、Token / 图片统计、费用分析，路由和计费都可追踪</p>
                         </div>
                     </div>
                 </div>
@@ -136,9 +136,9 @@ export default function Landing() {
                         <div className="step-card animate-fade-in-up">
                             <div className="step-number">03</div>
                             <h3>开始使用</h3>
-                            <p>和使用 OpenAI 完全一样的体验</p>
+                            <p>Base URL 不变，只改 model 就能切模型</p>
                             <div className="step-code">
-                                <code>model: "gpt-5.2-codex" ✓</code>
+                                <code>model: "gemini-fast" ✓</code>
                             </div>
                         </div>
                     </div>
@@ -183,9 +183,9 @@ export default function Landing() {
                     <p className="section-subtitle">关于 CoinCoin 的一些常见疑问</p>
                     <div className="faq-list">
                         {[
-                            { q: '支持哪些模型？', a: '目前支持 gpt-5.2-codex 模型（Azure OpenAI），更多模型即将上线。' },
-                            { q: '如何计费？', a: '按实际 Token 使用量扣费：Input $0.99/百万 Token，Output $6.99/百万 Token。余额用完后需充值继续使用。' },
-                            { q: '支持哪些客户端？', a: '支持所有 OpenAI 兼容的客户端，包括 Codex CLI、Continue、Aider、ChatBox 等。只需配置 Base URL 和 API Key。' },
+                            { q: '支持哪些模型？', a: '当前支持默认 GPT 文本模型、多个 Gemini 文本 alias，以及 Gemini 生图模型。公开目录可通过 /v1/models 查询。' },
+                            { q: '如何计费？', a: '文本模型按 Token 计费，图片模型按张数计费。所有费用统一从账户余额扣除。' },
+                            { q: '支持哪些客户端？', a: '当前优先支持 Codex CLI、Continue、Aider、ChatBox 等主流 OpenAI 兼容客户端，OpenClaw 也可接入但建议走 openai-completions 模式。Gemini CLI 暂不作为一等公共接入方式。' },
                             { q: 'API Key 丢失怎么办？', a: '请联系管理员，我们可以为你生成新的 API Key。' },
                             { q: '余额用完会怎样？', a: '余额用完后请求会返回 HTTP 402 错误，充值后即可恢复使用。已有的余额不会过期。' },
                             { q: '支持哪些支付方式？', a: '目前支持支付宝。充值后余额实时到账。' },

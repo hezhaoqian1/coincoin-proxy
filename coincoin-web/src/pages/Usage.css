@@ -39,6 +39,30 @@
     border-radius: 4px;
 }
 
+.provider-tag-sm {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+}
+
+.usage-pill {
+    display: inline-flex;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+}
+
+.usage-pill.tokens {
+    background: rgba(99, 102, 241, 0.12);
+    color: var(--accent-indigo);
+}
+
+.usage-pill.images {
+    background: rgba(245, 158, 11, 0.12);
+    color: var(--accent-amber);
+}
+
 .table-footer {
     display: flex;
     justify-content: space-between;

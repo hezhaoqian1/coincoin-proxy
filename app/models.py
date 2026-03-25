@@ -71,6 +71,7 @@ class UsageDaily(Base):
     tokens_total: Mapped[int] = mapped_column(BigInteger, default=0)  # 保留兼容
     input_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
     output_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
+    images_total: Mapped[int] = mapped_column(BigInteger, default=0)
     cost_cents: Mapped[int] = mapped_column(BigInteger, default=0)  # 消费金额（分）
     requests_total: Mapped[int] = mapped_column(BigInteger, default=0)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -88,6 +89,12 @@ class RequestLog(Base):
     input_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
     output_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
     cached_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
+    image_count: Mapped[int] = mapped_column(BigInteger, default=0)
+    provider_model: Mapped[str] = mapped_column(String(128), default="")
+    customer_model_alias: Mapped[str] = mapped_column(String(128), default="")
+    usage_unit_type: Mapped[str] = mapped_column(String(32), default="tokens")
+    usage_unit_count: Mapped[int] = mapped_column(BigInteger, default=0)
+    billable_sku: Mapped[str] = mapped_column(String(128), default="")
     cost_cents: Mapped[int] = mapped_column(BigInteger, default=0)  # 费用（分）
     duration_ms: Mapped[int] = mapped_column(BigInteger, default=0)  # 响应耗时（毫秒）
     status_code: Mapped[int] = mapped_column(BigInteger, default=200)  # 上游响应状态码

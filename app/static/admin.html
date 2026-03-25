@@ -962,7 +962,7 @@
               <svg width="22" height="22" fill="none" stroke="white" stroke-width="2" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
             </div>
             <div class="stat-value" id="statReqToday">-</div>
-            <div class="stat-label">Requests Today</div>
+            <div class="stat-label">Req / Img Today</div>
           </div>
         </div>
 
@@ -988,7 +988,7 @@
             </div>
             <div class="card-body flush">
               <table>
-                <thead><tr><th>User</th><th>Requests</th><th>Tokens</th></tr></thead>
+                <thead><tr><th>User</th><th>Requests</th><th>Tokens</th><th>Images</th></tr></thead>
                 <tbody id="topUsageBody"></tbody>
               </table>
             </div>
@@ -1178,7 +1178,7 @@
             <div class="table-wrapper">
               <table>
                 <thead>
-                  <tr><th>Date</th><th>User</th><th>Requests</th><th>Input Tokens</th><th>Output Tokens</th><th>Cost</th></tr>
+                  <tr><th>Date</th><th>User</th><th>Requests</th><th>Input Tokens</th><th>Output Tokens</th><th>Images</th><th>Cost</th></tr>
                 </thead>
                 <tbody id="usageBody"></tbody>
               </table>
@@ -1249,7 +1249,7 @@
       <div class="modal-body" style="padding:0;max-height:520px;overflow-y:auto">
         <table>
           <thead>
-            <tr><th>Time</th><th>Endpoint</th><th>Model</th><th>Input</th><th>Output</th><th>Cost</th><th>Latency</th><th>Status</th></tr>
+            <tr><th>Time</th><th>Endpoint</th><th>Alias</th><th>Provider</th><th>Usage</th><th>SKU</th><th>Cost</th><th>Latency</th><th>Status</th></tr>
           </thead>
           <tbody id="logsBody"></tbody>
         </table>
@@ -1466,7 +1466,7 @@
         document.getElementById('statTotalUsers').textContent = formatNum(d.total_users);
         document.getElementById('statActiveUsers').textContent = formatNum(d.active_users);
         document.getElementById('statTotalTokens').textContent = formatNum(d.total_tokens);
-        document.getElementById('statReqToday').textContent = formatNum(d.total_requests_today);
+        document.getElementById('statReqToday').textContent = `${formatNum(d.total_requests_today)} / ${formatNum(d.total_images_today || 0)}`;
       } catch (e) { console.error(e); }
     }
 
@@ -1482,7 +1482,8 @@
           <td>${r.username || (r.user_id||'').slice(0, 10)}</td>
           <td>${formatNum(r.requests_total)}</td>
           <td>${formatNum(r.tokens_total)}</td>
-        </tr>`).join('') : '<tr><td colspan="3" class="text-muted" style="text-align:center;padding:20px">No data</td></tr>';
+          <td>${formatNum(r.images_total || 0)}</td>
+        </tr>`).join('') : '<tr><td colspan="4" class="text-muted" style="text-align:center;padding:20px">No data</td></tr>';
       } catch (e) { console.error(e); }
     }
 
@@ -1703,7 +1704,7 @@
         const data = await r.json();
         const body = document.getElementById('usageBody');
         if (!data.length) {
-          body.innerHTML = '<tr><td colspan="6"><div class="empty-state"><div class="empty-state-icon">📊</div><h3>No data</h3><p>Usage will appear here</p></div></td></tr>';
+          body.innerHTML = '<tr><td colspan="7"><div class="empty-state"><div class="empty-state-icon">📊</div><h3>No data</h3><p>Usage will appear here</p></div></td></tr>';
           return;
         }
         body.innerHTML = data.map(r => `<tr>
@@ -1712,6 +1713,7 @@
           <td>${formatNum(r.requests_total)}</td>
           <td>${formatNum(r.input_tokens||0)}</td>
           <td>${formatNum(r.output_tokens||0)}</td>
+          <td>${formatNum(r.images_total||0)}</td>
           <td class="text-success">$${((r.cost_cents||0)/100).toFixed(4)}</td>
         </tr>`).join('');
       } catch (e) { console.error(e); }
@@ -1725,7 +1727,7 @@
       logsUserId = userId;
       logsOffset = 0;
       document.getElementById('logsModalTitle').textContent = `Request Logs — ${displayName}`;
-      document.getElementById('logsBody').innerHTML = '<tr><td colspan="8" style="text-align:center;padding:40px;color:var(--text-tertiary)">Loading...</td></tr>';
+      document.getElementById('logsBody').innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;color:var(--text-tertiary)">Loading...</td></tr>';
       document.getElementById('logsPagination').textContent = '';
       openModal('logsModal');
       await loadRequestLogs();
@@ -1738,16 +1740,20 @@
         const data = await r.json();
         const body = document.getElementById('logsBody');
         if (!data.data.length) {
-          body.innerHTML = '<tr><td colspan="8"><div class="empty-state" style="padding:40px"><div class="empty-state-icon">📋</div><h3>No requests</h3></div></td></tr>';
+          body.innerHTML = '<tr><td colspan="9"><div class="empty-state" style="padding:40px"><div class="empty-state-icon">📋</div><h3>No requests</h3></div></td></tr>';
         } else {
           body.innerHTML = data.data.map(l => {
             const sc = l.status_code < 400 ? 'badge-success' : 'badge-error';
+            const usageLabel = l.usage_unit_type === 'images'
+              ? `${formatNum(l.image_count || l.usage_unit_count || 0)} images`
+              : `in ${formatNum(l.input_tokens || 0)} / out ${formatNum(l.output_tokens || 0)}`;
             return `<tr>
               <td class="text-sm">${l.created_at ? utcDate(l.created_at).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '-'}</td>
               <td class="text-sm">${l.endpoint}</td>
               <td class="text-sm text-muted">${l.model}</td>
-              <td class="text-sm">${formatNum(l.input_tokens)}</td>
-              <td class="text-sm">${formatNum(l.output_tokens)}</td>
+              <td class="text-sm text-muted">${l.provider_model || '-'}</td>
+              <td class="text-sm">${usageLabel}<div class="text-muted" style="font-size:11px">${l.usage_unit_type}:${formatNum(l.usage_unit_count || 0)}</div></td>
+              <td class="text-sm text-muted">${l.billable_sku || '-'}</td>
               <td class="text-sm text-success">$${l.cost_usd.toFixed(4)}</td>
               <td class="text-sm text-muted">${l.duration_ms}ms</td>
               <td><span class="badge ${sc}" style="font-size:11px">${l.status_code}</span></td>

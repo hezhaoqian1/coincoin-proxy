@@ -1,0 +1,218 @@
+{
+  "default_text_model": "${COINCOIN_FIXED_MODEL}",
+  "default_image_model": "gemini-image",
+  "models": [
+    {
+      "id": "${COINCOIN_FIXED_MODEL}",
+      "owned_by": "openai",
+      "provider_name": "OpenAI",
+      "capabilities": ["chat/completions", "responses", "embeddings"],
+      "routing_mode": "legacy_auto",
+      "billable_sku": "legacy-default-text"
+    },
+    {
+      "id": "gemini-balanced",
+      "owned_by": "google",
+      "provider_name": "Google",
+      "provider_model": "gemini-2.5-flash-lite",
+      "capabilities": ["chat/completions", "responses"],
+      "routing_mode": "direct",
+      "upstream_model": "gemini-balanced",
+      "upstream_url": "${COINCOIN_GATEWAY_BASE_URL}/v1",
+      "api_key": "${COINCOIN_GATEWAY_API_KEY}",
+      "auth_style": "${COINCOIN_GATEWAY_AUTH_STYLE:-bearer}",
+      "price_input_per_million": "${COINCOIN_GEMINI_BALANCED_INPUT_PRICE:-0}",
+      "price_output_per_million": "${COINCOIN_GEMINI_BALANCED_OUTPUT_PRICE:-0}",
+      "billable_sku": "gemini-balanced-text",
+      "metadata": {
+        "tier": "stable"
+      }
+    },
+    {
+      "id": "gemini-fast",
+      "owned_by": "google",
+      "provider_name": "Google",
+      "provider_model": "gemini-2.5-flash",
+      "capabilities": ["chat/completions", "responses"],
+      "routing_mode": "direct",
+      "upstream_model": "gemini-fast",
+      "upstream_url": "${COINCOIN_GATEWAY_BASE_URL}/v1",
+      "api_key": "${COINCOIN_GATEWAY_API_KEY}",
+      "auth_style": "${COINCOIN_GATEWAY_AUTH_STYLE:-bearer}",
+      "price_input_per_million": "${COINCOIN_GEMINI_FAST_INPUT_PRICE:-0}",
+      "price_output_per_million": "${COINCOIN_GEMINI_FAST_OUTPUT_PRICE:-0}",
+      "billable_sku": "gemini-fast-text",
+      "metadata": {
+        "tier": "stable"
+      }
+    },
+    {
+      "id": "gemini-reasoning",
+      "owned_by": "google",
+      "provider_name": "Google",
+      "provider_model": "gemini-2.5-pro",
+      "capabilities": ["chat/completions", "responses"],
+      "routing_mode": "direct",
+      "upstream_model": "gemini-reasoning",
+      "upstream_url": "${COINCOIN_GATEWAY_BASE_URL}/v1",
+      "api_key": "${COINCOIN_GATEWAY_API_KEY}",
+      "auth_style": "${COINCOIN_GATEWAY_AUTH_STYLE:-bearer}",
+      "price_input_per_million": "${COINCOIN_GEMINI_REASONING_INPUT_PRICE:-0}",
+      "price_output_per_million": "${COINCOIN_GEMINI_REASONING_OUTPUT_PRICE:-0}",
+      "billable_sku": "gemini-reasoning-text",
+      "metadata": {
+        "tier": "stable"
+      }
+    },
+    {
+      "id": "vertex-gemini-2.5-flash-lite",
+      "owned_by": "google",
+      "provider_name": "Google",
+      "provider_model": "gemini-2.5-flash-lite",
+      "capabilities": ["chat/completions", "responses"],
+      "routing_mode": "direct",
+      "upstream_model": "vertex-gemini-2.5-flash-lite",
+      "upstream_url": "${COINCOIN_GATEWAY_BASE_URL}/v1",
+      "api_key": "${COINCOIN_GATEWAY_API_KEY}",
+      "auth_style": "${COINCOIN_GATEWAY_AUTH_STYLE:-bearer}",
+      "price_input_per_million": "${COINCOIN_VERTEX_FLASH_LITE_INPUT_PRICE:-0}",
+      "price_output_per_million": "${COINCOIN_VERTEX_FLASH_LITE_OUTPUT_PRICE:-0}",
+      "billable_sku": "vertex-gemini-2.5-flash-lite-text",
+      "metadata": {
+        "tier": "explicit"
+      }
+    },
+    {
+      "id": "vertex-gemini-2.5-flash",
+      "owned_by": "google",
+      "provider_name": "Google",
+      "provider_model": "gemini-2.5-flash",
+      "capabilities": ["chat/completions", "responses"],
+      "routing_mode": "direct",
+      "upstream_model": "vertex-gemini-2.5-flash",
+      "upstream_url": "${COINCOIN_GATEWAY_BASE_URL}/v1",
+      "api_key": "${COINCOIN_GATEWAY_API_KEY}",
+      "auth_style": "${COINCOIN_GATEWAY_AUTH_STYLE:-bearer}",
+      "price_input_per_million": "${COINCOIN_VERTEX_FLASH_INPUT_PRICE:-0}",
+      "price_output_per_million": "${COINCOIN_VERTEX_FLASH_OUTPUT_PRICE:-0}",
+      "billable_sku": "vertex-gemini-2.5-flash-text",
+      "metadata": {
+        "tier": "explicit"
+      }
+    },
+    {
+      "id": "vertex-gemini-2.5-pro",
+      "owned_by": "google",
+      "provider_name": "Google",
+      "provider_model": "gemini-2.5-pro",
+      "capabilities": ["chat/completions", "responses"],
+      "routing_mode": "direct",
+      "upstream_model": "vertex-gemini-2.5-pro",
+      "upstream_url": "${COINCOIN_GATEWAY_BASE_URL}/v1",
+      "api_key": "${COINCOIN_GATEWAY_API_KEY}",
+      "auth_style": "${COINCOIN_GATEWAY_AUTH_STYLE:-bearer}",
+      "price_input_per_million": "${COINCOIN_VERTEX_PRO_INPUT_PRICE:-0}",
+      "price_output_per_million": "${COINCOIN_VERTEX_PRO_OUTPUT_PRICE:-0}",
+      "billable_sku": "vertex-gemini-2.5-pro-text",
+      "metadata": {
+        "tier": "explicit"
+      }
+    },
+    {
+      "id": "vertex-gemini-3.1-flash-lite-preview",
+      "owned_by": "google",
+      "provider_name": "Google",
+      "provider_model": "gemini-3.1-flash-lite-preview",
+      "capabilities": ["chat/completions", "responses"],
+      "routing_mode": "direct",
+      "upstream_model": "vertex-gemini-3.1-flash-lite-preview",
+      "upstream_url": "${COINCOIN_GATEWAY_BASE_URL}/v1",
+      "api_key": "${COINCOIN_GATEWAY_API_KEY}",
+      "auth_style": "${COINCOIN_GATEWAY_AUTH_STYLE:-bearer}",
+      "price_input_per_million": "${COINCOIN_VERTEX_31_FLASH_LITE_INPUT_PRICE:-0}",
+      "price_output_per_million": "${COINCOIN_VERTEX_31_FLASH_LITE_OUTPUT_PRICE:-0}",
+      "billable_sku": "vertex-gemini-3.1-flash-lite-preview-text",
+      "metadata": {
+        "tier": "preview"
+      }
+    },
+    {
+      "id": "vertex-gemini-3-flash-preview",
+      "owned_by": "google",
+      "provider_name": "Google",
+      "provider_model": "gemini-3-flash-preview",
+      "capabilities": ["chat/completions", "responses"],
+      "routing_mode": "direct",
+      "upstream_model": "vertex-gemini-3-flash-preview",
+      "upstream_url": "${COINCOIN_GATEWAY_BASE_URL}/v1",
+      "api_key": "${COINCOIN_GATEWAY_API_KEY}",
+      "auth_style": "${COINCOIN_GATEWAY_AUTH_STYLE:-bearer}",
+      "price_input_per_million": "${COINCOIN_VERTEX_3_FLASH_INPUT_PRICE:-0}",
+      "price_output_per_million": "${COINCOIN_VERTEX_3_FLASH_OUTPUT_PRICE:-0}",
+      "billable_sku": "vertex-gemini-3-flash-preview-text",
+      "metadata": {
+        "tier": "preview"
+      }
+    },
+    {
+      "id": "vertex-gemini-3.1-pro-preview",
+      "owned_by": "google",
+      "provider_name": "Google",
+      "provider_model": "gemini-3.1-pro-preview",
+      "capabilities": ["chat/completions", "responses"],
+      "routing_mode": "direct",
+      "upstream_model": "vertex-gemini-3.1-pro-preview",
+      "upstream_url": "${COINCOIN_GATEWAY_BASE_URL}/v1",
+      "api_key": "${COINCOIN_GATEWAY_API_KEY}",
+      "auth_style": "${COINCOIN_GATEWAY_AUTH_STYLE:-bearer}",
+      "price_input_per_million": "${COINCOIN_VERTEX_31_PRO_INPUT_PRICE:-0}",
+      "price_output_per_million": "${COINCOIN_VERTEX_31_PRO_OUTPUT_PRICE:-0}",
+      "billable_sku": "vertex-gemini-3.1-pro-preview-text",
+      "metadata": {
+        "tier": "preview"
+      }
+    },
+    {
+      "id": "gemini-image",
+      "owned_by": "google",
+      "provider_name": "Google",
+      "provider_model": "gemini-2.5-flash-image",
+      "capabilities": ["images/generations"],
+      "routing_mode": "direct",
+      "upstream_model": "vertex-gemini-2.5-flash-image",
+      "upstream_url": "${COINCOIN_GATEWAY_BASE_URL}/v1",
+      "api_key": "${COINCOIN_GATEWAY_API_KEY}",
+      "auth_style": "${COINCOIN_GATEWAY_AUTH_STYLE:-bearer}",
+      "price_per_image_cents": "${COINCOIN_GEMINI_IMAGE_PRICE:-0}",
+      "billable_sku": "gemini-image"
+    },
+    {
+      "id": "vertex-gemini-2.5-flash-image",
+      "owned_by": "google",
+      "provider_name": "Google",
+      "provider_model": "gemini-2.5-flash-image",
+      "capabilities": ["images/generations"],
+      "routing_mode": "direct",
+      "upstream_model": "vertex-gemini-2.5-flash-image",
+      "upstream_url": "${COINCOIN_GATEWAY_BASE_URL}/v1",
+      "api_key": "${COINCOIN_GATEWAY_API_KEY}",
+      "auth_style": "${COINCOIN_GATEWAY_AUTH_STYLE:-bearer}",
+      "price_per_image_cents": "${COINCOIN_VERTEX_FLASH_IMAGE_PRICE:-0}",
+      "billable_sku": "vertex-gemini-2.5-flash-image"
+    },
+    {
+      "id": "vertex-gemini-3.1-flash-image-preview",
+      "owned_by": "google",
+      "provider_name": "Google",
+      "provider_model": "gemini-3.1-flash-image-preview",
+      "capabilities": ["images/generations"],
+      "routing_mode": "direct",
+      "upstream_model": "vertex-gemini-3.1-flash-image-preview",
+      "upstream_url": "${COINCOIN_GATEWAY_BASE_URL}/v1",
+      "api_key": "${COINCOIN_GATEWAY_API_KEY}",
+      "auth_style": "${COINCOIN_GATEWAY_AUTH_STYLE:-bearer}",
+      "price_per_image_cents": "${COINCOIN_VERTEX_31_FLASH_IMAGE_PRICE:-0}",
+      "billable_sku": "vertex-gemini-3.1-flash-image-preview"
+    }
+  ]
+}

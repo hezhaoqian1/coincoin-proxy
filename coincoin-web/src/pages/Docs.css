@@ -74,6 +74,24 @@
     margin-bottom: var(--space-md);
 }
 
+.doc-callout {
+    padding: var(--space-lg);
+    margin-bottom: var(--space-xl);
+    border: 1px solid rgba(16, 185, 129, 0.2);
+    background: rgba(16, 185, 129, 0.08);
+    border-radius: var(--radius-md);
+}
+
+.doc-callout strong {
+    display: block;
+    margin-bottom: var(--space-sm);
+    color: var(--accent-emerald);
+}
+
+.doc-callout p {
+    margin: 0;
+}
+
 .doc-list {
     list-style: none;
     padding: 0;
@@ -143,6 +161,24 @@
 .config-row code {
     font-size: 0.85rem;
     color: var(--accent-indigo);
+}
+
+.table-subtle {
+    margin-top: 4px;
+    font-size: 0.78rem;
+    color: var(--text-tertiary);
+    line-height: 1.5;
+}
+
+.inline-badge {
+    display: inline-flex;
+    margin-left: 8px;
+    padding: 2px 8px;
+    border-radius: var(--radius-full);
+    background: rgba(99, 102, 241, 0.12);
+    color: var(--accent-indigo);
+    font-size: 0.72rem;
+    font-weight: 600;
 }
 
 /* Endpoint block */
