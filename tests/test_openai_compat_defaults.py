@@ -15,7 +15,7 @@ import app.openai_compat as openai_module
 class _FakeUpstreamResponse:
     def __init__(
         self,
-        payload: dict,
+        payload,
         status_code: int = 200,
         content_type: str = "application/json",
         headers: dict | None = None,
@@ -23,13 +23,30 @@ class _FakeUpstreamResponse:
         self._payload = payload
         self.status_code = status_code
         self.headers = {"content-type": content_type, **(headers or {})}
+        self._closed = False
 
     def json(self):
         return self._payload
 
     @property
     def text(self) -> str:
-        return json.dumps(self._payload, ensure_ascii=False)
+        if isinstance(self._payload, (dict, list)):
+            return json.dumps(self._payload, ensure_ascii=False)
+        if isinstance(self._payload, bytes):
+            return self._payload.decode("utf-8", errors="replace")
+        return str(self._payload)
+
+    async def aread(self) -> bytes:
+        return self.text.encode("utf-8")
+
+    async def aiter_bytes(self):
+        body = self.text.encode("utf-8")
+        midpoint = max(1, len(body) // 2)
+        yield body[:midpoint]
+        yield body[midpoint:]
+
+    async def aclose(self) -> None:
+        self._closed = True
 
 
 class _RecordingClient:
@@ -41,6 +58,27 @@ class _RecordingClient:
         self.calls.append({"url": url, **kwargs})
         if not self.responses:
             raise AssertionError("unexpected upstream call")
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+
+class _RecordingStreamClient:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    def build_request(self, method, url, **kwargs):
+        request = {"method": method, "url": url, **kwargs}
+        self.calls.append(request)
+        return request
+
+    async def send(self, request, stream=False):
+        if not stream:
+            raise AssertionError("expected stream=True")
+        if not self.responses:
+            raise AssertionError("unexpected upstream stream call")
         response = self.responses.pop(0)
         if isinstance(response, Exception):
             raise response
@@ -413,7 +451,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(add_usage.await_args.kwargs["upstream_request_id"], "req_123")
 
     async def test_image_generation_uses_gateway_lane_without_vertex_key(self) -> None:
-        upstream_client = _RecordingClient(
+        upstream_client = _RecordingStreamClient(
             [
                 _FakeUpstreamResponse(
                     {
@@ -428,7 +466,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
             with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
                 proxy_module,
-                "get_http_client",
+                "get_image_stream_client",
                 AsyncMock(return_value=upstream_client),
             ):
                 response = await client.post(
@@ -446,7 +484,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         settings.gateway_base_url = "https://gateway.example"
         settings.gateway_api_key = "gateway-key"
 
-        upstream_client = _RecordingClient(
+        upstream_client = _RecordingStreamClient(
             [
                 _FakeUpstreamResponse(
                     {
@@ -461,7 +499,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
             with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
                 proxy_module,
-                "get_http_client",
+                "get_image_stream_client",
                 AsyncMock(return_value=upstream_client),
             ):
                 response = await client.post(
@@ -675,7 +713,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(upstream_client.calls), 3)
 
     async def test_image_edit_uses_gateway_lane_without_vertex_key(self) -> None:
-        upstream_client = _RecordingClient(
+        upstream_client = _RecordingStreamClient(
             [
                 _FakeUpstreamResponse(
                     {
@@ -690,7 +728,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
             with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
                 proxy_module,
-                "get_http_client",
+                "get_image_stream_client",
                 AsyncMock(return_value=upstream_client),
             ):
                 response = await client.post(
@@ -709,7 +747,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         settings.gateway_base_url = "https://gateway.example"
         settings.gateway_api_key = "gateway-key"
 
-        upstream_client = _RecordingClient(
+        upstream_client = _RecordingStreamClient(
             [
                 _FakeUpstreamResponse(
                     {
@@ -724,7 +762,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
             with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
                 proxy_module,
-                "get_http_client",
+                "get_image_stream_client",
                 AsyncMock(return_value=upstream_client),
             ):
                 response = await client.post(

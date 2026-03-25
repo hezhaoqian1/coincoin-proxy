@@ -6,7 +6,7 @@ import time
 from copy import deepcopy
 from datetime import date, datetime
 from types import SimpleNamespace
-from typing import Dict, List, Optional, Tuple
+from typing import Awaitable, Callable, Dict, List, Optional, Tuple
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -194,6 +194,7 @@ logger = logging.getLogger("coincoin.proxy")
 
 _http_client: Optional[httpx.AsyncClient] = None
 _http_stream_client: Optional[httpx.AsyncClient] = None
+_http_image_stream_client: Optional[httpx.AsyncClient] = None
 _http_lock = asyncio.Lock()
 IMAGE_UPSTREAM_TIMEOUT = httpx.Timeout(connect=10.0, read=300.0, write=300.0, pool=60.0)
 
@@ -233,14 +234,36 @@ async def get_stream_client() -> httpx.AsyncClient:
         return _http_stream_client
 
 
+async def get_image_stream_client() -> httpx.AsyncClient:
+    global _http_image_stream_client
+    if _http_image_stream_client and not _http_image_stream_client.is_closed:
+        return _http_image_stream_client
+    async with _http_lock:
+        if _http_image_stream_client and not _http_image_stream_client.is_closed:
+            return _http_image_stream_client
+        limits = httpx.Limits(
+            max_connections=settings.http_pool_max,
+            max_keepalive_connections=settings.http_pool_keepalive,
+        )
+        _http_image_stream_client = httpx.AsyncClient(
+            limits=limits,
+            timeout=IMAGE_UPSTREAM_TIMEOUT,
+            trust_env=False,
+        )
+        return _http_image_stream_client
+
+
 async def close_http_client() -> None:
-    global _http_client, _http_stream_client
+    global _http_client, _http_stream_client, _http_image_stream_client
     if _http_client and not _http_client.is_closed:
         await _http_client.aclose()
     _http_client = None
     if _http_stream_client and not _http_stream_client.is_closed:
         await _http_stream_client.aclose()
     _http_stream_client = None
+    if _http_image_stream_client and not _http_image_stream_client.is_closed:
+        await _http_image_stream_client.aclose()
+    _http_image_stream_client = None
 
 
 async def _post_with_retries(
@@ -263,6 +286,46 @@ async def _post_with_retries(
             await asyncio.sleep(backoff_seconds * attempt)
     assert last_error is not None
     raise last_error
+
+
+async def _send_stream_request(
+    client: httpx.AsyncClient,
+    method: str,
+    url: str,
+    **kwargs,
+) -> httpx.Response:
+    request = client.build_request(method, url, **kwargs)
+    return await client.send(request, stream=True)
+
+
+def _stream_upstream_response(
+    upstream: httpx.Response,
+    *,
+    headers: Dict[str, str],
+    media_type: str,
+    on_close: Callable[[], Awaitable[None]] | None = None,
+) -> StreamingResponse:
+    async def iter_bytes():
+        try:
+            async for chunk in upstream.aiter_bytes():
+                yield chunk
+        finally:
+            try:
+                await upstream.aclose()
+            finally:
+                if on_close is not None:
+                    await on_close()
+
+    stream_headers = dict(headers)
+    stream_headers.pop("content-length", None)
+    stream_headers.setdefault("cache-control", "no-store")
+    stream_headers.setdefault("x-accel-buffering", "no")
+    return StreamingResponse(
+        iter_bytes(),
+        status_code=upstream.status_code,
+        headers=stream_headers,
+        media_type=media_type,
+    )
 
 
 class KeyCache:
@@ -1134,11 +1197,11 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
     used_cfg = resolved_model.backend
     used_route_reason = resolved_model.route_reason
 
-    client = await get_http_client()
     is_google_image_generation = public_model.provider_name.strip().lower() == "google"
     delivery_lane = (public_model.delivery_lane or "").strip().lower()
     should_use_gateway_image_generation = is_google_image_generation and delivery_lane == "gateway"
     should_use_direct_vertex = is_google_image_generation and delivery_lane == "vertex_direct"
+    client = None
 
     if is_google_image_generation and not should_use_gateway_image_generation and not should_use_direct_vertex:
         return _unsupported_google_image_lane_error(delivery_lane)
@@ -1155,19 +1218,22 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
         return _vertex_image_candidate_count_error()
 
     if should_use_gateway_image_generation:
+        stream_client = await get_image_stream_client()
         payload["model"] = used_cfg.model_id
         payload.pop("model_provider", None)
         upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/images/generations"
         headers = _build_upstream_headers(used_cfg)
         t0 = time.monotonic()
-        upstream = await client.post(
+        upstream = await _send_stream_request(
+            stream_client,
+            "POST",
             upstream_url,
             json=payload,
             headers=headers,
-            timeout=IMAGE_UPSTREAM_TIMEOUT,
         )
         duration_ms = int((time.monotonic() - t0) * 1000)
     elif should_use_direct_vertex:
+        client = await get_http_client()
         upstream_payload = _build_vertex_image_generation_payload(payload)
         upstream_url = (
             f"{settings.vertex_gemini_api_base.rstrip('/')}/models/"
@@ -1189,6 +1255,7 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
             )
         duration_ms = int((time.monotonic() - t0) * 1000)
     else:
+        client = await get_http_client()
         payload["model"] = used_cfg.model_id
         payload.pop("model_provider", None)
         upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/images/generations"
@@ -1206,6 +1273,46 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
     response_headers.pop("content-length", None)
     upstream_request_id = extract_upstream_request_id(upstream.headers)
     content_type = upstream.headers.get("content-type", "application/json")
+
+    if should_use_gateway_image_generation and "application/json" in content_type:
+        if upstream.status_code < 400:
+            image_count = _requested_image_count_from_json(payload)
+            await usage_buffer.add(
+                user.id,
+                requests=1,
+                endpoint="images/generations",
+                model=display_model,
+                customer_model_alias=display_model,
+                provider_model=public_model.provider_model or used_cfg.model_id,
+                route_reason=used_route_reason,
+                duration_ms=duration_ms,
+                status_code=upstream.status_code,
+                usage_unit_type="images",
+                usage_unit_count=image_count,
+                billable_sku=public_model.billable_sku or display_model,
+                upstream_request_id=upstream_request_id,
+                image_count=image_count,
+                price_per_image_cents=public_model.price_per_image_cents,
+            )
+            return _stream_upstream_response(
+                upstream,
+                headers=response_headers,
+                media_type=content_type,
+            )
+        try:
+            upstream_body = await upstream.aread()
+        finally:
+            await upstream.aclose()
+        try:
+            data = json.loads(upstream_body.decode("utf-8"))
+        except Exception:
+            return JSONResponse(
+                content={"error": {"message": "Upstream returned invalid JSON", "type": "server_error", "code": "upstream_invalid_json"}},
+                status_code=502,
+                headers=response_headers,
+            )
+        logger.error("image upstream error %s: %s", upstream.status_code, str(data)[:500])
+        return JSONResponse(content=data, status_code=upstream.status_code, headers=response_headers)
 
     if "application/json" in content_type:
         try:
@@ -1279,13 +1386,13 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
     used_cfg = resolved_model.backend
     used_route_reason = resolved_model.route_reason
 
-    client = await get_http_client()
     response_headers: Dict[str, str] = {}
 
     is_google_image_edit = public_model.provider_name.strip().lower() == "google"
     delivery_lane = (public_model.delivery_lane or "").strip().lower()
     should_use_gateway_image_edit = is_google_image_edit and delivery_lane == "gateway"
     should_use_direct_vertex = is_google_image_edit and delivery_lane == "vertex_direct"
+    client = None
 
     if is_google_image_edit and not should_use_gateway_image_edit and not should_use_direct_vertex:
         return _unsupported_google_image_lane_error(delivery_lane)
@@ -1302,6 +1409,7 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
         return _vertex_image_candidate_count_error()
 
     if should_use_gateway_image_edit:
+        stream_client = await get_image_stream_client()
         if any(key in {"mask", "mask[]"} for key, _ in file_fields):
             return _openai_error_response(
                 "Gemini image edits via the current gateway lane do not support mask uploads.",
@@ -1318,22 +1426,53 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
         upstream_form_fields.append(("model", used_cfg.model_id))
 
         t0 = time.monotonic()
-        upstream = await client.post(
+        upstream = await _send_stream_request(
+            stream_client,
+            "POST",
             upstream_url,
             data=upstream_form_fields,
             files=file_fields,
             headers=headers,
-            timeout=IMAGE_UPSTREAM_TIMEOUT,
         )
         duration_ms = int((time.monotonic() - t0) * 1000)
 
         response_headers = filter_headers(dict(upstream.headers))
+        response_headers.pop("content-length", None)
         upstream_request_id = extract_upstream_request_id(upstream.headers)
         content_type = upstream.headers.get("content-type", "application/json")
 
+        if "application/json" in content_type and upstream.status_code < 400:
+            image_count = _requested_image_count_from_pairs(form_fields)
+            await usage_buffer.add(
+                user.id,
+                requests=1,
+                endpoint="images/edits",
+                model=display_model,
+                customer_model_alias=display_model,
+                provider_model=public_model.provider_model or used_cfg.model_id,
+                route_reason=used_route_reason,
+                duration_ms=duration_ms,
+                status_code=upstream.status_code,
+                usage_unit_type="images",
+                usage_unit_count=image_count,
+                billable_sku=public_model.billable_sku or display_model,
+                upstream_request_id=upstream_request_id,
+                image_count=image_count,
+                price_per_image_cents=public_model.price_per_image_cents,
+            )
+            return _stream_upstream_response(
+                upstream,
+                headers=response_headers,
+                media_type=content_type,
+            )
+
+        try:
+            upstream_body = await upstream.aread()
+        finally:
+            await upstream.aclose()
         if "application/json" in content_type:
             try:
-                data = upstream.json()
+                data = json.loads(upstream_body.decode("utf-8"))
             except Exception:
                 return JSONResponse(
                     content={"error": {"message": "Upstream returned invalid JSON", "type": "server_error", "code": "upstream_invalid_json"}},
@@ -1341,8 +1480,9 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
                     headers=response_headers,
                 )
         else:
-            data = upstream.text
+            data = upstream_body.decode("utf-8", errors="replace")
     elif should_use_direct_vertex:
+        client = await get_http_client()
         if any(key in {"mask", "mask[]"} for key, _ in file_fields):
             return _openai_error_response(
                 "Gemini image edits via the current Vertex API-key lane do not support mask uploads.",
@@ -1398,6 +1538,7 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
                 status_code=upstream.status_code,
             )
     else:
+        client = await get_http_client()
         upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/images/edits"
         headers = _build_upstream_headers(used_cfg)
         headers.pop("content-type", None)
