@@ -933,6 +933,33 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["error"]["code"], "image_candidate_count_not_supported")
         self.assertEqual(len(upstream_client.calls), 0)
 
+    async def test_image_edit_requires_async_job_when_input_count_exceeds_sync_limit(self) -> None:
+        upstream_client = _RecordingStreamClient([])
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_image_stream_client",
+                AsyncMock(return_value=upstream_client),
+            ):
+                response = await client.post(
+                    "/v1/images/edits",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    data={"model": "gemini-image", "prompt": "Blend these references", "n": "1"},
+                    files=[
+                        ("image", ("input-1.png", b"fake_image_data_1", "image/png")),
+                        ("image", ("input-2.png", b"fake_image_data_2", "image/png")),
+                        ("image", ("input-3.png", b"fake_image_data_3", "image/png")),
+                    ],
+                )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "image_job_required")
+        self.assertIn("/v1/image-jobs/edits", payload["error"]["message"])
+        self.assertEqual(len(upstream_client.calls), 0)
+
     async def test_image_edit_rejects_mask_on_direct_vertex_lane(self) -> None:
         self._set_model_delivery_lane("gemini-image", "vertex_direct")
         settings.vertex_api_key = "vertex-direct-key"

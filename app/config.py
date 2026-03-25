@@ -32,6 +32,14 @@ class Settings(BaseSettings):
     # Azure Standard: typically 50% off => 0.5, Provisioned can be 100% off => 0.0
     cache_discount_rate: float = 0.5
 
+    # Async multi-image jobs
+    image_jobs_enabled: bool = True
+    image_job_poll_interval: int = 5
+    image_job_storage_dir: str = "/tmp/coincoin-image-jobs"
+    image_job_sync_input_limit: int = 2
+    image_job_async_max_inputs: int = 8
+    image_job_max_total_bytes: int = 50 * 1024 * 1024
+
     # Database — prefer database_url (Railway ${{MySQL.MYSQL_URL}});
     # falls back to individual db_host/port/name/user/password fields.
     database_url: str = ""
