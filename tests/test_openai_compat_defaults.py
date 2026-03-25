@@ -420,11 +420,51 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(upstream_client.calls[0]["json"]["model"], "vertex-gemini-2.5-flash-image")
         self.assertEqual(upstream_client.calls[0]["headers"]["authorization"], "Bearer gateway-key")
 
-    async def test_image_edit_without_model_uses_default_image_alias(self) -> None:
+    async def test_image_edit_without_vertex_key_fails_closed_for_google_models(self) -> None:
+        upstream_client = _RecordingClient([])
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ):
+                response = await client.post(
+                    "/v1/images/edits",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    data={"prompt": "Turn this into pixel art", "n": "1", "size": "1024x1024"},
+                    files={"image": ("input.png", b"fake_image_data", "image/png")},
+                )
+
+        self.assertEqual(response.status_code, 503, response.text)
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "vertex_image_edit_not_configured")
+        self.assertEqual(len(upstream_client.calls), 0)
+
+    async def test_image_edit_without_model_uses_default_image_alias_on_direct_vertex_lane(self) -> None:
+        settings.vertex_api_key = "vertex-direct-key"
+        settings.vertex_gemini_api_base = "https://aiplatform.googleapis.com/v1/publishers/google"
+
         upstream_client = _RecordingClient(
             [
                 _FakeUpstreamResponse(
-                    {"created": 1774380000, "data": [{"b64_json": "edited"}]}
+                    {
+                        "candidates": [
+                            {
+                                "content": {
+                                    "parts": [
+                                        {
+                                            "inlineData": {
+                                                "mimeType": "image/png",
+                                                "data": "edited",
+                                            }
+                                        }
+                                    ]
+                                }
+                            }
+                        ]
+                    }
                 )
             ]
         )
@@ -445,21 +485,12 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
-        self.assertEqual(len(payload["data"]), 1)
+        self.assertEqual(payload["data"][0]["b64_json"], "edited")
         self.assertEqual(len(upstream_client.calls), 1)
-        self.assertEqual(upstream_client.calls[0]["url"], "https://gateway.example/v1/images/edits")
-        self.assertEqual(upstream_client.calls[0]["headers"]["authorization"], "Bearer gateway-key")
-
-        forwarded_fields = dict(upstream_client.calls[0]["data"])
-        self.assertEqual(forwarded_fields["model"], "vertex-gemini-2.5-flash-image")
-        self.assertEqual(forwarded_fields["prompt"], "Turn this into pixel art")
-
-        forwarded_files = upstream_client.calls[0]["files"]
-        self.assertEqual(len(forwarded_files), 1)
-        self.assertEqual(forwarded_files[0][0], "image")
-        self.assertEqual(forwarded_files[0][1][0], "input.png")
-        self.assertEqual(forwarded_files[0][1][1], b"fake_image_data")
-        self.assertEqual(forwarded_files[0][1][2], "image/png")
+        self.assertEqual(
+            upstream_client.calls[0]["url"],
+            "https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-2.5-flash-image:generateContent",
+        )
 
     async def test_image_edit_can_call_vertex_directly_when_vertex_key_is_configured(self) -> None:
         settings.vertex_api_key = "vertex-direct-key"
