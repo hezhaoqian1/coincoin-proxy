@@ -31,7 +31,7 @@ class ModelCatalogTests(unittest.TestCase):
             "model_catalog_json": settings.model_catalog_json,
         }
 
-        settings.fixed_model = "gpt-5.2-codex"
+        settings.fixed_model = "gpt-5.4"
         settings.router_enabled = True
         settings.upstream_base_url = "https://legacy.example/v1"
         settings.upstream_api_key = "legacy-key"
@@ -44,7 +44,7 @@ class ModelCatalogTests(unittest.TestCase):
         settings.cheap_api_key = "legacy-key"
         settings.cheap_price_input = 15
         settings.cheap_price_output = 60
-        settings.fallback_model = "gpt-5.2-codex"
+        settings.fallback_model = "gpt-5.4"
         settings.fallback_upstream_url = "https://fallback.example/v1"
         settings.fallback_api_key = "fallback-key"
         settings.fallback_price_input = 99
@@ -53,9 +53,23 @@ class ModelCatalogTests(unittest.TestCase):
         settings.gateway_auth_style = "bearer"
         settings.model_catalog_json = json.dumps(
             {
-                "default_text_model": "gpt-5.2-codex",
+                "default_text_model": "gpt-5.4",
                 "default_image_model": "gemini-image",
                 "models": [
+                    {
+                        "id": "gpt-5.4",
+                        "owned_by": "openai",
+                        "provider_name": "OpenAI",
+                        "capabilities": ["chat/completions", "responses", "embeddings"],
+                        "routing_mode": "legacy_auto",
+                    },
+                    {
+                        "id": "gpt-5.2",
+                        "owned_by": "openai",
+                        "provider_name": "OpenAI",
+                        "capabilities": ["chat/completions", "responses", "embeddings"],
+                        "routing_mode": "legacy_auto",
+                    },
                     {
                         "id": "gpt-5.2-codex",
                         "owned_by": "openai",
@@ -109,7 +123,7 @@ class ModelCatalogTests(unittest.TestCase):
             tools=None,
         )
 
-        self.assertEqual(resolved.public_model.public_id, "gpt-5.2-codex")
+        self.assertEqual(resolved.public_model.public_id, "gpt-5.4")
         self.assertEqual(resolved.backend.model_id, "gpt-4o-mini")
         self.assertEqual(resolved.backend.auth_style, "azure")
 
@@ -133,6 +147,18 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertEqual(resolved.public_model.public_id, "gpt-5.2-codex")
         self.assertEqual(resolved.backend.model_id, "gpt-4o-mini")
         self.assertEqual(resolved.route_reason, "catalog:gpt-5.2-codex:auto_cheap")
+
+    def test_explicit_gpt_5_2_alias_keeps_legacy_lane(self) -> None:
+        resolved = registry.resolve_public_model(
+            "gpt-5.2",
+            "responses",
+            messages=[{"role": "user", "content": "hello"}],
+            tools=None,
+        )
+
+        self.assertEqual(resolved.public_model.public_id, "gpt-5.2")
+        self.assertEqual(resolved.backend.model_id, "gpt-4o-mini")
+        self.assertEqual(resolved.route_reason, "catalog:gpt-5.2:auto_cheap")
 
     def test_default_image_model_is_used_when_model_is_omitted(self) -> None:
         resolved = registry.resolve_public_model(None, "images/generations")

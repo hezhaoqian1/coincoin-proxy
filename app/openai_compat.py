@@ -13,7 +13,7 @@ from .config import settings
 from .db import get_db
 from .proxy import (
     _build_upstream_headers, _ensure_content_text, _sanitize_encrypted_ids,
-    authenticate_user, authorize_request, filter_headers, get_http_client,
+    authenticate_user, authorize_request, extract_upstream_request_id, filter_headers, get_http_client,
     get_stream_client, proxy_images_edits, proxy_images_generations, proxy_responses, responses_health,
 )
 from .router import (
@@ -1012,6 +1012,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                         price_output_per_million=used_cfg.price_output_per_million,
                         usage_unit_type="tokens",
                         billable_sku=public_model.billable_sku or display_model,
+                        upstream_request_id=extract_upstream_request_id(upstream.headers),
                     ))
         stream_headers = filter_headers(dict(upstream.headers))
         stream_headers.pop("content-length", None)
@@ -1071,6 +1072,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
     response_headers.pop("content-length", None)
 
     content_type = upstream.headers.get("content-type", "application/json")
+    upstream_request_id = extract_upstream_request_id(upstream.headers)
     if can_fallback and "application/json" not in content_type:
         _fb = "cheap" if is_cheap else "premium"
         used_cfg = fallback_cfg
@@ -1081,6 +1083,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
         response_headers = filter_headers(dict(upstream.headers))
         response_headers.pop("content-length", None)
         content_type = upstream.headers.get("content-type", "application/json")
+        upstream_request_id = extract_upstream_request_id(upstream.headers)
 
     if "application/json" in content_type:
         try:
@@ -1096,6 +1099,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                 response_headers = filter_headers(dict(upstream.headers))
                 response_headers.pop("content-length", None)
                 content_type = upstream.headers.get("content-type", "application/json")
+                upstream_request_id = extract_upstream_request_id(upstream.headers)
                 data = upstream.json() if "application/json" in content_type else upstream.text
             else:
                 return openai_error("Upstream returned invalid JSON", "server_error", code="upstream_invalid_json", status_code=502)
@@ -1129,6 +1133,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
             price_output_per_million=used_cfg.price_output_per_million,
             usage_unit_type="tokens",
             billable_sku=public_model.billable_sku or display_model,
+            upstream_request_id=upstream_request_id,
         )
     else:
         import logging
@@ -1193,6 +1198,7 @@ async def embeddings(request: Request, db: AsyncSession = Depends(get_db)):
     duration_ms = int((time.monotonic() - t0) * 1000)
     response_headers = filter_headers(dict(upstream.headers))
     response_headers.pop("content-length", None)
+    upstream_request_id = extract_upstream_request_id(upstream.headers)
 
     content_type = upstream.headers.get("content-type", "application/json")
     if "application/json" in content_type:
@@ -1228,6 +1234,7 @@ async def embeddings(request: Request, db: AsyncSession = Depends(get_db)):
             price_output_per_million=used_cfg.price_output_per_million,
             usage_unit_type="tokens",
             billable_sku=public_model.billable_sku or display_model,
+            upstream_request_id=upstream_request_id,
         )
 
     if isinstance(data, dict):

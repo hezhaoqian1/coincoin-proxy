@@ -13,10 +13,16 @@ import app.openai_compat as openai_module
 
 
 class _FakeUpstreamResponse:
-    def __init__(self, payload: dict, status_code: int = 200, content_type: str = "application/json") -> None:
+    def __init__(
+        self,
+        payload: dict,
+        status_code: int = 200,
+        content_type: str = "application/json",
+        headers: dict | None = None,
+    ) -> None:
         self._payload = payload
         self.status_code = status_code
-        self.headers = {"content-type": content_type}
+        self.headers = {"content-type": content_type, **(headers or {})}
 
     def json(self):
         return self._payload
@@ -66,7 +72,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             "model_catalog_json": settings.model_catalog_json,
         }
 
-        settings.fixed_model = "gpt-5.2-codex"
+        settings.fixed_model = "gpt-5.4"
         settings.router_enabled = True
         settings.upstream_base_url = "https://legacy.example/v1"
         settings.upstream_api_key = "legacy-key"
@@ -79,7 +85,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         settings.cheap_api_key = "legacy-key"
         settings.cheap_price_input = 15
         settings.cheap_price_output = 60
-        settings.fallback_model = "gpt-5.2-codex"
+        settings.fallback_model = "gpt-5.4"
         settings.fallback_upstream_url = "https://fallback.example/v1"
         settings.fallback_api_key = "fallback-key"
         settings.fallback_price_input = 99
@@ -90,9 +96,23 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         settings.vertex_gemini_api_base = "https://aiplatform.googleapis.com/v1/publishers/google"
         settings.model_catalog_json = json.dumps(
             {
-                "default_text_model": "gpt-5.2-codex",
+                "default_text_model": "gpt-5.4",
                 "default_image_model": "gemini-image",
                 "models": [
+                    {
+                        "id": "gpt-5.4",
+                        "owned_by": "openai",
+                        "provider_name": "OpenAI",
+                        "capabilities": ["chat/completions", "responses", "embeddings"],
+                        "routing_mode": "legacy_auto",
+                    },
+                    {
+                        "id": "gpt-5.2",
+                        "owned_by": "openai",
+                        "provider_name": "OpenAI",
+                        "capabilities": ["chat/completions", "responses", "embeddings"],
+                        "routing_mode": "legacy_auto",
+                    },
                     {
                         "id": "gpt-5.2-codex",
                         "owned_by": "openai",
@@ -177,7 +197,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
-        self.assertEqual(payload["model"], "gpt-5.2-codex")
+        self.assertEqual(payload["model"], "gpt-5.4")
         self.assertEqual(payload["choices"][0]["message"]["content"], "OK")
         self.assertEqual(len(upstream_client.calls), 1)
         self.assertEqual(upstream_client.calls[0]["url"], "https://legacy.example/v1/responses")
@@ -218,12 +238,157 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
-        self.assertEqual(payload["model"], "gpt-5.2-codex")
+        self.assertEqual(payload["model"], "gpt-5.4")
         self.assertEqual(payload["output"][0]["content"][0]["text"], "OK")
         self.assertEqual(len(upstream_client.calls), 1)
         self.assertEqual(upstream_client.calls[0]["url"], "https://legacy.example/v1/responses")
         self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-4o-mini")
         self.assertEqual(upstream_client.calls[0]["headers"]["api-key"], "legacy-key")
+
+    async def test_responses_explicit_legacy_alias_keeps_public_model_name(self) -> None:
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "resp_legacy_alias",
+                        "output": [
+                            {
+                                "type": "message",
+                                "content": [{"type": "output_text", "text": "OK"}],
+                            }
+                        ],
+                        "usage": {"input_tokens": 3, "output_tokens": 1, "total_tokens": 4},
+                    }
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ):
+                response = await client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"model": "gpt-5.2-codex", "input": "Reply with only: OK"},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["model"], "gpt-5.2-codex")
+
+    async def test_responses_legacy_lane_drops_context_management(self) -> None:
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "resp_context_strip",
+                        "output": [
+                            {
+                                "type": "message",
+                                "content": [{"type": "output_text", "text": "OK"}],
+                            }
+                        ],
+                        "usage": {"input_tokens": 3, "output_tokens": 1, "total_tokens": 4},
+                    }
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ):
+                response = await client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={
+                        "model": "gpt-5.2-codex",
+                        "input": "Reply with only: OK",
+                        "context_management": {"type": "auto"},
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertNotIn("context_management", upstream_client.calls[0]["json"])
+
+    async def test_responses_cache_miss_drops_previous_response_id(self) -> None:
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "resp_cache_miss",
+                        "output": [
+                            {
+                                "type": "message",
+                                "content": [{"type": "output_text", "text": "OK"}],
+                            }
+                        ],
+                        "usage": {"input_tokens": 3, "output_tokens": 1, "total_tokens": 4},
+                    }
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(proxy_module._conv_cache, "get", return_value=None):
+                response = await client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={
+                        "model": "gpt-5.2-codex",
+                        "input": "Reply with only: OK",
+                        "previous_response_id": "resp_missing",
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertNotIn("previous_response_id", upstream_client.calls[0]["json"])
+
+    async def test_responses_logs_upstream_request_id(self) -> None:
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "resp_reqid",
+                        "output": [
+                            {
+                                "type": "message",
+                                "content": [{"type": "output_text", "text": "OK"}],
+                            }
+                        ],
+                        "usage": {"input_tokens": 3, "output_tokens": 1, "total_tokens": 4},
+                    },
+                    headers={"x-request-id": "req_123"},
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(proxy_module.usage_buffer, "add", AsyncMock()) as add_usage:
+                response = await client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"input": "Reply with only: OK"},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(add_usage.await_args.kwargs["upstream_request_id"], "req_123")
 
     async def test_image_without_model_uses_default_image_alias(self) -> None:
         upstream_client = _RecordingClient(
@@ -433,17 +598,19 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["object"], "list")
         self.assertEqual(
             [item["id"] for item in payload["data"]],
-            ["gpt-5.2-codex", "gemini-fast", "gemini-image"],
+            ["gpt-5.4", "gpt-5.2", "gpt-5.2-codex", "gemini-fast", "gemini-image"],
         )
         self.assertEqual(payload["data"][0]["coincoin_provider"], "OpenAI")
-        self.assertEqual(payload["data"][0]["coincoin_billable_sku"], "gpt-5.2-codex")
+        self.assertEqual(payload["data"][0]["coincoin_billable_sku"], "gpt-5.4")
         self.assertEqual(payload["data"][0]["coincoin_default_for"], ["text"])
-        self.assertEqual(payload["data"][1]["coincoin_provider"], "Google")
-        self.assertEqual(payload["data"][1]["coincoin_provider_model"], "gemini-2.5-flash")
-        self.assertEqual(payload["data"][1]["coincoin_capabilities"], ["chat/completions", "responses"])
-        self.assertEqual(payload["data"][1]["coincoin_billable_sku"], "gemini-fast")
-        self.assertEqual(payload["data"][2]["coincoin_capabilities"], ["images/generations", "images/edits"])
-        self.assertEqual(payload["data"][2]["coincoin_default_for"], ["image"])
+        self.assertEqual(payload["data"][2]["coincoin_provider"], "OpenAI")
+        self.assertEqual(payload["data"][2]["coincoin_billable_sku"], "gpt-5.2-codex")
+        self.assertEqual(payload["data"][3]["coincoin_provider"], "Google")
+        self.assertEqual(payload["data"][3]["coincoin_provider_model"], "gemini-2.5-flash")
+        self.assertEqual(payload["data"][3]["coincoin_capabilities"], ["chat/completions", "responses"])
+        self.assertEqual(payload["data"][3]["coincoin_billable_sku"], "gemini-fast")
+        self.assertEqual(payload["data"][4]["coincoin_capabilities"], ["images/generations", "images/edits"])
+        self.assertEqual(payload["data"][4]["coincoin_default_for"], ["image"])
 
     async def test_model_detail_endpoint_returns_curated_metadata(self) -> None:
         transport = httpx.ASGITransport(app=app)

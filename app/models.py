@@ -95,6 +95,7 @@ class RequestLog(Base):
     usage_unit_type: Mapped[str] = mapped_column(String(32), default="tokens")
     usage_unit_count: Mapped[int] = mapped_column(BigInteger, default=0)
     billable_sku: Mapped[str] = mapped_column(String(128), default="")
+    upstream_request_id: Mapped[str] = mapped_column(String(128), default="")
     cost_cents: Mapped[int] = mapped_column(BigInteger, default=0)  # 费用（分）
     duration_ms: Mapped[int] = mapped_column(BigInteger, default=0)  # 响应耗时（毫秒）
     status_code: Mapped[int] = mapped_column(BigInteger, default=200)  # 上游响应状态码
