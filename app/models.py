@@ -1,7 +1,8 @@
 from datetime import date, datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, CheckConstraint, Date, DateTime, ForeignKey, Index, String
+from sqlalchemy import BigInteger, CheckConstraint, Date, DateTime, ForeignKey, Index, String, Text
+from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
@@ -186,3 +187,33 @@ class Account(Base):
     failed_attempts: Mapped[int] = mapped_column(BigInteger, default=0)
     locked_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ImageJob(Base):
+    __tablename__ = "coincoin_image_jobs"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_users.id"), index=True)
+    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    endpoint: Mapped[str] = mapped_column(String(32), default="images/edits")
+    public_model: Mapped[str] = mapped_column(String(128), default="")
+    provider_model: Mapped[str] = mapped_column(String(128), default="")
+    route_reason: Mapped[str] = mapped_column(String(64), default="")
+    image_count: Mapped[int] = mapped_column(BigInteger, default=0)
+    request_payload_json: Mapped[str] = mapped_column(Text)
+    result_payload_json: Mapped[Optional[str]] = mapped_column(LONGTEXT, nullable=True)
+    error_code: Mapped[str] = mapped_column(String(64), default="")
+    error_message: Mapped[str] = mapped_column(Text, default="")
+    upstream_request_id: Mapped[str] = mapped_column(String(128), default="")
+    attempt_count: Mapped[int] = mapped_column(BigInteger, default=0)
+    duration_ms: Mapped[int] = mapped_column(BigInteger, default=0)
+    storage_dir: Mapped[str] = mapped_column(String(512), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+Index("ix_image_jobs_status_created", ImageJob.status, ImageJob.created_at.desc())

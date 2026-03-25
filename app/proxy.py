@@ -471,6 +471,21 @@ def _unsupported_google_image_lane_error(delivery_lane: str) -> JSONResponse:
     )
 
 
+def _image_job_required_error(image_count: int) -> JSONResponse:
+    sync_limit = max(1, int(settings.image_job_sync_input_limit or 2))
+    async_limit = max(sync_limit, int(settings.image_job_async_max_inputs or sync_limit))
+    return _openai_error_response(
+        (
+            f"Gemini image edits with more than {sync_limit} input images must use "
+            f"POST /v1/image-jobs/edits. Received {image_count} images; this deployment "
+            f"currently supports up to {async_limit} async input images."
+        ),
+        code="image_job_required",
+        param="image",
+        status_code=400,
+    )
+
+
 def _map_image_size_to_aspect_ratio(size: str) -> str:
     aspect_ratio_map = {
         "1024x1024": "1:1",
@@ -1393,6 +1408,7 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
     should_use_gateway_image_edit = is_google_image_edit and delivery_lane == "gateway"
     should_use_direct_vertex = is_google_image_edit and delivery_lane == "vertex_direct"
     client = None
+    input_image_count = sum(1 for key, _ in file_fields if key in {"image", "image[]"})
 
     if is_google_image_edit and not should_use_gateway_image_edit and not should_use_direct_vertex:
         return _unsupported_google_image_lane_error(delivery_lane)
@@ -1407,6 +1423,23 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
 
     if is_google_image_edit and _requested_image_count_from_pairs(form_fields) > 1:
         return _vertex_image_candidate_count_error()
+
+    if is_google_image_edit and input_image_count > max(1, int(settings.image_job_sync_input_limit or 2)):
+        if not settings.image_jobs_enabled:
+            return _openai_error_response(
+                "This deployment requires async image jobs for multi-image Gemini edits, but image jobs are disabled.",
+                code="image_jobs_disabled",
+                error_type="server_error",
+                status_code=503,
+            )
+        if input_image_count > max(1, int(settings.image_job_async_max_inputs or 8)):
+            return _openai_error_response(
+                f"Async image jobs currently support up to {settings.image_job_async_max_inputs} input images.",
+                code="image_job_input_limit_exceeded",
+                param="image",
+                status_code=400,
+            )
+        return _image_job_required_error(input_image_count)
 
     if should_use_gateway_image_edit:
         stream_client = await get_image_stream_client()

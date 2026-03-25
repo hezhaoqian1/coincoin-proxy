@@ -1,6 +1,6 @@
 # CoinCoin Proxy
 
-OpenAI 兼容的 API 控制平面，负责客户密钥、余额与用量控制，并把公开模型目录路由到旧 GPT 链路、Gemini 文本 gateway 或 Gemini 图片直连 Vertex 链路。
+OpenAI 兼容的 API 控制平面，负责客户密钥、余额与用量控制，并把公开模型目录路由到旧 GPT 链路或内部 LiteLLM gateway。当前长期架构里，Gemini 文本和 Gemini 图片都统一走 gateway，CoinCoin 只保留控制面职责。
 
 ## 功能特性
 
@@ -51,16 +51,22 @@ COINCOIN_UPSTREAM_API_KEY=your-azure-api-key
 COINCOIN_FIXED_MODEL=gpt-5.2-codex
 COINCOIN_MODEL_CATALOG_PATH=config/model_catalog.json
 
-# 内部 LiteLLM gateway（Gemini text）
+# 内部 LiteLLM gateway（Gemini text + Gemini images）
 # 注意：这里填 gateway 根地址，不要带结尾斜杠；catalog 会自动补 /v1
 COINCOIN_GATEWAY_BASE_URL=https://transfer-station-litellm-gateway-production.up.railway.app
 COINCOIN_GATEWAY_API_KEY=your-internal-gateway-key
 COINCOIN_GATEWAY_AUTH_STYLE=bearer
 
-# 直连 Vertex（Gemini 图片生成 / 图生图）
-# 当前公开 /v1/images/generations 和 /v1/images/edits 都依赖这组官方 Vertex 变量
+# 可选：直连 Vertex 调试 / fallback
+# 不是公网 Gemini 图片主链路的必需项
 COINCOIN_VERTEX_API_KEY=your-vertex-api-key
 COINCOIN_VERTEX_GEMINI_API_BASE=https://aiplatform.googleapis.com/v1/publishers/google
+
+# 多图异步任务
+COINCOIN_IMAGE_JOBS_ENABLED=true
+COINCOIN_IMAGE_JOB_SYNC_INPUT_LIMIT=2
+COINCOIN_IMAGE_JOB_ASYNC_MAX_INPUTS=8
+COINCOIN_IMAGE_JOB_MAX_TOTAL_BYTES=52428800
 
 # 数据库配置 (MySQL/TiDB)
 COINCOIN_DB_HOST=localhost
@@ -104,8 +110,10 @@ uvicorn app.main:app --reload --port 8000
 - 终端客户只看 CoinCoin 的公开模型目录，不直接感知 LiteLLM 或 Vertex 的内部模型名
 - 老用户如果不传 `model`，仍然走默认 GPT 公共模型
 - 新增 Gemini 文本能力是增量暴露；显式传入 Gemini 文本 alias 时，会真实路由到内部 LiteLLM gateway
-- Gemini 图片 alias 的公网生产链路由 CoinCoin 控制面直连 Vertex `generateContent`
+- Gemini 图片 alias 的公网生产链路默认也走内部 LiteLLM gateway
 - 图片模型支持 `/v1/images/generations` 与 `/v1/images/edits`，不会伪装成文本模型
+- `<=2` 张输入图继续走同步 `/v1/images/edits`
+- `>=3` 张输入图使用显式异步 job 端点，避免把大图任务强塞进同步公开契约
 - 公开目录的 source of truth 是 `config/model_catalog.json`
 - 后续扩模型时，按 [Add Public Model Runbook](/Users/hezhaoqian/Desktop/codex_transfer_station/docs/operations/add-public-model-runbook.md) 同步修改 LiteLLM、CoinCoin、测试与文档
 - 每次发布后的统一验收，按 [Release Verification Checklist](/Users/hezhaoqian/Desktop/codex_transfer_station/docs/operations/release-verification-checklist.md) 执行
@@ -125,6 +133,8 @@ uvicorn app.main:app --reload --port 8000
 | `/v1/usage` | GET | 查询请求明细（支持分页） |
 | `/v1/images/generations` | POST | 生成图片 |
 | `/v1/images/edits` | POST | 编辑图片 / 图生图 |
+| `/v1/image-jobs/edits` | POST | 创建异步多图图生图任务 |
+| `/v1/image-jobs/{job_id}` | GET | 查询异步图片任务状态和结果 |
 
 ### 图片编辑示例
 
@@ -146,9 +156,32 @@ curl https://<coincoin-domain>/v1/images/edits \
 
 当前 Gemini 图生图说明：
 
-- 支持 `multipart/form-data` 上传 1 张或多张输入图
+- 支持 `multipart/form-data` 上传图片
+- 1-2 张输入图：继续使用同步 `/v1/images/edits`
+- 3-8 张输入图：改用 `/v1/image-jobs/edits`
 - `n` 当前只支持 `1`
 - 当前不支持 `mask` 上传；若传入 `mask`，会返回 `mask_not_supported`
+
+### 多图异步图生图示例
+
+```bash
+curl https://<coincoin-domain>/v1/image-jobs/edits \
+  -H "Authorization: Bearer sk_cc_xxx" \
+  -F "model=gemini-image" \
+  -F "prompt=Combine these references into one cohesive poster illustration" \
+  -F "n=1" \
+  -F "size=1024x1024" \
+  -F "image=@./input-1.png" \
+  -F "image=@./input-2.png" \
+  -F "image=@./input-3.png"
+```
+
+然后轮询：
+
+```bash
+curl https://<coincoin-domain>/v1/image-jobs/<job_id> \
+  -H "Authorization: Bearer sk_cc_xxx"
+```
 
 ### OpenAI 兼容端点
 

@@ -10,6 +10,11 @@ from fastapi.staticfiles import StaticFiles
 
 from .admin import router as admin_router
 from .auth import router as auth_router
+from .image_jobs import (
+    image_job_loop,
+    openai_router as image_jobs_openai_router,
+    router as image_jobs_router,
+)
 from .keys import router as keys_router
 from .proxy import router as proxy_router, close_http_client
 from .openai_compat import router as openai_router
@@ -76,6 +81,9 @@ async def lifespan(app: FastAPI):
 
     flush_task = asyncio.create_task(flush_loop(settings.usage_flush_interval))
     reconcile_task = asyncio.create_task(reconcile_loop())
+    image_job_task = None
+    if settings.image_jobs_enabled:
+        image_job_task = asyncio.create_task(image_job_loop(settings.image_job_poll_interval))
     logging.info("CoinCoin Proxy started")
 
     try:
@@ -83,6 +91,8 @@ async def lifespan(app: FastAPI):
     finally:
         flush_task.cancel()
         reconcile_task.cancel()
+        if image_job_task is not None:
+            image_job_task.cancel()
         await flush_once()
         await close_http_client()
         logging.info("CoinCoin Proxy stopped")
@@ -108,6 +118,8 @@ app.add_middleware(
 
 app.include_router(proxy_router)
 app.include_router(openai_router)
+app.include_router(image_jobs_router)
+app.include_router(image_jobs_openai_router)
 app.include_router(keys_router)
 app.include_router(admin_router)
 app.include_router(webhook_router)
