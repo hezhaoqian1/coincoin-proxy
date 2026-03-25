@@ -20,6 +20,7 @@ from .router import registry as model_registry
 from .usage_buffer import usage_buffer
 from .proxy import (
     _build_upstream_headers,
+    _encode_multipart_form_data,
     _model_resolution_error_response,
     _openai_error_response,
     _parse_image_edit_form,
@@ -220,8 +221,9 @@ async def _process_image_edit_job(job_id: str) -> None:
     upstream_form_fields = [(key, value) for key, value in form_fields if key != "model"]
     upstream_form_fields.append(("model", used_cfg.model_id))
     headers = _build_upstream_headers(used_cfg)
-    headers.pop("content-type", None)
     upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/images/edits"
+    multipart_body, multipart_content_type = _encode_multipart_form_data(upstream_form_fields, file_fields)
+    headers["content-type"] = multipart_content_type
 
     stream_client = await get_image_stream_client()
     started = time.monotonic()
@@ -230,8 +232,7 @@ async def _process_image_edit_job(job_id: str) -> None:
             stream_client,
             "POST",
             upstream_url,
-            data=upstream_form_fields,
-            files=file_fields,
+            content=multipart_body,
             headers=headers,
         )
         try:
