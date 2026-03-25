@@ -14,8 +14,10 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app/ ./app/
+COPY config/ ./config/
 COPY static/ ./static/
 COPY --from=frontend /web/dist ./static/web
+RUN test -f ./config/model_catalog.json
 
 EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
