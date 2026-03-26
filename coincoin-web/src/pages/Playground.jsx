@@ -123,8 +123,27 @@ export default function Playground() {
                     <p className="page-desc">在线测试真实公开模型目录，验证只改 <code>model</code> 的实际效果</p>
                 </div>
 
+                <div className="playground-overview glass-card animate-fade-in-up">
+                    <div className="playground-overview-copy">
+                        <span className="playground-kicker">Verification</span>
+                        <h2>这里是验证页，不是正式接入配置页</h2>
+                        <p>如果你只是想确认某个公开模型能不能正常返回、速度如何、提示词效果如何，可以先在这里试。真正要复制 SDK、CLI 或 OpenClaw 配置，请回接入配置页。</p>
+                    </div>
+                    <div className="playground-overview-links">
+                        <Link to="/settings" className="btn btn-secondary btn-sm">去接入配置</Link>
+                        <Link to="/docs" className="btn btn-ghost btn-sm">阅读文档</Link>
+                        <Link to="/recharge" className="btn btn-ghost btn-sm">账户充值</Link>
+                    </div>
+                </div>
+
                 <div className="playground-layout">
                     <div className="playground-input glass-card animate-fade-in-up">
+                        <div className="pg-panel-head">
+                            <div>
+                                <h3>请求参数</h3>
+                                <p>选模型、写提示词、调温度，然后直接发起一条真实请求。</p>
+                            </div>
+                        </div>
                         <div className="pg-section">
                             <label className="pg-label">Text Model</label>
                             <select className="pg-select" value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)} disabled={loadingModels || loading}>
@@ -182,7 +201,10 @@ export default function Playground() {
 
                     <div className="playground-output glass-card animate-fade-in-up" style={{ animationDelay: '100ms' }}>
                         <div className="pg-output-header">
-                            <span className="pg-label">响应</span>
+                            <div>
+                                <span className="pg-label">响应</span>
+                                <p className="pg-output-desc">这里展示实时返回内容和这次请求的基础统计。</p>
+                            </div>
                             {loading && <div className="loading-spinner" style={{ width: 16, height: 16 }}></div>}
                         </div>
                         <div className="pg-response">

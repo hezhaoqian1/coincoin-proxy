@@ -1,7 +1,79 @@
+.usage-overview {
+    display: grid;
+    grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
+    gap: var(--space-xl);
+    padding: var(--space-xl);
+    margin-bottom: var(--space-lg);
+}
+
+.usage-kicker {
+    display: inline-flex;
+    margin-bottom: 10px;
+    font-size: 0.74rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent-cyan);
+}
+
+.usage-overview-copy h2 {
+    margin-bottom: var(--space-sm);
+    font-size: 1.45rem;
+    line-height: 1.2;
+}
+
+.usage-overview-copy p {
+    margin: 0;
+    color: var(--text-secondary);
+    line-height: 1.75;
+}
+
+.usage-overview-points {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+}
+
+.usage-overview-item {
+    padding: var(--space-lg);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-color);
+    background: var(--bg-glass);
+}
+
+.usage-overview-item strong {
+    display: block;
+    margin-bottom: 8px;
+}
+
+.usage-overview-item p {
+    margin: 0;
+    color: var(--text-tertiary);
+    font-size: 0.84rem;
+    line-height: 1.65;
+}
+
 /* Filters */
 .usage-filters {
     padding: var(--space-lg);
     margin-bottom: var(--space-lg);
+}
+
+.usage-filters-header {
+    margin-bottom: var(--space-md);
+}
+
+.usage-filters-header h3 {
+    margin-bottom: 6px;
+    font-size: 1rem;
+    font-weight: 700;
+}
+
+.usage-filters-header p {
+    margin: 0;
+    color: var(--text-tertiary);
+    font-size: 0.85rem;
+    line-height: 1.65;
 }
 
 .filter-row {
@@ -92,4 +164,10 @@
 .table-pagination button:disabled {
     opacity: 0.3;
     cursor: not-allowed;
+}
+
+@media (max-width: 900px) {
+    .usage-overview {
+        grid-template-columns: 1fr;
+    }
 }
