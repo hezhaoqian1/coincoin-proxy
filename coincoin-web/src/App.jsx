@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import { getApiKey } from './api/client'
+import { useAuth } from './hooks/useAuth'
 import { ThemeProvider } from './hooks/useTheme'
 import Navbar from './components/Navbar'
 import Footer from './components/Footer'
@@ -15,14 +15,14 @@ import Playground from './pages/Playground'
 import PayReturn from './pages/PayReturn'
 
 function ProtectedRoute({ children }) {
-    const key = getApiKey()
-    if (!key) return <Navigate to="/login" replace />
+    const { isLoggedIn } = useAuth()
+    if (!isLoggedIn) return <Navigate to="/login" replace />
     return children
 }
 
 function GuestOnlyRoute({ children }) {
-    const key = getApiKey()
-    if (key) return <Navigate to="/dashboard" replace />
+    const { isLoggedIn } = useAuth()
+    if (isLoggedIn) return <Navigate to="/dashboard" replace />
     return children
 }
 
