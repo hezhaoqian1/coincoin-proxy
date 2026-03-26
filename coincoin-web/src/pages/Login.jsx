@@ -52,7 +52,7 @@ export default function Login() {
                 <div className="auth-header">
                     <div className="logo-icon" style={{ width: 48, height: 48, fontSize: '1.1rem', borderRadius: 14 }}>CC</div>
                     <h1>欢迎回来</h1>
-                    <p>先决定你要进入控制台，还是只验证一个开发者 API Key</p>
+                    <p>默认应该先登录控制台；只有你已经拿到开发者 API Key 时，才建议用下面的直登入口</p>
                 </div>
 
                 <div className="auth-tabs">

@@ -4,7 +4,32 @@ import { usePublicModels } from '../hooks/usePublicModels'
 import './Docs.css'
 
 const SITE = typeof window !== 'undefined' ? window.location.origin : ''
-const TABS = ['快速开始', '模型与价格', 'API 参考', '代码示例']
+const TABS = [
+    {
+        label: '快速开始',
+        icon: '🚀',
+        kicker: 'Onboarding',
+        intro: '先搞清控制台账号、开发者 Key 和客户端接入的关系，再开始复制配置。'
+    },
+    {
+        label: '模型与价格',
+        icon: '💎',
+        kicker: 'Catalog',
+        intro: '这里展示的是线上真实公开模型目录和计费方式，不是想象中的规划表。'
+    },
+    {
+        label: 'API 参考',
+        icon: '📡',
+        kicker: 'Protocol',
+        intro: '把 OpenAI 兼容端点、错误码和图片接口边界一次讲清，减少误接。'
+    },
+    {
+        label: '代码示例',
+        icon: '💻',
+        kicker: 'Snippets',
+        intro: '给常见客户端和 SDK 一份最短可用配置，别让用户再自己猜。'
+    }
+]
 
 function formatCaps(model) {
     return (model.coincoin_capabilities || []).join(' · ')
@@ -23,6 +48,7 @@ export default function Docs() {
     const { models, textModels, imageModels, defaultTextModel, defaultImageModel } = usePublicModels()
     const primaryTextModel = defaultTextModel || textModels[0] || models[0]
     const primaryImageModel = defaultImageModel || imageModels[0] || null
+    const activeSection = TABS[activeTab]
 
     return (
         <div className="page-wrapper">
@@ -34,13 +60,18 @@ export default function Docs() {
 
                 <div className="docs-layout">
                     <nav className="docs-nav glass-card">
+                        <div className="docs-nav-header">
+                            <span className="docs-nav-kicker">{activeSection.kicker}</span>
+                            <h2>{activeSection.icon} {activeSection.label}</h2>
+                            <p>{activeSection.intro}</p>
+                        </div>
                         {TABS.map((tab, i) => (
                             <button
-                                key={tab}
+                                key={tab.label}
                                 className={`docs-nav-item ${activeTab === i ? 'active' : ''}`}
                                 onClick={() => setActiveTab(i)}
                             >
-                                {['🚀', '💎', '📡', '💻'][i]} {tab}
+                                {tab.icon} {tab.label}
                             </button>
                         ))}
                     </nav>
@@ -60,11 +91,37 @@ export default function Docs() {
 function QuickStart({ primaryTextModel, primaryImageModel }) {
     const textModelId = primaryTextModel?.id || 'gpt-5.2-codex'
     const imageModelId = primaryImageModel?.id || 'gemini-image'
+    const quickstartSteps = [
+        {
+            title: '进入控制台',
+            desc: '先创建控制台账号，拿到的是站内管理能力，不是给代码用的 API Key。'
+        },
+        {
+            title: '生成开发者 Key',
+            desc: '在仪表盘里生成真正给 Codex CLI、Continue、Aider、cURL 使用的开发者 Key。'
+        },
+        {
+            title: '复制客户端配置',
+            desc: 'Base URL 固定为同一个 /v1，切模型时优先改 model，不要自行猜内部链路。'
+        }
+    ]
 
     return (
         <div className="doc-section animate-fade-in">
             <h2>🚀 快速开始</h2>
             <p className="doc-intro">CoinCoin 对外保持 OpenAI 兼容协议，但接入流程现在更清晰了：先创建控制台账号，再生成开发者 API Key，最后把它放进你的客户端配置里。</p>
+
+            <div className="quickstart-rail">
+                {quickstartSteps.map((step, index) => (
+                    <div key={step.title} className="quickstart-step">
+                        <span className="quickstart-step-index">0{index + 1}</span>
+                        <div>
+                            <strong>{step.title}</strong>
+                            <p>{step.desc}</p>
+                        </div>
+                    </div>
+                ))}
+            </div>
 
             <div className="doc-callout">
                 <strong>先分清两种 Key</strong>

@@ -16,6 +16,7 @@ export default function Navbar() {
     }
 
     const isActive = (path) => location.pathname === path
+    const isOverviewActive = ['/dashboard', '/usage'].includes(location.pathname)
     const accountLabel = authMode === 'api'
         ? 'API Key 会话'
         : authMode === 'demo'
@@ -37,24 +38,26 @@ export default function Navbar() {
                                 <span className="nav-session-title">{accountLabel}</span>
                                 <span className="nav-session-sub">{hasDeveloperKey ? '开发者 Key 已就绪' : '仅控制台会话'}</span>
                             </div>
-                            <Link to="/dashboard" className={`nav-link ${isActive('/dashboard') ? 'active' : ''}`}>
+                            <Link to="/dashboard" className={`nav-link ${isOverviewActive ? 'active' : ''}`}>
                                 概览
-                            </Link>
-                            <Link to="/usage" className={`nav-link ${isActive('/usage') ? 'active' : ''}`}>
-                                用量
                             </Link>
                             <Link to="/recharge" className={`nav-link ${isActive('/recharge') ? 'active' : ''}`}>
                                 计费
                             </Link>
-                            <Link to="/settings" className={`nav-link ${isActive('/settings') ? 'active' : ''}`}>
-                                配置
-                            </Link>
-                            <Link to="/playground" className={`nav-link ${isActive('/playground') ? 'active' : ''}`}>
-                                测试
-                            </Link>
                             <Link to="/docs" className={`nav-link ${isActive('/docs') ? 'active' : ''}`}>
                                 文档
                             </Link>
+                            <div className="nav-secondary-links">
+                                <Link to="/usage" className={`nav-link nav-link-secondary ${isActive('/usage') ? 'active' : ''}`}>
+                                    请求日志
+                                </Link>
+                                <Link to="/settings" className={`nav-link nav-link-secondary ${isActive('/settings') ? 'active' : ''}`}>
+                                    接入配置
+                                </Link>
+                                <Link to="/playground" className={`nav-link nav-link-secondary ${isActive('/playground') ? 'active' : ''}`}>
+                                    Playground
+                                </Link>
+                            </div>
                             <button onClick={toggleTheme} className="theme-toggle" title={theme === 'dark' ? '切换到浅色' : '切换到深色'}>
                                 {theme === 'dark' ? '☀️' : '🌙'}
                             </button>

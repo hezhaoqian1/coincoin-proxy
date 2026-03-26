@@ -47,7 +47,7 @@ export default function Register() {
                 <div className="auth-header">
                     <div className="logo-icon" style={{ width: 48, height: 48, fontSize: '1.1rem', borderRadius: 14 }}>CC</div>
                     <h1>创建控制台账号</h1>
-                    <p>注册后先进入控制台，再在仪表盘生成开发者 API Key</p>
+                    <p>先注册控制台账号，统一管理余额、日志和开发者 Key；真正给客户端调用的 Key 会在仪表盘里单独生成</p>
                 </div>
 
                 <form onSubmit={handleSubmit} className="auth-form">
