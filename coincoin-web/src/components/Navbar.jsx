@@ -42,7 +42,7 @@ export default function Navbar() {
                                 概览
                             </Link>
                             <Link to="/recharge" className={`nav-link ${isActive('/recharge') ? 'active' : ''}`}>
-                                计费
+                                充值
                             </Link>
                             <Link to="/docs" className={`nav-link ${isActive('/docs') ? 'active' : ''}`}>
                                 文档

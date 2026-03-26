@@ -233,6 +233,186 @@
     line-height: 1.7;
 }
 
+.key-warning-box {
+    padding: var(--space-lg);
+    margin-bottom: var(--space-md);
+    border-radius: var(--radius-lg);
+    border: 1px solid rgba(245, 158, 11, 0.28);
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.14), rgba(251, 191, 36, 0.06));
+}
+
+.key-warning-eyebrow {
+    display: inline-flex;
+    margin-bottom: 8px;
+    font-size: 0.74rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent-amber);
+}
+
+.key-warning-box p {
+    margin: 0;
+    font-size: 0.9rem;
+    line-height: 1.7;
+    color: var(--text-primary);
+}
+
+.key-secret-panel {
+    padding: var(--space-lg);
+    border-radius: var(--radius-lg);
+    border: 1px solid rgba(6, 182, 212, 0.18);
+    background: linear-gradient(180deg, rgba(2, 6, 23, 0.88), rgba(15, 23, 42, 0.92));
+}
+
+.key-secret-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-md);
+}
+
+.key-secret-value {
+    display: block;
+    width: 100%;
+    margin-bottom: var(--space-md);
+    padding: var(--space-md);
+    border-radius: var(--radius-md);
+    background: rgba(15, 23, 42, 0.72);
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    color: #7dd3fc;
+    font-size: 0.92rem;
+    line-height: 1.7;
+    word-break: break-all;
+}
+
+.key-secret-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+}
+
+.quick-actions-header {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-lg);
+    align-items: flex-start;
+    margin-bottom: var(--space-lg);
+}
+
+.quick-actions-desc {
+    margin: 8px 0 0;
+    color: var(--text-tertiary);
+    font-size: 0.88rem;
+    line-height: 1.7;
+}
+
+.base-url-card {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+    padding: var(--space-lg);
+    margin-bottom: var(--space-lg);
+    border-radius: var(--radius-lg);
+    border: 1px solid rgba(6, 182, 212, 0.18);
+    background: linear-gradient(135deg, rgba(6, 182, 212, 0.08), rgba(99, 102, 241, 0.08));
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.base-url-card:hover {
+    transform: translateY(-1px);
+    border-color: rgba(6, 182, 212, 0.28);
+}
+
+.base-url-icon {
+    width: 44px;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 14px;
+    background: rgba(15, 23, 42, 0.8);
+    font-size: 1.1rem;
+    flex-shrink: 0;
+}
+
+.base-url-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+    flex: 1;
+}
+
+.base-url-label {
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+}
+
+.base-url-copy code {
+    font-size: 0.92rem;
+    color: var(--accent-cyan);
+    overflow-wrap: anywhere;
+}
+
+.shortcut-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--space-md);
+}
+
+.shortcut-card {
+    display: flex;
+    gap: 12px;
+    padding: var(--space-lg);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-color);
+    background: var(--bg-glass);
+    color: inherit;
+    text-decoration: none;
+    transition: all var(--transition-fast);
+}
+
+.shortcut-card:hover {
+    transform: translateY(-2px);
+    border-color: rgba(99, 102, 241, 0.28);
+    background: var(--bg-glass-strong);
+}
+
+.shortcut-card-primary {
+    border-color: rgba(16, 185, 129, 0.24);
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.12), rgba(6, 182, 212, 0.06));
+}
+
+.shortcut-icon {
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 12px;
+    background: rgba(15, 23, 42, 0.72);
+    flex-shrink: 0;
+    font-size: 1rem;
+}
+
+.shortcut-card strong {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 0.92rem;
+}
+
+.shortcut-card p {
+    margin: 0;
+    color: var(--text-tertiary);
+    font-size: 0.82rem;
+    line-height: 1.6;
+}
+
 /* Pricing Info */
 .price-row {
     display: grid;
@@ -470,6 +650,23 @@
     }
 
     .action-links {
+        flex-direction: column;
+    }
+
+    .quick-actions-header {
+        flex-direction: column;
+    }
+
+    .base-url-card {
+        align-items: flex-start;
+        flex-wrap: wrap;
+    }
+
+    .shortcut-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .key-secret-actions {
         flex-direction: column;
     }
 
