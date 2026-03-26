@@ -1,3 +1,93 @@
+.recharge-overview {
+    display: grid;
+    grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr);
+    gap: var(--space-xl);
+    padding: var(--space-xl);
+    margin-bottom: var(--space-lg);
+}
+
+.recharge-kicker {
+    display: inline-flex;
+    margin-bottom: 10px;
+    font-size: 0.74rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent-cyan);
+}
+
+.recharge-overview-copy h2 {
+    margin-bottom: var(--space-sm);
+    font-size: 1.5rem;
+    line-height: 1.2;
+}
+
+.recharge-overview-copy p {
+    margin: 0;
+    color: var(--text-secondary);
+    line-height: 1.75;
+}
+
+.recharge-overview-points {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+}
+
+.recharge-point {
+    padding: var(--space-lg);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-color);
+    background: var(--bg-glass);
+}
+
+.recharge-point strong {
+    display: block;
+    margin-bottom: 8px;
+    font-size: 0.92rem;
+}
+
+.recharge-point p {
+    margin: 0;
+    color: var(--text-tertiary);
+    font-size: 0.84rem;
+    line-height: 1.65;
+}
+
+.recharge-path-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-md);
+    margin-bottom: var(--space-lg);
+}
+
+.recharge-path-card {
+    padding: var(--space-lg);
+}
+
+.recharge-path-label {
+    display: inline-flex;
+    margin-bottom: 8px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+}
+
+.recharge-path-card strong {
+    display: block;
+    margin-bottom: 8px;
+    font-size: 0.98rem;
+}
+
+.recharge-path-card p {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 0.86rem;
+    line-height: 1.65;
+}
+
 .recharge-plans {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
@@ -169,7 +259,23 @@
     color: var(--text-tertiary);
 }
 
+.recharge-next-links {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+    margin-top: var(--space-lg);
+}
+
 @media (max-width: 1024px) {
+    .recharge-overview {
+        grid-template-columns: 1fr;
+    }
+
+    .recharge-path-grid {
+        grid-template-columns: 1fr;
+    }
+
     .recharge-plans {
         grid-template-columns: repeat(2, 1fr);
     }
@@ -180,6 +286,11 @@
         grid-template-columns: 1fr;
         max-width: 360px;
         margin: 0 auto var(--space-xl);
+    }
+
+    .recharge-overview,
+    .recharge-path-card {
+        padding: var(--space-lg);
     }
 }
 
