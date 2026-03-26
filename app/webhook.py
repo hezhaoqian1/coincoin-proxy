@@ -1,25 +1,23 @@
 """
 支付回调 Webhook 接口
 - /webhook/recharge        — 旧的手工充值（webhook_secret 鉴权）
-- /webhook/pay-notify      — 支付服务异步通知（主路径自动入账）
+- /webhook/pay-notify      — Epay 异步通知（主路径自动入账）
 """
 import logging
 from datetime import datetime
-from decimal import Decimal, InvalidOperation, ROUND_DOWN
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import PlainTextResponse
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .config import settings
 from .db import get_db
-from .models import PaymentOrder, RechargeLog, User
-from .referral import process_referral_reward
+from .epay import EpayVerificationError, verify_epay_callback_params
+from .models import RechargeLog, User
+from .payment_common import PaymentConfirmError, confirm_paid_order
 from .schemas import RechargeRequest, RechargeResponse
 from .security import generate_id
+from .config import settings
 
 router = APIRouter(prefix="/webhook", tags=["webhook"])
 logger = logging.getLogger("coincoin.webhook")
@@ -39,19 +37,17 @@ def verify_webhook_secret(request: Request):
 async def recharge(payload: RechargeRequest, db: AsyncSession = Depends(get_db)):
     """
     充值接口 - 给用户增加 token 和请求额度
-    
+
     - order_id: 外部订单号，用于幂等性（重复调用会返回之前的结果）
     - 用户查找优先级: user_id > username > external_id
     - add_tokens: 增加的 token 额度（会累加到 token_limit）
     - add_daily_requests: 增加的每日请求限额（会累加到 request_limit_per_day）
     """
-    # 1. 幂等性检查：如果 order_id 已处理过，直接返回
     existing = await db.execute(
         select(RechargeLog).where(RechargeLog.order_id == payload.order_id)
     )
     existing_log = existing.scalar_one_or_none()
     if existing_log:
-        # 已处理过，查询用户当前状态返回
         user_result = await db.execute(select(User).where(User.id == existing_log.user_id))
         user = user_result.scalar_one_or_none()
         return RechargeResponse(
@@ -64,7 +60,6 @@ async def recharge(payload: RechargeRequest, db: AsyncSession = Depends(get_db))
             message="order already processed (idempotent)"
         )
 
-    # 2. 查找用户
     user = None
     if payload.user_id:
         result = await db.execute(select(User).where(User.id == payload.user_id))
@@ -82,12 +77,9 @@ async def recharge(payload: RechargeRequest, db: AsyncSession = Depends(get_db))
             detail="user not found, provide valid user_id, username or external_id"
         )
 
-    # 3. 增加额度
-    # 增加余额
     if payload.add_balance > 0:
         user.balance += payload.add_balance
-    
-    # 增加 token 限额（兼容旧逻辑）
+
     if payload.add_tokens > 0:
         if user.token_limit is None:
             user.token_limit = payload.add_tokens
@@ -100,7 +92,6 @@ async def recharge(payload: RechargeRequest, db: AsyncSession = Depends(get_db))
         else:
             user.request_limit_per_day += payload.add_daily_requests
 
-    # 4. 记录充值日志
     log = RechargeLog(
         id=generate_id("r_"),
         order_id=payload.order_id,
@@ -115,7 +106,10 @@ async def recharge(payload: RechargeRequest, db: AsyncSession = Depends(get_db))
     db.add(log)
     await db.commit()
 
-    logger.info(f"Recharge success: order={payload.order_id} user={user.id} balance=+{payload.add_balance} tokens=+{payload.add_tokens} daily_requests=+{payload.add_daily_requests}")
+    logger.info(
+        "Recharge success: order=%s user=%s balance=+%s tokens=+%s daily_requests=+%s",
+        payload.order_id, user.id, payload.add_balance, payload.add_tokens, payload.add_daily_requests,
+    )
 
     return RechargeResponse(
         success=True,
@@ -135,7 +129,7 @@ async def get_recharge(order_id: str, db: AsyncSession = Depends(get_db)):
     log = result.scalar_one_or_none()
     if not log:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="order not found")
-    
+
     return {
         "id": log.id,
         "order_id": log.order_id,
@@ -149,135 +143,60 @@ async def get_recharge(order_id: str, db: AsyncSession = Depends(get_db)):
     }
 
 
-# ============================================================
-#  支付服务异步通知 — 主路径自动入账
-#  支付平台在用户付款后回调此 URL（即使用户关闭浏览器也会到达）
-# ============================================================
-
-def _rmb_to_cents(money_str: str) -> int:
-    """Mirror of payment.rmb_to_cents (avoid circular import)."""
-    PLAN_MAP: dict[Decimal, int] = {
-        Decimal("9.90"):   1800,    # 体验包  $18    (要发)
-        Decimal("29.90"):  6600,    # 轻量版  $66    (六六大顺)
-        Decimal("59.90"):  13800,   # 基础版  $138   (一生发)
-        Decimal("99.90"):  23800,   # 进阶版  $238   (爱生发)
-        Decimal("199.90"): 51800,   # 专业版  $518   (我要发)
-        Decimal("499.90"): 138800,  # 旗舰版  $1388  (一生发发)
-    }
+async def _collect_notify_params(request: Request) -> dict[str, str]:
+    params: dict[str, str] = dict(request.query_params)
+    ct = (request.headers.get("content-type") or "").lower()
     try:
-        d = Decimal(money_str).quantize(Decimal("0.01"))
-    except (InvalidOperation, ValueError):
-        return 0
-    if d <= 0:
-        return 0
-    if d in PLAN_MAP:
-        return PLAN_MAP[d]
-    rate = Decimal(str(settings.rmb_to_cents_rate))
-    return max(1, int((d * rate).to_integral_value(ROUND_DOWN)))
+        if "application/json" in ct:
+            body = await request.json()
+            if isinstance(body, dict):
+                for k, v in body.items():
+                    params[str(k)] = "" if v is None else str(v)
+        elif request.method == "POST":
+            form = await request.form()
+            for k, v in form.items():
+                params[str(k)] = "" if v is None else str(v)
+    except Exception:
+        pass
+    return params
 
 
-async def _do_confirm_order(order_no: str, db: AsyncSession) -> bool:
-    """
-    Core confirm logic shared by pay-notify callback.
-    Returns True if balance was added (or already confirmed).
-    """
-    order = (
-        await db.execute(
-            select(PaymentOrder)
-            .where(PaymentOrder.order_no == order_no)
-            .with_for_update()
+async def _handle_pay_notify(request: Request, db: AsyncSession) -> PlainTextResponse:
+    params = await _collect_notify_params(request)
+    logger.info("pay-notify received params=%s", params)
+
+    try:
+        callback = verify_epay_callback_params(params, require_success=True)
+    except EpayVerificationError as exc:
+        logger.warning("pay-notify verification failed: %s params=%s", exc.detail, params)
+        return PlainTextResponse("fail", status_code=400)
+
+    try:
+        result = await confirm_paid_order(
+            order_no=callback["out_trade_no"],
+            money=callback["money"],
+            trade_no=callback["trade_no"],
+            db=db,
         )
-    ).scalar_one_or_none()
-
-    if not order:
-        logger.warning("pay-notify: order %s not found in DB", order_no)
-        return False
-
-    if order.status == "confirmed":
-        return True
-
-    async with httpx.AsyncClient(timeout=10) as client:
-        try:
-            resp = await client.get(f"{settings.pay_base_url}/api/order/{order_no}")
-            data = resp.json()
-        except Exception as e:
-            logger.error("pay-notify: failed to verify order %s: %s", order_no, e)
-            return False
-
-    if str(data.get("status")) != "1":
-        return False
-
-    money = data.get("money", order.amount_rmb)
-    add_cents = _rmb_to_cents(money)
-    trade_no = data.get("trade_no", "")
-
-    user = (
-        await db.execute(select(User).where(User.id == order.user_id).with_for_update())
-    ).scalar_one_or_none()
-    if not user:
-        logger.error("pay-notify: user %s not found for order %s", order.user_id, order_no)
-        return False
-
-    user.balance += add_cents
-    order.status = "confirmed"
-    order.add_balance_cents = add_cents
-    order.trade_no = trade_no
-    order.confirmed_at = datetime.utcnow()
-
-    await process_referral_reward(user, add_cents, order_no, db)
-
-    try:
-        await db.commit()
-    except IntegrityError:
-        await db.rollback()
-        logger.warning("pay-notify: concurrent confirm for order %s", order_no)
-        return True
+    except PaymentConfirmError as exc:
+        status_code = 409 if exc.status_code == 409 else 400 if exc.status_code == 400 else 404
+        logger.warning("pay-notify confirm failed: %s callback=%s", exc.detail, callback)
+        return PlainTextResponse("fail", status_code=status_code)
 
     logger.info(
-        "pay-notify auto-confirmed: order=%s user=%s rmb=%s +%dcents",
-        order_no, order.user_id, money, add_cents,
+        "pay-notify confirmed order=%s trade_no=%s already_confirmed=%s",
+        callback["out_trade_no"],
+        callback["trade_no"],
+        result.get("already_confirmed", False),
     )
-    return True
+    return PlainTextResponse("success")
 
 
 @router.get("/pay-notify")
 async def pay_notify(request: Request, db: AsyncSession = Depends(get_db)):
-    """
-    支付服务异步回调（GET + query params）。
-    标准参数：out_trade_no, trade_no, money, type, name, sign 等。
-    我们不信任参数金额 — 拿 out_trade_no 二次查询支付服务确认。
-    """
-    params: dict[str, str] = dict(request.query_params)
-
-    # Some gateways call notify_url using POST (form or JSON). Be tolerant.
-    if request.method == "POST":
-        ct = (request.headers.get("content-type") or "").lower()
-        try:
-            if "application/json" in ct:
-                body = await request.json()
-                if isinstance(body, dict):
-                    for k, v in body.items():
-                        params[str(k)] = "" if v is None else str(v)
-            else:
-                form = await request.form()
-                for k, v in form.items():
-                    params[str(k)] = "" if v is None else str(v)
-        except Exception:
-            # Ignore body parsing errors; query params may still carry the order_no.
-            pass
-
-    order_no = params.get("out_trade_no") or params.get("order_no") or ""
-
-    if not order_no:
-        return PlainTextResponse("fail", status_code=400)
-
-    logger.info("pay-notify received: order_no=%s params=%s", order_no, params)
-
-    ok = await _do_confirm_order(order_no, db)
-    return PlainTextResponse("success" if ok else "fail")
+    return await _handle_pay_notify(request, db)
 
 
-# Accept POST notify as well (common for payment gateways).
 @router.post("/pay-notify")
 async def pay_notify_post(request: Request, db: AsyncSession = Depends(get_db)):
-    return await pay_notify(request, db)
+    return await _handle_pay_notify(request, db)

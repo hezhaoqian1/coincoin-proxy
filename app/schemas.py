@@ -30,6 +30,10 @@ class AdminKeyUpdate(BaseModel):
     status: Optional[str] = Field(default=None, examples=["active", "disabled"])
 
 
+class AdminPaymentManualConfirmRequest(BaseModel):
+    proof_url: str = Field(..., description="支付成功回跳 URL，需包含 out_trade_no / trade_no / money / trade_status")
+
+
 class RechargeRequest(BaseModel):
     """充值请求"""
     order_id: str = Field(..., description="外部订单号，用于幂等性校验")
@@ -83,6 +87,7 @@ class OrderCreateResponse(BaseModel):
 
 class OrderConfirmRequest(BaseModel):
     order_no: str = Field(..., description="proxy 侧订单号")
+    proof_url: Optional[str] = Field(default=None, description="支付成功回跳 URL，包含签名与支付结果参数")
 
 class OrderConfirmResponse(BaseModel):
     success: bool

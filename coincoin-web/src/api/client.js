@@ -132,12 +132,16 @@ export async function createOrder({ name, money, pay_type = 'alipay' }) {
     return res.json()
 }
 
-/** Confirm payment order (proxy verifies with payment service then adds balance) */
-export async function confirmOrder(orderNo) {
+/** Confirm payment order. Prefer signed proof_url from return page; fallback to backend reconciliation. */
+export async function confirmOrder(orderNo, proofUrl) {
+    const body = { order_no: orderNo }
+    if (proofUrl) {
+        body.proof_url = proofUrl
+    }
     const res = await fetch(`${PROXY_BASE}/v1/orders/confirm`, {
         method: 'POST',
         headers: authHeaders(),
-        body: JSON.stringify({ order_no: orderNo })
+        body: JSON.stringify(body)
     })
     return res.json()
 }
