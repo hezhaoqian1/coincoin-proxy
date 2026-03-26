@@ -88,6 +88,55 @@ export default function Docs() {
     )
 }
 
+function AudienceGuide() {
+    const routes = [
+        {
+            title: '直连 API / cURL',
+            tag: '最短路径',
+            desc: '适合服务端脚本、后端接口和想直接调 OpenAI 兼容协议的人。',
+            bullets: ['先看 API 参考', '重点看 chat / responses / models', '排错时再看错误码']
+        },
+        {
+            title: 'Codex CLI',
+            tag: '一等支持',
+            desc: '适合命令行工作流，需要稳定的 OpenAI 兼容入口和明确的 model 选择方式。',
+            bullets: ['先生成开发者 Key', '在代码示例里抄 config.toml', '默认推荐 responses']
+        },
+        {
+            title: 'OpenClaw',
+            tag: '兼容接入',
+            desc: '适合已有 OpenAI 风格 provider 配置的人，重点是 provider 字段和默认模型。',
+            bullets: ['看代码示例里的 OpenClaw', '优先走 openai-completions', '上下文窗口按示例填']
+        },
+        {
+            title: '生图 / 图生图',
+            tag: '图片工作流',
+            desc: '适合只关心图片生成、1-2 图同步编辑、3+ 图异步任务的人。',
+            bullets: ['看 API 参考里的 images', '1-2 张图走 edits', '3-8 张图走 image-jobs']
+        }
+    ]
+
+    return (
+        <div className="audience-guide">
+            <h3>按你的接入方式开始</h3>
+            <div className="audience-grid">
+                {routes.map((route) => (
+                    <div key={route.title} className="audience-card">
+                        <span className="inline-badge audience-badge">{route.tag}</span>
+                        <strong>{route.title}</strong>
+                        <p>{route.desc}</p>
+                        <ul className="doc-list audience-list">
+                            {route.bullets.map((item) => (
+                                <li key={item}>{item}</li>
+                            ))}
+                        </ul>
+                    </div>
+                ))}
+            </div>
+        </div>
+    )
+}
+
 function QuickStart({ primaryTextModel, primaryImageModel }) {
     const textModelId = primaryTextModel?.id || 'gpt-5.2-codex'
     const imageModelId = primaryImageModel?.id || 'gemini-image'
@@ -122,6 +171,8 @@ function QuickStart({ primaryTextModel, primaryImageModel }) {
                     </div>
                 ))}
             </div>
+
+            <AudienceGuide />
 
             <div className="doc-callout">
                 <strong>先分清两种 Key</strong>
@@ -434,6 +485,15 @@ function CodeExamples({ primaryTextModel, primaryImageModel }) {
                 <strong>使用示例前先确认</strong>
                 <p>下面所有代码示例都默认你已经在控制台里生成了开发者 API Key。没有开发者 Key 时，请先回仪表盘完成生成，而不是把控制台登录态直接塞进客户端。</p>
             </div>
+
+            <h3>cURL（直连文本接口）</h3>
+            <pre className="code-block">{`curl ${SITE}/v1/chat/completions \\
+  -H "Authorization: Bearer sk_cc_xxxxx" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "${textModelId}",
+    "messages": [{"role": "user", "content": "Hello from CoinCoin"}]
+  }'`}</pre>
 
             <h3>Python (openai 库)</h3>
             <pre className="code-block">{`from openai import OpenAI

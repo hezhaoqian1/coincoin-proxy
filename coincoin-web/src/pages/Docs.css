@@ -161,6 +161,51 @@
     font-size: 0.86rem;
 }
 
+.audience-guide {
+    margin-bottom: var(--space-2xl);
+}
+
+.audience-guide h3 {
+    margin-top: 0;
+}
+
+.audience-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-md);
+}
+
+.audience-card {
+    padding: var(--space-lg);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-color);
+    background: var(--bg-glass);
+}
+
+.audience-badge {
+    margin-left: 0;
+    margin-bottom: 10px;
+}
+
+.audience-card strong {
+    display: block;
+    margin-bottom: 8px;
+    font-size: 0.98rem;
+}
+
+.audience-card p {
+    margin-bottom: var(--space-md);
+    font-size: 0.88rem;
+}
+
+.audience-list {
+    margin: 0;
+}
+
+.audience-list li {
+    font-size: 0.84rem;
+}
+
 .doc-list {
     list-style: none;
     padding: 0;
@@ -317,6 +362,10 @@
     }
 
     .quickstart-rail {
+        grid-template-columns: 1fr;
+    }
+
+    .audience-grid {
         grid-template-columns: 1fr;
     }
 }

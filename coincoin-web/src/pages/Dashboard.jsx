@@ -202,32 +202,25 @@ function KeyManagement({ copied, copy, username, generatedApiKey, authMode, effe
                 </div>
             ) : showKey ? (
                 <div>
-                    <div style={{
-                        background: 'rgba(245, 158, 11, 0.1)',
-                        border: '1px solid rgba(245, 158, 11, 0.2)',
-                        borderRadius: 'var(--radius-sm)',
-                        padding: 'var(--space-md)',
-                        fontSize: '0.88rem',
-                        color: 'var(--accent-amber)',
-                        marginBottom: 'var(--space-md)'
-                    }}>
-                        请务必保存此开发者 API Key。完整值只会在重新生成后的这一刻明确展示。
+                    <div className="key-warning-box">
+                        <span className="key-warning-eyebrow">请立即保存</span>
+                        <p>这是重新生成后的完整开发者 API Key。完整值只会在这一刻明文展示，隐藏后请使用你已经保存的副本继续配置客户端。</p>
                     </div>
-                    <div className="key-display" style={{
-                        display: 'flex', alignItems: 'center', gap: 'var(--space-sm)',
-                        background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-color)',
-                        borderRadius: 'var(--radius-md)', padding: 'var(--space-md)', marginBottom: 'var(--space-md)'
-                    }}>
-                        <code style={{ flex: 1, fontSize: '0.85rem', color: 'var(--accent-cyan)', wordBreak: 'break-all' }}>
-                            {generatedKey}
-                        </code>
-                        <button className="btn btn-ghost btn-sm" onClick={() => copy(generatedKey, 'newkey')}>
-                            {copied === 'newkey' ? '&#10003; 已复制' : '复制'}
-                        </button>
+                    <div className="key-secret-panel">
+                        <div className="key-secret-meta">
+                            <span className="meta-pill">开发者 API Key</span>
+                            <span className="meta-pill">仅本次明文展示</span>
+                        </div>
+                        <code className="key-secret-value">{generatedKey}</code>
+                        <div className="key-secret-actions">
+                            <button className="btn btn-primary btn-sm" onClick={() => copy(generatedKey, 'newkey')}>
+                                {copied === 'newkey' ? '&#10003; 已复制' : '复制完整 Key'}
+                            </button>
+                            <button className="btn btn-ghost btn-sm" onClick={() => setShowKey(false)}>
+                                我已保存，隐藏完整 Key
+                            </button>
+                        </div>
                     </div>
-                    <button className="btn btn-secondary btn-sm" onClick={() => setShowKey(false)}>
-                        我已保存，隐藏完整 Key
-                    </button>
                 </div>
             ) : (
                 <div>
@@ -476,23 +469,64 @@ export default function Dashboard() {
 
                 {/* Quick Links */}
                 <div className="quick-actions glass-card animate-fade-in-up" style={{ animationDelay: '250ms' }}>
-                    <h3>快速操作</h3>
-                    <div className="action-grid">
-                        <div className="action-item" onClick={() => copy(window.location.origin + '/v1', 'url')}>
-                            <div className="action-icon">&#127760;</div>
-                            <div>
-                                <strong>复制 Base URL</strong>
-                                <code>{window.location.origin}/v1</code>
-                            </div>
-                            <span className="action-btn">{copied === 'url' ? '&#10003; 已复制' : '复制'}</span>
+                    <div className="quick-actions-header">
+                        <div>
+                            <h3>快速操作</h3>
+                            <p className="quick-actions-desc">充值、接入、排查和在线测试都集中在这里，避免你在控制台里来回找入口。</p>
                         </div>
+                        <Link to="/recharge" className="btn btn-primary btn-sm">进入充值中心</Link>
                     </div>
-                    <div className="action-links">
-                        <Link to="/recharge" className="btn btn-primary btn-sm">&#128176; 充值</Link>
-                        <Link to="/usage" className="btn btn-secondary btn-sm">&#128202; 查看详情</Link>
-                        <Link to="/settings" className="btn btn-secondary btn-sm">&#128736; 接入配置</Link>
-                        <Link to="/docs" className="btn btn-secondary btn-sm">&#128214; 接入文档</Link>
-                        <Link to="/playground" className="btn btn-secondary btn-sm">&#9881; 在线测试</Link>
+                    <div className="base-url-card" onClick={() => copy(window.location.origin + '/v1', 'url')}>
+                        <div className="base-url-icon">&#127760;</div>
+                        <div className="base-url-copy">
+                            <span className="base-url-label">统一 Base URL</span>
+                            <code>{window.location.origin}/v1</code>
+                        </div>
+                        <span className="action-btn">{copied === 'url' ? '&#10003; 已复制' : '复制'}</span>
+                    </div>
+                    <div className="shortcut-grid">
+                        <Link to="/recharge" className="shortcut-card shortcut-card-primary">
+                            <span className="shortcut-icon">&#128176;</span>
+                            <div>
+                                <strong>充值</strong>
+                                <p>账户续费、查看余额变化和支付结果。</p>
+                            </div>
+                        </Link>
+                        <Link to="/usage" className="shortcut-card">
+                            <span className="shortcut-icon">&#128202;</span>
+                            <div>
+                                <strong>请求日志</strong>
+                                <p>看模型、耗时、扣费和状态码。</p>
+                            </div>
+                        </Link>
+                        <Link to="/settings" className="shortcut-card">
+                            <span className="shortcut-icon">&#128736;</span>
+                            <div>
+                                <strong>接入配置</strong>
+                                <p>复制 SDK、CLI 和 OpenClaw 配置片段。</p>
+                            </div>
+                        </Link>
+                        <Link to="/docs" className="shortcut-card">
+                            <span className="shortcut-icon">&#128214;</span>
+                            <div>
+                                <strong>接入文档</strong>
+                                <p>查协议、模型目录、错误码和生图规则。</p>
+                            </div>
+                        </Link>
+                        <Link to="/playground" className="shortcut-card">
+                            <span className="shortcut-icon">&#9881;</span>
+                            <div>
+                                <strong>在线测试</strong>
+                                <p>不改本地环境，直接验证模型是否可用。</p>
+                            </div>
+                        </Link>
+                        <a href="#developer-key" className="shortcut-card">
+                            <span className="shortcut-icon">&#128273;</span>
+                            <div>
+                                <strong>开发者 Key</strong>
+                                <p>生成、复制或重新生成开发者 API Key。</p>
+                            </div>
+                        </a>
                     </div>
                 </div>
 
