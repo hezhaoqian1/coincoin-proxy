@@ -64,17 +64,20 @@ function QuickStart({ primaryTextModel, primaryImageModel }) {
     return (
         <div className="doc-section animate-fade-in">
             <h2>🚀 快速开始</h2>
-            <p className="doc-intro">CoinCoin 对外保持 OpenAI 兼容协议，但公开模型目录现在已经支持 GPT 文本、Gemini 文本和 Gemini 图片能力。</p>
+            <p className="doc-intro">CoinCoin 对外保持 OpenAI 兼容协议，但接入流程现在更清晰了：先创建控制台账号，再生成开发者 API Key，最后把它放进你的客户端配置里。</p>
 
             <div className="doc-callout">
-                <strong>模型切换规则</strong>
-                <p>现在可以直接通过请求里的 <code>model</code> 选择公开模型。老客户端如果不传 <code>model</code>，仍然会默认走兼容 GPT 文本模型，不会被这次升级打断。</p>
+                <strong>先分清两种 Key</strong>
+                <p>控制台登录后拿到的是站内 session key，只能看仪表盘、充值和日志；真正给 Codex CLI、Continue、Aider、cURL 使用的，是你在仪表盘里单独生成的开发者 API Key。</p>
             </div>
 
-            <h3>Step 1: 获取 API Key</h3>
-            <p>在 <a href="/register">注册页面</a> 创建账户，获取你的专属 API Key。</p>
+            <h3>Step 1: 创建控制台账号</h3>
+            <p>在 <a href="/register">注册页面</a> 创建账户并进入控制台。</p>
 
-            <h3>Step 2: 配置客户端</h3>
+            <h3>Step 2: 生成开发者 API Key</h3>
+            <p>进入仪表盘后，在“开发者 Key 管理”区域生成你的专属开发者 API Key。这个 Key 才能用于 SDK、CLI 和服务端请求。</p>
+
+            <h3>Step 3: 配置客户端</h3>
             <p>以 Codex CLI 为例，编辑 <code>~/.codex/config.toml</code>：</p>
             <pre className="code-block">{`model = "${textModelId}"
 model_provider = "coincoin"
@@ -86,13 +89,18 @@ base_url = "${SITE}/v1"
 env_key = "COINCOIN_API_KEY"
 wire_api = "responses"`}</pre>
 
-            <h3>Step 3: 设置环境变量</h3>
+            <h3>Step 4: 设置环境变量</h3>
             <pre className="code-block">{`# 临时设置
 export COINCOIN_API_KEY="sk_cc_xxxxx"
 
 # 永久设置
 echo 'export COINCOIN_API_KEY="sk_cc_xxxxx"' >> ~/.zshrc
 source ~/.zshrc`}</pre>
+
+            <div className="doc-callout">
+                <strong>模型切换规则</strong>
+                <p>现在可以直接通过请求里的 <code>model</code> 选择公开模型。老客户端如果不传 <code>model</code>，仍然会默认走兼容 GPT 文本模型，不会被这次升级打断。</p>
+            </div>
 
             <h3>第三方客户端配置</h3>
             <p>支持所有 OpenAI 兼容客户端。大多数客户端只需要这 3 个值：</p>
@@ -121,7 +129,7 @@ source ~/.zshrc`}</pre>
                         <td>Codex CLI</td>
                         <td><span className="badge badge-success">一等支持</span></td>
                         <td><code>/v1 + responses</code></td>
-                        <td>最推荐的命令行客户端路径，直接通过 <code>model</code> 选择公开 alias。</td>
+                        <td>最推荐的命令行客户端路径，直接通过 <code>model</code> 选择公开 alias。建议使用你在控制台生成的开发者 API Key。</td>
                     </tr>
                     <tr>
                         <td>OpenClaw</td>
@@ -231,6 +239,18 @@ function ApiReference({ primaryTextModel, primaryImageModel }) {
             <h3>认证方式</h3>
             <pre className="code-block">{`Authorization: Bearer sk_cc_xxxxx`}</pre>
 
+            <ul className="doc-list">
+                <li>这里要求的是开发者 API Key，不是控制台 session key。</li>
+                <li>如果你把 session key 拿来请求 API，服务端会返回 <code>403</code>。</li>
+                <li>控制台账号负责余额、日志和充值；开发者 API Key 负责真正的程序调用。</li>
+            </ul>
+
+            <div className="doc-callout">
+                <strong>给同事和 AI agent 的契约入口</strong>
+                <p>当前真正部署并对外使用的文档入口，就是这个 CoinCoin 站点本身。对同事、对接方和 AI agent，先以这里的公开文档和接口说明为准。</p>
+                <p>工作区根目录里虽然还有更偏工程内部的文档和实验性 docs portal 方案，但那部分当前没有部署，不应被当成线上正式入口。</p>
+            </div>
+
             <h3>模型目录</h3>
             <div className="endpoint-block">
                 <span className="method get">GET</span>
@@ -286,8 +306,32 @@ function ApiReference({ primaryTextModel, primaryImageModel }) {
   -F "size=1024x1024" \\
   -F "image=@./input.png"`}</pre>
 
+            <h3>Images: 多图异步图生图</h3>
+            <div className="endpoint-block">
+                <span className="method post">POST</span>
+                <code>/v1/image-jobs/edits</code>
+            </div>
+            <pre className="code-block">{`curl ${SITE}/v1/image-jobs/edits \\
+  -H "Authorization: Bearer sk_cc_xxxxx" \\
+  -F "model=${imageModelId}" \\
+  -F "prompt=Combine these references into one poster illustration" \\
+  -F "n=1" \\
+  -F "size=1024x1024" \\
+  -F "image=@./ref-1.png" \\
+  -F "image=@./ref-2.png" \\
+  -F "image=@./ref-3.png"`}</pre>
+
+            <div className="endpoint-block">
+                <span className="method get">GET</span>
+                <code>/v1/image-jobs/{'{job_id}'}</code>
+            </div>
+            <pre className="code-block">{`curl ${SITE}/v1/image-jobs/job_xxxxx \\
+  -H "Authorization: Bearer sk_cc_xxxxx"`}</pre>
+
             <ul className="doc-list">
-                <li>当前 Gemini 图生图支持 1 张或多张输入图，但输出候选数当前只支持 <code>n=1</code>。</li>
+                <li>当前 Gemini 图生图分为两条公开契约：<code>1-2</code> 张输入图继续走同步 <code>/v1/images/edits</code>，<code>3-8</code> 张输入图改走异步 <code>/v1/image-jobs/edits</code>。</li>
+                <li>如果你把 <code>3+</code> 张输入图直接发到 <code>/v1/images/edits</code>，接口会明确返回 <code>image_job_required</code>，而不是随机超时。</li>
+                <li>Gemini 图片当前输出候选数只支持 <code>n=1</code>。</li>
                 <li>当前 Gemini 图生图不支持 <code>mask</code> 上传；如果传了掩码，会返回 <code>mask_not_supported</code>。</li>
                 <li>如果平台运营侧没有配置好 Vertex 图片变量，Gemini 图片请求会返回配置错误，而不是偷偷回退到别的模型。</li>
             </ul>
@@ -306,6 +350,9 @@ function ApiReference({ primaryTextModel, primaryImageModel }) {
                 </thead>
                 <tbody>
                     <tr><td>400</td><td>模型或参数错误</td><td>例如模型不存在、模型不支持该端点</td></tr>
+                    <tr><td>400</td><td><code>image_candidate_count_not_supported</code></td><td>Gemini 图片当前只支持 <code>n=1</code></td></tr>
+                    <tr><td>400</td><td><code>image_job_required</code></td><td>同步图生图请求里传了 <code>3+</code> 张输入图，请改用 <code>/v1/image-jobs/edits</code></td></tr>
+                    <tr><td>400</td><td><code>mask_not_supported</code></td><td>当前 Gemini 图片编辑不支持 <code>mask</code> 上传</td></tr>
                     <tr><td>401</td><td>认证失败</td><td>API Key 缺失或无效</td></tr>
                     <tr><td>402</td><td>余额不足</td><td>请充值后重试</td></tr>
                     <tr><td>403</td><td>禁止访问</td><td>Key 被禁用、用户被封禁，或使用了 session key 访问 API</td></tr>
@@ -327,8 +374,8 @@ function CodeExamples({ primaryTextModel, primaryImageModel }) {
             <p className="doc-intro">核心原则只有一条：Base URL 不变，只改 <code>model</code> 就能切换到 CoinCoin 公开目录里的不同模型。图片能力的上游细节由平台控制，不需要终端用户理解内部 gateway。</p>
 
             <div className="doc-callout">
-                <strong>关于 Gemini CLI</strong>
-                <p>当前不把 Gemini CLI 作为 CoinCoin 公共入口的一等客户端承诺。技术上它存在代理和自定义 base URL 的空间，但当前更适合作为后续独立兼容侧车处理，而不是直接和 Codex / OpenClaw 共用这套公共 OpenAI 面。</p>
+                <strong>使用示例前先确认</strong>
+                <p>下面所有代码示例都默认你已经在控制台里生成了开发者 API Key。没有开发者 Key 时，请先回仪表盘完成生成，而不是把控制台登录态直接塞进客户端。</p>
             </div>
 
             <h3>Python (openai 库)</h3>

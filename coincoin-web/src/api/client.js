@@ -1,5 +1,11 @@
 const PROXY_BASE = ''
 
+function emitAuthChange() {
+    if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('coincoin-auth-changed'))
+    }
+}
+
 /** Get stored API key */
 export function getApiKey() {
     return localStorage.getItem('coincoin_api_key') || ''
@@ -8,12 +14,14 @@ export function getApiKey() {
 /** Set API key */
 export function setApiKey(key) {
     localStorage.setItem('coincoin_api_key', key)
+    emitAuthChange()
 }
 
 /** Clear API key (logout) */
 export function clearApiKey() {
     localStorage.removeItem('coincoin_api_key')
     localStorage.removeItem('coincoin_user_id')
+    emitAuthChange()
 }
 
 export function getUserId() {
@@ -22,6 +30,7 @@ export function getUserId() {
 
 export function setUserId(id) {
     localStorage.setItem('coincoin_user_id', id)
+    emitAuthChange()
 }
 
 export function getUsername() {
@@ -30,6 +39,21 @@ export function getUsername() {
 
 export function setUsername(u) {
     localStorage.setItem('coincoin_username', u)
+    emitAuthChange()
+}
+
+export function getGeneratedKey() {
+    return localStorage.getItem('coincoin_generated_key') || ''
+}
+
+export function setGeneratedKey(key) {
+    localStorage.setItem('coincoin_generated_key', key)
+    emitAuthChange()
+}
+
+export function clearGeneratedKey() {
+    localStorage.removeItem('coincoin_generated_key')
+    emitAuthChange()
 }
 
 /** Auth header helper */

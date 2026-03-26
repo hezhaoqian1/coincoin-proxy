@@ -52,28 +52,32 @@ export default function Login() {
                 <div className="auth-header">
                     <div className="logo-icon" style={{ width: 48, height: 48, fontSize: '1.1rem', borderRadius: 14 }}>CC</div>
                     <h1>欢迎回来</h1>
-                    <p>选择登录方式</p>
+                    <p>先决定你要进入控制台，还是只验证一个开发者 API Key</p>
                 </div>
 
                 <div className="auth-tabs">
                     <button
                         className={`auth-tab ${tab === 'password' ? 'active' : ''}`}
                         onClick={() => { setTab('password'); clearError() }}
-                    >密码登录</button>
+                    >控制台登录</button>
                     <button
                         className={`auth-tab ${tab === 'key' ? 'active' : ''}`}
                         onClick={() => { setTab('key'); clearError() }}
-                    >API Key 登录</button>
+                    >开发者 Key 直登</button>
                 </div>
 
                 {tab === 'password' ? (
                     <form onSubmit={handlePasswordLogin} className="auth-form">
+                        <div className="auth-callout">
+                            <strong>适合需要站内管理的人</strong>
+                            <p>控制台登录可以看余额、充值、查看用量，并在仪表盘生成开发者 API Key。</p>
+                        </div>
                         <div className="input-group">
                             <label>用户名</label>
                             <input
                                 type="text"
                                 className="input-field"
-                                placeholder="输入用户名"
+                                placeholder="输入控制台用户名"
                                 value={username}
                                 onChange={(e) => { setUsername(e.target.value); clearError() }}
                                 autoFocus
@@ -91,13 +95,17 @@ export default function Login() {
                             {error && <span className="input-error">{error}</span>}
                         </div>
                         <button type="submit" className="btn btn-primary" style={{ width: '100%' }} disabled={loading}>
-                            {loading ? '登录中...' : '登录'}
+                            {loading ? '登录中...' : '进入控制台'}
                         </button>
                     </form>
                 ) : (
                     <form onSubmit={handleKeyLogin} className="auth-form">
+                        <div className="auth-callout auth-callout-muted">
+                            <strong>适合已经拿到开发者 Key 的人</strong>
+                            <p>这个入口只验证你的开发者 API Key 是否可用，不会自动拥有控制台账号管理能力。</p>
+                        </div>
                         <div className="input-group">
-                            <label>API Key</label>
+                            <label>开发者 API Key</label>
                             <input
                                 type="password"
                                 className="input-field"
@@ -109,7 +117,7 @@ export default function Login() {
                             {error && <span className="input-error">{error}</span>}
                         </div>
                         <button type="submit" className="btn btn-primary" style={{ width: '100%' }} disabled={loading}>
-                            {loading ? '验证中...' : '登录'}
+                            {loading ? '验证中...' : '验证并进入'}
                         </button>
                     </form>
                 )}
@@ -119,11 +127,11 @@ export default function Login() {
                 </div>
 
                 <button onClick={handleDemo} className="btn btn-secondary" style={{ width: '100%' }}>
-                    体验 Demo 模式
+                    先看 Demo
                 </button>
 
                 <p className="auth-footer-text">
-                    还没有账号？<Link to="/register">立即注册</Link>
+                    还没有控制台账号？<Link to="/register">立即注册</Link>
                 </p>
             </div>
         </div>

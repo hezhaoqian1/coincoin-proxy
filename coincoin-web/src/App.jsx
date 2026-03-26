@@ -20,6 +20,12 @@ function ProtectedRoute({ children }) {
     return children
 }
 
+function GuestOnlyRoute({ children }) {
+    const key = getApiKey()
+    if (key) return <Navigate to="/dashboard" replace />
+    return children
+}
+
 export default function App() {
     return (
         <ThemeProvider>
@@ -27,8 +33,12 @@ export default function App() {
                 <Navbar />
                 <Routes>
                     <Route path="/" element={<Landing />} />
-                    <Route path="/login" element={<Login />} />
-                    <Route path="/register" element={<Register />} />
+                    <Route path="/login" element={
+                        <GuestOnlyRoute><Login /></GuestOnlyRoute>
+                    } />
+                    <Route path="/register" element={
+                        <GuestOnlyRoute><Register /></GuestOnlyRoute>
+                    } />
                     <Route path="/dashboard" element={
                         <ProtectedRoute><Dashboard /></ProtectedRoute>
                     } />
