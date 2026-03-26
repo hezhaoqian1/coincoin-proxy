@@ -7,6 +7,12 @@ export default function Landing() {
     const { isLoggedIn } = useAuth()
     const startTarget = isLoggedIn ? '/dashboard' : '/register'
     const purchaseTarget = isLoggedIn ? '/recharge' : '/register'
+    const heroHighlights = [
+        '一个入口统一接 GPT 文本、Gemini 文本和 Gemini 生图',
+        '控制台账号、余额、请求日志、开发者 Key 全在一处管理',
+        '兼容 Codex CLI、Continue、Aider、OpenClaw 等主流客户端',
+    ]
+    const featuredPlans = PRICING_PLANS.slice(0, 3)
 
     return (
         <div className="landing">
@@ -24,12 +30,21 @@ export default function Landing() {
                         GPT + Gemini 文本与生图已上线
                     </div>
                     <h1 className="hero-title animate-fade-in-up">
-                        高性能 AI API<br />
-                        <span className="hero-gradient">中转加速平台</span>
+                        一个入口接入<br />
+                        <span className="hero-gradient">GPT 与 Gemini</span>
                     </h1>
                     <p className="hero-desc animate-fade-in-up" style={{ animationDelay: '100ms' }}>
-                        OpenAI 兼容入口 · 公开模型目录 · 按量计费 · 先登录控制台，再生成开发者 Key 接入 GPT 与 Gemini
+                        OpenAI 兼容入口，统一管理模型、余额、日志与开发者 Key。
+                        先进入控制台，再把配置直接复制到你的客户端里。
                     </p>
+                    <div className="hero-proof animate-fade-in-up" style={{ animationDelay: '160ms' }}>
+                        {heroHighlights.map((item) => (
+                            <div key={item} className="hero-proof-item">
+                                <span className="hero-proof-dot"></span>
+                                <span>{item}</span>
+                            </div>
+                        ))}
+                    </div>
                     <div className="hero-actions animate-fade-in-up" style={{ animationDelay: '200ms' }}>
                         <Link to={startTarget} className="btn btn-primary btn-lg">
                             {isLoggedIn ? '进入控制台' : '免费开始使用'}
@@ -61,50 +76,29 @@ export default function Landing() {
             {/* Features */}
             <section className="section" id="features">
                 <div className="container">
-                    <h2 className="section-title">为什么选择 CoinCoin？</h2>
-                    <p className="section-subtitle">我们提供稳定、快速、经济的 AI API 中转服务</p>
-                    <div className="features-grid stagger-children">
+                    <h2 className="section-title">为什么团队用 CoinCoin 做统一入口</h2>
+                    <p className="section-subtitle">不是单纯的代理站，而是把控制台、计费和开发者接入合在一起的控制面</p>
+                    <div className="features-grid features-grid-compact stagger-children">
                         <div className="feature-card glass-card animate-fade-in-up">
                             <div className="feature-icon" style={{ background: 'rgba(99,102,241,0.12)', color: 'var(--accent-indigo)' }}>
                                 <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" /><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" /></svg>
                             </div>
-                            <h3>全球加速</h3>
-                            <p>专线优化，统一承接 GPT 与 Gemini 上游，请求入口不变，模型目录可持续扩展</p>
+                            <h3>统一模型入口</h3>
+                            <p>Base URL 不变，只通过 <code>model</code> 切换 GPT 文本、Gemini 文本和 Gemini 生图。</p>
                         </div>
                         <div className="feature-card glass-card animate-fade-in-up">
                             <div className="feature-icon" style={{ background: 'rgba(16,185,129,0.12)', color: 'var(--accent-emerald)' }}>
                                 <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" /></svg>
                             </div>
-                            <h3>按量计费</h3>
-                            <p>余额制扣费，用多少付多少。文本按 Token，生图按张数，计费维度清晰可追踪</p>
+                            <h3>控制台即管理台</h3>
+                            <p>余额、充值、请求日志和开发者 Key 都在一个控制台里完成，不再分散在文档和脚本里。</p>
                         </div>
                         <div className="feature-card glass-card animate-fade-in-up">
                             <div className="feature-icon" style={{ background: 'rgba(6,182,212,0.12)', color: 'var(--accent-cyan)' }}>
                                 <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" /></svg>
                             </div>
-                            <h3>完全兼容</h3>
-                            <p>兼容 Chat Completions、Responses 和 Images 接口，老客户端不改也能继续用</p>
-                        </div>
-                        <div className="feature-card glass-card animate-fade-in-up">
-                            <div className="feature-icon" style={{ background: 'rgba(139,92,246,0.12)', color: 'var(--accent-violet)' }}>
-                                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
-                            </div>
-                            <h3>安全可靠</h3>
-                            <p>API Key 独立隔离，请求日志加密存储，严格的速率限制保障服务安全</p>
-                        </div>
-                        <div className="feature-card glass-card animate-fade-in-up">
-                            <div className="feature-icon" style={{ background: 'rgba(245,158,11,0.12)', color: 'var(--accent-amber)' }}>
-                                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></svg>
-                            </div>
-                            <h3>一键接入</h3>
-                            <p>先创建控制台账号，再生成开发者 API Key。支持 Codex CLI、OpenClaw、Continue、Aider 等主流工具，3 分钟完成配置</p>
-                        </div>
-                        <div className="feature-card glass-card animate-fade-in-up">
-                            <div className="feature-icon" style={{ background: 'rgba(244,63,94,0.12)', color: 'var(--accent-rose)' }}>
-                                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2" /></svg>
-                            </div>
-                            <h3>实时监控</h3>
-                            <p>详细的请求日志、Token / 图片统计、费用分析，路由和计费都可追踪</p>
+                            <h3>开发者友好</h3>
+                            <p>兼容 Codex CLI、Continue、Aider、OpenClaw 等主流 OpenAI 风格客户端，配置路径尽量短。</p>
                         </div>
                     </div>
                 </div>
@@ -153,10 +147,10 @@ export default function Landing() {
             {/* Pricing */}
             <section className="section" id="pricing">
                 <div className="container">
-                    <h2 className="section-title">选择适合你的方案</h2>
-                    <p className="section-subtitle">灵活的定价，按量计费，充得越多越划算</p>
+                    <h2 className="section-title">先把账户开通，再按量充值</h2>
+                    <p className="section-subtitle">对大多数用户来说，真正需要做的只有两步：创建控制台账号，然后按你的使用规模充值</p>
                     <div className="pricing-grid stagger-children">
-                        {PRICING_PLANS.map((plan, i) => (
+                        {featuredPlans.map((plan, i) => (
                             <div key={i} className={`pricing-card glass-card animate-fade-in-up ${plan.highlight ? 'pricing-highlight' : ''}`}>
                                 {plan.badge && <div className="pricing-badge">{plan.badge}</div>}
                                 <h3 className="pricing-name">{plan.name}</h3>
@@ -173,7 +167,7 @@ export default function Landing() {
                                     ))}
                                 </ul>
                                 <Link to={purchaseTarget} className={`btn ${plan.highlight ? 'btn-primary' : 'btn-secondary'}`} style={{ width: '100%' }}>
-                                    {plan.price === '免费' ? '免费注册' : '立即购买'}
+                                    {plan.price === '免费' ? (isLoggedIn ? '进入控制台' : '创建账号') : (isLoggedIn ? '去充值' : '创建账号后充值')}
                                 </Link>
                             </div>
                         ))}

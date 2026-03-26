@@ -33,6 +33,7 @@ export default function Settings() {
     const { models, textModels, defaultTextModel, defaultImageModel } = usePublicModels()
     const [copied, setCopied] = useState(false)
     const [selectedModel, setSelectedModel] = useState(defaultTextModel?.id || 'gpt-5.2-codex')
+    const [activeSnippet, setActiveSnippet] = useState('Python (openai SDK)')
 
     useEffect(() => {
         if (!textModels.find(model => model.id === selectedModel) && defaultTextModel?.id) {
@@ -143,13 +144,26 @@ wire_api = "responses"
   }'`
         }
     ]
+    const activeSnippetContent = snippets.find((snippet) => snippet.title === activeSnippet) || snippets[0]
+    const readinessChecks = [
+        hasDeveloperKey ? '已拿到开发者 API Key，可以直接接 SDK / CLI。' : '当前只有控制台会话，先去仪表盘生成开发者 API Key。',
+        '客户端 Base URL 固定为同一个 /v1 入口，不用为不同模型换域名。',
+        '切换模型时优先改 model，不要手改内部上游地址。',
+        '如果请求 403，先排查是不是把 session key 当成 API Key 在用。',
+    ]
+    const troubleshootingItems = [
+        'Codex CLI / Continue 接不上时，先确认你填的是开发者 API Key，而不是控制台 session。',
+        '模型没切换成功时，先抓请求体，看客户端是否真的把 model 字段发出来了。',
+        'Gemini 生图请走 /v1/images/generations 或 /v1/images/edits，不要直连内部 gateway。',
+        '余额、充值、请求日志和开发者 Key 管理都以控制台为准，不要分散到外部脚本里维护。',
+    ]
 
     return (
         <div className="page-wrapper">
             <div className="container">
                 <div className="page-header">
-                    <h1 className="page-title">设置</h1>
-                    <p className="page-desc">管理开发者接入信息、模型选择和客户端配置</p>
+                    <h1 className="page-title">接入配置</h1>
+                    <p className="page-desc">把控制台会话、开发者 API Key、模型选择和客户端配置放到同一张工作台里</p>
                 </div>
 
                 <div className="settings-grid">
@@ -212,77 +226,136 @@ wire_api = "responses"
                         </p>
                     </div>
 
-                    <div className="glass-card settings-section animate-fade-in-up" style={{ animationDelay: '100ms' }}>
-                        <h3>&#127760; 接入信息</h3>
-                        <div className="info-grid">
-                            <div className="info-item">
-                                <span className="info-label">Base URL</span>
-                                <code>{baseUrl}</code>
-                            </div>
-                            <div className="info-item">
-                                <span className="info-label">默认文本模型</span>
-                                <code>{defaultTextModel?.id || 'gpt-5.2-codex'}</code>
-                            </div>
-                            <div className="info-item">
-                                <span className="info-label">默认图片模型</span>
-                                <code>{imageModel}</code>
-                            </div>
-                            <div className="info-item">
-                                <span className="info-label">支持端点</span>
-                                <code>chat/completions, responses, models, images/generations</code>
-                            </div>
-                            <div className="info-item">
-                                <span className="info-label">认证提示</span>
-                                <code>{hasDeveloperKey ? '使用 Bearer 开发者 Key' : '先生成开发者 Key，再接入客户端'}</code>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div className="glass-card settings-section animate-fade-in-up" style={{ animationDelay: '150ms' }}>
-                        <h3>&#129302; 模型配置</h3>
-                        <p className="settings-hint" style={{ marginBottom: 'var(--space-lg)' }}>
-                            现在可以直接通过修改 <code>model</code> 选择公开模型；老客户端不传 <code>model</code> 仍会保持默认 GPT 兼容行为。
-                        </p>
-                        <div className="model-picker">
-                            <label className="info-label">文本模型</label>
-                            <select className="model-select" value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)}>
-                                {textModels.map((model) => (
-                                    <option key={model.id} value={model.id}>{model.id}</option>
-                                ))}
-                            </select>
-                            {selectedModelInfo && <p className="settings-hint">{describePublicModel(selectedModelInfo)}</p>}
-                        </div>
-                        <div className="model-chip-list">
-                            {models.map((model) => (
-                                <div key={model.id} className={`model-chip ${model.id === selectedModel ? 'active' : ''}`}>
-                                    <strong>{model.id}</strong>
-                                    <span>{model.coincoin_provider}</span>
+                    <div className="settings-two-column">
+                        <div className="glass-card settings-section animate-fade-in-up" style={{ animationDelay: '100ms' }}>
+                            <div className="settings-section-head">
+                                <div>
+                                    <h3>&#127760; 接入信息</h3>
+                                    <p className="settings-subtitle">真正要给 SDK、CLI 和服务端使用的，是这里这套开发者接入参数。</p>
                                 </div>
-                            ))}
+                                <span className="meta-pill">统一入口</span>
+                            </div>
+                            <div className="info-grid">
+                                <div className="info-item">
+                                    <span className="info-label">Base URL</span>
+                                    <code>{baseUrl}</code>
+                                </div>
+                                <div className="info-item">
+                                    <span className="info-label">默认文本模型</span>
+                                    <code>{defaultTextModel?.id || 'gpt-5.2-codex'}</code>
+                                </div>
+                                <div className="info-item">
+                                    <span className="info-label">默认图片模型</span>
+                                    <code>{imageModel}</code>
+                                </div>
+                                <div className="info-item">
+                                    <span className="info-label">支持端点</span>
+                                    <code>chat/completions, responses, models, images/*</code>
+                                </div>
+                                <div className="info-item">
+                                    <span className="info-label">认证提示</span>
+                                    <code>{hasDeveloperKey ? 'Bearer 开发者 Key' : '先生成开发者 Key'}</code>
+                                </div>
+                                <div className="info-item">
+                                    <span className="info-label">当前会话</span>
+                                    <code>{authMode === 'api' ? 'API Key 直登' : isConsoleSession ? '控制台登录' : '未登录或 Demo'}</code>
+                                </div>
+                            </div>
+                            <div className="settings-checklist">
+                                {readinessChecks.map((item) => (
+                                    <div key={item} className="settings-check-item">
+                                        <span className="settings-check-dot"></span>
+                                        <span>{item}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div className="glass-card settings-section animate-fade-in-up" style={{ animationDelay: '150ms' }}>
+                            <div className="settings-section-head">
+                                <div>
+                                    <h3>&#129302; 模型配置</h3>
+                                    <p className="settings-subtitle">现在切模型的动作应该尽量轻，只改 <code>model</code>，不再折腾多套域名和脚本。</p>
+                                </div>
+                                <span className="meta-pill">模型工作区</span>
+                            </div>
+                            <div className="model-picker">
+                                <label className="info-label">文本模型</label>
+                                <select className="model-select" value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)}>
+                                    {textModels.map((model) => (
+                                        <option key={model.id} value={model.id}>{model.id}</option>
+                                    ))}
+                                </select>
+                                {selectedModelInfo && <p className="settings-hint">{describePublicModel(selectedModelInfo)}</p>}
+                            </div>
+                            <div className="model-chip-list">
+                                {models.map((model) => (
+                                    <div key={model.id} className={`model-chip ${model.id === selectedModel ? 'active' : ''}`}>
+                                        <strong>{model.id}</strong>
+                                        <span>{model.coincoin_provider}</span>
+                                    </div>
+                                ))}
+                            </div>
                         </div>
                     </div>
 
                     <div className="glass-card settings-section animate-fade-in-up" style={{ animationDelay: '200ms' }}>
-                        <h3>&#9881; 接入配置生成器</h3>
+                        <div className="settings-section-head">
+                            <div>
+                                <h3>&#9881; 配置片段</h3>
+                                <p className="settings-subtitle">先选客户端，再复制对应的最短可用配置。页面只展示当前这一个片段，减少视觉噪音。</p>
+                            </div>
+                            <span className="meta-pill">可直接复制</span>
+                        </div>
                         <p className="settings-hint" style={{ marginBottom: 'var(--space-lg)' }}>
                             选择模型后，一键复制配置代码。Base URL 不变，只需要改 <code>model</code>。
                             {!hasDeveloperKey && ' 当前未检测到开发者 Key，示例里会保留占位符。'}
                         </p>
-                        <div className="snippets-list">
+                        <div className="snippet-tabs">
                             {snippets.map((snippet) => (
-                                <ConfigSnippet key={snippet.title} title={snippet.title} code={snippet.code} />
+                                <button
+                                    key={snippet.title}
+                                    className={`snippet-tab ${activeSnippet === snippet.title ? 'active' : ''}`}
+                                    onClick={() => setActiveSnippet(snippet.title)}
+                                >
+                                    {snippet.title}
+                                </button>
                             ))}
+                        </div>
+                        <div className="snippets-list">
+                            <ConfigSnippet title={activeSnippetContent.title} code={activeSnippetContent.code} />
                         </div>
                     </div>
 
-                    <div className="glass-card settings-section animate-fade-in-up" style={{ animationDelay: '300ms' }}>
-                        <h3>&#128231; 联系支持</h3>
-                        <p className="settings-text">如需帮助，请联系管理员：</p>
-                        <ul className="settings-list">
-                            <li>API Key 丢失：管理员可为你生成新 Key</li>
-                            <li>模型接入问题：先确认客户端有没有把 <code>model</code> 真的发出来</li>
-                            <li>Gemini 生图调用：使用 <code>/v1/images/generations</code> 和图片 alias</li>
-                        </ul>
+                    <div className="settings-two-column">
+                        <div className="glass-card settings-section animate-fade-in-up" style={{ animationDelay: '260ms' }}>
+                            <div className="settings-section-head">
+                                <div>
+                                    <h3>&#128269; 接入前检查</h3>
+                                    <p className="settings-subtitle">排查问题时，先查这些最容易出错的地方，别一上来就怀疑上游模型。</p>
+                                </div>
+                            </div>
+                            <ul className="settings-list">
+                                {troubleshootingItems.map((item) => (
+                                    <li key={item}>{item}</li>
+                                ))}
+                            </ul>
+                        </div>
+
+                        <div className="glass-card settings-section animate-fade-in-up" style={{ animationDelay: '300ms' }}>
+                            <div className="settings-section-head">
+                                <div>
+                                    <h3>&#128241; 下一步建议</h3>
+                                    <p className="settings-subtitle">当前这页解决的是“怎么接”。如果你要继续运营或排查，下一步一般会回到这些页面。</p>
+                                </div>
+                            </div>
+                            <ul className="settings-list">
+                                <li>去仪表盘看余额、生成或轮换开发者 Key。</li>
+                                <li>去请求日志确认每次调用的模型、耗时和扣费记录。</li>
+                                <li>去文档页查支持矩阵、错误码和多图图生图的接口规则。</li>
+                                <li>如果是团队协作场景，统一让同事从这页复制配置，减少野生接法。</li>
+                            </ul>
+                        </div>
                     </div>
                 </div>
             </div>

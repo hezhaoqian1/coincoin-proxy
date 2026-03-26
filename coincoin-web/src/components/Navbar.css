@@ -16,6 +16,7 @@
     align-items: center;
     justify-content: space-between;
     height: 100%;
+    gap: var(--space-lg);
 }
 
 .navbar-logo {
@@ -52,9 +53,17 @@
 .navbar-links {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 10px;
     flex-wrap: wrap;
     justify-content: flex-end;
+}
+
+.nav-secondary-links {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding-left: 8px;
+    border-left: 1px solid var(--border-color);
 }
 
 .nav-link {
@@ -75,6 +84,11 @@
 .nav-link.active {
     color: var(--text-primary);
     background: var(--bg-glass-strong);
+}
+
+.nav-link-secondary {
+    font-size: 0.82rem;
+    color: var(--text-tertiary);
 }
 
 .nav-session-badge {
@@ -107,9 +121,15 @@
         height: auto;
     }
 
+    .navbar-inner {
+        align-items: flex-start;
+        padding-top: 10px;
+        padding-bottom: 10px;
+    }
+
     .navbar-links {
         gap: 4px;
-        padding: 8px 0;
+        padding: 0;
     }
 
     .nav-link {
@@ -121,6 +141,13 @@
         width: 100%;
         margin-right: 0;
         order: -1;
+    }
+
+    .nav-secondary-links {
+        width: 100%;
+        border-left: none;
+        padding-left: 0;
+        gap: 4px;
     }
 
     .logo-text {
