@@ -1,8 +1,12 @@
 import { Link } from 'react-router-dom'
 import { PRICING_PLANS } from '../api/client'
+import { useAuth } from '../hooks/useAuth'
 import './Landing.css'
 
 export default function Landing() {
+    const { isLoggedIn } = useAuth()
+    const purchaseTarget = isLoggedIn ? '/recharge' : '/register'
+
     return (
         <div className="landing">
             {/* Hero */}
@@ -23,7 +27,7 @@ export default function Landing() {
                         <span className="hero-gradient">中转加速平台</span>
                     </h1>
                     <p className="hero-desc animate-fade-in-up" style={{ animationDelay: '100ms' }}>
-                        OpenAI 兼容入口 · 公开模型目录 · 按量计费 · 一个 Key 调用 GPT 与 Gemini
+                        OpenAI 兼容入口 · 公开模型目录 · 按量计费 · 先登录控制台，再生成开发者 Key 接入 GPT 与 Gemini
                     </p>
                     <div className="hero-actions animate-fade-in-up" style={{ animationDelay: '200ms' }}>
                         <Link to="/register" className="btn btn-primary btn-lg">
@@ -92,7 +96,7 @@ export default function Landing() {
                                 <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></svg>
                             </div>
                             <h3>一键接入</h3>
-                            <p>注册即用，支持 Codex CLI、OpenClaw、Continue、Aider 等主流工具，3 分钟完成配置</p>
+                            <p>先创建控制台账号，再生成开发者 API Key。支持 Codex CLI、OpenClaw、Continue、Aider 等主流工具，3 分钟完成配置</p>
                         </div>
                         <div className="feature-card glass-card animate-fade-in-up">
                             <div className="feature-icon" style={{ background: 'rgba(244,63,94,0.12)', color: 'var(--accent-rose)' }}>
@@ -113,8 +117,19 @@ export default function Landing() {
                     <div className="steps-grid stagger-children">
                         <div className="step-card animate-fade-in-up">
                             <div className="step-number">01</div>
-                            <h3>注册获取 Key</h3>
-                            <p>填写用户名，一键获取专属 API Key</p>
+                            <h3>创建控制台账号</h3>
+                            <p>先注册并进入控制台，完成余额和权限管理</p>
+                            <div className="step-code">
+                                <code>dashboard.coincoin.ai</code>
+                            </div>
+                        </div>
+                        <div className="step-connector">
+                            <svg width="40" height="2" viewBox="0 0 40 2"><line x1="0" y1="1" x2="40" y2="1" stroke="var(--accent-indigo)" strokeWidth="2" strokeDasharray="6,4" /></svg>
+                        </div>
+                        <div className="step-card animate-fade-in-up">
+                            <div className="step-number">02</div>
+                            <h3>生成开发者 Key</h3>
+                            <p>在仪表盘生成真正给客户端使用的 API Key</p>
                             <div className="step-code">
                                 <code>sk_cc_xxxxxxxxxxxxx</code>
                             </div>
@@ -123,22 +138,11 @@ export default function Landing() {
                             <svg width="40" height="2" viewBox="0 0 40 2"><line x1="0" y1="1" x2="40" y2="1" stroke="var(--accent-indigo)" strokeWidth="2" strokeDasharray="6,4" /></svg>
                         </div>
                         <div className="step-card animate-fade-in-up">
-                            <div className="step-number">02</div>
-                            <h3>配置客户端</h3>
-                            <p>设置 Base URL 和 API Key</p>
-                            <div className="step-code">
-                                <code>base_url = "your-domain/v1"</code>
-                            </div>
-                        </div>
-                        <div className="step-connector">
-                            <svg width="40" height="2" viewBox="0 0 40 2"><line x1="0" y1="1" x2="40" y2="1" stroke="var(--accent-indigo)" strokeWidth="2" strokeDasharray="6,4" /></svg>
-                        </div>
-                        <div className="step-card animate-fade-in-up">
                             <div className="step-number">03</div>
-                            <h3>开始使用</h3>
+                            <h3>配置并开始使用</h3>
                             <p>Base URL 不变，只改 model 就能切模型</p>
                             <div className="step-code">
-                                <code>model: "gemini-fast" ✓</code>
+                                <code>base_url = "your-domain/v1"</code>
                             </div>
                         </div>
                     </div>
@@ -167,7 +171,7 @@ export default function Landing() {
                                         </li>
                                     ))}
                                 </ul>
-                                <Link to="/register" className={`btn ${plan.highlight ? 'btn-primary' : 'btn-secondary'}`} style={{ width: '100%' }}>
+                                <Link to={purchaseTarget} className={`btn ${plan.highlight ? 'btn-primary' : 'btn-secondary'}`} style={{ width: '100%' }}>
                                     {plan.price === '免费' ? '免费注册' : '立即购买'}
                                 </Link>
                             </div>

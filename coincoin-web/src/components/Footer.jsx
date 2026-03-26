@@ -1,7 +1,11 @@
 import { Link } from 'react-router-dom'
+import { useAuth } from '../hooks/useAuth'
 import './Footer.css'
 
 export default function Footer() {
+    const { isLoggedIn } = useAuth()
+    const pricingTarget = isLoggedIn ? '/recharge' : '/#pricing'
+
     return (
         <footer className="footer">
             <div className="container footer-inner">
@@ -20,14 +24,14 @@ export default function Footer() {
                     <div className="footer-col">
                         <h4>产品</h4>
                         <Link to="/docs">接入文档</Link>
-                        <Link to="/recharge">定价方案</Link>
+                        <Link to={pricingTarget}>定价方案</Link>
                         <Link to="/docs">API 文档</Link>
                     </div>
 
                     <div className="footer-col">
                         <h4>支持</h4>
                         <Link to="/docs">快速开始</Link>
-                        <a href="#faq">常见问题</a>
+                        <Link to="/#faq">常见问题</Link>
                         <a href="mailto:support@coincoin.ai">联系我们</a>
                     </div>
 

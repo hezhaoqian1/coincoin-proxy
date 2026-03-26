@@ -2,19 +2,91 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { Line } from 'react-chartjs-2'
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler } from 'chart.js'
-import { MOCK_BALANCE, MOCK_USAGE, getApiKey, getBalance, getUsageLogs, getDailyUsage, getAnnouncements, getUsername, activateKey, getReferralInfo } from '../api/client'
+import { MOCK_BALANCE, MOCK_USAGE, getBalance, getUsageLogs, getDailyUsage, getAnnouncements, activateKey, getReferralInfo, setGeneratedKey as storeGeneratedKey } from '../api/client'
 import useOrderConfirm from '../hooks/useOrderConfirm'
+import { useAuth } from '../hooks/useAuth'
 import { usePublicModels } from '../hooks/usePublicModels'
 import './Dashboard.css'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler)
 
-function KeyManagement({ copied, copy }) {
-    const username = getUsername()
-    const [generatedKey, setGeneratedKey] = useState(() => localStorage.getItem('coincoin_generated_key') || '')
+function ReadinessCard({ authMode, username, hasDeveloperKey }) {
+    const contentMap = {
+        session_only: {
+            tone: 'warning',
+            eyebrow: '控制台已登录',
+            title: '还差一步：生成开发者 API Key',
+            description: `${username || '当前账户'} 已进入控制台，但现在手上的还是站内 session key。它可以看余额、充值、查看用量，不能直接给 Codex CLI、Continue 或 cURL 调 API。`,
+            actions: [
+                { to: '/settings', label: '查看接入配置', style: 'btn btn-primary btn-sm' },
+                { to: '/docs', label: '阅读接入文档', style: 'btn btn-secondary btn-sm' },
+            ],
+        },
+        session_with_api: {
+            tone: 'success',
+            eyebrow: '开发接入已就绪',
+            title: '控制台账号和开发者密钥都已准备好',
+            description: `${username || '当前账户'} 已生成开发者 API Key。你可以继续在控制台看余额和日志，也可以直接复制密钥接入客户端。`,
+            actions: [
+                { to: '/settings', label: '复制配置片段', style: 'btn btn-primary btn-sm' },
+                { to: '/playground', label: '在线测试模型', style: 'btn btn-secondary btn-sm' },
+            ],
+        },
+        api: {
+            tone: 'info',
+            eyebrow: 'API Key 会话',
+            title: '当前正在用开发者 API Key 直接登录',
+            description: '这种方式适合快速验证密钥是否有效，但它不等同于控制台账号登录。如果你还需要生成新密钥、查看邀请返佣或做账户管理，建议再用用户名密码登录一次。',
+            actions: [
+                { to: '/settings', label: '查看接入配置', style: 'btn btn-primary btn-sm' },
+                { to: '/docs', label: '查看客户端示例', style: 'btn btn-secondary btn-sm' },
+            ],
+        },
+        demo: {
+            tone: 'muted',
+            eyebrow: '演示模式',
+            title: '你当前看到的是演示数据',
+            description: '可以先熟悉余额、日志、模型和充值入口。真正接入客户端时，请注册控制台账号并生成自己的开发者 API Key。',
+            actions: [
+                { to: '/register', label: '创建正式账号', style: 'btn btn-primary btn-sm' },
+                { to: '/docs', label: '先看文档', style: 'btn btn-secondary btn-sm' },
+            ],
+        },
+    }
+    const content = contentMap[authMode] || contentMap.api
+
+    return (
+        <div className={`readiness-card glass-card readiness-${content.tone} animate-fade-in-up`}>
+            <div className="readiness-copy">
+                <span className="readiness-eyebrow">{content.eyebrow}</span>
+                <h2>{content.title}</h2>
+                <p>{content.description}</p>
+                <div className="readiness-tags">
+                    <span className="readiness-tag">{authMode === 'session_only' ? '只能访问控制台' : '站内状态正常'}</span>
+                    <span className="readiness-tag">{hasDeveloperKey ? '开发者 Key 已就绪' : '尚未生成开发者 Key'}</span>
+                    {username && <span className="readiness-tag">账户：{username}</span>}
+                </div>
+            </div>
+            <div className="readiness-actions">
+                {content.actions.map((action) => (
+                    <Link key={action.to + action.label} to={action.to} className={action.style}>
+                        {action.label}
+                    </Link>
+                ))}
+            </div>
+        </div>
+    )
+}
+
+function KeyManagement({ copied, copy, username, generatedApiKey, authMode, effectiveApiKey }) {
+    const [generatedKey, setGeneratedKey] = useState(generatedApiKey || '')
     const [showKey, setShowKey] = useState(false)
     const [generating, setGenerating] = useState(false)
     const [genError, setGenError] = useState('')
+
+    useEffect(() => {
+        setGeneratedKey(generatedApiKey || '')
+    }, [generatedApiKey])
 
     const handleGenerate = async () => {
         if (!username) return
@@ -24,7 +96,7 @@ function KeyManagement({ copied, copy }) {
             const data = await activateKey(username)
             if (data.api_key) {
                 setGeneratedKey(data.api_key)
-                localStorage.setItem('coincoin_generated_key', data.api_key)
+                storeGeneratedKey(data.api_key)
                 setShowKey(true)
             } else {
                 setGenError('生成失败，请重试')
@@ -42,31 +114,49 @@ function KeyManagement({ copied, copy }) {
 
     return (
         <div className="quick-actions glass-card animate-fade-in-up" style={{ animationDelay: '200ms' }}>
-            <h3>API Key 管理</h3>
-            {!username ? (
-                <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-                    当前使用 API Key 直接登录。如需管理 Key，请使用用户名密码注册/登录。
+            <h3>开发者 Key 管理</h3>
+            {authMode === 'demo' ? (
+                <div className="key-panel-copy">
+                    <p>
+                        Demo 模式不会分配真实的开发者 API Key。想要接入客户端，请先注册控制台账号，
+                        然后在仪表盘里生成你自己的开发者 Key。
+                    </p>
+                    <div className="action-links">
+                        <Link to="/register" className="btn btn-primary btn-sm">创建正式账号</Link>
+                        <Link to="/docs" className="btn btn-secondary btn-sm">查看接入步骤</Link>
+                    </div>
+                </div>
+            ) : !username ? (
+                <div className="key-panel-copy">
+                    <p>
+                        当前会话是通过开发者 API Key 直接登录的。你可以复制并继续使用这个 Key，
+                        但如果要在站内重新生成或管理 Key，需要改用用户名密码登录控制台。
+                    </p>
                     <div className="action-grid" style={{ marginTop: 'var(--space-md)' }}>
-                        <div className="action-item" onClick={() => copy(getApiKey(), 'key')}>
+                        <div className="action-item" onClick={() => copy(effectiveApiKey, 'key')}>
                             <div className="action-icon">&#128273;</div>
                             <div>
-                                <strong>当前 Key</strong>
-                                <code>{getApiKey().substring(0, 12)}...</code>
+                                <strong>当前开发者 Key</strong>
+                                <code>{effectiveApiKey.substring(0, 12)}...</code>
                             </div>
                             <span className="action-btn">{copied === 'key' ? '&#10003; 已复制' : '复制'}</span>
                         </div>
                     </div>
+                    <div className="action-links">
+                        <Link to="/settings" className="btn btn-secondary btn-sm">查看配置片段</Link>
+                    </div>
                 </div>
             ) : generatedKey && !showKey ? (
                 <div>
-                    <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: 'var(--space-md)' }}>
-                        你已生成过 API Key，用于第三方客户端（Codex CLI、Continue 等）。
+                    <p className="key-panel-copy">
+                        你已经生成过开发者 API Key，可直接用于 Codex CLI、Continue、Aider 和其他 OpenAI 兼容客户端。
+                        当前站内登录依然走控制台 session，两者职责不同。
                     </p>
                     <div className="action-grid">
                         <div className="action-item" onClick={() => copy(generatedKey, 'apikey')}>
                             <div className="action-icon">&#128273;</div>
                             <div>
-                                <strong>API Key</strong>
+                                <strong>开发者 API Key</strong>
                                 <code>{maskedKey}</code>
                             </div>
                             <span className="action-btn">{copied === 'apikey' ? '&#10003; 已复制' : '复制'}</span>
@@ -74,8 +164,9 @@ function KeyManagement({ copied, copy }) {
                     </div>
                     <div style={{ marginTop: 'var(--space-md)', display: 'flex', gap: 'var(--space-sm)' }}>
                         <button className="btn btn-secondary btn-sm" onClick={handleGenerate} disabled={generating}>
-                            {generating ? '生成中...' : '重新生成'}
+                            {generating ? '生成中...' : '重新生成开发者 Key'}
                         </button>
+                        <Link to="/settings" className="btn btn-ghost btn-sm">查看完整配置</Link>
                     </div>
                     {genError && <p style={{ color: 'var(--accent-rose)', fontSize: '0.85rem', marginTop: 'var(--space-sm)' }}>{genError}</p>}
                 </div>
@@ -90,7 +181,7 @@ function KeyManagement({ copied, copy }) {
                         color: 'var(--accent-amber)',
                         marginBottom: 'var(--space-md)'
                     }}>
-                        请务必保存此 API Key，它只会显示一次！
+                        请务必保存此开发者 API Key。完整值只会在重新生成后的这一刻明确展示。
                     </div>
                     <div className="key-display" style={{
                         display: 'flex', alignItems: 'center', gap: 'var(--space-sm)',
@@ -105,17 +196,17 @@ function KeyManagement({ copied, copy }) {
                         </button>
                     </div>
                     <button className="btn btn-secondary btn-sm" onClick={() => setShowKey(false)}>
-                        我已保存，隐藏 Key
+                        我已保存，隐藏完整 Key
                     </button>
                 </div>
             ) : (
                 <div>
-                    <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: 'var(--space-md)' }}>
-                        生成一个 API Key 用于第三方客户端（Codex CLI、Continue、Aider 等）。
-                        当前登录使用的 session key 只能访问 Dashboard，不能调用 API。
+                    <p className="key-panel-copy">
+                        为你的控制台账户生成一个开发者 API Key，用于第三方客户端。
+                        当前这次登录拿到的是 session key，只能访问 Dashboard、充值和设置页面，不能直接调用 API。
                     </p>
                     <button className="btn btn-primary btn-sm" onClick={handleGenerate} disabled={generating}>
-                        {generating ? '生成中...' : '生成 API Key'}
+                        {generating ? '生成中...' : '生成开发者 API Key'}
                     </button>
                     {genError && <p style={{ color: 'var(--accent-rose)', fontSize: '0.85rem', marginTop: 'var(--space-sm)' }}>{genError}</p>}
                 </div>
@@ -126,6 +217,7 @@ function KeyManagement({ copied, copy }) {
 
 export default function Dashboard() {
     const { defaultTextModel, defaultImageModel } = usePublicModels()
+    const { authMode, effectiveApiKey, generatedApiKey, hasDeveloperKey, isDemo, username } = useAuth()
     const [balance, setBalance] = useState(null)
     const [usage, setUsage] = useState(null)
     const [dailyData, setDailyData] = useState(null)
@@ -137,7 +229,6 @@ export default function Dashboard() {
     const [chartMode, setChartMode] = useState('cost')
     const [referral, setReferral] = useState(null)
     const [refCopied, setRefCopied] = useState(false)
-    const isDemo = getApiKey() === 'sk_cc_demo_key'
     const { confirmResult: orderConfirmed, dismiss: dismissOrder } = useOrderConfirm()
 
     useEffect(() => {
@@ -251,8 +342,10 @@ export default function Dashboard() {
             <div className="container">
                 <div className="page-header">
                     <h1 className="page-title">仪表盘</h1>
-                    <p className="page-desc">你的 API 使用概览</p>
+                    <p className="page-desc">余额、调用记录、开发者接入状态都集中在这里</p>
                 </div>
+
+                <ReadinessCard authMode={authMode} username={username} hasDeveloperKey={hasDeveloperKey} />
 
                 {/* Announcements */}
                 {activeAnns.map(a => (
@@ -341,7 +434,14 @@ export default function Dashboard() {
                 )}
 
                 {/* API Key Management */}
-                <KeyManagement copied={copied} copy={copy} />
+                <KeyManagement
+                    copied={copied}
+                    copy={copy}
+                    username={username}
+                    generatedApiKey={generatedApiKey}
+                    authMode={authMode}
+                    effectiveApiKey={effectiveApiKey}
+                />
 
                 {/* Quick Links */}
                 <div className="quick-actions glass-card animate-fade-in-up" style={{ animationDelay: '250ms' }}>
@@ -359,6 +459,7 @@ export default function Dashboard() {
                     <div className="action-links">
                         <Link to="/recharge" className="btn btn-primary btn-sm">&#128176; 充值</Link>
                         <Link to="/usage" className="btn btn-secondary btn-sm">&#128202; 查看详情</Link>
+                        <Link to="/settings" className="btn btn-secondary btn-sm">&#128736; 接入配置</Link>
                         <Link to="/docs" className="btn btn-secondary btn-sm">&#128214; 接入文档</Link>
                         <Link to="/playground" className="btn btn-secondary btn-sm">&#9881; 在线测试</Link>
                     </div>

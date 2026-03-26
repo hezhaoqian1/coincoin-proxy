@@ -6,6 +6,83 @@
     padding: var(--space-xl) var(--space-xl);
 }
 
+.readiness-card {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-xl);
+    margin-bottom: var(--space-lg);
+    border-color: rgba(99, 102, 241, 0.24);
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.12), rgba(6, 182, 212, 0.07));
+}
+
+.readiness-warning {
+    border-color: rgba(245, 158, 11, 0.28);
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.14), rgba(99, 102, 241, 0.06));
+}
+
+.readiness-success {
+    border-color: rgba(16, 185, 129, 0.26);
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.13), rgba(6, 182, 212, 0.06));
+}
+
+.readiness-muted {
+    background: linear-gradient(135deg, rgba(148, 163, 184, 0.1), rgba(99, 102, 241, 0.05));
+}
+
+.readiness-copy {
+    flex: 1;
+}
+
+.readiness-copy h2 {
+    margin: 0 0 var(--space-sm);
+    font-size: 1.5rem;
+    line-height: 1.2;
+}
+
+.readiness-copy p {
+    margin: 0;
+    max-width: 780px;
+    color: var(--text-secondary);
+    font-size: 0.94rem;
+    line-height: 1.75;
+}
+
+.readiness-eyebrow {
+    display: inline-flex;
+    margin-bottom: var(--space-sm);
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+}
+
+.readiness-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+    margin-top: var(--space-lg);
+}
+
+.readiness-tag {
+    display: inline-flex;
+    align-items: center;
+    padding: 7px 12px;
+    border-radius: var(--radius-full);
+    background: rgba(255, 255, 255, 0.52);
+    border: 1px solid var(--border-color);
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+}
+
+.readiness-actions {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    min-width: 180px;
+}
+
 .stat-icon {
     width: 48px;
     height: 48px;
@@ -107,6 +184,13 @@
     display: flex;
     gap: var(--space-sm);
     flex-wrap: wrap;
+}
+
+.key-panel-copy {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    margin-bottom: var(--space-md);
+    line-height: 1.7;
 }
 
 /* Pricing Info */
@@ -328,6 +412,15 @@
 }
 
 @media (max-width: 768px) {
+    .readiness-card {
+        flex-direction: column;
+    }
+
+    .readiness-actions {
+        width: 100%;
+        min-width: 0;
+    }
+
     .price-row {
         grid-template-columns: 1fr;
     }

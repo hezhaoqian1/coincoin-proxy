@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
-import { registerUser, setApiKey, setUserId, setUsername as storeUsername } from '../api/client'
-import { useAuth } from '../hooks/useAuth'
+import { clearGeneratedKey, registerUser, setApiKey, setUserId, setUsername as storeUsername } from '../api/client'
 import './Auth.css'
 
 export default function Register() {
@@ -14,7 +13,6 @@ export default function Register() {
     })
     const [error, setError] = useState('')
     const [loading, setLoading] = useState(false)
-    const { login } = useAuth()
     const navigate = useNavigate()
 
     const handleSubmit = async (e) => {
@@ -27,10 +25,10 @@ export default function Register() {
         setError('')
         try {
             const data = await registerUser(username.trim(), password, referralCode.trim() || undefined)
+            clearGeneratedKey()
             setApiKey(data.session_key)
             setUserId(data.user_id)
             storeUsername(data.username)
-            await login(data.session_key)
             navigate('/dashboard')
         } catch (err) {
             setError(err.message || '注册失败，请重试')
@@ -48,11 +46,15 @@ export default function Register() {
             <div className="auth-card glass-card animate-fade-in-up">
                 <div className="auth-header">
                     <div className="logo-icon" style={{ width: 48, height: 48, fontSize: '1.1rem', borderRadius: 14 }}>CC</div>
-                    <h1>创建账号</h1>
-                    <p>注册后可在仪表盘生成 API Key</p>
+                    <h1>创建控制台账号</h1>
+                    <p>注册后先进入控制台，再在仪表盘生成开发者 API Key</p>
                 </div>
 
                 <form onSubmit={handleSubmit} className="auth-form">
+                    <div className="auth-callout">
+                        <strong>注册完成后会发生什么？</strong>
+                        <p>你会先登录到站内控制台，获得余额、充值和日志视图。真正给客户端使用的开发者 API Key 需要在仪表盘里单独生成。</p>
+                    </div>
                     <div className="input-group">
                         <label>用户名</label>
                         <input
@@ -98,11 +100,11 @@ export default function Register() {
                     </div>
 
                     <button type="submit" className="btn btn-primary" style={{ width: '100%' }} disabled={loading}>
-                        {loading ? '创建中...' : '注册'}
+                        {loading ? '创建中...' : '创建账号并进入控制台'}
                     </button>
 
                     <p className="auth-footer-text">
-                        已有账号？<Link to="/login">去登录</Link>
+                        已有控制台账号？<Link to="/login">去登录</Link>
                     </p>
                 </form>
             </div>
