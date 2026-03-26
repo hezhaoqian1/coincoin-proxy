@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .db import SessionLocal
 from .models import PaymentOrder
-from .webhook import _do_confirm_order
+from .payment import _confirm_with_query_fallback
 
 logger = logging.getLogger("coincoin.reconcile")
 
@@ -34,8 +34,8 @@ async def reconcile_once(max_orders: int = 20, lookback_hours: int = 72) -> int:
 
         for order_no in order_nos:
             try:
-                ok = await _do_confirm_order(order_no, db)
-                confirmed += 1 if ok else 0
+                result = await _confirm_with_query_fallback(order_no, db)
+                confirmed += 1 if result else 0
             except Exception as e:
                 logger.warning("reconcile: failed for order %s: %s", order_no, e)
                 # Continue to next order.
@@ -58,4 +58,3 @@ async def reconcile_loop(interval_seconds: int = 300) -> None:
         except Exception as e:
             logger.warning("reconcile loop error: %s", e)
         await asyncio.sleep(max(10, int(interval_seconds)))
-

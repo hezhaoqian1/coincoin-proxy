@@ -36,6 +36,7 @@ export default function PayReturn() {
         const stored = localStorage.getItem('coincoin_last_order')
         const qs = new URLSearchParams(location.search || '')
         const orderNoFromQuery = qs.get('order_no') || qs.get('out_trade_no') || ''
+        const proofUrl = typeof window !== 'undefined' ? window.location.href : ''
 
         let order = null
         if (stored) {
@@ -67,7 +68,7 @@ export default function PayReturn() {
             }
 
             try {
-                const result = await confirmOrder(order.orderNo)
+                const result = await confirmOrder(order.orderNo, attempts === 1 ? proofUrl : undefined)
 
                 if (result.success) {
                     setConfirmResult(result)

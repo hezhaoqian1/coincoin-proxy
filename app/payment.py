@@ -1,13 +1,11 @@
 """
-支付订单：由 proxy 统一创建、确认
-- POST /v1/orders/create  — 前端带 API Key 调用，proxy 生成订单入库后转发支付服务拿 pay_url
-- POST /v1/orders/confirm — 兜底补单：校验归属 + 二次验证 + FOR UPDATE 防并发
+支付订单：由 CoinCoin 统一创建、验签确认、幂等入账
+- POST /v1/orders/create  — 前端带 API Key 调用，proxy 生成订单入库并直连 Epay 生成 pay_url
+- POST /v1/orders/confirm — 兜底补单：优先使用支付回跳 proof URL 验签，必要时再尝试查单兜底
 """
 import logging
 from datetime import datetime
-from decimal import Decimal, InvalidOperation, ROUND_DOWN
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -15,9 +13,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import settings
 from .db import get_db
-from .models import PaymentOrder, User
+from .epay import (
+    EpayVerificationError,
+    build_epay_submit_url,
+    epay_configured,
+    extract_epay_params_from_proof_url,
+    query_epay_order,
+    verify_epay_callback_params,
+)
+from .models import PaymentOrder
+from .payment_common import PaymentConfirmError, confirm_paid_order, rmb_to_cents
 from .proxy import authenticate_user
-from .referral import process_referral_reward
 from .rate_limiter import rate_limiter
 from .schemas import (
     OrderConfirmRequest,
@@ -30,15 +36,6 @@ from .security import generate_id
 router = APIRouter(prefix="/v1", tags=["payment"])
 logger = logging.getLogger("coincoin.payment")
 
-PLAN_MAP: dict[Decimal, int] = {
-    Decimal("9.90"):   1800,    # 体验包  $18    (要发)
-    Decimal("29.90"):  6600,    # 轻量版  $66    (六六大顺)
-    Decimal("59.90"):  13800,   # 基础版  $138   (一生发)
-    Decimal("99.90"):  23800,   # 进阶版  $238   (爱生发)
-    Decimal("199.90"): 51800,   # 专业版  $518   (我要发)
-    Decimal("499.90"): 138800,  # 旗舰版  $1388  (一生发发)
-}
-
 CONFIRM_RATE_LIMIT = 30  # per user per minute
 
 
@@ -49,12 +46,10 @@ def _public_base_url(request: Request) -> str:
     """
     if settings.self_base_url:
         base = settings.self_base_url.strip().rstrip("/")
-        # Be tolerant: allow users to set "example.com" and treat it as https://example.com
         if "://" not in base:
             base = f"https://{base}"
         return base
 
-    # Railway / Cloudflare / Nginx commonly set these
     xf_proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip()
     xf_host = request.headers.get("x-forwarded-host", "").split(",")[0].strip()
     host = xf_host or request.headers.get("host", "").strip()
@@ -68,23 +63,56 @@ def _public_base_url(request: Request) -> str:
     return str(request.base_url).rstrip("/")
 
 
-def rmb_to_cents(money_str: str) -> int:
-    """RMB string → balance cents.  Uses Decimal to avoid float rounding."""
+def _translate_confirm_error(exc: PaymentConfirmError) -> HTTPException:
+    if exc.status_code == 404:
+        return HTTPException(status.HTTP_404_NOT_FOUND, exc.detail)
+    if exc.status_code == 409:
+        return HTTPException(status.HTTP_409_CONFLICT, exc.detail)
+    if exc.status_code == 400:
+        return HTTPException(status.HTTP_400_BAD_REQUEST, exc.detail)
+    return HTTPException(status.HTTP_400_BAD_REQUEST, exc.detail)
+
+
+async def _confirm_with_query_fallback(order_no: str, db: AsyncSession):
+    data = await query_epay_order(order_no)
+    if str(data.get("code", "")) == "-1":
+        logger.warning("epay query fallback unavailable for %s: %s", order_no, data)
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, data.get("msg", "payment query unavailable"))
+    trade_status = str(data.get("trade_status", "")).upper()
+    if str(data.get("status")) != "1" and trade_status != "TRADE_SUCCESS":
+        raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, "payment not completed")
+
+    trade_no = str(data.get("trade_no", "")).strip()
+    money = str(data.get("money", "")).strip()
+    if not trade_no or not money:
+        logger.warning("epay query fallback missing fields for %s: %s", order_no, data)
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "payment query response incomplete")
+
     try:
-        d = Decimal(money_str).quantize(Decimal("0.01"))
-    except (InvalidOperation, ValueError):
-        return 0
-    if d <= 0:
-        return 0
-    if d in PLAN_MAP:
-        return PLAN_MAP[d]
-    rate = Decimal(str(settings.rmb_to_cents_rate))
-    return max(1, int((d * rate).to_integral_value(ROUND_DOWN)))
+        return await confirm_paid_order(
+            order_no=order_no,
+            money=money,
+            trade_no=trade_no,
+            db=db,
+        )
+    except PaymentConfirmError as exc:
+        raise _translate_confirm_error(exc) from exc
 
 
-# ---------------------------------------------------------------------------
-# POST /v1/orders/create  —  前端唯一的下单入口
-# ---------------------------------------------------------------------------
+def _response_from_confirm_result(result: dict, message: str) -> OrderConfirmResponse:
+    user = result["user"]
+    order = result["order"]
+    return OrderConfirmResponse(
+        success=True,
+        order_no=order.order_no,
+        amount_rmb=result["amount_rmb"],
+        added_cents=result["added_cents"],
+        new_balance=user.balance,
+        new_balance_usd=user.balance / 100,
+        message=message,
+    )
+
+
 @router.post("/orders/create", response_model=OrderCreateResponse)
 async def create_order(
     payload: OrderCreateRequest,
@@ -93,6 +121,9 @@ async def create_order(
 ):
     cached = await authenticate_user(request, db)
     user_id = cached.id
+
+    if not epay_configured():
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "payment service is not configured")
 
     if not await rate_limiter.allow(f"order_create:{user_id}", CONFIRM_RATE_LIMIT):
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "too many order requests")
@@ -105,39 +136,25 @@ async def create_order(
 
     base = _public_base_url(request)
     notify_url = f"{base}/webhook/pay-notify"
-    # Put order_no in query as a fallback for SPA return page (in case localStorage is missing).
     return_url = f"{base}/pay/return?order_no={order_no}"
 
-    async with httpx.AsyncClient(timeout=10) as client:
-        try:
-            resp = await client.post(
-                f"{settings.pay_base_url}/api/pay",
-                json={
-                    "out_trade_no": order_no,
-                    "name": payload.name,
-                    "money": payload.money,
-                    "type": payload.pay_type,
-                    "sitename": "CoinCoin",
-                    "notify_url": notify_url,
-                    "return_url": return_url,
-                },
-            )
-            data = resp.json()
-        except Exception as e:
-            logger.error("Failed to create pay order: %s", e)
-            raise HTTPException(status.HTTP_502_BAD_GATEWAY, "payment service unavailable")
-
-    if data.get("code") != 1 or not data.get("pay_url"):
-        logger.warning("Pay service rejected order: %s", data)
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "payment service error")
-
-    pay_url = data["pay_url"]
-    final_order_no = data.get("out_trade_no", order_no)
+    try:
+        pay_url = build_epay_submit_url(
+            out_trade_no=order_no,
+            name=payload.name,
+            money=payload.money,
+            pay_type=payload.pay_type,
+            notify_url=notify_url,
+            return_url=return_url,
+        )
+    except Exception as exc:
+        logger.error("Failed to build epay submit URL for %s: %s", order_no, exc)
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "payment service unavailable") from exc
 
     order = PaymentOrder(
         id=generate_id("po_"),
         user_id=user_id,
-        order_no=final_order_no,
+        order_no=order_no,
         amount_rmb=payload.money,
         add_balance_cents=expected_cents,
         status="pending",
@@ -146,24 +163,23 @@ async def create_order(
     db.add(order)
     try:
         await db.commit()
-    except IntegrityError:
+    except IntegrityError as exc:
         await db.rollback()
-        raise HTTPException(status.HTTP_409_CONFLICT, "duplicate order")
+        raise HTTPException(status.HTTP_409_CONFLICT, "duplicate order") from exc
 
-    logger.info("Order created: %s user=%s rmb=%s cents=%d", final_order_no, user_id, payload.money, expected_cents)
-    logger.info("Pay URLs: base=%s notify_url=%s return_url=%s", base, notify_url, return_url)
+    logger.info(
+        "Order created: %s user=%s rmb=%s cents=%d notify=%s return=%s",
+        order_no, user_id, payload.money, expected_cents, notify_url, return_url,
+    )
 
     return OrderCreateResponse(
-        order_no=final_order_no,
+        order_no=order_no,
         pay_url=pay_url,
         amount_rmb=payload.money,
         expected_cents=expected_cents,
     )
 
 
-# ---------------------------------------------------------------------------
-# POST /v1/orders/confirm  —  兜底补单（前端 PayReturn 调用）
-# ---------------------------------------------------------------------------
 @router.post("/orders/confirm", response_model=OrderConfirmResponse)
 async def confirm_order(
     payload: OrderConfirmRequest,
@@ -176,84 +192,51 @@ async def confirm_order(
     if not await rate_limiter.allow(f"order_confirm:{user_id}", CONFIRM_RATE_LIMIT):
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "too many confirm requests")
 
-    order = (
-        await db.execute(
-            select(PaymentOrder)
-            .where(PaymentOrder.order_no == payload.order_no)
-            .with_for_update()
-        )
+    payment_order = (
+        await db.execute(select(PaymentOrder).where(PaymentOrder.order_no == payload.order_no))
     ).scalar_one_or_none()
-
-    if not order:
+    if not payment_order:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "order not found — create via /v1/orders/create first")
-    if order.user_id != user_id:
+    if payment_order.user_id != user_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "order does not belong to this user")
 
-    if order.status == "confirmed":
-        user = (await db.execute(select(User).where(User.id == user_id))).scalar_one()
-        return OrderConfirmResponse(
-            success=True,
-            order_no=order.order_no,
-            amount_rmb=order.amount_rmb,
-            added_cents=order.add_balance_cents,
-            new_balance=user.balance,
-            new_balance_usd=user.balance / 100,
-            message="order already confirmed",
-        )
+    if payment_order.status == "confirmed":
+        result = {
+            "order": payment_order,
+            "user": cached,
+            "amount_rmb": payment_order.amount_rmb,
+            "added_cents": payment_order.add_balance_cents,
+        }
+        return _response_from_confirm_result(result, "order already confirmed")
 
-    async with httpx.AsyncClient(timeout=10) as client:
+    if payload.proof_url:
         try:
-            resp = await client.get(f"{settings.pay_base_url}/api/order/{payload.order_no}")
-            data = resp.json()
-        except Exception as e:
-            logger.error("Failed to verify order %s: %s", payload.order_no, e)
-            raise HTTPException(status.HTTP_502_BAD_GATEWAY, "unable to verify payment status")
+            callback_params = verify_epay_callback_params(
+                extract_epay_params_from_proof_url(payload.proof_url),
+                require_success=True,
+            )
+        except EpayVerificationError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, exc.detail) from exc
 
-    if str(data.get("status")) != "1":
-        raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, "payment not completed")
+        if callback_params["out_trade_no"] != payload.order_no:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "payment proof does not match this order")
 
-    money = data.get("money", order.amount_rmb)
-    add_cents = rmb_to_cents(money)
-    trade_no = data.get("trade_no", "")
+        try:
+            result = await confirm_paid_order(
+                order_no=payload.order_no,
+                money=callback_params["money"],
+                trade_no=callback_params["trade_no"],
+                db=db,
+            )
+        except PaymentConfirmError as exc:
+            raise _translate_confirm_error(exc) from exc
 
-    user = (
-        await db.execute(select(User).where(User.id == user_id).with_for_update())
-    ).scalar_one()
-    user.balance += add_cents
-
-    order.status = "confirmed"
-    order.add_balance_cents = add_cents
-    order.trade_no = trade_no
-    order.confirmed_at = datetime.utcnow()
-
-    await process_referral_reward(user, add_cents, payload.order_no, db)
+        message = "order already confirmed" if result.get("already_confirmed") else "recharge success"
+        return _response_from_confirm_result(result, message)
 
     try:
-        await db.commit()
-    except IntegrityError:
-        await db.rollback()
-        logger.warning("Concurrent confirm caught by DB for order %s", payload.order_no)
-        return OrderConfirmResponse(
-            success=True,
-            order_no=payload.order_no,
-            amount_rmb=money,
-            added_cents=add_cents,
-            new_balance=user.balance,
-            new_balance_usd=user.balance / 100,
-            message="order already confirmed (concurrent)",
-        )
-
-    logger.info(
-        "Payment confirmed: order=%s user=%s rmb=%s +%dcents balance=%d",
-        payload.order_no, user_id, money, add_cents, user.balance,
-    )
-
-    return OrderConfirmResponse(
-        success=True,
-        order_no=payload.order_no,
-        amount_rmb=money,
-        added_cents=add_cents,
-        new_balance=user.balance,
-        new_balance_usd=user.balance / 100,
-        message="recharge success",
-    )
+        result = await _confirm_with_query_fallback(payload.order_no, db)
+    except HTTPException:
+        raise
+    message = "order already confirmed" if result.get("already_confirmed") else "recharge success"
+    return _response_from_confirm_result(result, message)

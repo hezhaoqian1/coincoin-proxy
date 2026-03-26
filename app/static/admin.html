@@ -1803,7 +1803,7 @@
     }
 
     async function forceConfirmOrder(orderNo) {
-      if (!confirm(`Force confirm order ${orderNo}? This will verify with payment service and credit balance.`)) return;
+      if (!confirm(`Verify order ${orderNo} with payment service first? If the provider query API is down, you can paste the success return URL in the next step.`)) return;
       try {
         const r = await fetch(`/admin/payment-orders/${orderNo}/force-confirm`, { method: 'POST', headers: adminHeaders() });
         const d = await r.json();
@@ -1811,7 +1811,29 @@
           toast(d.status === 'already_confirmed' ? 'Already confirmed' : 'Order confirmed & balance credited', 'success');
           loadPaymentOrders();
         } else {
-          toast(d.detail || 'Failed to confirm', 'error');
+          const needsManualProof = r.status === 502 || (d.detail || '').includes('payment verification failed');
+          if (!needsManualProof) {
+            toast(d.detail || 'Failed to confirm', 'error');
+            return;
+          }
+
+          const proofUrl = prompt(
+            `Provider auto-verify failed for ${orderNo}.\nPaste the payment success return URL from bird-alipay to manually confirm this order:`
+          );
+          if (!proofUrl || !proofUrl.trim()) return;
+
+          const mr = await fetch(`/admin/payment-orders/${orderNo}/manual-confirm`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+            body: JSON.stringify({ proof_url: proofUrl.trim() }),
+          });
+          const md = await mr.json();
+          if (mr.ok) {
+            toast('Order manually confirmed & balance credited', 'success');
+            loadPaymentOrders();
+          } else {
+            toast(md.detail || 'Manual confirmation failed', 'error');
+          }
         }
       } catch (e) { toast('Failed', 'error'); }
     }

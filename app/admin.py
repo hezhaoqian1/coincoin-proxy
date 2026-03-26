@@ -9,9 +9,11 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .db import get_db
+from .epay import EpayVerificationError, extract_epay_params_from_proof_url, verify_epay_callback_params
 from .models import Announcement, ApiKey, PaymentOrder, RechargeLog, RedemptionCode, ReferralReward, RequestLog, UsageDaily, User
+from .payment_common import PaymentConfirmError, confirm_paid_order
 from .schemas import (
-    AdminKeyUpdate, AdminUserUpdate,
+    AdminKeyUpdate, AdminPaymentManualConfirmRequest, AdminUserUpdate,
     AnnouncementCreate, AnnouncementUpdate,
     RedemptionGenerateRequest, RedemptionGenerateResponse,
 )
@@ -533,7 +535,7 @@ async def list_payment_orders(
 @router.post("/payment-orders/{order_no}/force-confirm", dependencies=[Depends(admin_guard)])
 async def force_confirm_order(order_no: str, db: AsyncSession = Depends(get_db)):
     """Admin 手动补单：查询支付服务验证后强制入账。"""
-    from .webhook import _do_confirm_order
+    from .payment import _confirm_with_query_fallback
 
     order = (
         await db.execute(select(PaymentOrder).where(PaymentOrder.order_no == order_no))
@@ -543,10 +545,72 @@ async def force_confirm_order(order_no: str, db: AsyncSession = Depends(get_db))
     if order.status == "confirmed":
         return {"order_no": order_no, "status": "already_confirmed"}
 
-    ok = await _do_confirm_order(order_no, db)
-    if not ok:
-        raise HTTPException(status_code=502, detail="payment verification failed or not paid yet")
-    return {"order_no": order_no, "status": "confirmed"}
+    try:
+        result = await _confirm_with_query_fallback(order_no, db)
+    except HTTPException as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    return {
+        "order_no": order_no,
+        "status": "already_confirmed" if result.get("already_confirmed") else "confirmed",
+        "trade_no": result["order"].trade_no,
+        "added_cents": result["added_cents"],
+        "new_balance": result["user"].balance,
+        "new_balance_usd": result["user"].balance / 100,
+    }
+
+
+@router.post("/payment-orders/{order_no}/manual-confirm", dependencies=[Depends(admin_guard)])
+async def manual_confirm_order(
+    order_no: str,
+    payload: AdminPaymentManualConfirmRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Admin 手工补单：当支付服务不给查单接口或没有回调到 CoinCoin 时，
+    允许管理员基于支付成功回跳 URL 手工确认 pending 订单。
+    """
+    order = (
+        await db.execute(
+            select(PaymentOrder)
+            .where(PaymentOrder.order_no == order_no)
+        )
+    ).scalar_one_or_none()
+    if not order:
+        raise HTTPException(status_code=404, detail="order not found")
+    if order.status == "confirmed":
+        return {"order_no": order_no, "status": "already_confirmed"}
+
+    try:
+        callback = verify_epay_callback_params(
+            extract_epay_params_from_proof_url(payload.proof_url),
+            require_success=True,
+        )
+    except EpayVerificationError as exc:
+        raise HTTPException(status_code=400, detail=exc.detail) from exc
+
+    if callback["out_trade_no"] != order_no:
+        raise HTTPException(status_code=400, detail="payment proof does not match this order")
+
+    try:
+        result = await confirm_paid_order(
+            order_no=order_no,
+            money=callback["money"],
+            trade_no=callback["trade_no"],
+            db=db,
+        )
+    except PaymentConfirmError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+    user = result["user"]
+
+    return {
+        "order_no": order_no,
+        "status": "already_confirmed" if result.get("already_confirmed") else "confirmed",
+        "trade_no": callback["trade_no"],
+        "added_cents": result["added_cents"],
+        "new_balance": user.balance,
+        "new_balance_usd": user.balance / 100,
+    }
 
 
 # ============== Referral Rewards ==============
