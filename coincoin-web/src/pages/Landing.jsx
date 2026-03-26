@@ -5,6 +5,7 @@ import './Landing.css'
 
 export default function Landing() {
     const { isLoggedIn } = useAuth()
+    const startTarget = isLoggedIn ? '/dashboard' : '/register'
     const purchaseTarget = isLoggedIn ? '/recharge' : '/register'
 
     return (
@@ -30,8 +31,8 @@ export default function Landing() {
                         OpenAI 兼容入口 · 公开模型目录 · 按量计费 · 先登录控制台，再生成开发者 Key 接入 GPT 与 Gemini
                     </p>
                     <div className="hero-actions animate-fade-in-up" style={{ animationDelay: '200ms' }}>
-                        <Link to="/register" className="btn btn-primary btn-lg">
-                            免费开始使用
+                        <Link to={startTarget} className="btn btn-primary btn-lg">
+                            {isLoggedIn ? '进入控制台' : '免费开始使用'}
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 12h14M12 5l7 7-7 7" /></svg>
                         </Link>
                         <Link to="/docs" className="btn btn-secondary btn-lg">
@@ -210,9 +211,9 @@ export default function Landing() {
             <section className="section cta-section">
                 <div className="container cta-content">
                     <h2 className="cta-title">准备好开始了吗？</h2>
-                    <p className="cta-desc">注册即送测试额度，3 分钟完成接入</p>
-                    <Link to="/register" className="btn btn-primary btn-lg">
-                        免费创建账号
+                    <p className="cta-desc">{isLoggedIn ? '直接进入控制台，继续充值、配置和接入' : '注册即送测试额度，3 分钟完成接入'}</p>
+                    <Link to={startTarget} className="btn btn-primary btn-lg">
+                        {isLoggedIn ? '进入控制台' : '免费创建账号'}
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 12h14M12 5l7 7-7 7" /></svg>
                     </Link>
                 </div>
