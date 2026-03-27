@@ -10,6 +10,10 @@ class ModelCatalogTests(unittest.TestCase):
         self._originals = {
             "fixed_model": settings.fixed_model,
             "embedding_model": settings.embedding_model,
+            "embedding_upstream_url": settings.embedding_upstream_url,
+            "embedding_api_key": settings.embedding_api_key,
+            "embedding_auth_style": settings.embedding_auth_style,
+            "embedding_price_input": settings.embedding_price_input,
             "router_enabled": settings.router_enabled,
             "upstream_base_url": settings.upstream_base_url,
             "upstream_api_key": settings.upstream_api_key,
@@ -34,6 +38,10 @@ class ModelCatalogTests(unittest.TestCase):
 
         settings.fixed_model = "gpt-5.4"
         settings.embedding_model = "text-embedding-3-small"
+        settings.embedding_upstream_url = ""
+        settings.embedding_api_key = ""
+        settings.embedding_auth_style = ""
+        settings.embedding_price_input = 99
         settings.router_enabled = True
         settings.upstream_base_url = "https://legacy.example/v1"
         settings.upstream_api_key = "legacy-key"
@@ -92,8 +100,8 @@ class ModelCatalogTests(unittest.TestCase):
                         "routing_mode": "direct",
                         "delivery_lane": "upstream_direct",
                         "upstream_model": "text-embedding-3-small",
-                        "upstream_url": "https://legacy.example/v1",
-                        "api_key": "legacy-key",
+                        "upstream_url": "https://fallback.example/v1",
+                        "api_key": "fallback-key",
                         "auth_style": "azure",
                         "price_input_per_million": 99,
                         "price_output_per_million": 0,
@@ -210,7 +218,7 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertEqual(resolved.public_model.public_id, "text-embedding-3-small")
         self.assertEqual(resolved.public_model.delivery_lane, "upstream_direct")
         self.assertEqual(resolved.backend.model_id, "text-embedding-3-small")
-        self.assertEqual(resolved.backend.upstream_url, "https://legacy.example/v1")
+        self.assertEqual(resolved.backend.upstream_url, "https://fallback.example/v1")
         self.assertEqual(resolved.backend.auth_style, "azure")
         self.assertEqual(resolved.route_reason, "catalog:text-embedding-3-small:upstream_direct")
 
@@ -219,7 +227,7 @@ class ModelCatalogTests(unittest.TestCase):
 
         self.assertEqual(resolved.public_model.public_id, "text-embedding-3-small")
         self.assertEqual(resolved.backend.model_id, "text-embedding-3-small")
-        self.assertEqual(resolved.backend.upstream_url, "https://legacy.example/v1")
+        self.assertEqual(resolved.backend.upstream_url, "https://fallback.example/v1")
         self.assertEqual(resolved.backend.auth_style, "azure")
         self.assertEqual(resolved.route_reason, "catalog:text-embedding-3-small:upstream_direct")
 

@@ -125,8 +125,14 @@ class GatewayCatalogSyncTests(unittest.TestCase):
                 self.assertEqual(capabilities, EMBEDDING_CAPABILITIES)
                 self.assertEqual(model.get("provider_name"), "OpenAI")
                 self.assertEqual(model.get("upstream_model"), model.get("provider_model"))
-                self.assertEqual(model.get("upstream_url"), "${COINCOIN_UPSTREAM_BASE_URL}")
-                self.assertEqual(model.get("api_key"), "${COINCOIN_UPSTREAM_API_KEY}")
+                self.assertEqual(
+                    model.get("upstream_url"),
+                    "${COINCOIN_EMBEDDING_UPSTREAM_URL:-${COINCOIN_FALLBACK_UPSTREAM_URL:-${COINCOIN_UPSTREAM_BASE_URL}}}",
+                )
+                self.assertEqual(
+                    model.get("api_key"),
+                    "${COINCOIN_EMBEDDING_API_KEY:-${COINCOIN_FALLBACK_API_KEY:-${COINCOIN_UPSTREAM_API_KEY}}}",
+                )
 
 
 if __name__ == "__main__":
