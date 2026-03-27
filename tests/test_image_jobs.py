@@ -143,13 +143,14 @@ class ImageJobsTests(unittest.IsolatedAsyncioTestCase):
         settings.model_catalog_json = json.dumps(
             {
                 "default_text_model": "gpt-5.4",
+                "default_embedding_model": "text-embedding-3-small",
                 "default_image_model": "gemini-image",
                 "models": [
                     {
                         "id": "gpt-5.4",
                         "owned_by": "openai",
                         "provider_name": "OpenAI",
-                        "capabilities": ["chat/completions", "responses", "embeddings"],
+                        "capabilities": ["chat/completions", "responses"],
                         "routing_mode": "legacy_auto",
                         "delivery_lane": "legacy",
                     },

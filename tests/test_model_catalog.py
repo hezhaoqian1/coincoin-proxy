@@ -9,6 +9,7 @@ class ModelCatalogTests(unittest.TestCase):
     def setUp(self) -> None:
         self._originals = {
             "fixed_model": settings.fixed_model,
+            "embedding_model": settings.embedding_model,
             "router_enabled": settings.router_enabled,
             "upstream_base_url": settings.upstream_base_url,
             "upstream_api_key": settings.upstream_api_key,
@@ -32,6 +33,7 @@ class ModelCatalogTests(unittest.TestCase):
         }
 
         settings.fixed_model = "gpt-5.4"
+        settings.embedding_model = "text-embedding-3-small"
         settings.router_enabled = True
         settings.upstream_base_url = "https://legacy.example/v1"
         settings.upstream_api_key = "legacy-key"
@@ -54,13 +56,14 @@ class ModelCatalogTests(unittest.TestCase):
         settings.model_catalog_json = json.dumps(
             {
                 "default_text_model": "gpt-5.4",
+                "default_embedding_model": "text-embedding-3-small",
                 "default_image_model": "gemini-image",
                 "models": [
                     {
                         "id": "gpt-5.4",
                         "owned_by": "openai",
                         "provider_name": "OpenAI",
-                        "capabilities": ["chat/completions", "responses", "embeddings"],
+                        "capabilities": ["chat/completions", "responses"],
                         "routing_mode": "legacy_auto",
                         "delivery_lane": "legacy",
                     },
@@ -68,7 +71,7 @@ class ModelCatalogTests(unittest.TestCase):
                         "id": "gpt-5.2",
                         "owned_by": "openai",
                         "provider_name": "OpenAI",
-                        "capabilities": ["chat/completions", "responses", "embeddings"],
+                        "capabilities": ["chat/completions", "responses"],
                         "routing_mode": "legacy_auto",
                         "delivery_lane": "legacy",
                     },
@@ -76,9 +79,25 @@ class ModelCatalogTests(unittest.TestCase):
                         "id": "gpt-5.2-codex",
                         "owned_by": "openai",
                         "provider_name": "OpenAI",
-                        "capabilities": ["chat/completions", "responses", "embeddings"],
+                        "capabilities": ["chat/completions", "responses"],
                         "routing_mode": "legacy_auto",
                         "delivery_lane": "legacy",
+                    },
+                    {
+                        "id": "text-embedding-3-small",
+                        "owned_by": "openai",
+                        "provider_name": "OpenAI",
+                        "provider_model": "text-embedding-3-small",
+                        "capabilities": ["embeddings"],
+                        "routing_mode": "direct",
+                        "delivery_lane": "upstream_direct",
+                        "upstream_model": "text-embedding-3-small",
+                        "upstream_url": "https://legacy.example/v1",
+                        "api_key": "legacy-key",
+                        "auth_style": "azure",
+                        "price_input_per_million": 99,
+                        "price_output_per_million": 0,
+                        "billable_sku": "azure-text-embedding-3-small",
                     },
                     {
                         "id": "gemini-fast",
@@ -185,9 +204,32 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertEqual(resolved.backend.upstream_url, "https://gateway.example/v1")
         self.assertEqual(resolved.route_reason, "catalog:gemini-image:gateway")
 
+    def test_default_embedding_model_uses_dedicated_azure_lane(self) -> None:
+        resolved = registry.resolve_public_model(None, "embeddings")
+
+        self.assertEqual(resolved.public_model.public_id, "text-embedding-3-small")
+        self.assertEqual(resolved.public_model.delivery_lane, "upstream_direct")
+        self.assertEqual(resolved.backend.model_id, "text-embedding-3-small")
+        self.assertEqual(resolved.backend.upstream_url, "https://legacy.example/v1")
+        self.assertEqual(resolved.backend.auth_style, "azure")
+        self.assertEqual(resolved.route_reason, "catalog:text-embedding-3-small:upstream_direct")
+
+    def test_explicit_embedding_model_uses_dedicated_azure_lane(self) -> None:
+        resolved = registry.resolve_public_model("text-embedding-3-small", "embeddings")
+
+        self.assertEqual(resolved.public_model.public_id, "text-embedding-3-small")
+        self.assertEqual(resolved.backend.model_id, "text-embedding-3-small")
+        self.assertEqual(resolved.backend.upstream_url, "https://legacy.example/v1")
+        self.assertEqual(resolved.backend.auth_style, "azure")
+        self.assertEqual(resolved.route_reason, "catalog:text-embedding-3-small:upstream_direct")
+
     def test_image_model_rejects_chat_endpoint(self) -> None:
         with self.assertRaises(ModelCapabilityError):
             registry.resolve_public_model("gemini-image", "chat/completions")
+
+    def test_legacy_text_model_rejects_embeddings_endpoint(self) -> None:
+        with self.assertRaises(ModelCapabilityError):
+            registry.resolve_public_model("gpt-5.2-codex", "embeddings")
 
 
 if __name__ == "__main__":

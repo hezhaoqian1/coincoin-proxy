@@ -1,12 +1,13 @@
 {
   "default_text_model": "${COINCOIN_FIXED_MODEL}",
+  "default_embedding_model": "${COINCOIN_EMBEDDING_MODEL:-text-embedding-3-small}",
   "default_image_model": "gemini-image",
   "models": [
     {
       "id": "${COINCOIN_FIXED_MODEL}",
       "owned_by": "openai",
       "provider_name": "OpenAI",
-      "capabilities": ["chat/completions", "responses", "embeddings"],
+      "capabilities": ["chat/completions", "responses"],
       "routing_mode": "legacy_auto",
       "delivery_lane": "legacy",
       "billable_sku": "legacy-default-text"
@@ -15,7 +16,7 @@
       "id": "gpt-5.2",
       "owned_by": "openai",
       "provider_name": "OpenAI",
-      "capabilities": ["chat/completions", "responses", "embeddings"],
+      "capabilities": ["chat/completions", "responses"],
       "routing_mode": "legacy_auto",
       "delivery_lane": "legacy",
       "billable_sku": "legacy-gpt-5.2-text"
@@ -24,10 +25,29 @@
       "id": "gpt-5.2-codex",
       "owned_by": "openai",
       "provider_name": "OpenAI",
-      "capabilities": ["chat/completions", "responses", "embeddings"],
+      "capabilities": ["chat/completions", "responses"],
       "routing_mode": "legacy_auto",
       "delivery_lane": "legacy",
       "billable_sku": "legacy-gpt-5.2-codex-text"
+    },
+    {
+      "id": "${COINCOIN_EMBEDDING_MODEL:-text-embedding-3-small}",
+      "owned_by": "openai",
+      "provider_name": "OpenAI",
+      "provider_model": "${COINCOIN_EMBEDDING_MODEL:-text-embedding-3-small}",
+      "capabilities": ["embeddings"],
+      "routing_mode": "direct",
+      "delivery_lane": "upstream_direct",
+      "upstream_model": "${COINCOIN_EMBEDDING_MODEL:-text-embedding-3-small}",
+      "upstream_url": "${COINCOIN_UPSTREAM_BASE_URL}",
+      "api_key": "${COINCOIN_UPSTREAM_API_KEY}",
+      "auth_style": "${COINCOIN_PRIMARY_AUTH_STYLE:-azure}",
+      "price_input_per_million": "${COINCOIN_EMBEDDING_PRICE_INPUT_PER_MILLION:-99}",
+      "price_output_per_million": 0,
+      "billable_sku": "azure-text-embedding-3-small",
+      "metadata": {
+        "tier": "stable"
+      }
     },
     {
       "id": "gemini-balanced",

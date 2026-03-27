@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     upstream_base_url: str = "https://hc-instance-eastus2.cognitiveservices.azure.com/openai/v1"
     upstream_api_key: str = ""
     fixed_model: str = "gpt-5.2-codex"
+    embedding_model: str = "text-embedding-3-small"
     model_catalog_path: str = "config/model_catalog.json"
     model_catalog_json: str = ""
 

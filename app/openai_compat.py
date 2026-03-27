@@ -59,6 +59,8 @@ def _serialize_public_model(public_model) -> Dict[str, Any]:
     default_for = []
     if public_model.public_id == model_registry.default_text_model_id:
         default_for.append("text")
+    if public_model.public_id == getattr(model_registry, "default_embedding_model_id", ""):
+        default_for.append("embedding")
     if public_model.public_id == model_registry.default_image_model_id:
         default_for.append("image")
     return {

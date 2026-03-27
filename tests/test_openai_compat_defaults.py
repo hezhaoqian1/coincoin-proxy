@@ -89,6 +89,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self._originals = {
             "fixed_model": settings.fixed_model,
+            "embedding_model": settings.embedding_model,
             "router_enabled": settings.router_enabled,
             "upstream_base_url": settings.upstream_base_url,
             "upstream_api_key": settings.upstream_api_key,
@@ -116,6 +117,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         }
 
         settings.fixed_model = "gpt-5.4"
+        settings.embedding_model = "text-embedding-3-small"
         settings.router_enabled = True
         settings.upstream_base_url = "https://legacy.example/v1"
         settings.upstream_api_key = "legacy-key"
@@ -142,13 +144,14 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         settings.model_catalog_json = json.dumps(
             {
                 "default_text_model": "gpt-5.4",
+                "default_embedding_model": "text-embedding-3-small",
                 "default_image_model": "gemini-image",
                 "models": [
                     {
                         "id": "gpt-5.4",
                         "owned_by": "openai",
                         "provider_name": "OpenAI",
-                        "capabilities": ["chat/completions", "responses", "embeddings"],
+                        "capabilities": ["chat/completions", "responses"],
                         "routing_mode": "legacy_auto",
                         "delivery_lane": "legacy",
                     },
@@ -156,7 +159,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                         "id": "gpt-5.2",
                         "owned_by": "openai",
                         "provider_name": "OpenAI",
-                        "capabilities": ["chat/completions", "responses", "embeddings"],
+                        "capabilities": ["chat/completions", "responses"],
                         "routing_mode": "legacy_auto",
                         "delivery_lane": "legacy",
                     },
@@ -164,9 +167,25 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                         "id": "gpt-5.2-codex",
                         "owned_by": "openai",
                         "provider_name": "OpenAI",
-                        "capabilities": ["chat/completions", "responses", "embeddings"],
+                        "capabilities": ["chat/completions", "responses"],
                         "routing_mode": "legacy_auto",
                         "delivery_lane": "legacy",
+                    },
+                    {
+                        "id": "text-embedding-3-small",
+                        "owned_by": "openai",
+                        "provider_name": "OpenAI",
+                        "provider_model": "text-embedding-3-small",
+                        "capabilities": ["embeddings"],
+                        "routing_mode": "direct",
+                        "delivery_lane": "upstream_direct",
+                        "upstream_model": "text-embedding-3-small",
+                        "upstream_url": "https://legacy.example/v1",
+                        "api_key": "legacy-key",
+                        "auth_style": "azure",
+                        "price_input_per_million": 99,
+                        "price_output_per_million": 0,
+                        "billable_sku": "azure-text-embedding-3-small",
                     },
                     {
                         "id": "gemini-fast",
@@ -1071,6 +1090,83 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(upstream_client.calls[0]["url"], "https://gateway.example/v1/responses")
         self.assertEqual(upstream_client.calls[0]["json"]["model"], "gemini-fast")
 
+    async def test_embeddings_endpoint_uses_dedicated_azure_embedding_model(self) -> None:
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "object": "list",
+                        "data": [
+                            {
+                                "object": "embedding",
+                                "index": 0,
+                                "embedding": [0.1, 0.2, 0.3],
+                            }
+                        ],
+                        "model": "text-embedding-3-small",
+                        "usage": {"prompt_tokens": 8, "total_tokens": 8},
+                    }
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(openai_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                openai_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ):
+                response = await client.post(
+                    "/v1/embeddings",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"model": "text-embedding-3-small", "input": "hello"},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["model"], "text-embedding-3-small")
+        self.assertEqual(len(upstream_client.calls), 1)
+        self.assertEqual(upstream_client.calls[0]["url"], "https://legacy.example/v1/embeddings")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "text-embedding-3-small")
+        self.assertEqual(upstream_client.calls[0]["headers"]["api-key"], "legacy-key")
+
+    async def test_embeddings_endpoint_defaults_to_dedicated_embedding_model(self) -> None:
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "object": "list",
+                        "data": [
+                            {
+                                "object": "embedding",
+                                "index": 0,
+                                "embedding": [0.1, 0.2, 0.3],
+                            }
+                        ],
+                        "model": "text-embedding-3-small",
+                        "usage": {"prompt_tokens": 4, "total_tokens": 4},
+                    }
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(openai_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                openai_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ):
+                response = await client.post(
+                    "/v1/embeddings",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"input": "hello"},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "text-embedding-3-small")
+
     async def test_models_endpoint_returns_curated_metadata(self) -> None:
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
@@ -1081,21 +1177,27 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["object"], "list")
         self.assertEqual(
             [item["id"] for item in payload["data"]],
-            ["gpt-5.4", "gpt-5.2", "gpt-5.2-codex", "gemini-fast", "gemini-image"],
+            ["gpt-5.4", "gpt-5.2", "gpt-5.2-codex", "text-embedding-3-small", "gemini-fast", "gemini-image"],
         )
         self.assertEqual(payload["data"][0]["coincoin_provider"], "OpenAI")
         self.assertEqual(payload["data"][0]["coincoin_billable_sku"], "gpt-5.4")
         self.assertEqual(payload["data"][0]["coincoin_default_for"], ["text"])
         self.assertEqual(payload["data"][2]["coincoin_provider"], "OpenAI")
         self.assertEqual(payload["data"][2]["coincoin_billable_sku"], "gpt-5.2-codex")
-        self.assertEqual(payload["data"][3]["coincoin_provider"], "Google")
-        self.assertEqual(payload["data"][3]["coincoin_provider_model"], "gemini-2.5-flash")
-        self.assertEqual(payload["data"][3]["coincoin_capabilities"], ["chat/completions", "responses"])
-        self.assertEqual(payload["data"][3]["coincoin_billable_sku"], "gemini-fast")
-        self.assertEqual(payload["data"][3]["coincoin_delivery_lane"], "gateway")
-        self.assertEqual(payload["data"][4]["coincoin_capabilities"], ["images/generations", "images/edits"])
-        self.assertEqual(payload["data"][4]["coincoin_default_for"], ["image"])
+        self.assertEqual(payload["data"][3]["coincoin_provider"], "OpenAI")
+        self.assertEqual(payload["data"][3]["coincoin_provider_model"], "text-embedding-3-small")
+        self.assertEqual(payload["data"][3]["coincoin_capabilities"], ["embeddings"])
+        self.assertEqual(payload["data"][3]["coincoin_billable_sku"], "azure-text-embedding-3-small")
+        self.assertEqual(payload["data"][3]["coincoin_default_for"], ["embedding"])
+        self.assertEqual(payload["data"][3]["coincoin_delivery_lane"], "upstream_direct")
+        self.assertEqual(payload["data"][4]["coincoin_provider"], "Google")
+        self.assertEqual(payload["data"][4]["coincoin_provider_model"], "gemini-2.5-flash")
+        self.assertEqual(payload["data"][4]["coincoin_capabilities"], ["chat/completions", "responses"])
+        self.assertEqual(payload["data"][4]["coincoin_billable_sku"], "gemini-fast")
         self.assertEqual(payload["data"][4]["coincoin_delivery_lane"], "gateway")
+        self.assertEqual(payload["data"][5]["coincoin_capabilities"], ["images/generations", "images/edits"])
+        self.assertEqual(payload["data"][5]["coincoin_default_for"], ["image"])
+        self.assertEqual(payload["data"][5]["coincoin_delivery_lane"], "gateway")
 
     async def test_model_detail_endpoint_returns_curated_metadata(self) -> None:
         transport = httpx.ASGITransport(app=app)
