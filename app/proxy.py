@@ -19,7 +19,7 @@ from sqlalchemy.orm import selectinload
 
 from .config import settings
 from .db import get_db
-from .models import ApiKey, UsageDaily
+from .models import ApiKey, UsageDaily, User
 from .rate_limiter import rate_limiter
 from .security import extract_api_key, hash_key
 from .router import (
@@ -713,7 +713,15 @@ async def _resolve_user(request: Request, db: AsyncSession):
     key_hash = hash_key(client_key)
     cached = await key_cache.get(key_hash)
     if cached:
-        user = SimpleNamespace(**cached)
+        try:
+            result = await db.execute(select(User).where(User.id == cached["id"]))
+            user = result.scalar_one_or_none()
+        except Exception:
+            logger.exception("db lookup failed")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="internal error")
+        if not user:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid api key")
+        key_kind = str(cached.get(_KEY_KIND_ATTR) or "api")
     else:
         try:
             result = await db.execute(
@@ -737,15 +745,10 @@ async def _resolve_user(request: Request, db: AsyncSession):
             key_hash,
             {
                 "id": user.id,
-                "status": user.status,
-                "balance": user.balance,
-                "token_limit": user.token_limit,
-                "token_used": user.token_used,
-                "request_limit_per_minute": user.request_limit_per_minute,
-                "request_limit_per_day": user.request_limit_per_day,
                 _KEY_KIND_ATTR: key_kind,
             },
         )
+    setattr(user, _KEY_KIND_ATTR, key_kind)
     if user.status != "active":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="user blocked")
     return user
