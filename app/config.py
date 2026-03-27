@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     upstream_api_key: str = ""
     fixed_model: str = "gpt-5.2-codex"
     embedding_model: str = "text-embedding-3-small"
+    embedding_upstream_url: str = ""
+    embedding_api_key: str = ""
+    embedding_auth_style: str = ""
+    embedding_price_input: int = 99
     model_catalog_path: str = "config/model_catalog.json"
     model_catalog_json: str = ""
 

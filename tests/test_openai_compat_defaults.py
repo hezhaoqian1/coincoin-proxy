@@ -90,6 +90,10 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self._originals = {
             "fixed_model": settings.fixed_model,
             "embedding_model": settings.embedding_model,
+            "embedding_upstream_url": settings.embedding_upstream_url,
+            "embedding_api_key": settings.embedding_api_key,
+            "embedding_auth_style": settings.embedding_auth_style,
+            "embedding_price_input": settings.embedding_price_input,
             "router_enabled": settings.router_enabled,
             "upstream_base_url": settings.upstream_base_url,
             "upstream_api_key": settings.upstream_api_key,
@@ -118,6 +122,10 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
 
         settings.fixed_model = "gpt-5.4"
         settings.embedding_model = "text-embedding-3-small"
+        settings.embedding_upstream_url = ""
+        settings.embedding_api_key = ""
+        settings.embedding_auth_style = ""
+        settings.embedding_price_input = 99
         settings.router_enabled = True
         settings.upstream_base_url = "https://legacy.example/v1"
         settings.upstream_api_key = "legacy-key"
@@ -180,8 +188,8 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                         "routing_mode": "direct",
                         "delivery_lane": "upstream_direct",
                         "upstream_model": "text-embedding-3-small",
-                        "upstream_url": "https://legacy.example/v1",
-                        "api_key": "legacy-key",
+                        "upstream_url": "https://fallback.example/v1",
+                        "api_key": "fallback-key",
                         "auth_style": "azure",
                         "price_input_per_million": 99,
                         "price_output_per_million": 0,
@@ -1127,9 +1135,9 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         payload = response.json()
         self.assertEqual(payload["model"], "text-embedding-3-small")
         self.assertEqual(len(upstream_client.calls), 1)
-        self.assertEqual(upstream_client.calls[0]["url"], "https://legacy.example/v1/embeddings")
+        self.assertEqual(upstream_client.calls[0]["url"], "https://fallback.example/v1/embeddings")
         self.assertEqual(upstream_client.calls[0]["json"]["model"], "text-embedding-3-small")
-        self.assertEqual(upstream_client.calls[0]["headers"]["api-key"], "legacy-key")
+        self.assertEqual(upstream_client.calls[0]["headers"]["api-key"], "fallback-key")
 
     async def test_embeddings_endpoint_defaults_to_dedicated_embedding_model(self) -> None:
         upstream_client = _RecordingClient(

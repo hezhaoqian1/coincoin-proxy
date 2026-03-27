@@ -151,6 +151,26 @@ class ModelRegistry:
         primary_strip = bool(
             getattr(settings, "primary_strip_unsupported", False)
         ) or _is_codex_like(settings.fixed_model)
+        embedding_upstream_url = (
+            getattr(settings, "embedding_upstream_url", "") or
+            getattr(settings, "fallback_upstream_url", "") or
+            settings.upstream_base_url
+        )
+        embedding_api_key = (
+            getattr(settings, "embedding_api_key", "") or
+            getattr(settings, "fallback_api_key", "") or
+            settings.upstream_api_key
+        )
+        embedding_auth_style = (
+            getattr(settings, "embedding_auth_style", "") or
+            getattr(settings, "fallback_auth_style", "") or
+            settings.primary_auth_style
+        )
+        embedding_price_input = int(
+            getattr(settings, "embedding_price_input", 0) or
+            getattr(settings, "fallback_price_input", 0) or
+            settings.price_input_per_million
+        )
 
         premium = ModelConfig(
             model_id=settings.fixed_model,
@@ -165,12 +185,12 @@ class ModelRegistry:
 
         self.models[EMBEDDING] = ModelConfig(
             model_id=getattr(settings, "embedding_model", "text-embedding-3-small"),
-            upstream_url=settings.upstream_base_url,
-            api_key=settings.upstream_api_key,
-            price_input_per_million=settings.price_input_per_million,
+            upstream_url=embedding_upstream_url,
+            api_key=embedding_api_key,
+            price_input_per_million=embedding_price_input,
             price_output_per_million=0,
             strip_unsupported=False,
-            auth_style=settings.primary_auth_style,
+            auth_style=embedding_auth_style,
         )
 
         cheap_model = (getattr(settings, "cheap_model", "") or "").strip()
@@ -219,10 +239,26 @@ class ModelRegistry:
                     "routing_mode": "direct",
                     "delivery_lane": "upstream_direct",
                     "upstream_model": getattr(settings, "embedding_model", "text-embedding-3-small"),
-                    "upstream_url": settings.upstream_base_url,
-                    "api_key": settings.upstream_api_key,
-                    "auth_style": settings.primary_auth_style,
-                    "price_input_per_million": settings.price_input_per_million,
+                    "upstream_url": (
+                        getattr(settings, "embedding_upstream_url", "") or
+                        getattr(settings, "fallback_upstream_url", "") or
+                        settings.upstream_base_url
+                    ),
+                    "api_key": (
+                        getattr(settings, "embedding_api_key", "") or
+                        getattr(settings, "fallback_api_key", "") or
+                        settings.upstream_api_key
+                    ),
+                    "auth_style": (
+                        getattr(settings, "embedding_auth_style", "") or
+                        getattr(settings, "fallback_auth_style", "") or
+                        settings.primary_auth_style
+                    ),
+                    "price_input_per_million": int(
+                        getattr(settings, "embedding_price_input", 0) or
+                        getattr(settings, "fallback_price_input", 0) or
+                        settings.price_input_per_million
+                    ),
                     "price_output_per_million": 0,
                     "billable_sku": "azure-text-embedding-3-small",
                     "metadata": {"tier": "stable"},
@@ -421,13 +457,13 @@ class ModelRegistry:
         tools: Optional[list] = None,
     ) -> ResolvedModel:
         public_model = self._select_public_model(requested_model, endpoint)
+        if endpoint in EMBEDDING_ENDPOINTS:
+            return ResolvedModel(
+                public_model=public_model,
+                backend=self.get(EMBEDDING),
+                route_reason=f"catalog:{public_model.public_id}:{public_model.delivery_lane or 'upstream_direct'}",
+            )
         if public_model.routing_mode == "legacy_auto":
-            if endpoint in EMBEDDING_ENDPOINTS:
-                return ResolvedModel(
-                    public_model=public_model,
-                    backend=self.get(EMBEDDING),
-                    route_reason=f"catalog:{public_model.public_id}:azure_embedding",
-                )
             backend, route_reason = resolve(messages or [], tools)
             return ResolvedModel(
                 public_model=public_model,
