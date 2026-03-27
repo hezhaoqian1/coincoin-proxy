@@ -57,21 +57,6 @@ function ReadinessCard({ authMode, username, hasDeveloperKey }) {
                 { to: '/docs', label: '查看客户端示例', style: 'btn btn-secondary btn-sm' },
             ],
         },
-        demo: {
-            tone: 'muted',
-            eyebrow: '演示模式',
-            title: '你当前看到的是演示数据',
-            description: '可以先熟悉余额、日志、模型和充值入口。真正接入客户端时，请注册控制台账号并生成自己的开发者 API Key。',
-            checklist: [
-                '当前内容仅用于体验界面',
-                '不会分配真实开发者 API Key',
-                '注册正式账号后才能接入客户端',
-            ],
-            actions: [
-                { to: '/register', label: '创建正式账号', style: 'btn btn-primary btn-sm' },
-                { to: '/docs', label: '先看文档', style: 'btn btn-secondary btn-sm' },
-            ],
-        },
     }
     const content = contentMap[authMode] || contentMap.api
 
@@ -145,18 +130,7 @@ function KeyManagement({ copied, copy, username, generatedApiKey, authMode, effe
     return (
         <div id="developer-key" className="quick-actions glass-card key-management-card animate-fade-in-up" style={{ animationDelay: '200ms' }}>
             <h3>开发者 Key 管理</h3>
-            {authMode === 'demo' ? (
-                <div className="key-panel-copy">
-                    <p>
-                        Demo 模式不会分配真实的开发者 API Key。想要接入客户端，请先注册控制台账号，
-                        然后在仪表盘里生成你自己的开发者 Key。
-                    </p>
-                    <div className="action-links">
-                        <Link to="/register" className="btn btn-primary btn-sm">创建正式账号</Link>
-                        <Link to="/docs" className="btn btn-secondary btn-sm">查看接入步骤</Link>
-                    </div>
-                </div>
-            ) : !username ? (
+            {!username ? (
                 <div className="key-panel-copy">
                     <p>
                         当前会话是通过开发者 API Key 直接登录的。你可以复制并继续使用这个 Key，
@@ -240,7 +214,7 @@ function KeyManagement({ copied, copy, username, generatedApiKey, authMode, effe
 
 export default function Dashboard() {
     const { defaultTextModel, defaultImageModel } = usePublicModels()
-    const { authMode, effectiveApiKey, generatedApiKey, hasDeveloperKey, isDemo, username } = useAuth()
+    const { authMode, effectiveApiKey, generatedApiKey, hasDeveloperKey, username } = useAuth()
     const [balance, setBalance] = useState(null)
     const [usage, setUsage] = useState(null)
     const [dailyData, setDailyData] = useState(null)
@@ -263,25 +237,20 @@ export default function Dashboard() {
 
     useEffect(() => {
         async function load() {
-            if (isDemo) {
+            try {
+                const [b, u] = await Promise.all([getBalance(), getUsageLogs(20)])
+                setBalance(b)
+                setUsage(u)
+            } catch {
                 setBalance(MOCK_BALANCE)
                 setUsage(MOCK_USAGE)
-            } else {
-                try {
-                    const [b, u] = await Promise.all([getBalance(), getUsageLogs(20)])
-                    setBalance(b)
-                    setUsage(u)
-                } catch {
-                    setBalance(MOCK_BALANCE)
-                    setUsage(MOCK_USAGE)
-                }
-                try { setDailyData(await getDailyUsage(7)) } catch { /* ignore */ }
-                try { setAnnouncements(await getAnnouncements()) } catch { /* ignore */ }
-                try { setReferral(await getReferralInfo()) } catch { /* ignore */ }
             }
+            try { setDailyData(await getDailyUsage(7)) } catch { /* ignore */ }
+            try { setAnnouncements(await getAnnouncements()) } catch { /* ignore */ }
+            try { setReferral(await getReferralInfo()) } catch { /* ignore */ }
         }
         load()
-    }, [isDemo])
+    }, [])
 
     const copy = (text, label) => {
         navigator.clipboard.writeText(text)

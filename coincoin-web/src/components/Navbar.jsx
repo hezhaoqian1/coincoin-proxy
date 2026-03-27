@@ -19,9 +19,7 @@ export default function Navbar() {
     const isOverviewActive = ['/dashboard', '/usage'].includes(location.pathname)
     const accountLabel = authMode === 'api'
         ? 'API Key 会话'
-        : authMode === 'demo'
-            ? 'Demo'
-            : username || '控制台'
+        : username || '控制台'
 
     return (
         <nav className="navbar">
