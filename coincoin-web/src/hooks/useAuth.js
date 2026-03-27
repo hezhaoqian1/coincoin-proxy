@@ -12,9 +12,12 @@ import {
     setUsername as storeUsername,
 } from '../api/client'
 
+const LEGACY_DEMO_KEY = 'sk_cc_demo_key'
+
 export function useAuth() {
-    const [apiKey, setApiKeyState] = useState(getApiKey())
-    const [isLoggedIn, setIsLoggedIn] = useState(!!getApiKey())
+    const initialKey = getApiKey()
+    const [apiKey, setApiKeyState] = useState(initialKey === LEGACY_DEMO_KEY ? '' : initialKey)
+    const [isLoggedIn, setIsLoggedIn] = useState(!!initialKey && initialKey !== LEGACY_DEMO_KEY)
     const [username, setUsernameState] = useState(getUsername())
     const [generatedApiKey, setGeneratedApiKeyState] = useState(getGeneratedKey())
     const [loading, setLoading] = useState(false)
@@ -22,6 +25,16 @@ export function useAuth() {
     useEffect(() => {
         const sync = () => {
             const k = getApiKey()
+            if (k === LEGACY_DEMO_KEY) {
+                clearApiKey()
+                storeUsername('')
+                clearGeneratedKey()
+                setApiKeyState('')
+                setIsLoggedIn(false)
+                setUsernameState('')
+                setGeneratedApiKeyState('')
+                return
+            }
             setApiKeyState(k)
             setIsLoggedIn(!!k)
             setUsernameState(getUsername())
@@ -52,12 +65,6 @@ export function useAuth() {
             setGeneratedApiKeyState('')
             return { success: true, data: balance }
         } catch (err) {
-            if (key === 'sk_cc_demo_key') {
-                setApiKeyState(key)
-                setIsLoggedIn(true)
-                setUsernameState('')
-                return { success: true, data: {} }
-            }
             clearApiKey()
             setApiKeyState('')
             setIsLoggedIn(false)
@@ -98,27 +105,14 @@ export function useAuth() {
         }
     }, [])
 
-    const loginDemo = useCallback(() => {
-        storeApiKey('sk_cc_demo_key')
-        storeUsername('')
-        clearGeneratedKey()
-        setApiKeyState('sk_cc_demo_key')
-        setIsLoggedIn(true)
-        setUsernameState('')
-        setGeneratedApiKeyState('')
-    }, [])
-
-    const isDemo = apiKey === 'sk_cc_demo_key'
-    const isConsoleSession = !!username && !isDemo
-    const hasDeveloperKey = !!generatedApiKey || (!!apiKey && !isConsoleSession && !isDemo)
+    const isConsoleSession = !!username
+    const hasDeveloperKey = !!generatedApiKey || (!!apiKey && !isConsoleSession)
     const effectiveApiKey = generatedApiKey || (hasDeveloperKey ? apiKey : '')
-    const authMode = isDemo
-        ? 'demo'
-        : !apiKey
-            ? 'anonymous'
-            : isConsoleSession
-                ? (generatedApiKey ? 'session_with_api' : 'session_only')
-                : 'api'
+    const authMode = !apiKey
+        ? 'anonymous'
+        : isConsoleSession
+            ? (generatedApiKey ? 'session_with_api' : 'session_only')
+            : 'api'
 
     return {
         apiKey,
@@ -127,13 +121,11 @@ export function useAuth() {
         generatedApiKey,
         hasDeveloperKey,
         isConsoleSession,
-        isDemo,
         isLoggedIn,
         loading,
         login,
         loginWithPassword,
         logout,
-        loginDemo,
         username,
     }
 }

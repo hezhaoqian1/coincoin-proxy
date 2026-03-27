@@ -7,13 +7,8 @@ export default function Usage() {
     const [page, setPage] = useState(0)
     const [filters, setFilters] = useState({ endpoint: '', status_code: '', start_date: '', end_date: '' })
     const limit = 15
-    const isDemo = getApiKey() === 'sk_cc_demo_key'
 
     const load = useCallback(async () => {
-        if (isDemo) {
-            setUsage(MOCK_USAGE)
-            return
-        }
         try {
             const params = new URLSearchParams({ limit, offset: page * limit })
             if (filters.endpoint) params.set('endpoint', filters.endpoint)
@@ -29,7 +24,7 @@ export default function Usage() {
         } catch {
             setUsage(MOCK_USAGE)
         }
-    }, [page, filters, isDemo])
+    }, [page, filters])
 
     useEffect(() => { load() }, [load])
 

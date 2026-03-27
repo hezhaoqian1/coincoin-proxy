@@ -9,7 +9,7 @@ export default function Login() {
     const [password, setPassword] = useState('')
     const [key, setKey] = useState('')
     const [error, setError] = useState('')
-    const { login, loginWithPassword, loginDemo, loading } = useAuth()
+    const { login, loginWithPassword, loading } = useAuth()
     const navigate = useNavigate()
 
     const handlePasswordLogin = async (e) => {
@@ -35,11 +35,6 @@ export default function Login() {
         }
     }
 
-    const handleDemo = () => {
-        loginDemo()
-        navigate('/dashboard')
-    }
-
     const clearError = () => setError('')
 
     return (
@@ -51,8 +46,25 @@ export default function Login() {
             <div className="auth-card glass-card animate-fade-in-up">
                 <div className="auth-header">
                     <div className="logo-icon" style={{ width: 48, height: 48, fontSize: '1.1rem', borderRadius: 14 }}>CC</div>
-                    <h1>欢迎回来</h1>
-                    <p>默认应该先登录控制台；只有你已经拿到开发者 API Key 时，才建议用下面的直登入口</p>
+                    <h1>登录控制台</h1>
+                    <p>默认入口只有一个：先登录控制台账号。只有你已经拿到开发者 API Key 时，才需要用下面的直登入口。</p>
+                </div>
+
+                <div className="auth-flow-note">
+                    <div className="auth-flow-item auth-flow-item-primary">
+                        <span className="auth-flow-index">01</span>
+                        <div>
+                            <strong>登录控制台</strong>
+                            <p>查看余额、充值、请求日志和账户状态。</p>
+                        </div>
+                    </div>
+                    <div className="auth-flow-item">
+                        <span className="auth-flow-index">02</span>
+                        <div>
+                            <strong>生成开发者 API Key</strong>
+                            <p>真正给 Codex、OpenClaw、cURL 和服务端程序使用。</p>
+                        </div>
+                    </div>
                 </div>
 
                 <div className="auth-tabs">
@@ -63,7 +75,7 @@ export default function Login() {
                     <button
                         className={`auth-tab ${tab === 'key' ? 'active' : ''}`}
                         onClick={() => { setTab('key'); clearError() }}
-                    >开发者 Key 直登</button>
+                    >已有开发者 Key</button>
                 </div>
 
                 {tab === 'password' ? (
@@ -97,12 +109,15 @@ export default function Login() {
                         <button type="submit" className="btn btn-primary" style={{ width: '100%' }} disabled={loading}>
                             {loading ? '登录中...' : '进入控制台'}
                         </button>
+                        <p className="auth-helper-text">
+                            还没有控制台账号？注册后先进入控制台，再在仪表盘里生成开发者 API Key。
+                        </p>
                     </form>
                 ) : (
                     <form onSubmit={handleKeyLogin} className="auth-form">
                         <div className="auth-callout auth-callout-muted">
                             <strong>适合已经拿到开发者 Key 的人</strong>
-                            <p>这个入口只验证你的开发者 API Key 是否可用，不会自动拥有控制台账号管理能力。</p>
+                            <p>这个入口只验证你的开发者 API Key 是否可用，不会自动拥有控制台账号管理能力，也不适合第一次来站的新用户。</p>
                         </div>
                         <div className="input-group">
                             <label>开发者 API Key</label>
@@ -119,16 +134,11 @@ export default function Login() {
                         <button type="submit" className="btn btn-primary" style={{ width: '100%' }} disabled={loading}>
                             {loading ? '验证中...' : '验证并进入'}
                         </button>
+                        <p className="auth-helper-text">
+                            如果你还没有开发者 API Key，请不要走这条路，先注册或登录控制台账号。
+                        </p>
                     </form>
                 )}
-
-                <div className="auth-divider">
-                    <span>或者</span>
-                </div>
-
-                <button onClick={handleDemo} className="btn btn-secondary" style={{ width: '100%' }}>
-                    先看 Demo
-                </button>
 
                 <p className="auth-footer-text">
                     还没有控制台账号？<Link to="/register">立即注册</Link>
