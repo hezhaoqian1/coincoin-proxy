@@ -5,6 +5,7 @@ from pathlib import Path
 import yaml
 
 IMAGE_CAPABILITIES = {"images/generations", "images/edits"}
+EMBEDDING_CAPABILITIES = {"embeddings"}
 
 
 class GatewayCatalogSyncTests(unittest.TestCase):
@@ -26,20 +27,30 @@ class GatewayCatalogSyncTests(unittest.TestCase):
             for item in (cls.catalog.get("models") or [])
             if isinstance(item, dict) and item.get("routing_mode") == "direct"
         ]
+        cls.gateway_models = [
+            item
+            for item in cls.direct_models
+            if item.get("delivery_lane") == "gateway"
+        ]
+        cls.upstream_direct_models = [
+            item
+            for item in cls.direct_models
+            if item.get("delivery_lane") == "upstream_direct"
+        ]
 
-    def test_every_direct_public_model_targets_a_gateway_alias(self) -> None:
+    def test_every_gateway_public_model_targets_a_gateway_alias(self) -> None:
         missing_aliases = sorted(
             model["upstream_model"]
-            for model in self.direct_models
+            for model in self.gateway_models
             if model.get("upstream_model") not in self.gateway_aliases
         )
         self.assertEqual(missing_aliases, [])
 
-    def test_every_direct_public_model_declares_delivery_lane(self) -> None:
+    def test_direct_public_models_only_use_supported_delivery_lanes(self) -> None:
         invalid_models = sorted(
             model["id"]
             for model in self.direct_models
-            if model.get("delivery_lane") != "gateway"
+            if model.get("delivery_lane") not in {"gateway", "upstream_direct"}
         )
         self.assertEqual(invalid_models, [])
 
@@ -59,7 +70,7 @@ class GatewayCatalogSyncTests(unittest.TestCase):
         self.assertIn("images/generations", public_models[default_image_model].get("capabilities") or [])
 
     def test_text_models_match_gemini_gateway_shape(self) -> None:
-        for model in self.direct_models:
+        for model in self.gateway_models:
             capabilities = set(model.get("capabilities") or [])
             if capabilities.intersection(IMAGE_CAPABILITIES):
                 continue
@@ -82,7 +93,7 @@ class GatewayCatalogSyncTests(unittest.TestCase):
                 )
 
     def test_image_models_match_vertex_image_gateway_shape(self) -> None:
-        for model in self.direct_models:
+        for model in self.gateway_models:
             capabilities = set(model.get("capabilities") or [])
             if not capabilities.intersection(IMAGE_CAPABILITIES):
                 continue
@@ -103,6 +114,19 @@ class GatewayCatalogSyncTests(unittest.TestCase):
                     litellm_params.get("api_key"),
                     "os.environ/VERTEX_API_KEY",
                 )
+
+    def test_upstream_direct_models_use_azure_openai_shape(self) -> None:
+        for model in self.upstream_direct_models:
+            capabilities = set(model.get("capabilities") or [])
+            if not capabilities.intersection(EMBEDDING_CAPABILITIES):
+                continue
+
+            with self.subTest(model=model["id"]):
+                self.assertEqual(capabilities, EMBEDDING_CAPABILITIES)
+                self.assertEqual(model.get("provider_name"), "OpenAI")
+                self.assertEqual(model.get("upstream_model"), model.get("provider_model"))
+                self.assertEqual(model.get("upstream_url"), "${COINCOIN_UPSTREAM_BASE_URL}")
+                self.assertEqual(model.get("api_key"), "${COINCOIN_UPSTREAM_API_KEY}")
 
 
 if __name__ == "__main__":

@@ -69,8 +69,10 @@ class ModelCapabilityError(ModelResolutionError):
 PREMIUM = "premium"
 CHEAP = "cheap"
 FALLBACK = "fallback"
+EMBEDDING = "embedding"
 
-TEXT_ENDPOINTS = frozenset({"chat/completions", "responses", "embeddings"})
+TEXT_ENDPOINTS = frozenset({"chat/completions", "responses"})
+EMBEDDING_ENDPOINTS = frozenset({"embeddings"})
 IMAGE_ENDPOINTS = frozenset({"images/generations", "images/edits"})
 DELIVERY_LANES = frozenset({"legacy", "gateway", "vertex_direct", "upstream_direct"})
 _ENV_PATTERN = re.compile(r"\$\{([A-Z0-9_]+)(:-([^}]*))?\}")
@@ -133,6 +135,7 @@ class ModelRegistry:
         self.router_enabled: bool = False
         self.tool_count_threshold: int = 2
         self.default_text_model_id: str = ""
+        self.default_embedding_model_id: str = ""
         self.default_image_model_id: str = ""
         self._initialized: bool = False
 
@@ -159,6 +162,16 @@ class ModelRegistry:
             auth_style=settings.primary_auth_style,
         )
         self.models = {PREMIUM: premium}
+
+        self.models[EMBEDDING] = ModelConfig(
+            model_id=getattr(settings, "embedding_model", "text-embedding-3-small"),
+            upstream_url=settings.upstream_base_url,
+            api_key=settings.upstream_api_key,
+            price_input_per_million=settings.price_input_per_million,
+            price_output_per_million=0,
+            strip_unsupported=False,
+            auth_style=settings.primary_auth_style,
+        )
 
         cheap_model = (getattr(settings, "cheap_model", "") or "").strip()
         if self.router_enabled and cheap_model:
@@ -193,10 +206,27 @@ class ModelRegistry:
                     "id": settings.fixed_model,
                     "owned_by": "openai",
                     "provider_name": "OpenAI",
-                    "capabilities": ["chat/completions", "responses", "embeddings"],
+                    "capabilities": ["chat/completions", "responses"],
                     "routing_mode": "legacy_auto",
                     "billable_sku": "legacy-default-text",
-                }
+                },
+                {
+                    "id": getattr(settings, "embedding_model", "text-embedding-3-small"),
+                    "owned_by": "openai",
+                    "provider_name": "OpenAI",
+                    "provider_model": getattr(settings, "embedding_model", "text-embedding-3-small"),
+                    "capabilities": ["embeddings"],
+                    "routing_mode": "direct",
+                    "delivery_lane": "upstream_direct",
+                    "upstream_model": getattr(settings, "embedding_model", "text-embedding-3-small"),
+                    "upstream_url": settings.upstream_base_url,
+                    "api_key": settings.upstream_api_key,
+                    "auth_style": settings.primary_auth_style,
+                    "price_input_per_million": settings.price_input_per_million,
+                    "price_output_per_million": 0,
+                    "billable_sku": "azure-text-embedding-3-small",
+                    "metadata": {"tier": "stable"},
+                },
             ],
         }
 
@@ -311,6 +341,11 @@ class ModelRegistry:
         requested_default_text = str(document.get("default_text_model") or settings.fixed_model or "").strip()
         self.default_text_model_id = self._pick_default_model(requested_default_text, TEXT_ENDPOINTS)
 
+        requested_default_embedding = str(
+            document.get("default_embedding_model") or getattr(settings, "embedding_model", "") or ""
+        ).strip()
+        self.default_embedding_model_id = self._pick_default_model(requested_default_embedding, EMBEDDING_ENDPOINTS)
+
         requested_default_image = str(document.get("default_image_model") or "").strip()
         self.default_image_model_id = self._pick_default_model(requested_default_image, IMAGE_ENDPOINTS)
 
@@ -363,6 +398,8 @@ class ModelRegistry:
         if not model_id:
             if endpoint in IMAGE_ENDPOINTS:
                 model_id = self.default_image_model_id
+            elif endpoint in EMBEDDING_ENDPOINTS:
+                model_id = self.default_embedding_model_id
             else:
                 model_id = self.default_text_model_id
 
@@ -385,6 +422,12 @@ class ModelRegistry:
     ) -> ResolvedModel:
         public_model = self._select_public_model(requested_model, endpoint)
         if public_model.routing_mode == "legacy_auto":
+            if endpoint in EMBEDDING_ENDPOINTS:
+                return ResolvedModel(
+                    public_model=public_model,
+                    backend=self.get(EMBEDDING),
+                    route_reason=f"catalog:{public_model.public_id}:azure_embedding",
+                )
             backend, route_reason = resolve(messages or [], tools)
             return ResolvedModel(
                 public_model=public_model,
