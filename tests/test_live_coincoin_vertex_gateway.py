@@ -143,6 +143,9 @@ class CoinCoinVertexGatewayLiveTests(unittest.TestCase):
         payload = response.json()
         model_ids = {item["id"] for item in payload["data"]}
 
+        self.assertTrue(
+            {"gpt-5", "gpt-5.1", "gpt-5.4-mini", "gpt-5-codex-mini"}.issubset(model_ids)
+        )
         self.assertIn("gpt-5.2-codex", model_ids)
         self.assertIn("gemini-fast", model_ids)
         self.assertIn("vertex-gemini-3.1-pro-preview", model_ids)

@@ -111,6 +111,7 @@ uvicorn app.main:app --reload --port 8000
 
 - 终端客户只看 CoinCoin 的公开模型目录，不直接感知 LiteLLM 或 Vertex 的内部模型名
 - 老用户如果不传 `model`，仍然走默认 GPT 公共模型
+- 旧 GPT lane 当前公开 alias 包括 `gpt-5`、`gpt-5.1`、`gpt-5.1-codex`、`gpt-5.1-codex-mini`、`gpt-5.1-codex-max`、`gpt-5.2`、`gpt-5.2-codex`、`gpt-5.3-codex`、`gpt-5.4-mini`、`gpt-5-codex`、`gpt-5-codex-mini`，以及由 `COINCOIN_FIXED_MODEL` 指定的默认 GPT alias
 - embedding 请求不再复用旧 GPT / CPA lane；`/v1/embeddings` 默认和显式 `text-embedding-3-small` 都直连 Azure
 - 新增 Gemini 文本能力是增量暴露；显式传入 Gemini 文本 alias 时，会真实路由到内部 LiteLLM gateway
 - Gemini 图片 alias 的公网生产链路默认也走内部 LiteLLM gateway

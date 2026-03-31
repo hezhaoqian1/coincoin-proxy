@@ -5,6 +5,33 @@ from app.config import settings
 from app.router import ModelCapabilityError, registry
 
 
+LEGACY_PUBLIC_TEXT_MODELS = [
+    "gpt-5.4",
+    "gpt-5",
+    "gpt-5.1",
+    "gpt-5.1-codex",
+    "gpt-5.1-codex-mini",
+    "gpt-5.1-codex-max",
+    "gpt-5.2",
+    "gpt-5.2-codex",
+    "gpt-5.3-codex",
+    "gpt-5.4-mini",
+    "gpt-5-codex",
+    "gpt-5-codex-mini",
+]
+
+
+def _legacy_text_model(model_id: str) -> dict:
+    return {
+        "id": model_id,
+        "owned_by": "openai",
+        "provider_name": "OpenAI",
+        "capabilities": ["chat/completions", "responses"],
+        "routing_mode": "legacy_auto",
+        "delivery_lane": "legacy",
+    }
+
+
 class ModelCatalogTests(unittest.TestCase):
     def setUp(self) -> None:
         self._originals = {
@@ -67,30 +94,7 @@ class ModelCatalogTests(unittest.TestCase):
                 "default_embedding_model": "text-embedding-3-small",
                 "default_image_model": "gemini-image",
                 "models": [
-                    {
-                        "id": "gpt-5.4",
-                        "owned_by": "openai",
-                        "provider_name": "OpenAI",
-                        "capabilities": ["chat/completions", "responses"],
-                        "routing_mode": "legacy_auto",
-                        "delivery_lane": "legacy",
-                    },
-                    {
-                        "id": "gpt-5.2",
-                        "owned_by": "openai",
-                        "provider_name": "OpenAI",
-                        "capabilities": ["chat/completions", "responses"],
-                        "routing_mode": "legacy_auto",
-                        "delivery_lane": "legacy",
-                    },
-                    {
-                        "id": "gpt-5.2-codex",
-                        "owned_by": "openai",
-                        "provider_name": "OpenAI",
-                        "capabilities": ["chat/completions", "responses"],
-                        "routing_mode": "legacy_auto",
-                        "delivery_lane": "legacy",
-                    },
+                    *[_legacy_text_model(model_id) for model_id in LEGACY_PUBLIC_TEXT_MODELS],
                     {
                         "id": "text-embedding-3-small",
                         "owned_by": "openai",
@@ -193,6 +197,27 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertEqual(resolved.public_model.public_id, "gpt-5.2")
         self.assertEqual(resolved.backend.model_id, "gpt-4o-mini")
         self.assertEqual(resolved.route_reason, "catalog:gpt-5.2:auto_cheap")
+
+    def test_explicit_gpt_5_4_mini_alias_keeps_legacy_lane(self) -> None:
+        resolved = registry.resolve_public_model(
+            "gpt-5.4-mini",
+            "responses",
+            messages=[{"role": "user", "content": "hello"}],
+            tools=None,
+        )
+
+        self.assertEqual(resolved.public_model.public_id, "gpt-5.4-mini")
+        self.assertEqual(resolved.backend.model_id, "gpt-4o-mini")
+        self.assertEqual(resolved.route_reason, "catalog:gpt-5.4-mini:auto_cheap")
+
+    def test_catalog_lists_all_expected_legacy_gpt_aliases(self) -> None:
+        text_model_ids = [
+            model.public_id
+            for model in registry.list_public_models("chat/completions")
+            if model.routing_mode == "legacy_auto"
+        ]
+
+        self.assertEqual(text_model_ids, LEGACY_PUBLIC_TEXT_MODELS)
 
     def test_default_image_model_is_used_when_model_is_omitted(self) -> None:
         resolved = registry.resolve_public_model(None, "images/generations")
