@@ -13,6 +13,51 @@
       "billable_sku": "legacy-default-text"
     },
     {
+      "id": "gpt-5",
+      "owned_by": "openai",
+      "provider_name": "OpenAI",
+      "capabilities": ["chat/completions", "responses"],
+      "routing_mode": "legacy_auto",
+      "delivery_lane": "legacy",
+      "billable_sku": "legacy-gpt-5-text"
+    },
+    {
+      "id": "gpt-5.1",
+      "owned_by": "openai",
+      "provider_name": "OpenAI",
+      "capabilities": ["chat/completions", "responses"],
+      "routing_mode": "legacy_auto",
+      "delivery_lane": "legacy",
+      "billable_sku": "legacy-gpt-5.1-text"
+    },
+    {
+      "id": "gpt-5.1-codex",
+      "owned_by": "openai",
+      "provider_name": "OpenAI",
+      "capabilities": ["chat/completions", "responses"],
+      "routing_mode": "legacy_auto",
+      "delivery_lane": "legacy",
+      "billable_sku": "legacy-gpt-5.1-codex-text"
+    },
+    {
+      "id": "gpt-5.1-codex-mini",
+      "owned_by": "openai",
+      "provider_name": "OpenAI",
+      "capabilities": ["chat/completions", "responses"],
+      "routing_mode": "legacy_auto",
+      "delivery_lane": "legacy",
+      "billable_sku": "legacy-gpt-5.1-codex-mini-text"
+    },
+    {
+      "id": "gpt-5.1-codex-max",
+      "owned_by": "openai",
+      "provider_name": "OpenAI",
+      "capabilities": ["chat/completions", "responses"],
+      "routing_mode": "legacy_auto",
+      "delivery_lane": "legacy",
+      "billable_sku": "legacy-gpt-5.1-codex-max-text"
+    },
+    {
       "id": "gpt-5.2",
       "owned_by": "openai",
       "provider_name": "OpenAI",
@@ -29,6 +74,42 @@
       "routing_mode": "legacy_auto",
       "delivery_lane": "legacy",
       "billable_sku": "legacy-gpt-5.2-codex-text"
+    },
+    {
+      "id": "gpt-5.3-codex",
+      "owned_by": "openai",
+      "provider_name": "OpenAI",
+      "capabilities": ["chat/completions", "responses"],
+      "routing_mode": "legacy_auto",
+      "delivery_lane": "legacy",
+      "billable_sku": "legacy-gpt-5.3-codex-text"
+    },
+    {
+      "id": "gpt-5.4-mini",
+      "owned_by": "openai",
+      "provider_name": "OpenAI",
+      "capabilities": ["chat/completions", "responses"],
+      "routing_mode": "legacy_auto",
+      "delivery_lane": "legacy",
+      "billable_sku": "legacy-gpt-5.4-mini-text"
+    },
+    {
+      "id": "gpt-5-codex",
+      "owned_by": "openai",
+      "provider_name": "OpenAI",
+      "capabilities": ["chat/completions", "responses"],
+      "routing_mode": "legacy_auto",
+      "delivery_lane": "legacy",
+      "billable_sku": "legacy-gpt-5-codex-text"
+    },
+    {
+      "id": "gpt-5-codex-mini",
+      "owned_by": "openai",
+      "provider_name": "OpenAI",
+      "capabilities": ["chat/completions", "responses"],
+      "routing_mode": "legacy_auto",
+      "delivery_lane": "legacy",
+      "billable_sku": "legacy-gpt-5-codex-mini-text"
     },
     {
       "id": "${COINCOIN_EMBEDDING_MODEL:-text-embedding-3-small}",
