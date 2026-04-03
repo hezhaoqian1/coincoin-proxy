@@ -61,8 +61,14 @@ class Settings(BaseSettings):
     # Performance
     http_pool_max: int = 100
     http_pool_keepalive: int = 20
+    responses_stream_read_timeout: int = 90
     key_cache_ttl: int = 30
     key_cache_max: int = 10000
+    response_cache_ttl: int = 300
+    response_cache_max_entries: int = 500
+    response_cache_max_total_bytes: int = 64 * 1024 * 1024
+    response_cache_max_entry_bytes: int = 256 * 1024
+    response_cache_max_turns: int = 8
     
     # Pricing (cents per million tokens)
     # Input $0.99/M = 99 cents/M, Output $6.99/M = 699 cents/M
