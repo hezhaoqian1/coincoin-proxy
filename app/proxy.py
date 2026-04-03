@@ -4,6 +4,7 @@ import json
 import logging
 import secrets
 import time
+from collections import OrderedDict
 from copy import deepcopy
 from datetime import date, datetime
 from types import SimpleNamespace
@@ -230,7 +231,12 @@ async def get_stream_client() -> httpx.AsyncClient:
             max_connections=settings.http_pool_max,
             max_keepalive_connections=settings.http_pool_keepalive,
         )
-        stream_timeout = httpx.Timeout(connect=5.0, read=120.0, write=60.0, pool=60.0)
+        stream_timeout = httpx.Timeout(
+            connect=5.0,
+            read=float(settings.responses_stream_read_timeout),
+            write=60.0,
+            pool=60.0,
+        )
         _http_stream_client = httpx.AsyncClient(limits=limits, timeout=stream_timeout, trust_env=False)
         return _http_stream_client
 
@@ -366,32 +372,86 @@ class ResponseConversationCache:
     previous context when previous_response_id is referenced.
     """
 
-    _TTL = 1800  # 30 min
-    _MAX = 10000
+    def __init__(
+        self,
+        *,
+        ttl_seconds: Optional[int] = None,
+        max_entries: Optional[int] = None,
+        max_total_bytes: Optional[int] = None,
+        max_entry_bytes: Optional[int] = None,
+        max_turns: Optional[int] = None,
+    ) -> None:
+        self._ttl = max(1, int(ttl_seconds or settings.response_cache_ttl))
+        self._max_entries = max(1, int(max_entries or settings.response_cache_max_entries))
+        self._max_total_bytes = max(1024, int(max_total_bytes or settings.response_cache_max_total_bytes))
+        self._max_entry_bytes = max(1024, int(max_entry_bytes or settings.response_cache_max_entry_bytes))
+        self._max_turns = max(1, int(max_turns or settings.response_cache_max_turns))
+        self._data: "OrderedDict[str, Tuple[float, list, list, int]]" = OrderedDict()
+        self._current_bytes = 0
 
-    def __init__(self) -> None:
-        self._data: Dict[str, Tuple[float, list, list]] = {}
+    @staticmethod
+    def _estimate_size_bytes(expanded_input: list, response_output: list) -> int:
+        payload = {"input": expanded_input, "output": response_output}
+        try:
+            return len(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+        except (TypeError, ValueError):
+            return len(repr(payload).encode("utf-8", errors="ignore"))
+
+    def _trim_turns(self, expanded_input: list) -> list:
+        max_items = max(1, self._max_turns * 2)
+        if len(expanded_input) <= max_items:
+            return expanded_input
+        return expanded_input[-max_items:]
+
+    def _drop(self, response_id: str) -> None:
+        item = self._data.pop(response_id, None)
+        if item:
+            self._current_bytes = max(0, self._current_bytes - item[3])
+
+    def _prune_expired(self, now: Optional[float] = None) -> None:
+        cutoff = time.time() if now is None else now
+        expired = [response_id for response_id, (expires_at, _, _, _) in self._data.items() if expires_at <= cutoff]
+        for response_id in expired:
+            self._drop(response_id)
+
+    def _evict_to_budget(self) -> None:
+        while self._data and (
+            len(self._data) > self._max_entries or self._current_bytes > self._max_total_bytes
+        ):
+            oldest_response_id = next(iter(self._data))
+            self._drop(oldest_response_id)
 
     def get(self, response_id: str) -> Optional[Tuple[list, list]]:
         item = self._data.get(response_id)
         if not item:
             return None
-        expires_at, expanded_input, response_output = item
+        expires_at, expanded_input, response_output, _size_bytes = item
         if expires_at <= time.time():
-            self._data.pop(response_id, None)
+            self._drop(response_id)
             return None
+        self._data.move_to_end(response_id)
         return expanded_input, response_output
 
     def set(self, response_id: str, expanded_input: list, response_output: list) -> None:
         now = time.time()
-        if len(self._data) >= self._MAX:
-            cutoff = now
-            stale = [k for k, (exp, _, _) in self._data.items() if exp <= cutoff]
-            for k in stale:
-                self._data.pop(k, None)
-            if len(self._data) >= self._MAX:
-                self._data.pop(next(iter(self._data)), None)
-        self._data[response_id] = (now + self._TTL, expanded_input, response_output)
+        self._prune_expired(now)
+        trimmed_input = self._trim_turns(expanded_input)
+        cached_output = _clone_responses_items(response_output)
+        size_bytes = self._estimate_size_bytes(trimmed_input, cached_output)
+        if size_bytes > self._max_entry_bytes:
+            logger.info(
+                "polyfill: skip cache for %s (%d bytes > %d budget)",
+                response_id,
+                size_bytes,
+                self._max_entry_bytes,
+            )
+            self._drop(response_id)
+            return
+        self._drop(response_id)
+        self._data[response_id] = (now + self._ttl, trimmed_input, cached_output, size_bytes)
+        self._current_bytes += size_bytes
+        self._data.move_to_end(response_id)
+        self._evict_to_budget()
 
 
 _conv_cache = ResponseConversationCache()
