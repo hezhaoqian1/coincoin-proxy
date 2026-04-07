@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     image_job_sync_input_limit: int = 2
     image_job_async_max_inputs: int = 8
     image_job_max_total_bytes: int = 50 * 1024 * 1024
+    image_edit_sync_gateway_timeout_seconds: int = 60
 
     # Database — prefer database_url (Railway ${{MySQL.MYSQL_URL}});
     # falls back to individual db_host/port/name/user/password fields.

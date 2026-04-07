@@ -777,6 +777,21 @@ def _image_job_required_error(image_count: int) -> JSONResponse:
     )
 
 
+def _image_job_timeout_error(image_count: int) -> JSONResponse:
+    async_limit = max(1, int(settings.image_job_async_max_inputs or 8))
+    return _openai_error_response(
+        (
+            "Gemini image edit exceeded the sync response budget on this deployment. "
+            "Retry via POST /v1/image-jobs/edits for a more reliable async workflow. "
+            f"Received {image_count} image(s); this deployment currently supports up to "
+            f"{async_limit} async input images."
+        ),
+        code="image_job_required",
+        param="image",
+        status_code=400,
+    )
+
+
 def _map_image_size_to_aspect_ratio(size: str) -> str:
     aspect_ratio_map = {
         "1024x1024": "1:1",
@@ -1844,6 +1859,7 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
     should_use_direct_vertex = is_google_image_edit and delivery_lane == "vertex_direct"
     client = None
     input_image_count = sum(1 for key, _ in file_fields if key in {"image", "image[]"})
+    total_upload_bytes = sum(len(content) for key, (_, content, _) in file_fields if key in {"image", "image[]"})
 
     if is_google_image_edit and not should_use_gateway_image_edit and not should_use_direct_vertex:
         return _unsupported_google_image_lane_error(delivery_lane)
@@ -1895,13 +1911,40 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
         headers["content-type"] = multipart_content_type
 
         t0 = time.monotonic()
-        upstream = await _send_stream_request(
-            stream_client,
-            "POST",
-            upstream_url,
-            content=multipart_body,
-            headers=headers,
-        )
+        try:
+            upstream = await asyncio.wait_for(
+                _send_stream_request(
+                    stream_client,
+                    "POST",
+                    upstream_url,
+                    content=multipart_body,
+                    headers=headers,
+                ),
+                timeout=max(1, int(settings.image_edit_sync_gateway_timeout_seconds or 60)),
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "gateway image edit exceeded sync budget; forcing async fallback image_count=%s upload_bytes=%s model=%s",
+                input_image_count,
+                total_upload_bytes,
+                display_model,
+            )
+            if settings.image_jobs_enabled and input_image_count <= max(1, int(settings.image_job_async_max_inputs or 8)):
+                return _image_job_timeout_error(input_image_count)
+            return _openai_error_response(
+                "Gemini image edit exceeded the sync response budget and async image jobs are unavailable for this request.",
+                code="upstream_timeout",
+                status_code=504,
+                error_type="server_error",
+            )
+        except (httpx.TimeoutException, httpx.RequestError) as exc:
+            logger.error("gateway image edit transport error: %s", exc)
+            return _openai_error_response(
+                f"Gateway image edit request failed: {exc}",
+                code="upstream_unreachable",
+                status_code=502,
+                error_type="server_error",
+            )
         duration_ms = int((time.monotonic() - t0) * 1000)
 
         response_headers = filter_headers(dict(upstream.headers))
