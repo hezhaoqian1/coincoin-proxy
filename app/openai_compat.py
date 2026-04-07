@@ -1043,7 +1043,6 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
 
     collapse_legacy_stream = (
         public_model.routing_mode == "legacy_auto"
-        and not _has_tools
         and str(used_cfg.model_id or "").strip() == "gpt-5.4"
     )
 

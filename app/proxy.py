@@ -241,18 +241,71 @@ def _build_responses_output_text_item(text: str) -> dict:
     }
 
 
+def _build_responses_function_call_item(item: Optional[dict] = None) -> dict:
+    item = item or {}
+    func = item.get("function") if isinstance(item.get("function"), dict) else {}
+    call_id = str(item.get("call_id") or item.get("id") or f"call_{secrets.token_hex(20)}")
+    arguments = item.get("arguments")
+    if arguments is None:
+        arguments = func.get("arguments", "")
+    if isinstance(arguments, dict):
+        arguments = json.dumps(arguments, ensure_ascii=False)
+    elif arguments is None:
+        arguments = ""
+    return {
+        "id": str(item.get("id") or call_id),
+        "call_id": call_id,
+        "type": "function_call",
+        "name": str(item.get("name") or func.get("name") or ""),
+        "arguments": str(arguments),
+    }
+
+
 async def _collect_responses_event_stream_payload(upstream: httpx.Response) -> dict:
     """Collapse a Responses SSE stream into a single JSON payload.
 
     Legacy GPT upstreams have started returning empty `output=[]` for non-stream
     JSON responses while still emitting correct `response.output_text.delta`
-    events on the streaming path. For non-stream callers we can safely aggregate
-    those deltas back into a normal Responses payload.
+    and function-call events on the streaming path. For non-stream callers we
+    can safely aggregate those events back into a normal Responses payload.
     """
     latest_response: Dict[str, object] = {}
     latest_usage: Dict[str, object] = {}
     text_parts: List[str] = []
+    tool_calls: List[dict] = []
+    tool_call_indexes: Dict[str, int] = {}
+    current_tool_index: Optional[int] = None
     error_payload: Optional[dict] = None
+
+    def _upsert_tool_call(item: Optional[dict]) -> Optional[int]:
+        nonlocal current_tool_index
+        if not isinstance(item, dict):
+            return None
+        item_type = str(item.get("type") or "")
+        if item_type not in {"function_call", "tool_use", "function"}:
+            return None
+
+        normalized = _build_responses_function_call_item(item)
+        key = str(normalized.get("id") or normalized.get("call_id") or "")
+        idx = tool_call_indexes.get(key) if key else None
+        if idx is None:
+            idx = len(tool_calls)
+            tool_calls.append(normalized)
+            if key:
+                tool_call_indexes[key] = idx
+        else:
+            existing = tool_calls[idx]
+            if normalized.get("name"):
+                existing["name"] = normalized["name"]
+            normalized_args = normalized.get("arguments")
+            if isinstance(normalized_args, str) and normalized_args:
+                existing_args = existing.get("arguments") or ""
+                if not existing_args or len(normalized_args) >= len(existing_args):
+                    existing["arguments"] = normalized_args
+            if normalized.get("call_id"):
+                existing["call_id"] = normalized["call_id"]
+        current_tool_index = idx
+        return idx
 
     async for line in upstream.aiter_lines():
         if not line:
@@ -296,6 +349,24 @@ async def _collect_responses_event_stream_payload(upstream: httpx.Response) -> d
                 delta = delta.get("text")
             if isinstance(delta, str) and delta:
                 text_parts.append(delta)
+        elif event_type in {"response.output_item.added", "response.function_call_arguments.start", "response.output_item.done"}:
+            _upsert_tool_call(event.get("item"))
+        elif event_type == "response.function_call_arguments.delta":
+            delta = event.get("delta")
+            if isinstance(delta, dict):
+                delta = delta.get("arguments") or delta.get("text")
+            if isinstance(delta, str) and delta:
+                if current_tool_index is None and tool_calls:
+                    current_tool_index = len(tool_calls) - 1
+                if current_tool_index is not None:
+                    tool_calls[current_tool_index]["arguments"] = str(tool_calls[current_tool_index].get("arguments") or "") + delta
+        elif event_type == "response.function_call_arguments.done":
+            arguments = event.get("arguments")
+            if isinstance(arguments, dict):
+                arguments = json.dumps(arguments, ensure_ascii=False)
+            if isinstance(arguments, str) and arguments and current_tool_index is not None:
+                tool_calls[current_tool_index]["arguments"] = arguments
+            current_tool_index = None
 
     if error_payload:
         return {"error": error_payload}
@@ -305,13 +376,23 @@ async def _collect_responses_event_stream_payload(upstream: httpx.Response) -> d
         data["usage"] = latest_usage
 
     collapsed_text = "".join(text_parts).strip()
-    if collapsed_text and _responses_payload_is_empty_success(data):
-        data["output"] = [_build_responses_output_text_item(collapsed_text)]
+    aggregated_output: List[dict] = []
+    if collapsed_text:
+        aggregated_output.append(_build_responses_output_text_item(collapsed_text))
+    if tool_calls:
+        aggregated_output.extend(tool_calls)
+
+    if aggregated_output and _responses_payload_is_empty_success(data):
+        data["output"] = aggregated_output
         data["output_text"] = collapsed_text
         data["status"] = "completed"
 
     if collapsed_text and not data.get("output_text"):
         data["output_text"] = collapsed_text
+
+    if aggregated_output and not _responses_payload_has_meaningful_output(data):
+        data["output"] = aggregated_output
+        data["status"] = "completed"
 
     if not data:
         data = {
@@ -319,7 +400,7 @@ async def _collect_responses_event_stream_payload(upstream: httpx.Response) -> d
             "object": "response",
             "created_at": int(time.time()),
             "status": "completed",
-            "output": [_build_responses_output_text_item(collapsed_text)] if collapsed_text else [],
+            "output": aggregated_output,
             "output_text": collapsed_text,
             "usage": latest_usage,
         }
@@ -1295,7 +1376,6 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
 
     collapse_legacy_stream = (
         public_model.routing_mode == "legacy_auto"
-        and not _has_tools
         and str(used_cfg.model_id or "").strip() == "gpt-5.4"
     )
 
