@@ -1,3 +1,4 @@
+import asyncio
 import json
 import unittest
 from types import SimpleNamespace
@@ -164,6 +165,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             "gateway_base_url": settings.gateway_base_url,
             "gateway_api_key": settings.gateway_api_key,
             "gateway_auth_style": settings.gateway_auth_style,
+            "image_edit_sync_gateway_timeout_seconds": settings.image_edit_sync_gateway_timeout_seconds,
             "vertex_api_key": settings.vertex_api_key,
             "vertex_gemini_api_base": settings.vertex_gemini_api_base,
             "model_catalog_json": settings.model_catalog_json,
@@ -196,6 +198,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         settings.gateway_base_url = ""
         settings.gateway_api_key = ""
         settings.gateway_auth_style = "bearer"
+        settings.image_edit_sync_gateway_timeout_seconds = 60
         settings.vertex_api_key = ""
         settings.vertex_gemini_api_base = "https://aiplatform.googleapis.com/v1/publishers/google"
         settings.model_catalog_json = json.dumps(
@@ -1295,6 +1298,37 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["error"]["code"], "image_job_required")
         self.assertIn("/v1/image-jobs/edits", payload["error"]["message"])
         self.assertEqual(len(upstream_client.calls), 0)
+
+    async def test_image_edit_requires_async_job_when_gateway_sync_budget_exceeded(self) -> None:
+        async def _hang(*args, **kwargs):
+            await asyncio.sleep(2)
+            raise AssertionError("sync image edit should have timed out first")
+
+        settings.image_edit_sync_gateway_timeout_seconds = 1
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_image_stream_client",
+                AsyncMock(return_value=object()),
+            ), patch.object(
+                proxy_module,
+                "_send_stream_request",
+                AsyncMock(side_effect=_hang),
+            ), patch.object(proxy_module.usage_buffer, "add", AsyncMock()) as add_usage:
+                response = await client.post(
+                    "/v1/images/edits",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    data={"model": "gemini-image", "prompt": "Turn this into pixel art", "n": "1"},
+                    files={"image": ("input.png", b"fake_image_data", "image/png")},
+                )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "image_job_required")
+        self.assertIn("/v1/image-jobs/edits", payload["error"]["message"])
+        add_usage.assert_not_awaited()
 
     async def test_image_edit_rejects_mask_on_direct_vertex_lane(self) -> None:
         self._set_model_delivery_lane("gemini-image", "vertex_direct")
