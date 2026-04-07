@@ -178,6 +178,155 @@ def _normalize_responses_input_items(raw_input) -> list:
     return normalized
 
 
+def _responses_payload_has_meaningful_output(resp: dict) -> bool:
+    if not isinstance(resp, dict):
+        return False
+
+    if isinstance(resp.get("output_text"), str) and resp.get("output_text").strip():
+        return True
+
+    output = resp.get("output")
+    if not isinstance(output, list):
+        return False
+
+    for item in output:
+        if not isinstance(item, dict):
+            continue
+        item_type = item.get("type")
+        if item_type in ("function_call", "tool_use", "function"):
+            return True
+        if item_type in ("output_text", "text") and str(item.get("text") or "").strip():
+            return True
+        if item_type == "message":
+            for content_item in item.get("content") or []:
+                if not isinstance(content_item, dict):
+                    continue
+                content_type = content_item.get("type")
+                if content_type in ("function_call", "tool_use", "function"):
+                    return True
+                if content_type in ("output_text", "text") and str(content_item.get("text") or "").strip():
+                    return True
+    return False
+
+
+def _responses_payload_is_empty_success(resp: dict) -> bool:
+    if not isinstance(resp, dict) or resp.get("error"):
+        return False
+    if _responses_payload_has_meaningful_output(resp):
+        return False
+
+    status = str(resp.get("status") or "").strip().lower()
+    usage = resp.get("usage") or {}
+    output_tokens = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
+    output = resp.get("output")
+    has_output_container = isinstance(output, list)
+
+    return has_output_container or status == "completed" or output_tokens > 0
+
+
+def _build_responses_output_text_item(text: str) -> dict:
+    return {
+        "id": f"msg_{secrets.token_hex(20)}",
+        "type": "message",
+        "status": "completed",
+        "role": "assistant",
+        "content": [
+            {
+                "type": "output_text",
+                "text": text,
+                "annotations": [],
+                "logprobs": [],
+            }
+        ],
+    }
+
+
+async def _collect_responses_event_stream_payload(upstream: httpx.Response) -> dict:
+    """Collapse a Responses SSE stream into a single JSON payload.
+
+    Legacy GPT upstreams have started returning empty `output=[]` for non-stream
+    JSON responses while still emitting correct `response.output_text.delta`
+    events on the streaming path. For non-stream callers we can safely aggregate
+    those deltas back into a normal Responses payload.
+    """
+    latest_response: Dict[str, object] = {}
+    latest_usage: Dict[str, object] = {}
+    text_parts: List[str] = []
+    error_payload: Optional[dict] = None
+
+    async for line in upstream.aiter_lines():
+        if not line:
+            continue
+        if line.startswith("event:"):
+            continue
+        if not line.startswith("data:"):
+            continue
+
+        payload_str = line[5:].strip()
+        if payload_str == "[DONE]":
+            break
+
+        try:
+            event = json.loads(payload_str)
+        except Exception:
+            continue
+
+        if not isinstance(event, dict):
+            continue
+
+        if isinstance(event.get("error"), dict):
+            error_payload = event["error"]
+            continue
+
+        response_obj = event.get("response")
+        if isinstance(response_obj, dict):
+            latest_response = response_obj
+            usage = response_obj.get("usage")
+            if isinstance(usage, dict):
+                latest_usage = usage
+
+        usage = event.get("usage")
+        if isinstance(usage, dict):
+            latest_usage = usage
+
+        event_type = str(event.get("type") or "")
+        if event_type in {"response.output_text.delta", "response.output_text.chunk"}:
+            delta = event.get("delta")
+            if isinstance(delta, dict):
+                delta = delta.get("text")
+            if isinstance(delta, str) and delta:
+                text_parts.append(delta)
+
+    if error_payload:
+        return {"error": error_payload}
+
+    data = dict(latest_response)
+    if latest_usage and not isinstance(data.get("usage"), dict):
+        data["usage"] = latest_usage
+
+    collapsed_text = "".join(text_parts).strip()
+    if collapsed_text and _responses_payload_is_empty_success(data):
+        data["output"] = [_build_responses_output_text_item(collapsed_text)]
+        data["output_text"] = collapsed_text
+        data["status"] = "completed"
+
+    if collapsed_text and not data.get("output_text"):
+        data["output_text"] = collapsed_text
+
+    if not data:
+        data = {
+            "id": f"resp_{secrets.token_hex(20)}",
+            "object": "response",
+            "created_at": int(time.time()),
+            "status": "completed",
+            "output": [_build_responses_output_text_item(collapsed_text)] if collapsed_text else [],
+            "output_text": collapsed_text,
+            "usage": latest_usage,
+        }
+
+    return data
+
+
 def _expand_previous_response_input(payload: dict, cached_conv: Optional[Tuple[list, list]]) -> Optional[Tuple[int, int, int]]:
     if not cached_conv:
         return None
@@ -1144,108 +1293,216 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         (used_cfg.upstream_url != fallback_cfg.upstream_url) or (used_cfg.model_id != fallback_cfg.model_id)
     )
 
-    client = await get_http_client()
+    collapse_legacy_stream = (
+        public_model.routing_mode == "legacy_auto"
+        and not _has_tools
+        and str(used_cfg.model_id or "").strip() == "gpt-5.4"
+    )
 
-    async def _post_json(cfg, *, is_fallback=False):
-        send_payload = dict(base_payload)
-        send_payload["model"] = cfg.model_id
-        if is_fallback:
-            send_payload.pop("previous_response_id", None)
-        send_payload["store"] = True
-        if "cognitiveservices.azure.com" in (cfg.upstream_url or ""):
-            if "codex" not in (cfg.model_id or "").lower():
-                send_payload.pop("reasoning", None)
-        if cfg.strip_unsupported:
-            for param in _STRIP_PARAMS:
-                send_payload.pop(param, None)
-        req_url = f"{cfg.upstream_url.rstrip('/')}/responses"
-        req_headers = _build_upstream_headers(cfg)
-        logger.info("json → %s  model=%s  store=%s  has_prev_resp=%s",
-                    req_url, send_payload.get("model"), send_payload.get("store"),
-                    "previous_response_id" in send_payload)
-        t0 = time.monotonic()
-        r = await client.post(req_url, json=send_payload, headers=req_headers)
-        dur = int((time.monotonic() - t0) * 1000)
-        return r, dur
+    if collapse_legacy_stream:
+        stream_client = await get_stream_client()
 
-    try:
-        upstream, duration_ms = await _post_json(used_cfg)
-    except (httpx.TimeoutException, httpx.RequestError) as exc:
-        if can_fallback:
-            _fb = "cheap" if is_cheap else "premium"
-            logger.warning("primary %s failed (%s: %s), falling back", _fb, type(exc).__name__, exc)
-            used_cfg = fallback_cfg
-            used_route_reason = f"{_fb}_fallback_timeout"
-            can_fallback = False
-            is_cheap = False
-            upstream, duration_ms = await _post_json(used_cfg, is_fallback=True)
-        else:
-            logger.error("upstream request error: %s", exc)
-            return JSONResponse(
-                content={"error": {"message": "Upstream request failed", "type": "server_error", "code": "upstream_unreachable"}},
-                status_code=502,
-            )
+        async def _post_stream_json(cfg, *, is_fallback=False):
+            send_payload = dict(base_payload)
+            send_payload["model"] = cfg.model_id
+            if is_fallback:
+                send_payload.pop("previous_response_id", None)
+            send_payload["store"] = True
+            send_payload["stream"] = True
+            if "cognitiveservices.azure.com" in (cfg.upstream_url or ""):
+                if "codex" not in (cfg.model_id or "").lower():
+                    send_payload.pop("reasoning", None)
+            if cfg.strip_unsupported:
+                for param in _STRIP_PARAMS:
+                    send_payload.pop(param, None)
+            req_url = f"{cfg.upstream_url.rstrip('/')}/responses"
+            req_headers = _build_upstream_headers(cfg)
+            logger.info("json-via-stream → %s  model=%s", req_url, send_payload.get("model"))
+            req = stream_client.build_request("POST", req_url, json=send_payload, headers=req_headers)
+            t0 = time.monotonic()
+            r = await stream_client.send(req, stream=True)
+            dur = int((time.monotonic() - t0) * 1000)
+            return r, dur
 
-    if can_fallback and upstream.status_code >= 400:
-        _fb = "cheap" if is_cheap else "premium"
-        logger.warning("primary %s returned %s: %s — falling back",
-                       _fb, upstream.status_code, str(upstream.text)[:500])
-        used_cfg = fallback_cfg
-        used_route_reason = f"{_fb}_fallback_{upstream.status_code}"
-        can_fallback = False
-        is_cheap = False
-        upstream, duration_ms = await _post_json(used_cfg, is_fallback=True)
-    response_headers = filter_headers(dict(upstream.headers))
-    response_headers.pop("content-length", None)
-
-    content_type = upstream.headers.get("content-type", "application/json")
-    upstream_request_id = extract_upstream_request_id(upstream.headers)
-    if can_fallback and "application/json" not in content_type:
-        _fb = "cheap" if is_cheap else "premium"
-        used_cfg = fallback_cfg
-        used_route_reason = f"{_fb}_fallback_unexpected"
-        can_fallback = False
-        is_cheap = False
-        upstream, duration_ms = await _post_json(used_cfg, is_fallback=True)
-        response_headers = filter_headers(dict(upstream.headers))
-        response_headers.pop("content-length", None)
-        content_type = upstream.headers.get("content-type", "application/json")
-        upstream_request_id = extract_upstream_request_id(upstream.headers)
-
-    if "application/json" in content_type:
         try:
-            data = upstream.json()
-        except Exception:
+            upstream, duration_ms = await _post_stream_json(used_cfg)
+        except (httpx.TimeoutException, httpx.RequestError) as exc:
             if can_fallback:
                 _fb = "cheap" if is_cheap else "premium"
+                logger.warning("primary %s stream-collapsed failed (%s: %s), falling back", _fb, type(exc).__name__, exc)
                 used_cfg = fallback_cfg
-                used_route_reason = f"{_fb}_fallback_unexpected"
+                used_route_reason = f"{_fb}_fallback_timeout"
+                can_fallback = False
+                is_cheap = False
+                upstream, duration_ms = await _post_stream_json(used_cfg, is_fallback=True)
+            else:
+                logger.error("upstream request error: %s", exc)
+                return JSONResponse(
+                    content={"error": {"message": "Upstream request failed", "type": "server_error", "code": "upstream_unreachable"}},
+                    status_code=502,
+                )
+
+        if can_fallback and upstream.status_code >= 400:
+            _fb = "cheap" if is_cheap else "premium"
+            logger.warning("primary %s stream-collapsed returned %s, falling back", _fb, upstream.status_code)
+            try:
+                await upstream.aclose()
+            except Exception:
+                pass
+            used_cfg = fallback_cfg
+            used_route_reason = f"{_fb}_fallback_{upstream.status_code}"
+            can_fallback = False
+            is_cheap = False
+            upstream, duration_ms = await _post_stream_json(used_cfg, is_fallback=True)
+
+        response_headers = filter_headers(dict(upstream.headers))
+        response_headers.pop("content-length", None)
+        content_type = upstream.headers.get("content-type", "text/event-stream")
+        upstream_request_id = extract_upstream_request_id(upstream.headers)
+
+        if "text/event-stream" in content_type:
+            try:
+                data = await _collect_responses_event_stream_payload(upstream)
+            finally:
+                await upstream.aclose()
+        else:
+            try:
+                body = await upstream.aread()
+            finally:
+                await upstream.aclose()
+            if "application/json" in content_type:
+                try:
+                    data = json.loads(body.decode("utf-8"))
+                except Exception:
+                    return JSONResponse(
+                        content={"error": {"message": "Upstream returned invalid JSON", "type": "server_error", "code": "upstream_invalid_json"}},
+                        status_code=502,
+                        headers=response_headers,
+                    )
+            else:
+                data = body.decode("utf-8", errors="replace")
+    else:
+        client = await get_http_client()
+
+        async def _post_json(cfg, *, is_fallback=False):
+            send_payload = dict(base_payload)
+            send_payload["model"] = cfg.model_id
+            if is_fallback:
+                send_payload.pop("previous_response_id", None)
+            send_payload["store"] = True
+            if "cognitiveservices.azure.com" in (cfg.upstream_url or ""):
+                if "codex" not in (cfg.model_id or "").lower():
+                    send_payload.pop("reasoning", None)
+            if cfg.strip_unsupported:
+                for param in _STRIP_PARAMS:
+                    send_payload.pop(param, None)
+            req_url = f"{cfg.upstream_url.rstrip('/')}/responses"
+            req_headers = _build_upstream_headers(cfg)
+            logger.info("json → %s  model=%s  store=%s  has_prev_resp=%s",
+                        req_url, send_payload.get("model"), send_payload.get("store"),
+                        "previous_response_id" in send_payload)
+            t0 = time.monotonic()
+            r = await client.post(req_url, json=send_payload, headers=req_headers)
+            dur = int((time.monotonic() - t0) * 1000)
+            return r, dur
+
+        try:
+            upstream, duration_ms = await _post_json(used_cfg)
+        except (httpx.TimeoutException, httpx.RequestError) as exc:
+            if can_fallback:
+                _fb = "cheap" if is_cheap else "premium"
+                logger.warning("primary %s failed (%s: %s), falling back", _fb, type(exc).__name__, exc)
+                used_cfg = fallback_cfg
+                used_route_reason = f"{_fb}_fallback_timeout"
                 can_fallback = False
                 is_cheap = False
                 upstream, duration_ms = await _post_json(used_cfg, is_fallback=True)
-                response_headers = filter_headers(dict(upstream.headers))
-                response_headers.pop("content-length", None)
-                content_type = upstream.headers.get("content-type", "application/json")
-                upstream_request_id = extract_upstream_request_id(upstream.headers)
-                try:
-                    data = upstream.json() if "application/json" in content_type else upstream.text
-                except Exception:
+            else:
+                logger.error("upstream request error: %s", exc)
+                return JSONResponse(
+                    content={"error": {"message": "Upstream request failed", "type": "server_error", "code": "upstream_unreachable"}},
+                    status_code=502,
+                )
+
+        if can_fallback and upstream.status_code >= 400:
+            _fb = "cheap" if is_cheap else "premium"
+            logger.warning("primary %s returned %s: %s — falling back",
+                           _fb, upstream.status_code, str(upstream.text)[:500])
+            used_cfg = fallback_cfg
+            used_route_reason = f"{_fb}_fallback_{upstream.status_code}"
+            can_fallback = False
+            is_cheap = False
+            upstream, duration_ms = await _post_json(used_cfg, is_fallback=True)
+        response_headers = filter_headers(dict(upstream.headers))
+        response_headers.pop("content-length", None)
+    
+        content_type = upstream.headers.get("content-type", "application/json")
+        upstream_request_id = extract_upstream_request_id(upstream.headers)
+        if can_fallback and "application/json" not in content_type:
+            _fb = "cheap" if is_cheap else "premium"
+            used_cfg = fallback_cfg
+            used_route_reason = f"{_fb}_fallback_unexpected"
+            can_fallback = False
+            is_cheap = False
+            upstream, duration_ms = await _post_json(used_cfg, is_fallback=True)
+            response_headers = filter_headers(dict(upstream.headers))
+            response_headers.pop("content-length", None)
+            content_type = upstream.headers.get("content-type", "application/json")
+            upstream_request_id = extract_upstream_request_id(upstream.headers)
+
+        if "application/json" in content_type:
+            try:
+                data = upstream.json()
+            except Exception:
+                if can_fallback:
+                    _fb = "cheap" if is_cheap else "premium"
+                    used_cfg = fallback_cfg
+                    used_route_reason = f"{_fb}_fallback_unexpected"
+                    can_fallback = False
+                    is_cheap = False
+                    upstream, duration_ms = await _post_json(used_cfg, is_fallback=True)
+                    response_headers = filter_headers(dict(upstream.headers))
+                    response_headers.pop("content-length", None)
+                    content_type = upstream.headers.get("content-type", "application/json")
+                    upstream_request_id = extract_upstream_request_id(upstream.headers)
+                    try:
+                        data = upstream.json() if "application/json" in content_type else upstream.text
+                    except Exception:
+                        return JSONResponse(
+                            content={"error": {"message": "Upstream returned invalid JSON", "type": "server_error", "code": "upstream_invalid_json"}},
+                            status_code=502, headers=response_headers,
+                        )
+                else:
                     return JSONResponse(
                         content={"error": {"message": "Upstream returned invalid JSON", "type": "server_error", "code": "upstream_invalid_json"}},
                         status_code=502, headers=response_headers,
                     )
-            else:
-                return JSONResponse(
-                    content={"error": {"message": "Upstream returned invalid JSON", "type": "server_error", "code": "upstream_invalid_json"}},
-                    status_code=502, headers=response_headers,
-                )
-    else:
-        data = upstream.text
+        else:
+            data = upstream.text
 
     input_tokens_delta = 0
     output_tokens_delta = 0
     cached_tokens_delta = 0
+    if isinstance(data, dict) and isinstance(data.get("error"), dict):
+        return JSONResponse(
+            content={"error": data["error"]},
+            status_code=upstream.status_code if upstream.status_code >= 400 else 502,
+            headers=response_headers,
+        )
     if upstream.status_code < 400 and isinstance(data, dict):
+        if _responses_payload_is_empty_success(data):
+            logger.error("responses upstream returned empty success payload for model=%s", display_model)
+            return JSONResponse(
+                content={
+                    "error": {
+                        "message": "Upstream completed without returning assistant text or tool calls",
+                        "type": "server_error",
+                        "code": "upstream_empty_response",
+                    }
+                },
+                status_code=502,
+                headers=response_headers,
+            )
         usage = data.get("usage") or {}
         input_tokens_delta = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
         output_tokens_delta = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)

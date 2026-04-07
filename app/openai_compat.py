@@ -13,8 +13,10 @@ from .config import settings
 from .db import get_db
 from .proxy import (
     _build_upstream_headers, _ensure_content_text, _sanitize_encrypted_ids,
-    authenticate_user, authorize_request, extract_upstream_request_id, filter_headers, get_http_client,
-    get_stream_client, proxy_images_edits, proxy_images_generations, proxy_responses, responses_health,
+    _collect_responses_event_stream_payload, _responses_payload_is_empty_success,
+    authenticate_user, authorize_request, extract_upstream_request_id,
+    filter_headers, get_http_client, get_stream_client, proxy_images_edits, proxy_images_generations,
+    proxy_responses, responses_health,
 )
 from .router import (
     ModelCapabilityError,
@@ -854,6 +856,13 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                     )
                 if "application/json" in content_type:
                     data = json.loads(body.decode("utf-8"))
+                    if _responses_payload_is_empty_success(data):
+                        return openai_error(
+                            "Upstream completed without returning assistant text or tool calls",
+                            "server_error",
+                            code="upstream_empty_response",
+                            status_code=502,
+                        )
                     return JSONResponse(content=build_chat_response(data, display_model), status_code=upstream.status_code, headers=response_headers)
                 return Response(content=body, status_code=upstream.status_code, headers=response_headers, media_type=content_type)
 
@@ -1032,87 +1041,175 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
         (used_cfg.upstream_url != fallback_cfg.upstream_url) or (used_cfg.model_id != fallback_cfg.model_id)
     )
 
-    client = await get_http_client()
+    collapse_legacy_stream = (
+        public_model.routing_mode == "legacy_auto"
+        and not _has_tools
+        and str(used_cfg.model_id or "").strip() == "gpt-5.4"
+    )
 
-    async def _post_json(cfg):
-        send_payload = dict(resp_payload)
-        send_payload["model"] = cfg.model_id
-        if cfg.strip_unsupported:
-            for field in _STRIP_PARAMS:
-                send_payload.pop(field, None)
-        else:
-            for field in ("temperature", "top_p", "presence_penalty", "frequency_penalty"):
-                if field in payload:
-                    send_payload[field] = payload[field]
-        req_url = f"{cfg.upstream_url.rstrip('/')}/responses"
-        req_headers = _build_upstream_headers(cfg)
-        t0 = time.monotonic()
-        r = await client.post(req_url, json=send_payload, headers=req_headers)
-        dur = int((time.monotonic() - t0) * 1000)
-        return r, dur
+    if collapse_legacy_stream:
+        stream_client = await get_stream_client()
 
-    try:
-        upstream, duration_ms = await _post_json(used_cfg)
-    except (httpx.TimeoutException, httpx.RequestError):
-        if can_fallback:
-            _fb = "cheap" if is_cheap else "premium"
-            used_cfg = fallback_cfg
-            used_route_reason = f"{_fb}_fallback_timeout"
-            can_fallback = False
-            is_cheap = False
-            upstream, duration_ms = await _post_json(used_cfg)
-        else:
-            return openai_error("Upstream request failed", "server_error", code="upstream_unreachable", status_code=502)
+        async def _post_stream_json(cfg):
+            send_payload = dict(resp_payload)
+            send_payload["model"] = cfg.model_id
+            send_payload["stream"] = True
+            if cfg.strip_unsupported:
+                for field in _STRIP_PARAMS:
+                    send_payload.pop(field, None)
+            else:
+                for field in ("temperature", "top_p", "presence_penalty", "frequency_penalty"):
+                    if field in payload:
+                        send_payload[field] = payload[field]
+            req_url = f"{cfg.upstream_url.rstrip('/')}/responses"
+            req_headers = _build_upstream_headers(cfg)
+            req = stream_client.build_request("POST", req_url, json=send_payload, headers=req_headers)
+            t0 = time.monotonic()
+            r = await stream_client.send(req, stream=True)
+            dur = int((time.monotonic() - t0) * 1000)
+            return r, dur
 
-    if can_fallback and upstream.status_code >= 400:
-        _fb = "cheap" if is_cheap else "premium"
-        used_cfg = fallback_cfg
-        used_route_reason = f"{_fb}_fallback_{upstream.status_code}"
-        can_fallback = False
-        is_cheap = False
-        upstream, duration_ms = await _post_json(used_cfg)
-    response_headers = filter_headers(dict(upstream.headers))
-    response_headers.pop("content-length", None)
-
-    content_type = upstream.headers.get("content-type", "application/json")
-    upstream_request_id = extract_upstream_request_id(upstream.headers)
-    if can_fallback and "application/json" not in content_type:
-        _fb = "cheap" if is_cheap else "premium"
-        used_cfg = fallback_cfg
-        used_route_reason = f"{_fb}_fallback_unexpected"
-        can_fallback = False
-        is_cheap = False
-        upstream, duration_ms = await _post_json(used_cfg)
-        response_headers = filter_headers(dict(upstream.headers))
-        response_headers.pop("content-length", None)
-        content_type = upstream.headers.get("content-type", "application/json")
-        upstream_request_id = extract_upstream_request_id(upstream.headers)
-
-    if "application/json" in content_type:
         try:
-            data = upstream.json()
-        except Exception:
+            upstream, duration_ms = await _post_stream_json(used_cfg)
+        except (httpx.TimeoutException, httpx.RequestError):
             if can_fallback:
                 _fb = "cheap" if is_cheap else "premium"
                 used_cfg = fallback_cfg
-                used_route_reason = f"{_fb}_fallback_unexpected"
+                used_route_reason = f"{_fb}_fallback_timeout"
+                can_fallback = False
+                is_cheap = False
+                upstream, duration_ms = await _post_stream_json(used_cfg)
+            else:
+                return openai_error("Upstream request failed", "server_error", code="upstream_unreachable", status_code=502)
+
+        if can_fallback and upstream.status_code >= 400:
+            _fb = "cheap" if is_cheap else "premium"
+            try:
+                await upstream.aclose()
+            except Exception:
+                pass
+            used_cfg = fallback_cfg
+            used_route_reason = f"{_fb}_fallback_{upstream.status_code}"
+            can_fallback = False
+            is_cheap = False
+            upstream, duration_ms = await _post_stream_json(used_cfg)
+
+        response_headers = filter_headers(dict(upstream.headers))
+        response_headers.pop("content-length", None)
+        content_type = upstream.headers.get("content-type", "text/event-stream")
+        upstream_request_id = extract_upstream_request_id(upstream.headers)
+        if "text/event-stream" in content_type:
+            try:
+                data = await _collect_responses_event_stream_payload(upstream)
+            finally:
+                await upstream.aclose()
+        else:
+            try:
+                body = await upstream.aread()
+            finally:
+                await upstream.aclose()
+            if "application/json" in content_type:
+                try:
+                    data = json.loads(body.decode("utf-8"))
+                except Exception:
+                    return openai_error("Upstream returned invalid JSON", "server_error", code="upstream_invalid_json", status_code=502)
+            else:
+                data = body.decode("utf-8", errors="replace")
+    else:
+        client = await get_http_client()
+
+        async def _post_json(cfg):
+            send_payload = dict(resp_payload)
+            send_payload["model"] = cfg.model_id
+            if cfg.strip_unsupported:
+                for field in _STRIP_PARAMS:
+                    send_payload.pop(field, None)
+            else:
+                for field in ("temperature", "top_p", "presence_penalty", "frequency_penalty"):
+                    if field in payload:
+                        send_payload[field] = payload[field]
+            req_url = f"{cfg.upstream_url.rstrip('/')}/responses"
+            req_headers = _build_upstream_headers(cfg)
+            t0 = time.monotonic()
+            r = await client.post(req_url, json=send_payload, headers=req_headers)
+            dur = int((time.monotonic() - t0) * 1000)
+            return r, dur
+
+        try:
+            upstream, duration_ms = await _post_json(used_cfg)
+        except (httpx.TimeoutException, httpx.RequestError):
+            if can_fallback:
+                _fb = "cheap" if is_cheap else "premium"
+                used_cfg = fallback_cfg
+                used_route_reason = f"{_fb}_fallback_timeout"
                 can_fallback = False
                 is_cheap = False
                 upstream, duration_ms = await _post_json(used_cfg)
-                response_headers = filter_headers(dict(upstream.headers))
-                response_headers.pop("content-length", None)
-                content_type = upstream.headers.get("content-type", "application/json")
-                upstream_request_id = extract_upstream_request_id(upstream.headers)
-                data = upstream.json() if "application/json" in content_type else upstream.text
             else:
-                return openai_error("Upstream returned invalid JSON", "server_error", code="upstream_invalid_json", status_code=502)
-    else:
-        data = upstream.text
+                return openai_error("Upstream request failed", "server_error", code="upstream_unreachable", status_code=502)
+
+        if can_fallback and upstream.status_code >= 400:
+            _fb = "cheap" if is_cheap else "premium"
+            used_cfg = fallback_cfg
+            used_route_reason = f"{_fb}_fallback_{upstream.status_code}"
+            can_fallback = False
+            is_cheap = False
+            upstream, duration_ms = await _post_json(used_cfg)
+        response_headers = filter_headers(dict(upstream.headers))
+        response_headers.pop("content-length", None)
+
+        content_type = upstream.headers.get("content-type", "application/json")
+        upstream_request_id = extract_upstream_request_id(upstream.headers)
+        if can_fallback and "application/json" not in content_type:
+            _fb = "cheap" if is_cheap else "premium"
+            used_cfg = fallback_cfg
+            used_route_reason = f"{_fb}_fallback_unexpected"
+            can_fallback = False
+            is_cheap = False
+            upstream, duration_ms = await _post_json(used_cfg)
+            response_headers = filter_headers(dict(upstream.headers))
+            response_headers.pop("content-length", None)
+            content_type = upstream.headers.get("content-type", "application/json")
+            upstream_request_id = extract_upstream_request_id(upstream.headers)
+
+        if "application/json" in content_type:
+            try:
+                data = upstream.json()
+            except Exception:
+                if can_fallback:
+                    _fb = "cheap" if is_cheap else "premium"
+                    used_cfg = fallback_cfg
+                    used_route_reason = f"{_fb}_fallback_unexpected"
+                    can_fallback = False
+                    is_cheap = False
+                    upstream, duration_ms = await _post_json(used_cfg)
+                    response_headers = filter_headers(dict(upstream.headers))
+                    response_headers.pop("content-length", None)
+                    content_type = upstream.headers.get("content-type", "application/json")
+                    upstream_request_id = extract_upstream_request_id(upstream.headers)
+                    data = upstream.json() if "application/json" in content_type else upstream.text
+                else:
+                    return openai_error("Upstream returned invalid JSON", "server_error", code="upstream_invalid_json", status_code=502)
+        else:
+            data = upstream.text
 
     input_tokens_delta = 0
     output_tokens_delta = 0
     cached_tokens_delta = 0
+    if isinstance(data, dict) and isinstance(data.get("error"), dict):
+        return JSONResponse(
+            content={"error": data["error"]},
+            status_code=upstream.status_code if upstream.status_code >= 400 else 502,
+            headers=response_headers,
+        )
     if upstream.status_code < 400 and isinstance(data, dict):
+        if _responses_payload_is_empty_success(data):
+            return openai_error(
+                "Upstream completed without returning assistant text or tool calls",
+                "server_error",
+                code="upstream_empty_response",
+                status_code=502,
+            )
         usage = data.get("usage") or {}
         input_tokens_delta = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
         output_tokens_delta = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
