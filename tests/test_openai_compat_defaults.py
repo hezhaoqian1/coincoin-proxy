@@ -611,26 +611,21 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(upstream_client.calls[0]["json"]["stream"])
         add_usage.assert_awaited_once()
 
-    async def test_responses_gpt_5_4_with_tools_keeps_json_path(self) -> None:
+    async def test_responses_gpt_5_4_with_tools_collapses_stream_tool_calls(self) -> None:
         settings.router_enabled = False
         registry._initialized = False
         registry.init_from_settings()
-        upstream_client = _RecordingClient(
+        upstream_client = _RecordingStreamClient(
             [
-                _FakeUpstreamResponse(
-                    {
-                        "id": "resp_tool_json",
-                        "status": "completed",
-                        "output": [
-                            {
-                                "type": "function_call",
-                                "id": "call_123",
-                                "name": "read_file",
-                                "arguments": "{\"path\":\"foo.txt\"}",
-                            }
-                        ],
-                        "usage": {"input_tokens": 3, "output_tokens": 1, "total_tokens": 4},
-                    }
+                _FakeEventStreamResponse(
+                    [
+                        'data: {"type":"response.created","response":{"id":"resp_tool_json","status":"in_progress","model":"gpt-5.4","output":[]}}',
+                        'data: {"type":"response.output_item.added","item":{"type":"function_call","id":"call_123","name":"read_file"}}',
+                        'data: {"type":"response.function_call_arguments.delta","delta":"{\\"path\\":\\"foo.txt\\"}"}',
+                        'data: {"type":"response.function_call_arguments.done"}',
+                        'data: {"type":"response.completed","response":{"id":"resp_tool_json","status":"completed","model":"gpt-5.4","output":[],"usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}}}',
+                        "data: [DONE]",
+                    ]
                 )
             ]
         )
@@ -639,9 +634,9 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
             with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
                 proxy_module,
-                "get_http_client",
+                "get_stream_client",
                 AsyncMock(return_value=upstream_client),
-            ), patch.object(proxy_module, "get_stream_client", AsyncMock()) as get_stream_client:
+            ), patch.object(proxy_module.usage_buffer, "add", AsyncMock()) as add_usage:
                 response = await client.post(
                     "/v1/responses",
                     headers={"Authorization": "Bearer sk_cc_test"},
@@ -666,10 +661,70 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
         self.assertEqual(payload["output"][0]["type"], "function_call")
+        self.assertEqual(payload["output"][0]["name"], "read_file")
+        self.assertEqual(payload["output"][0]["arguments"], "{\"path\":\"foo.txt\"}")
         self.assertEqual(upstream_client.calls[0]["url"], "https://legacy.example/v1/responses")
-        self.assertNotIn("stream", upstream_client.calls[0]["json"])
+        self.assertTrue(upstream_client.calls[0]["json"]["stream"])
         self.assertEqual(upstream_client.calls[0]["json"]["tools"][0]["name"], "read_file")
-        get_stream_client.assert_not_awaited()
+        add_usage.assert_awaited_once()
+
+    async def test_chat_nonstream_gpt_5_4_with_tools_collapses_stream_tool_calls(self) -> None:
+        settings.router_enabled = False
+        registry._initialized = False
+        registry.init_from_settings()
+        upstream_client = _RecordingStreamClient(
+            [
+                _FakeEventStreamResponse(
+                    [
+                        'data: {"type":"response.created","response":{"id":"resp_tool_chat","status":"in_progress","model":"gpt-5.4","output":[]}}',
+                        'data: {"type":"response.output_item.added","item":{"type":"function_call","id":"call_123","name":"read_file"}}',
+                        'data: {"type":"response.function_call_arguments.delta","delta":"{\\"path\\":\\"foo.txt\\"}"}',
+                        'data: {"type":"response.function_call_arguments.done"}',
+                        'data: {"type":"response.completed","response":{"id":"resp_tool_chat","status":"completed","model":"gpt-5.4","output":[],"usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}}}',
+                        "data: [DONE]",
+                    ]
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(openai_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                openai_module,
+                "get_stream_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(openai_module.usage_buffer, "add", AsyncMock()) as add_usage:
+                response = await client.post(
+                    "/v1/chat/completions",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={
+                        "model": "gpt-5.4",
+                        "messages": [{"role": "user", "content": "Read foo.txt"}],
+                        "tools": [
+                            {
+                                "type": "function",
+                                "function": {
+                                    "name": "read_file",
+                                    "description": "Read file contents",
+                                    "parameters": {
+                                        "type": "object",
+                                        "properties": {"path": {"type": "string"}},
+                                        "required": ["path"],
+                                    },
+                                },
+                            }
+                        ],
+                        "tool_choice": "required",
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        tool_calls = payload["choices"][0]["message"]["tool_calls"]
+        self.assertEqual(tool_calls[0]["function"]["name"], "read_file")
+        self.assertEqual(tool_calls[0]["function"]["arguments"], "{\"path\":\"foo.txt\"}")
+        self.assertTrue(upstream_client.calls[0]["json"]["stream"])
+        add_usage.assert_awaited_once()
 
     async def test_chat_stream_gpt_5_4_with_tools_preserves_tool_call_sse(self) -> None:
         settings.router_enabled = False
