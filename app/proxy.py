@@ -408,6 +408,15 @@ async def _collect_responses_event_stream_payload(upstream: httpx.Response) -> d
     return data
 
 
+def _should_collapse_legacy_stream(public_model, cfg) -> bool:
+    if getattr(public_model, "routing_mode", None) != "legacy_auto":
+        return False
+
+    upstream_url = str(getattr(cfg, "upstream_url", "") or "").lower()
+    auth_style = str(getattr(cfg, "auth_style", "") or "").strip().lower()
+    return auth_style == "bearer" and "cognitiveservices.azure.com" not in upstream_url
+
+
 def _expand_previous_response_input(payload: dict, cached_conv: Optional[Tuple[list, list]]) -> Optional[Tuple[int, int, int]]:
     if not cached_conv:
         return None
@@ -1205,6 +1214,8 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         can_fallback = allow_fallback and (
             (used_cfg.upstream_url != fallback_cfg.upstream_url) or (used_cfg.model_id != fallback_cfg.model_id)
         )
+        if resolved_model.lock_model_selection and fallback_cfg.model_id != used_cfg.model_id:
+            can_fallback = False
 
         stream_client = await get_stream_client()
 
@@ -1388,11 +1399,10 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
     can_fallback = allow_fallback and (
         (used_cfg.upstream_url != fallback_cfg.upstream_url) or (used_cfg.model_id != fallback_cfg.model_id)
     )
+    if resolved_model.lock_model_selection and fallback_cfg.model_id != used_cfg.model_id:
+        can_fallback = False
 
-    collapse_legacy_stream = (
-        public_model.routing_mode == "legacy_auto"
-        and str(used_cfg.model_id or "").strip() == "gpt-5.4"
-    )
+    collapse_legacy_stream = _should_collapse_legacy_stream(public_model, used_cfg)
 
     if collapse_legacy_stream:
         stream_client = await get_stream_client()
