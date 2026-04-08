@@ -4,4 +4,5 @@ coincoin-web/dist/
 __pycache__/
 *.pyc
 .venv/
+.venv312/
 *.egg-info/
