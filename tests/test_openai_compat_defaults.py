@@ -34,6 +34,7 @@ def _legacy_text_model(model_id: str) -> dict:
         "id": model_id,
         "owned_by": "openai",
         "provider_name": "OpenAI",
+        "provider_model": model_id,
         "capabilities": ["chat/completions", "responses"],
         "routing_mode": "legacy_auto",
         "delivery_lane": "legacy",
@@ -322,6 +323,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_chat_empty_nonstream_json_collapses_stream_output(self) -> None:
         settings.router_enabled = False
+        settings.primary_auth_style = "bearer"
         registry._initialized = False
         registry.init_from_settings()
         upstream_client = _RecordingStreamClient(
@@ -431,6 +433,8 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["model"], "gpt-5.2-codex")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-5.2-codex")
+        self.assertEqual(upstream_client.calls[0]["url"], "https://legacy.example/v1/responses")
 
     async def test_responses_explicit_gpt_5_4_mini_alias_keeps_public_model_name(self) -> None:
         upstream_client = _RecordingClient(
@@ -465,6 +469,67 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["model"], "gpt-5.4-mini")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-5.4-mini")
+        self.assertEqual(upstream_client.calls[0]["url"], "https://legacy.example/v1/responses")
+
+    async def test_responses_explicit_legacy_alias_does_not_fallback_to_different_model(self) -> None:
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {"error": {"message": "primary failed", "type": "server_error"}},
+                    status_code=500,
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ):
+                response = await client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"model": "gpt-5.2-codex", "input": "Reply with only: OK"},
+                )
+
+        self.assertEqual(response.status_code, 500, response.text)
+        self.assertEqual(len(upstream_client.calls), 1)
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-5.2-codex")
+        self.assertEqual(upstream_client.calls[0]["url"], "https://legacy.example/v1/responses")
+
+    async def test_chat_explicit_legacy_alias_does_not_fallback_to_different_model(self) -> None:
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {"error": {"message": "primary failed", "type": "server_error"}},
+                    status_code=500,
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(openai_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                openai_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ):
+                response = await client.post(
+                    "/v1/chat/completions",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={
+                        "model": "gpt-5.2-codex",
+                        "messages": [{"role": "user", "content": "Reply with only: OK"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 500, response.text)
+        self.assertEqual(len(upstream_client.calls), 1)
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-5.2-codex")
+        self.assertEqual(upstream_client.calls[0]["url"], "https://legacy.example/v1/responses")
 
     async def test_responses_legacy_lane_drops_context_management(self) -> None:
         upstream_client = _RecordingClient(
@@ -579,6 +644,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_responses_empty_nonstream_json_collapses_stream_output(self) -> None:
         settings.router_enabled = False
+        settings.primary_auth_style = "bearer"
         registry._initialized = False
         registry.init_from_settings()
         upstream_client = _RecordingStreamClient(
@@ -614,8 +680,54 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(upstream_client.calls[0]["json"]["stream"])
         add_usage.assert_awaited_once()
 
+    async def test_responses_explicit_codex_alias_collapses_stream_and_preserves_reasoning(self) -> None:
+        settings.router_enabled = False
+        settings.primary_auth_style = "bearer"
+        registry._initialized = False
+        registry.init_from_settings()
+        upstream_client = _RecordingStreamClient(
+            [
+                _FakeEventStreamResponse(
+                    [
+                        'data: {"type":"response.created","response":{"id":"resp_codex_reasoning","status":"in_progress","model":"gpt-5.3-codex","output":[],"reasoning":{"effort":"high"}}}',
+                        'data: {"type":"response.output_text.delta","delta":"OK"}',
+                        'data: {"type":"response.completed","response":{"id":"resp_codex_reasoning","status":"completed","model":"gpt-5.3-codex","output":[],"reasoning":{"effort":"high"},"usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}}}',
+                        "data: [DONE]",
+                    ]
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_stream_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(proxy_module.usage_buffer, "add", AsyncMock()) as add_usage:
+                response = await client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={
+                        "model": "gpt-5.3-codex",
+                        "input": "Reply with only: OK",
+                        "reasoning": {"effort": "high"},
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["model"], "gpt-5.3-codex")
+        self.assertEqual(payload["output"][0]["content"][0]["text"], "OK")
+        self.assertEqual(payload["reasoning"]["effort"], "high")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-5.3-codex")
+        self.assertEqual(upstream_client.calls[0]["json"]["reasoning"]["effort"], "high")
+        self.assertTrue(upstream_client.calls[0]["json"]["stream"])
+        add_usage.assert_awaited_once()
+
     async def test_responses_gpt_5_4_with_tools_collapses_stream_tool_calls(self) -> None:
         settings.router_enabled = False
+        settings.primary_auth_style = "bearer"
         registry._initialized = False
         registry.init_from_settings()
         upstream_client = _RecordingStreamClient(
@@ -673,6 +785,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_chat_nonstream_gpt_5_4_with_tools_collapses_stream_tool_calls(self) -> None:
         settings.router_enabled = False
+        settings.primary_auth_style = "bearer"
         registry._initialized = False
         registry.init_from_settings()
         upstream_client = _RecordingStreamClient(

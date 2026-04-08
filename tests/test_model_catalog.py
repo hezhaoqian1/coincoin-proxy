@@ -26,6 +26,7 @@ def _legacy_text_model(model_id: str) -> dict:
         "id": model_id,
         "owned_by": "openai",
         "provider_name": "OpenAI",
+        "provider_model": model_id,
         "capabilities": ["chat/completions", "responses"],
         "routing_mode": "legacy_auto",
         "delivery_lane": "legacy",
@@ -183,8 +184,9 @@ class ModelCatalogTests(unittest.TestCase):
         )
 
         self.assertEqual(resolved.public_model.public_id, "gpt-5.2-codex")
-        self.assertEqual(resolved.backend.model_id, "gpt-4o-mini")
-        self.assertEqual(resolved.route_reason, "catalog:gpt-5.2-codex:auto_cheap")
+        self.assertEqual(resolved.backend.model_id, "gpt-5.2-codex")
+        self.assertEqual(resolved.route_reason, "catalog:gpt-5.2-codex:legacy_explicit")
+        self.assertTrue(resolved.lock_model_selection)
 
     def test_explicit_gpt_5_2_alias_keeps_legacy_lane(self) -> None:
         resolved = registry.resolve_public_model(
@@ -195,8 +197,9 @@ class ModelCatalogTests(unittest.TestCase):
         )
 
         self.assertEqual(resolved.public_model.public_id, "gpt-5.2")
-        self.assertEqual(resolved.backend.model_id, "gpt-4o-mini")
-        self.assertEqual(resolved.route_reason, "catalog:gpt-5.2:auto_cheap")
+        self.assertEqual(resolved.backend.model_id, "gpt-5.2")
+        self.assertEqual(resolved.route_reason, "catalog:gpt-5.2:legacy_explicit")
+        self.assertTrue(resolved.lock_model_selection)
 
     def test_explicit_gpt_5_4_mini_alias_keeps_legacy_lane(self) -> None:
         resolved = registry.resolve_public_model(
@@ -207,8 +210,9 @@ class ModelCatalogTests(unittest.TestCase):
         )
 
         self.assertEqual(resolved.public_model.public_id, "gpt-5.4-mini")
-        self.assertEqual(resolved.backend.model_id, "gpt-4o-mini")
-        self.assertEqual(resolved.route_reason, "catalog:gpt-5.4-mini:auto_cheap")
+        self.assertEqual(resolved.backend.model_id, "gpt-5.4-mini")
+        self.assertEqual(resolved.route_reason, "catalog:gpt-5.4-mini:legacy_explicit")
+        self.assertTrue(resolved.lock_model_selection)
 
     def test_catalog_lists_all_expected_legacy_gpt_aliases(self) -> None:
         text_model_ids = [
