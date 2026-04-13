@@ -10,12 +10,12 @@ from .models import PaymentOrder, User
 from .referral import process_referral_reward
 
 PLAN_MAP: dict[Decimal, int] = {
-    Decimal("9.90"):   1800,    # 体验包  $18    (要发)
-    Decimal("29.90"):  6600,    # 轻量版  $66    (六六大顺)
-    Decimal("59.90"):  13800,   # 基础版  $138   (一生发)
-    Decimal("99.90"):  23800,   # 进阶版  $238   (爱生发)
-    Decimal("199.90"): 51800,   # 专业版  $518   (我要发)
-    Decimal("499.90"): 138800,  # 旗舰版  $1388  (一生发发)
+    Decimal("9.90"):   4999,    # 体验包  $49.99
+    Decimal("29.90"):  14999,   # 轻量版  $149.99
+    Decimal("59.90"):  29999,   # 基础版  $299.99
+    Decimal("99.90"):  49999,   # 进阶版  $499.99
+    Decimal("199.90"): 99999,   # 专业版  $999.99
+    Decimal("499.90"): 249999,  # 旗舰版  $2499.99
 }
 
 
@@ -97,9 +97,13 @@ async def confirm_paid_order(
     if duplicate_trade:
         raise PaymentConfirmError(f"trade_no already linked to order {duplicate_trade}", status_code=409)
 
-    add_cents = rmb_to_cents(normalized_money)
+    # The quoted balance is locked in when the order is created.
+    # Confirming an old pending order must not pick up a newer pricing table.
+    add_cents = int(getattr(order, "add_balance_cents", 0) or 0)
     if add_cents <= 0:
-        raise PaymentConfirmError("invalid payment amount", status_code=400)
+        add_cents = rmb_to_cents(normalized_money)
+        if add_cents <= 0:
+            raise PaymentConfirmError("invalid payment amount", status_code=400)
 
     user.balance += add_cents
     order.status = "confirmed"

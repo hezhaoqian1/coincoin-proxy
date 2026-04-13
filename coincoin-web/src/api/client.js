@@ -327,8 +327,8 @@ export const PRICING_PLANS = [
         price: '¥9.9',
         priceNote: '',
         money: '9.90',
-        balanceLabel: '$18 余额',
-        features: ['$18.00 账户余额', '适合接入测试与小流量使用', 'GPT + Gemini 多模型可选', '按量计费 · 用多少扣多少'],
+        balanceLabel: '$49.99 余额',
+        features: ['$49.99 账户余额', '适合接入测试与小流量使用', 'GPT + Gemini 多模型可选', '按量计费 · 用多少扣多少'],
         badge: null,
         highlight: false
     },
@@ -337,8 +337,8 @@ export const PRICING_PLANS = [
         price: '¥29.9',
         priceNote: '',
         money: '29.90',
-        balanceLabel: '$66 余额',
-        features: ['$66.00 账户余额', '适合日常编码和对话请求', '支持 Gemini 文本与图片模型', '按量计费 · 用多少扣多少'],
+        balanceLabel: '$149.99 余额',
+        features: ['$149.99 账户余额', '适合日常编码和对话请求', '支持 Gemini 文本与图片模型', '按量计费 · 用多少扣多少'],
         badge: null,
         highlight: false
     },
@@ -347,8 +347,8 @@ export const PRICING_PLANS = [
         price: '¥59.9',
         priceNote: '',
         money: '59.90',
-        balanceLabel: '$138 余额',
-        features: ['$138.00 账户余额', '适合多客户端长期使用', '默认 GPT 兼容 + Gemini 多模型', '按量计费 · 用多少扣多少'],
+        balanceLabel: '$299.99 余额',
+        features: ['$299.99 账户余额', '适合多客户端长期使用', '默认 GPT 兼容 + Gemini 多模型', '按量计费 · 用多少扣多少'],
         badge: '最受欢迎',
         highlight: true
     },
@@ -357,8 +357,8 @@ export const PRICING_PLANS = [
         price: '¥99.9',
         priceNote: '',
         money: '99.90',
-        balanceLabel: '$238 余额',
-        features: ['$238.00 账户余额', '适合团队协作与代理工作流', '文本 + 生图请求统一计费', '按量计费 · 用多少扣多少'],
+        balanceLabel: '$499.99 余额',
+        features: ['$499.99 账户余额', '适合团队协作与代理工作流', '文本 + 生图请求统一计费', '按量计费 · 用多少扣多少'],
         badge: null,
         highlight: false
     },
@@ -367,8 +367,8 @@ export const PRICING_PLANS = [
         price: '¥199.9',
         priceNote: '',
         money: '199.90',
-        balanceLabel: '$518 余额',
-        features: ['$518.00 账户余额', '适合高频自动化与批量调用', '支持稳定版与预览版 Gemini', '按量计费 · 用多少扣多少'],
+        balanceLabel: '$999.99 余额',
+        features: ['$999.99 账户余额', '适合高频自动化与批量调用', '支持稳定版与预览版 Gemini', '按量计费 · 用多少扣多少'],
         badge: null,
         highlight: false
     },
@@ -377,8 +377,8 @@ export const PRICING_PLANS = [
         price: '¥499.9',
         priceNote: '',
         money: '499.90',
-        balanceLabel: '$1388 余额',
-        features: ['$1,388.00 账户余额', '适合多账号、长上下文和图片工作流', 'CoinCoin 长期主力方案', '按量计费 · 用多少扣多少'],
+        balanceLabel: '$2499.99 余额',
+        features: ['$2,499.99 账户余额', '适合多账号、长上下文和图片工作流', 'CoinCoin 长期主力方案', '按量计费 · 用多少扣多少'],
         badge: '最划算',
         highlight: false
     }
