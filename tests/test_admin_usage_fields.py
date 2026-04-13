@@ -209,7 +209,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             user_id="u_1",
             amount_rmb="9.90",
             status="pending",
-            add_balance_cents=0,
+            add_balance_cents=4999,
             trade_no=None,
             confirmed_at=None,
         )
@@ -250,8 +250,8 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         payload = response.json()
         self.assertEqual(payload["status"], "confirmed")
         self.assertEqual(payload["trade_no"], "2026032622080275954")
-        self.assertEqual(payload["added_cents"], 1800)
-        self.assertEqual(user.balance, 2300)
+        self.assertEqual(payload["added_cents"], 4999)
+        self.assertEqual(user.balance, 5499)
         self.assertEqual(order.status, "confirmed")
         self.assertEqual(order.trade_no, "2026032622080275954")
         self.assertEqual(fake_db.commits, 1)
@@ -266,7 +266,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             user_id="u_1",
             amount_rmb="9.90",
             status="pending",
-            add_balance_cents=0,
+            add_balance_cents=4999,
             trade_no=None,
             confirmed_at=None,
         )
@@ -337,6 +337,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("notify_url=https%3A%2F%2Fbird-alipay.up.railway.app%2Fwebhook%2Fpay-notify", payload["pay_url"])
         self.assertIn("return_url=https%3A%2F%2Fbird-alipay.up.railway.app%2Fpay%2Freturn%3Forder_no%3D", payload["pay_url"])
         self.assertIn("sign=", payload["pay_url"])
+        self.assertEqual(payload["expected_cents"], 4999)
         self.assertEqual(fake_db.commits, 1)
 
     async def test_confirm_order_accepts_signed_proof_url(self) -> None:
@@ -350,7 +351,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             user_id="u_1",
             amount_rmb="9.90",
             status="pending",
-            add_balance_cents=0,
+            add_balance_cents=4999,
             trade_no=None,
             confirmed_at=None,
         )
@@ -399,8 +400,73 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
         self.assertTrue(payload["success"])
-        self.assertEqual(payload["added_cents"], 1800)
+        self.assertEqual(payload["added_cents"], 4999)
+        self.assertEqual(user.balance, 5499)
         self.assertEqual(order.trade_no, "2026032622080275954")
+        self.assertEqual(fake_db.commits, 1)
+
+    async def test_confirm_order_keeps_stored_pending_balance_quote(self) -> None:
+        payment_module.settings.epay_api_url = "https://code.nxslq.top/"
+        payment_module.settings.epay_pid = "177938431"
+        payment_module.settings.epay_key = "j9J4loEx5Qy"
+
+        user = SimpleNamespace(id="u_1", balance=500, referred_by=None, status="active")
+        order = SimpleNamespace(
+            order_no="CC_test_order",
+            user_id="u_1",
+            amount_rmb="9.90",
+            status="pending",
+            add_balance_cents=4321,
+            trade_no=None,
+            confirmed_at=None,
+        )
+        fake_db = _FakeDB(
+            execute_results=[
+                _FakeEntityResult(order),
+                _FakeEntityResult(order),
+                _FakeEntityResult(user),
+                _FakeEntityResult(None),
+            ]
+        )
+
+        async def fake_get_db():
+            yield fake_db
+
+        async def fake_authenticate_user(_request, _db):
+            return user
+
+        async def fake_allow(_key, _limit):
+            return True
+
+        original_authenticate_user = payment_module.authenticate_user
+        original_allow = payment_module.rate_limiter.allow
+        payment_module.authenticate_user = fake_authenticate_user
+        payment_module.rate_limiter.allow = fake_allow
+        app.dependency_overrides[payment_module.get_db] = fake_get_db
+
+        transport = httpx.ASGITransport(app=app)
+        try:
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                response = await client.post(
+                    "/v1/orders/confirm",
+                    json={
+                        "order_no": "CC_test_order",
+                        "proof_url": "https://bird-alipay.up.railway.app/pay/return?order_no=CC_test_order"
+                        "&pid=177938431&trade_no=2026032622080275954&out_trade_no=CC_test_order"
+                        "&type=alipay&name=%E4%BD%93%E9%AA%8C%E5%8C%85&money=9.90&trade_status=TRADE_SUCCESS"
+                        "&sign=f1b31796bddaf4e9e156657dba3a0159&sign_type=MD5",
+                    },
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                )
+        finally:
+            payment_module.authenticate_user = original_authenticate_user
+            payment_module.rate_limiter.allow = original_allow
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["added_cents"], 4321)
+        self.assertEqual(user.balance, 4821)
+        self.assertEqual(order.add_balance_cents, 4321)
         self.assertEqual(fake_db.commits, 1)
 
     async def test_pay_notify_confirms_order_from_signed_callback(self) -> None:
@@ -413,7 +479,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             user_id="u_1",
             amount_rmb="9.90",
             status="pending",
-            add_balance_cents=0,
+            add_balance_cents=4999,
             trade_no=None,
             confirmed_at=None,
         )
@@ -456,6 +522,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.text, "success")
         self.assertEqual(order.status, "confirmed")
+        self.assertEqual(user.balance, 5499)
         self.assertEqual(fake_db.commits, 1)
 
 
