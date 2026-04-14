@@ -12,7 +12,6 @@ export default function Landing() {
         '控制台账号、余额、请求日志、开发者 Key 全在一处管理',
         '兼容 Codex CLI、Continue、Aider、OpenClaw 等主流客户端',
     ]
-    const featuredPlans = PRICING_PLANS.slice(0, 3)
 
     return (
         <div className="landing">
@@ -150,7 +149,7 @@ export default function Landing() {
                     <h2 className="section-title">先把账户开通，再按量充值</h2>
                     <p className="section-subtitle">对大多数用户来说，真正需要做的只有两步：创建控制台账号，然后按你的使用规模充值</p>
                     <div className="pricing-grid stagger-children">
-                        {featuredPlans.map((plan, i) => (
+                        {PRICING_PLANS.map((plan, i) => (
                             <div key={i} className={`pricing-card glass-card animate-fade-in-up ${plan.highlight ? 'pricing-highlight' : ''}`}>
                                 {plan.badge && <div className="pricing-badge">{plan.badge}</div>}
                                 <h3 className="pricing-name">{plan.name}</h3>
