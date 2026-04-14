@@ -8,7 +8,7 @@ export default function Navbar() {
     const { theme, toggleTheme } = useTheme()
     const location = useLocation()
     const navigate = useNavigate()
-    const pricingTarget = isLoggedIn ? '/recharge' : '/#pricing'
+    const pricingTarget = '/recharge'
 
     const handleLogout = () => {
         logout()

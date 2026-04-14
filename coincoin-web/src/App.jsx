@@ -45,9 +45,7 @@ export default function App() {
                     <Route path="/usage" element={
                         <ProtectedRoute><Usage /></ProtectedRoute>
                     } />
-                    <Route path="/recharge" element={
-                        <ProtectedRoute><Recharge /></ProtectedRoute>
-                    } />
+                    <Route path="/recharge" element={<Recharge />} />
                     <Route path="/docs" element={<Docs />} />
                     <Route path="/playground" element={
                         <ProtectedRoute><Playground /></ProtectedRoute>

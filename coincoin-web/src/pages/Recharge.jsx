@@ -2,12 +2,14 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { PRICING_PLANS, redeemCode, getApiKey, confirmOrder } from '../api/client'
 import useOrderConfirm from '../hooks/useOrderConfirm'
+import { useAuth } from '../hooks/useAuth'
 import './Recharge.css'
 
 const POLL_INTERVAL = 3000
 const MAX_POLL_ATTEMPTS = 200
 
 export default function Recharge() {
+    const { isLoggedIn } = useAuth()
     const [selectedPlan, setSelectedPlan] = useState(2)
     const [customAmount, setCustomAmount] = useState('')
     const [useCustom, setUseCustom] = useState(false)
@@ -71,6 +73,11 @@ export default function Recharge() {
     }, [])
 
     const handlePay = async () => {
+        if (!isLoggedIn) {
+            navigate('/login')
+            return
+        }
+
         const plan = useCustom ? null : PRICING_PLANS[selectedPlan]
         const planMoney = useCustom ? parseFloat(customAmount).toFixed(2) : plan.money
         if (!planMoney || parseFloat(planMoney) <= 0) return
@@ -137,6 +144,11 @@ export default function Recharge() {
     }
 
     const handleRedeem = async () => {
+        if (!isLoggedIn) {
+            navigate('/login')
+            return
+        }
+
         if (!redeemInput.trim()) return
         setRedeemLoading(true)
         setRedeemMsg(null)
@@ -162,6 +174,21 @@ export default function Recharge() {
                     <h1 className="page-title">充值中心</h1>
                     <p className="page-desc">这里是控制台里最直接的续费入口。先给账户充值，再由所有文本和图片请求统一扣费。</p>
                 </div>
+
+                {!isLoggedIn && (
+                    <div className="glass-card animate-fade-in" style={{ padding: 'var(--space-lg)', marginBottom: 'var(--space-lg)', background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 'var(--space-md)', alignItems: 'center', flexWrap: 'wrap' }}>
+                            <div>
+                                <strong style={{ display: 'block', marginBottom: 'var(--space-xs)' }}>套餐和额度可以先看，真正支付前再登录</strong>
+                                <span style={{ color: 'var(--text-secondary)' }}>未登录用户现在也能查看充值页；但创建订单和兑换码到账仍需要先登录，这样余额才能准确充到你的账户。</span>
+                            </div>
+                            <div style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
+                                <Link to="/login" className="btn btn-primary btn-sm">登录后充值</Link>
+                                <Link to="/register" className="btn btn-secondary btn-sm">注册账号</Link>
+                            </div>
+                        </div>
+                    </div>
+                )}
 
                 <div className="recharge-overview glass-card animate-fade-in-up">
                     <div className="recharge-overview-copy">
@@ -314,49 +341,70 @@ export default function Recharge() {
                         <button
                             className="btn btn-primary btn-lg pay-btn"
                             onClick={handlePay}
-                            disabled={loading || (useCustom && (!customAmount || parseFloat(customAmount) <= 0))}
+                            disabled={(isLoggedIn && loading) || (useCustom && (!customAmount || parseFloat(customAmount) <= 0))}
                         >
-                            {loading ? '创建订单中...' : (
+                            {isLoggedIn && loading ? '创建订单中...' : (
                                 <>
                                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="1" y="4" width="22" height="16" rx="2" ry="2" /><line x1="1" y1="10" x2="23" y2="10" /></svg>
-                                    {useCustom
+                                    {!isLoggedIn
+                                        ? '登录后充值'
+                                        : useCustom
                                         ? `支付宝支付 ¥${customAmount || '0'}`
                                         : `支付宝支付 ${PRICING_PLANS[selectedPlan].price}`
                                     }
                                 </>
                             )}
                         </button>
-                        <p className="pay-note">点击后会在新标签打开支付页面，支付完成后本页自动检测到账并跳转到仪表盘</p>
+                        <p className="pay-note">{isLoggedIn ? '点击后会在新标签打开支付页面，支付完成后本页自动检测到账并跳转到仪表盘' : '充值页现在公开可见；登录后才会真正创建订单并把余额充到你的账户。'}</p>
                         <div className="recharge-next-links">
-                            <Link to="/dashboard" className="btn btn-ghost btn-sm">返回仪表盘</Link>
-                            <Link to="/usage" className="btn btn-ghost btn-sm">查看请求日志</Link>
-                            <Link to="/settings" className="btn btn-ghost btn-sm">去接入配置</Link>
+                            {isLoggedIn ? (
+                                <>
+                                    <Link to="/dashboard" className="btn btn-ghost btn-sm">返回仪表盘</Link>
+                                    <Link to="/usage" className="btn btn-ghost btn-sm">查看请求日志</Link>
+                                    <Link to="/settings" className="btn btn-ghost btn-sm">去接入配置</Link>
+                                </>
+                            ) : (
+                                <>
+                                    <Link to="/login" className="btn btn-ghost btn-sm">登录</Link>
+                                    <Link to="/register" className="btn btn-ghost btn-sm">注册</Link>
+                                    <Link to="/docs" className="btn btn-ghost btn-sm">查看文档</Link>
+                                </>
+                            )}
                         </div>
                     </div>
                 )}
 
                 <div className="redeem-section glass-card animate-fade-in-up" style={{ animationDelay: '500ms' }}>
                     <h3>兑换码充值</h3>
-                    <p className="redeem-desc">输入兑换码立即充值到账</p>
-                    <div className="redeem-row">
-                        <input
-                            type="text"
-                            className="input-field redeem-input"
-                            placeholder="请输入兑换码"
-                            value={redeemInput}
-                            onChange={(e) => setRedeemInput(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && handleRedeem()}
-                        />
-                        <button
-                            className="btn btn-primary"
-                            onClick={handleRedeem}
-                            disabled={redeemLoading || !redeemInput.trim()}
-                        >
-                            {redeemLoading ? '兑换中...' : '兑换'}
-                        </button>
-                    </div>
-                    {redeemMsg && (
-                        <div className={`redeem-msg ${redeemMsg.type}`}>{redeemMsg.text}</div>
+                    <p className="redeem-desc">{isLoggedIn ? '输入兑换码立即充值到账' : '兑换码也需要先登录，避免把余额充到错误账户。'}</p>
+                    {isLoggedIn ? (
+                        <>
+                            <div className="redeem-row">
+                                <input
+                                    type="text"
+                                    className="input-field redeem-input"
+                                    placeholder="请输入兑换码"
+                                    value={redeemInput}
+                                    onChange={(e) => setRedeemInput(e.target.value)}
+                                    onKeyDown={(e) => e.key === 'Enter' && handleRedeem()}
+                                />
+                                <button
+                                    className="btn btn-primary"
+                                    onClick={handleRedeem}
+                                    disabled={redeemLoading || !redeemInput.trim()}
+                                >
+                                    {redeemLoading ? '兑换中...' : '兑换'}
+                                </button>
+                            </div>
+                            {redeemMsg && (
+                                <div className={`redeem-msg ${redeemMsg.type}`}>{redeemMsg.text}</div>
+                            )}
+                        </>
+                    ) : (
+                        <div style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
+                            <Link to="/login" className="btn btn-primary">登录后兑换</Link>
+                            <Link to="/register" className="btn btn-secondary">先注册</Link>
+                        </div>
                     )}
                 </div>
             </div>
