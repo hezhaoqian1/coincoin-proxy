@@ -6,7 +6,7 @@ import './Landing.css'
 export default function Landing() {
     const { isLoggedIn } = useAuth()
     const startTarget = isLoggedIn ? '/dashboard' : '/register'
-    const purchaseTarget = isLoggedIn ? '/recharge' : '/register'
+    const purchaseTarget = '/recharge'
     const heroHighlights = [
         '一个入口统一接 GPT 文本、Gemini 文本和 Gemini 生图',
         '控制台账号、余额、请求日志、开发者 Key 全在一处管理',
@@ -167,7 +167,7 @@ export default function Landing() {
                                     ))}
                                 </ul>
                                 <Link to={purchaseTarget} className={`btn ${plan.highlight ? 'btn-primary' : 'btn-secondary'}`} style={{ width: '100%' }}>
-                                    {plan.price === '免费' ? (isLoggedIn ? '进入控制台' : '创建账号') : (isLoggedIn ? '去充值' : '创建账号后充值')}
+                                    {plan.price === '免费' ? (isLoggedIn ? '进入控制台' : '创建账号') : (isLoggedIn ? '去充值' : '查看充值页')}
                                 </Link>
                             </div>
                         ))}

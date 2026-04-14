@@ -4,7 +4,7 @@ import './Footer.css'
 
 export default function Footer() {
     const { isLoggedIn } = useAuth()
-    const pricingTarget = isLoggedIn ? '/recharge' : '/#pricing'
+    const pricingTarget = '/recharge'
 
     return (
         <footer className="footer">
