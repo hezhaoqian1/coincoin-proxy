@@ -430,6 +430,23 @@ def _expand_previous_response_input(payload: dict, cached_conv: Optional[Tuple[l
     return len(prev_input_items), len(prev_output_items), len(cur_input_items)
 
 
+def _apply_previous_response_polyfill(
+    payload: dict,
+    cached_conv: Optional[Tuple[list, list]],
+) -> Optional[Tuple[int, int, int]]:
+    """Expand cached history locally and stop forwarding previous_response_id upstream.
+
+    Once we replay the prior turns into `input`, keeping `previous_response_id`
+    would ask the upstream to apply the same history again. That can inflate the
+    effective context window turn after turn and cause long-tail latency.
+    """
+    counts = _expand_previous_response_input(payload, cached_conv)
+    if counts is None:
+        return None
+    payload.pop("previous_response_id", None)
+    return counts
+
+
 router = APIRouter(prefix="/openai/v1", tags=["proxy"])
 logger = logging.getLogger("coincoin.proxy")
 
@@ -1170,8 +1187,8 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
     if _prev_resp_id:
         _cached_conv = _conv_cache.get(_prev_resp_id)
         if _cached_conv:
-            _expanded_counts = _expand_previous_response_input(payload, _cached_conv)
-            logger.info("polyfill: expanded from %s (%d+%d+%d items)",
+            _expanded_counts = _apply_previous_response_polyfill(payload, _cached_conv)
+            logger.info("polyfill: expanded from %s (%d+%d+%d items) and cleared previous_response_id",
                         _prev_resp_id, *_expanded_counts)
         else:
             payload.pop("previous_response_id", None)
