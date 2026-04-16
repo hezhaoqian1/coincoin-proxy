@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import settings
 from .db import get_db
+from .finance_summary import ensure_finance_summary_initialized, increment_finance_summary
 from .models import Account, ApiKey, User
 from .rate_limiter import rate_limiter
 from .schemas import AuthLoginRequest, AuthRegisterRequest, AuthResponse
@@ -98,6 +99,9 @@ async def register(
         )
         db.add(user)
         await db.flush()
+        await ensure_finance_summary_initialized(db, user.id, commit=False)
+        if settings.default_balance > 0:
+            await increment_finance_summary(db, user.id, bonus_cents=settings.default_balance)
 
     account = Account(
         id=generate_id("acc_"),

@@ -14,6 +14,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import settings
+from .finance_summary import ensure_finance_summary_initialized, increment_finance_summary
 from .models import ReferralReward, User
 from .security import generate_id
 
@@ -69,6 +70,7 @@ async def process_referral_reward(
     if not referrer or referrer.status != "active":
         return 0
 
+    await ensure_finance_summary_initialized(db, referrer.id, commit=False)
     referrer.balance += reward_cents
     db.add(ReferralReward(
         id=generate_id("rr_"),
@@ -78,6 +80,7 @@ async def process_referral_reward(
         order_amount_cents=add_cents,
         reward_cents=reward_cents,
     ))
+    await increment_finance_summary(db, referrer.id, bonus_cents=reward_cents)
     logger.info(
         "referral reward: referrer=%s +%dcents from user=%s order=%s (%d/%d)",
         referrer.id, reward_cents, user.id, order_no,
@@ -86,7 +89,9 @@ async def process_referral_reward(
 
     # First-purchase bonus for the referred user
     if reward_count == 0 and settings.referral_new_user_bonus_cents > 0:
+        await ensure_finance_summary_initialized(db, user.id, commit=False)
         user.balance += settings.referral_new_user_bonus_cents
+        await increment_finance_summary(db, user.id, bonus_cents=settings.referral_new_user_bonus_cents)
         logger.info(
             "referral bonus: user=%s +%dcents (first purchase)",
             user.id, settings.referral_new_user_bonus_cents,

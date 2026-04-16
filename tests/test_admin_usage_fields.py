@@ -41,6 +41,14 @@ class _FakeEntityResult:
         return self._value
 
 
+class _FakeScalarOneResult:
+    def __init__(self, value):
+        self._value = value
+
+    def scalar_one_or_none(self):
+        return self._value
+
+
 class _FakeScalarsCollection:
     def __init__(self, rows):
         self._rows = rows
@@ -180,7 +188,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(item["upstream_request_id"], "req_img_123")
 
     async def test_summary_metrics_expose_images_today(self) -> None:
-        fake_db = _FakeDB(scalar_results=[12, 10, 987654, 45, 6])
+        fake_db = _FakeDB(scalar_results=[12, 10, 987654, 45, 6, 999, 321])
 
         async def fake_get_db():
             yield fake_db
@@ -199,6 +207,8 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["total_tokens"], 987654)
         self.assertEqual(payload["total_requests_today"], 45)
         self.assertEqual(payload["total_images_today"], 6)
+        self.assertEqual(payload["paid_today_cents"], 999)
+        self.assertEqual(payload["consumed_today_cents"], 321)
 
     async def test_manual_payment_confirm_credits_pending_order_from_proof_url(self) -> None:
         admin_module._settings.epay_api_url = "https://code.nxslq.top/"
@@ -224,6 +234,12 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                 _FakeEntityResult(order),
                 _FakeEntityResult(order),
                 _FakeEntityResult(user),
+                _FakeEntityResult(None),
+                _FakeScalarOneResult(None),
+                _FakeAllResult([]),
+                _FakeAllResult([]),
+                _FakeAllResult([]),
+                _FakeAllResult([]),
                 _FakeEntityResult(None),
             ]
         )
@@ -361,6 +377,12 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                 _FakeEntityResult(order),
                 _FakeEntityResult(user),
                 _FakeEntityResult(None),
+                _FakeScalarOneResult(None),
+                _FakeAllResult([]),
+                _FakeAllResult([]),
+                _FakeAllResult([]),
+                _FakeAllResult([]),
+                _FakeEntityResult(None),
             ]
         )
 
@@ -425,6 +447,12 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                 _FakeEntityResult(order),
                 _FakeEntityResult(order),
                 _FakeEntityResult(user),
+                _FakeEntityResult(None),
+                _FakeScalarOneResult(None),
+                _FakeAllResult([]),
+                _FakeAllResult([]),
+                _FakeAllResult([]),
+                _FakeAllResult([]),
                 _FakeEntityResult(None),
             ]
         )
@@ -494,6 +522,12 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                 _FakeEntityResult(order),
                 _FakeEntityResult(user),
                 _FakeEntityResult(None),
+                _FakeScalarOneResult(None),
+                _FakeAllResult([]),
+                _FakeAllResult([]),
+                _FakeAllResult([]),
+                _FakeAllResult([]),
+                _FakeEntityResult(None),
             ]
         )
 
@@ -524,6 +558,62 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(order.status, "confirmed")
         self.assertEqual(user.balance, 5499)
         self.assertEqual(fake_db.commits, 1)
+
+    async def test_user_detail_exposes_finance_summary(self) -> None:
+        user = SimpleNamespace(
+            id="u_1",
+            username="alice",
+            external_id="ext_alice",
+            status="active",
+            balance=4321,
+            token_limit=None,
+            token_used=123,
+            input_tokens_used=100,
+            output_tokens_used=23,
+            request_limit_per_minute=None,
+            request_limit_per_day=None,
+            created_at=datetime(2026, 3, 25, 10, 0, 0),
+            updated_at=datetime(2026, 3, 25, 10, 0, 0),
+        )
+        finance_summary = SimpleNamespace(
+            user_id="u_1",
+            initialized_from_history=1,
+            total_paid_rmb_cents=990,
+            total_paid_balance_cents=4999,
+            total_ops_credit_cents=300,
+            total_bonus_cents=120,
+            total_consumed_cents=777,
+            total_ops_debit_cents=0,
+            legacy_unclassified_cents=0,
+            total_paid_orders=1,
+            last_payment_at=datetime(2026, 3, 25, 11, 0, 0),
+        )
+        fake_db = _FakeDB(
+            execute_results=[
+                _FakeEntityResult(user),
+                _FakeScalarsResult([]),
+                _FakeEntityResult(finance_summary),
+            ],
+            scalar_results=[120, 450],
+        )
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get("/admin/users/u_1")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertIn("finance_summary", payload)
+        self.assertEqual(payload["finance_summary"]["total_paid_balance_cents"], 4999)
+        self.assertEqual(payload["finance_summary"]["consumed_7d_cents"], 120)
+        self.assertEqual(payload["finance_summary"]["consumed_30d_cents"], 450)
+        self.assertEqual(payload["finance_summary"]["current_balance_cents"], 4321)
 
 
 if __name__ == "__main__":

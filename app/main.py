@@ -57,6 +57,16 @@ async def _run_migrations(conn):
         ("coincoin_request_logs", "usage_unit_count", "BIGINT DEFAULT 0"),
         ("coincoin_request_logs", "billable_sku", "VARCHAR(128) DEFAULT ''"),
         ("coincoin_request_logs", "upstream_request_id", "VARCHAR(128) DEFAULT ''"),
+        ("coincoin_user_finance_summary", "initialized_from_history", "BIGINT DEFAULT 0"),
+        ("coincoin_user_finance_summary", "total_paid_rmb_cents", "BIGINT DEFAULT 0"),
+        ("coincoin_user_finance_summary", "total_paid_balance_cents", "BIGINT DEFAULT 0"),
+        ("coincoin_user_finance_summary", "total_ops_credit_cents", "BIGINT DEFAULT 0"),
+        ("coincoin_user_finance_summary", "total_bonus_cents", "BIGINT DEFAULT 0"),
+        ("coincoin_user_finance_summary", "total_consumed_cents", "BIGINT DEFAULT 0"),
+        ("coincoin_user_finance_summary", "total_ops_debit_cents", "BIGINT DEFAULT 0"),
+        ("coincoin_user_finance_summary", "legacy_unclassified_cents", "BIGINT DEFAULT 0"),
+        ("coincoin_user_finance_summary", "total_paid_orders", "BIGINT DEFAULT 0"),
+        ("coincoin_user_finance_summary", "last_payment_at", "DATETIME NULL"),
     ]
     logger = logging.getLogger("coincoin.migrations")
     for table, col, ddl in migrations:
