@@ -9,6 +9,7 @@ from sqlalchemy.dialects.mysql import insert as mysql_insert
 
 from .config import settings
 from .db import SessionLocal
+from .finance_summary import increment_finance_summary
 from .models import RequestLog, UsageDaily, User
 from .security import generate_id
 
@@ -339,6 +340,11 @@ async def flush_once() -> None:
                             output_tokens_used=User.output_tokens_used + output_tokens,
                             balance=User.balance - cost_cents,  # 扣除余额
                         )
+                    )
+                    await increment_finance_summary(
+                        session,
+                        user_id,
+                        consumed_cents=cost_cents,
                     )
 
             # 更新每日统计

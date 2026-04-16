@@ -10,6 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .db import get_db
 from .epay import EpayVerificationError, extract_epay_params_from_proof_url, verify_epay_callback_params
+from .finance_summary import (
+    build_user_finance_snapshot,
+    build_user_finance_snapshots,
+    ensure_finance_summary_initialized,
+)
 from .models import Announcement, ApiKey, PaymentOrder, RechargeLog, RedemptionCode, ReferralReward, RequestLog, UsageDaily, User
 from .payment_common import PaymentConfirmError, confirm_paid_order
 from .schemas import (
@@ -90,7 +95,10 @@ async def update_user(user_id: str, payload: AdminUserUpdate, db: AsyncSession =
     if payload.status:
         user.status = payload.status
     if payload.balance is not None:
+        balance_delta = int(payload.balance) - int(user.balance or 0)
         user.balance = payload.balance
+    else:
+        balance_delta = 0
     if payload.token_limit is not None:
         user.token_limit = payload.token_limit
     if payload.token_used is not None:
@@ -103,6 +111,15 @@ async def update_user(user_id: str, payload: AdminUserUpdate, db: AsyncSession =
         user.request_limit_per_minute = payload.request_limit_per_minute
     if payload.request_limit_per_day is not None:
         user.request_limit_per_day = payload.request_limit_per_day
+
+    if balance_delta > 0:
+        from .finance_summary import increment_finance_summary
+        await ensure_finance_summary_initialized(db, user.id, commit=False)
+        await increment_finance_summary(db, user.id, ops_credit_cents=balance_delta)
+    elif balance_delta < 0:
+        from .finance_summary import increment_finance_summary
+        await ensure_finance_summary_initialized(db, user.id, commit=False)
+        await increment_finance_summary(db, user.id, ops_debit_cents=abs(balance_delta))
 
     await db.commit()
     return {
@@ -177,6 +194,7 @@ async def get_user_detail(user_id: str, db: AsyncSession = Depends(get_db)):
         "request_limit_per_day": user.request_limit_per_day,
         "created_at": user.created_at,
         "updated_at": user.updated_at,
+        "finance_summary": await build_user_finance_snapshot(db, user.id, user.balance),
         "keys": [
             {
                 "id": k.id,
@@ -268,6 +286,15 @@ async def summary_metrics(db: AsyncSession = Depends(get_db)):
     total_images_today = await db.scalar(
         select(func.coalesce(func.sum(UsageDaily.images_total), 0)).where(UsageDaily.day == today)
     )
+    paid_today_cents = await db.scalar(
+        select(func.coalesce(func.sum(PaymentOrder.add_balance_cents), 0)).where(
+            PaymentOrder.status == "confirmed",
+            func.date(PaymentOrder.confirmed_at) == today,
+        )
+    )
+    consumed_today_cents = await db.scalar(
+        select(func.coalesce(func.sum(UsageDaily.cost_cents), 0)).where(UsageDaily.day == today)
+    )
 
     return {
         "total_users": int(total_users or 0),
@@ -275,7 +302,46 @@ async def summary_metrics(db: AsyncSession = Depends(get_db)):
         "total_tokens": int(total_tokens or 0),
         "total_requests_today": int(total_requests_today or 0),
         "total_images_today": int(total_images_today or 0),
+        "paid_today_cents": int(paid_today_cents or 0),
+        "paid_today_usd": int(paid_today_cents or 0) / 100,
+        "consumed_today_cents": int(consumed_today_cents or 0),
+        "consumed_today_usd": int(consumed_today_cents or 0) / 100,
+        "net_today_cents": int((paid_today_cents or 0) - (consumed_today_cents or 0)),
+        "net_today_usd": int((paid_today_cents or 0) - (consumed_today_cents or 0)) / 100,
     }
+
+
+@router.get("/finance/summary", dependencies=[Depends(admin_guard)])
+async def finance_summary(
+    search: Optional[str] = None,
+    limit: int = 50,
+    db: AsyncSession = Depends(get_db),
+):
+    limit = max(1, min(limit, 200))
+    query = select(User).order_by(User.created_at.desc())
+    if search:
+        pat = f"%{search}%"
+        query = query.where(
+            User.username.ilike(pat)
+            | User.external_id.ilike(pat)
+            | User.id.ilike(pat)
+        )
+    users = (await db.execute(query.limit(limit))).scalars().all()
+    snapshots = await build_user_finance_snapshots(
+        db,
+        {user.id: int(user.balance or 0) for user in users},
+    )
+    return [
+        {
+            "user_id": user.id,
+            "username": user.username,
+            "external_id": user.external_id,
+            "created_at": user.created_at,
+            "status": user.status,
+            "finance_summary": snapshots.get(user.id, {}),
+        }
+        for user in users
+    ]
 
 
 @router.get("/keys", dependencies=[Depends(admin_guard)])

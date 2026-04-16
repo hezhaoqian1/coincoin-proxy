@@ -6,6 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import settings
+from .finance_summary import ensure_finance_summary_initialized, increment_finance_summary
 from .models import PaymentOrder, User
 from .referral import process_referral_reward
 
@@ -45,6 +46,17 @@ def rmb_to_cents(money_str: str) -> int:
         return PLAN_MAP[d]
     rate = Decimal(str(settings.rmb_to_cents_rate))
     return max(1, int((d * rate).to_integral_value(ROUND_DOWN)))
+
+
+def rmb_to_minor_cents(money_str: str) -> int:
+    """RMB string -> RMB cents for finance reporting."""
+    try:
+        d = Decimal(str(money_str)).quantize(Decimal("0.01"))
+    except (InvalidOperation, ValueError, TypeError):
+        return 0
+    if d <= 0:
+        return 0
+    return int((d * 100).to_integral_value(ROUND_DOWN))
 
 
 async def confirm_paid_order(
@@ -105,11 +117,21 @@ async def confirm_paid_order(
         if add_cents <= 0:
             raise PaymentConfirmError("invalid payment amount", status_code=400)
 
+    await ensure_finance_summary_initialized(db, user.id, commit=False)
     user.balance += add_cents
     order.status = "confirmed"
     order.add_balance_cents = add_cents
     order.trade_no = trade_no or order.trade_no
     order.confirmed_at = datetime.utcnow()
+
+    await increment_finance_summary(
+        db,
+        user.id,
+        paid_rmb_cents=rmb_to_minor_cents(normalized_money),
+        paid_balance_cents=add_cents,
+        paid_orders=1,
+        payment_at=order.confirmed_at,
+    )
 
     await process_referral_reward(user, add_cents, order_no, db)
 

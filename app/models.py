@@ -175,6 +175,26 @@ class ReferralReward(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class UserFinanceSummary(Base):
+    """按用户预聚合的财务汇总，仅供后台读取。"""
+    __tablename__ = "coincoin_user_finance_summary"
+
+    user_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_users.id"), primary_key=True)
+    initialized_from_history: Mapped[int] = mapped_column(BigInteger, default=0)
+    total_paid_rmb_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    total_paid_balance_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    total_ops_credit_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    total_bonus_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    total_consumed_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    total_ops_debit_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    legacy_unclassified_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    total_paid_orders: Mapped[int] = mapped_column(BigInteger, default=0)
+    last_payment_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class Account(Base):
     """Web 登录账号 — 与 User 通过 linked_user_id 硬绑定"""
     __tablename__ = "coincoin_accounts"

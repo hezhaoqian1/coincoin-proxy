@@ -27,6 +27,7 @@ from .router import (
 )
 from .schemas import BalanceResponse
 from .usage_buffer import extract_cached_tokens, usage_buffer
+from .finance_summary import ensure_finance_summary_initialized, increment_finance_summary
 
 
 router = APIRouter(prefix="/v1", tags=["openai-compat"])
@@ -308,6 +309,8 @@ async def redeem_code(request: Request, db: AsyncSession = Depends(get_db)):
     code.status = "used"
     code.used_by = user.id
     code.used_at = dt.utcnow()
+    await ensure_finance_summary_initialized(db, user.id, commit=False)
+    await increment_finance_summary(db, user.id, bonus_cents=code.balance_cents)
 
     try:
         await db.commit()

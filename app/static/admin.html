@@ -885,6 +885,10 @@
 
         <div class="nav-group">
           <div class="nav-group-title">Finance</div>
+          <div class="nav-item" data-page="finance-summary">
+            <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 17l6-6 4 4 8-8"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 7h7v7"/></svg>
+            Finance Summary
+          </div>
           <div class="nav-item" data-page="recharge">
             <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
             Billing
@@ -963,6 +967,37 @@
             </div>
             <div class="stat-value" id="statReqToday">-</div>
             <div class="stat-label">Req / Img Today</div>
+          </div>
+        </div>
+
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-icon">
+              <svg width="22" height="22" fill="none" stroke="white" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+            </div>
+            <div class="stat-value" id="statPaidToday">-</div>
+            <div class="stat-label">Paid Today</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon">
+              <svg width="22" height="22" fill="none" stroke="white" stroke-width="2" viewBox="0 0 24 24"><path d="M20 12H4"/><path d="M12 4v16"/></svg>
+            </div>
+            <div class="stat-value" id="statConsumedToday">-</div>
+            <div class="stat-label">Consumed Today</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon">
+              <svg width="22" height="22" fill="none" stroke="white" stroke-width="2" viewBox="0 0 24 24"><path d="M7 17L17 7"/><path d="M7 7h10v10"/></svg>
+            </div>
+            <div class="stat-value" id="statNetToday">-</div>
+            <div class="stat-label">Net Today</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon">
+              <svg width="22" height="22" fill="none" stroke="white" stroke-width="2" viewBox="0 0 24 24"><path d="M3 12h18"/><path d="M3 6h18"/><path d="M3 18h18"/></svg>
+            </div>
+            <div class="stat-value" id="statFinanceHint">pre-agg</div>
+            <div class="stat-label">Finance Mode</div>
           </div>
         </div>
 
@@ -1049,6 +1084,30 @@
                   <tr><th>Key ID</th><th>User</th><th>Status</th><th>Last Used</th><th>Created</th><th>Actions</th></tr>
                 </thead>
                 <tbody id="keysBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- =============== Billing =============== -->
+      <div id="page-finance-summary" class="page">
+        <div class="page-header">
+          <h1 class="page-title">Finance Summary</h1>
+          <p class="page-desc">Pre-aggregated user finance overview. Reads summary tables and daily usage only.</p>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <input type="text" id="financeSearch" class="form-input" style="width:300px" placeholder="Search by username, external_id, user_id..." oninput="debounceFinanceSearch()" />
+            <button class="btn btn-secondary" onclick="loadFinanceSummary()">Refresh</button>
+          </div>
+          <div class="card-body flush">
+            <div class="table-wrapper">
+              <table>
+                <thead>
+                  <tr><th>User</th><th>Current Balance</th><th>Total Paid</th><th>Ops Credit</th><th>Bonus</th><th>Total Consumed</th><th>7D / 30D</th><th>Last Payment</th></tr>
+                </thead>
+                <tbody id="financeSummaryBody"></tbody>
               </table>
             </div>
           </div>
@@ -1394,6 +1453,7 @@
 
         const loaders = {
           users: loadUsers,
+          'finance-summary': loadFinanceSummary,
           keys: loadAllKeys,
           recharge: loadRecharges,
           usage: loadFullUsage,
@@ -1457,6 +1517,11 @@
       toast('Copied', 'success');
     }
 
+    function formatMoney(cents) {
+      const n = Number(cents || 0) / 100;
+      return `${n < 0 ? '-' : ''}$${Math.abs(n).toFixed(2)}`;
+    }
+
     // ==================== Dashboard ====================
     async function loadSummary() {
       try {
@@ -1467,6 +1532,9 @@
         document.getElementById('statActiveUsers').textContent = formatNum(d.active_users);
         document.getElementById('statTotalTokens').textContent = formatNum(d.total_tokens);
         document.getElementById('statReqToday').textContent = `${formatNum(d.total_requests_today)} / ${formatNum(d.total_images_today || 0)}`;
+        document.getElementById('statPaidToday').textContent = formatMoney(d.paid_today_cents || 0);
+        document.getElementById('statConsumedToday').textContent = formatMoney(d.consumed_today_cents || 0);
+        document.getElementById('statNetToday').textContent = formatMoney(d.net_today_cents || 0);
       } catch (e) { console.error(e); }
     }
 
@@ -1551,6 +1619,7 @@
         const r = await fetch(`/admin/users/${userId}`, { headers: adminHeaders() });
         if (!r.ok) return toast('Failed', 'error');
         const u = await r.json();
+        const f = u.finance_summary || {};
         const keysHtml = u.keys?.length ? u.keys.map(k => `
           <div style="display:flex;align-items:center;justify-content:space-between;padding:10px;background:var(--bg-primary);border-radius:8px;margin-bottom:8px">
             <div><div class="text-mono text-sm">${k.id}</div><div class="text-sm text-muted">${k.last_used_at ? 'Last: ' + formatDate(k.last_used_at) : 'Never used'}</div></div>
@@ -1577,6 +1646,16 @@
           <div class="form-row">
             <div class="form-group"><label class="form-label">Req/Min</label><input type="number" id="modalRPM" class="form-input" value="${u.request_limit_per_minute||''}" placeholder="Unlimited" /></div>
             <div class="form-group"><label class="form-label">Req/Day</label><input type="number" id="modalRPD" class="form-input" value="${u.request_limit_per_day||''}" placeholder="Unlimited" /></div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Finance Summary</label>
+            <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px">
+              <div style="padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--bg-primary)"><div class="text-sm text-muted">Total Paid</div><div style="font-weight:700">${formatMoney(f.total_paid_balance_cents || 0)}</div><div class="text-sm text-muted">RMB ${formatMoney(f.total_paid_rmb_cents || 0)}</div></div>
+              <div style="padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--bg-primary)"><div class="text-sm text-muted">Current Balance</div><div style="font-weight:700">${formatMoney(f.current_balance_cents || u.balance || 0)}</div><div class="text-sm text-muted">Orders: ${formatNum(f.total_paid_orders || 0)}</div></div>
+              <div style="padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--bg-primary)"><div class="text-sm text-muted">Ops Credit / Bonus</div><div style="font-weight:700">${formatMoney((f.total_ops_credit_cents || 0) + (f.total_bonus_cents || 0))}</div><div class="text-sm text-muted">Ops ${formatMoney(f.total_ops_credit_cents || 0)} · Bonus ${formatMoney(f.total_bonus_cents || 0)}</div></div>
+              <div style="padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--bg-primary)"><div class="text-sm text-muted">Consumed</div><div style="font-weight:700">${formatMoney(f.total_consumed_cents || 0)}</div><div class="text-sm text-muted">7D ${formatMoney(f.consumed_7d_cents || 0)} · 30D ${formatMoney(f.consumed_30d_cents || 0)}</div></div>
+            </div>
+            <div class="text-sm text-muted" style="margin-top:8px">Last payment: ${formatDateFull(f.last_payment_at)} · Pre-aggregated read only</div>
           </div>
           <div class="form-group"><label class="form-label">API Keys (${u.keys?.length||0})</label><div style="max-height:140px;overflow-y:auto">${keysHtml}</div></div>`;
         openModal('userModal');
@@ -1669,6 +1748,43 @@
         if (r.ok) { toast(ns === 'active' ? 'Enabled' : 'Disabled', 'success'); loadAllKeys(); }
         else toast('Failed', 'error');
       } catch (e) { toast('Failed', 'error'); }
+    }
+
+    // ==================== Finance Summary ====================
+    let financeSearchTimeout = null;
+
+    function debounceFinanceSearch() {
+      clearTimeout(financeSearchTimeout);
+      financeSearchTimeout = setTimeout(loadFinanceSummary, 300);
+    }
+
+    async function loadFinanceSummary() {
+      try {
+        const search = document.getElementById('financeSearch')?.value.trim() || '';
+        const url = search ? `/admin/finance/summary?search=${encodeURIComponent(search)}` : '/admin/finance/summary';
+        const r = await fetch(url, { headers: adminHeaders() });
+        if (!r.ok) return toast('Failed', 'error');
+        const data = await r.json();
+        const body = document.getElementById('financeSummaryBody');
+        if (!body) return;
+        if (!data.length) {
+          body.innerHTML = '<tr><td colspan="8"><div class="empty-state"><div class="empty-state-icon">📈</div><h3>No finance data</h3><p>Finance summaries will appear here</p></div></td></tr>';
+          return;
+        }
+        body.innerHTML = data.map(row => {
+          const f = row.finance_summary || {};
+          return `<tr>
+            <td><div class="user-cell"><div class="user-avatar">${getInitials(row.username || row.external_id || row.user_id)}</div><div class="user-info"><strong>${row.username || row.external_id || row.user_id}</strong><span>${row.user_id}</span></div></div></td>
+            <td><strong>${formatMoney(f.current_balance_cents || 0)}</strong></td>
+            <td>${formatMoney(f.total_paid_balance_cents || 0)}<div class="text-sm text-muted">RMB ${formatMoney(f.total_paid_rmb_cents || 0)}</div></td>
+            <td>${formatMoney(f.total_ops_credit_cents || 0)}</td>
+            <td>${formatMoney(f.total_bonus_cents || 0)}</td>
+            <td>${formatMoney(f.total_consumed_cents || 0)}</td>
+            <td>${formatMoney(f.consumed_7d_cents || 0)}<div class="text-sm text-muted">30D ${formatMoney(f.consumed_30d_cents || 0)}</div></td>
+            <td class="text-sm text-muted">${formatDateFull(f.last_payment_at)}</td>
+          </tr>`;
+        }).join('');
+      } catch (e) { console.error(e); toast('Failed', 'error'); }
     }
 
     // ==================== Billing ====================
@@ -2004,6 +2120,7 @@
       loadSummary();
       loadUsers();
       loadUsage();
+      loadFinanceSummary();
     }
 
     loadAll();

@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .db import get_db
 from .epay import EpayVerificationError, verify_epay_callback_params
+from .finance_summary import ensure_finance_summary_initialized, increment_finance_summary
 from .models import RechargeLog, User
 from .payment_common import PaymentConfirmError, confirm_paid_order
 from .schemas import RechargeRequest, RechargeResponse
@@ -104,6 +105,17 @@ async def recharge(payload: RechargeRequest, db: AsyncSession = Depends(get_db))
         created_at=datetime.utcnow(),
     )
     db.add(log)
+    await ensure_finance_summary_initialized(db, user.id, commit=False)
+    await increment_finance_summary(
+        db,
+        user.id,
+        paid_rmb_cents=int(payload.amount or 0) if payload.amount and payload.add_balance > 0 else 0,
+        paid_balance_cents=payload.add_balance if payload.amount and payload.add_balance > 0 else 0,
+        ops_credit_cents=payload.add_balance if not payload.amount else 0,
+        bonus_cents=0,
+        paid_orders=1 if payload.amount and payload.add_balance > 0 else 0,
+        payment_at=log.created_at if payload.amount and payload.add_balance > 0 else None,
+    )
     await db.commit()
 
     logger.info(
