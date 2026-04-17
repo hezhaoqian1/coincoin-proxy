@@ -606,6 +606,9 @@
       display: flex;
       align-items: center;
       justify-content: center;
+      padding: 24px;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
       z-index: 1000;
       opacity: 0;
       visibility: hidden;
@@ -620,6 +623,10 @@
       border-radius: 20px;
       width: 90%;
       max-width: 480px;
+      max-height: calc(100vh - 48px);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
       transform: scale(0.95) translateY(10px);
       transition: all 0.2s ease;
       box-shadow: 0 24px 80px rgba(0,0,0,0.5);
@@ -633,6 +640,7 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
+      flex-shrink: 0;
     }
 
     .modal-title { font-size: 18px; font-weight: 600; }
@@ -653,7 +661,14 @@
     }
 
     .modal-close:hover { background: var(--bg-tertiary); color: var(--text-primary); }
-    .modal-body { padding: 24px; }
+    .modal-body {
+      padding: 24px;
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      -webkit-overflow-scrolling: touch;
+    }
 
     .modal-footer {
       padding: 20px 24px;
@@ -661,6 +676,7 @@
       display: flex;
       justify-content: flex-end;
       gap: 12px;
+      flex-shrink: 0;
     }
 
     /* Toast */
@@ -823,7 +839,14 @@
       .stats-grid { grid-template-columns: 1fr 1fr; }
       .page-title { font-size: 22px; }
       .page-header { margin-bottom: 20px; }
-      .modal { max-width: 95vw !important; }
+      .modal-overlay {
+        align-items: flex-start;
+        padding: 16px;
+      }
+      .modal {
+        max-width: 95vw !important;
+        max-height: calc(100vh - 32px);
+      }
       .modal-body { padding: 16px; }
       .form-row { grid-template-columns: 1fr; }
       td, th { padding: 10px 12px; font-size: 13px; }
