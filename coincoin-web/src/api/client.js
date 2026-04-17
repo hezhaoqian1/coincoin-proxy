@@ -174,6 +174,84 @@ export async function getReferralInfo() {
     return res.json()
 }
 
+export async function getStationApplication() {
+    const res = await fetch(`${PROXY_BASE}/v1/stations/application`, {
+        headers: authHeaders()
+    })
+    if (!res.ok) throw new Error('Failed to fetch station application')
+    return res.json()
+}
+
+export async function applyForStation(payload) {
+    const res = await fetch(`${PROXY_BASE}/v1/stations/apply`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify(payload)
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || 'Failed to apply for station')
+    return data
+}
+
+export async function getStationSummary() {
+    const res = await fetch(`${PROXY_BASE}/v1/stations/me/summary`, {
+        headers: authHeaders()
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || 'Failed to fetch station summary')
+    return data
+}
+
+export async function getStationCustomers() {
+    const res = await fetch(`${PROXY_BASE}/v1/stations/me/customers`, {
+        headers: authHeaders()
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || 'Failed to fetch station customers')
+    return data
+}
+
+export async function createStationCustomer(payload) {
+    const res = await fetch(`${PROXY_BASE}/v1/stations/me/customers`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify(payload)
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || 'Failed to create station customer')
+    return data
+}
+
+export async function getStationCommissionLedger(statusFilter = '') {
+    const suffix = statusFilter ? `?status_filter=${encodeURIComponent(statusFilter)}` : ''
+    const res = await fetch(`${PROXY_BASE}/v1/stations/me/commission-ledger${suffix}`, {
+        headers: authHeaders()
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || 'Failed to fetch station commission ledger')
+    return data
+}
+
+export async function getStationPayoutBatches() {
+    const res = await fetch(`${PROXY_BASE}/v1/stations/me/payout-batches`, {
+        headers: authHeaders()
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || 'Failed to fetch station payouts')
+    return data
+}
+
+export async function updateStationSettlement(payload) {
+    const res = await fetch(`${PROXY_BASE}/v1/stations/me/settlement`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify(payload)
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || 'Failed to update station settlement')
+    return data
+}
+
 /** Get active announcements */
 export async function getAnnouncements() {
     const res = await fetch(`${PROXY_BASE}/v1/announcements`)

@@ -220,6 +220,138 @@
     white-space: nowrap;
 }
 
+.station-card {
+    margin-top: var(--space-lg);
+}
+
+.station-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: var(--space-lg);
+    margin-bottom: var(--space-lg);
+}
+
+.station-card-header h3 {
+    margin: 0 0 var(--space-xs);
+    font-size: 1rem;
+    font-weight: 700;
+}
+
+.station-card-desc {
+    margin: 0;
+    max-width: 760px;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    line-height: 1.7;
+}
+
+.station-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 8px 12px;
+    border-radius: var(--radius-full);
+    border: 1px solid rgba(245, 158, 11, 0.24);
+    background: rgba(245, 158, 11, 0.1);
+    color: var(--accent-amber);
+    font-size: 0.78rem;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.station-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+}
+
+.station-form-grid,
+.station-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-md);
+}
+
+.station-field,
+.station-summary-item {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: var(--space-md);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-glass);
+}
+
+.station-field span,
+.station-summary-label {
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.station-field input,
+.station-field textarea {
+    width: 100%;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: rgba(255, 255, 255, 0.68);
+    padding: 12px 14px;
+    color: var(--text-primary);
+    font: inherit;
+}
+
+.station-field textarea {
+    resize: vertical;
+}
+
+.station-field-wide,
+.station-summary-item-wide {
+    grid-column: 1 / -1;
+}
+
+.station-summary-item strong,
+.station-summary-item code,
+.station-summary-item p {
+    margin: 0;
+}
+
+.station-summary-item p {
+    color: var(--text-secondary);
+    line-height: 1.7;
+}
+
+.station-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+    flex-wrap: wrap;
+}
+
+.station-hint {
+    color: var(--text-tertiary);
+    font-size: 0.82rem;
+}
+
+.station-error {
+    margin: 0;
+    color: var(--accent-rose);
+    font-size: 0.85rem;
+}
+
+@media (max-width: 900px) {
+    .station-card-header {
+        flex-direction: column;
+    }
+
+    .station-form-grid,
+    .station-summary-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
 .action-links {
     display: flex;
     gap: var(--space-sm);

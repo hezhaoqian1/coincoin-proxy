@@ -32,6 +32,7 @@ from .schemas import (
     OrderCreateResponse,
 )
 from .security import generate_id
+from .station_settlement import attach_station_to_order, create_station_commission_entry_for_confirmed_order
 
 router = APIRouter(prefix="/v1", tags=["payment"])
 logger = logging.getLogger("coincoin.payment")
@@ -160,6 +161,10 @@ async def create_order(
         status="pending",
         pay_url=pay_url,
     )
+    try:
+        await attach_station_to_order(db, order, user_id)
+    except Exception:
+        logger.exception("failed to attach station snapshot to order %s", order_no)
     db.add(order)
     try:
         await db.commit()
@@ -231,6 +236,15 @@ async def confirm_order(
         except PaymentConfirmError as exc:
             raise _translate_confirm_error(exc) from exc
 
+        try:
+            refreshed_order_result = await db.execute(select(PaymentOrder).where(PaymentOrder.order_no == payload.order_no))
+            refreshed_order = getattr(refreshed_order_result, "scalar_one_or_none", lambda: None)()
+            if refreshed_order:
+                await create_station_commission_entry_for_confirmed_order(db, refreshed_order)
+                await db.commit()
+        except Exception:
+            logger.exception("failed to create station commission entry for %s", payload.order_no)
+
         message = "order already confirmed" if result.get("already_confirmed") else "recharge success"
         return _response_from_confirm_result(result, message)
 
@@ -238,5 +252,13 @@ async def confirm_order(
         result = await _confirm_with_query_fallback(payload.order_no, db)
     except HTTPException:
         raise
+    try:
+        refreshed_order_result = await db.execute(select(PaymentOrder).where(PaymentOrder.order_no == payload.order_no))
+        refreshed_order = getattr(refreshed_order_result, "scalar_one_or_none", lambda: None)()
+        if refreshed_order:
+            await create_station_commission_entry_for_confirmed_order(db, refreshed_order)
+            await db.commit()
+    except Exception:
+        logger.exception("failed to create station commission entry for %s", payload.order_no)
     message = "order already confirmed" if result.get("already_confirmed") else "recharge success"
     return _response_from_confirm_result(result, message)

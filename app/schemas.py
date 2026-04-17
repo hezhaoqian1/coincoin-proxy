@@ -150,3 +150,44 @@ class AuthResponse(BaseModel):
     user_id: str
     username: str
     session_key: str = Field(description="kind=session key for Dashboard access only")
+
+
+# ===== Station Center =====
+
+class StationApplicationCreateRequest(BaseModel):
+    station_name: str = Field(..., min_length=2, max_length=128)
+    contact_handle: str = Field(default="", max_length=128)
+    traffic_source: str = Field(default="", max_length=256)
+    audience_note: str = Field(..., min_length=10, max_length=5000)
+    settlement_method: str = Field(default="alipay_manual")
+    settlement_payee_name: str = Field(default="", max_length=128)
+    settlement_payee_account: str = Field(default="", max_length=128)
+    settlement_qr_url: str = Field(default="", max_length=512)
+
+
+class StationApplicationReviewRequest(BaseModel):
+    status: str = Field(..., description="approved / rejected")
+    review_note: str = Field(default="", max_length=5000)
+
+
+class StationPayoutBatchCreateRequest(BaseModel):
+    station_id: str
+    notes: Optional[str] = Field(default=None, max_length=5000)
+
+
+class StationPayoutBatchMarkPaidRequest(BaseModel):
+    payment_reference: str = Field(default="", max_length=128)
+    payment_screenshot_url: str = Field(default="", max_length=512)
+    payment_note: str = Field(default="", max_length=5000)
+
+
+class StationCustomerCreateRequest(BaseModel):
+    username: str = Field(..., min_length=2, max_length=64, pattern=r'^[a-zA-Z0-9_-]+$')
+    create_api_key: bool = Field(default=True)
+
+
+class StationSettlementUpdateRequest(BaseModel):
+    settlement_method: str = Field(default="alipay_manual")
+    settlement_payee_name: str = Field(default="", max_length=128)
+    settlement_payee_account: str = Field(default="", max_length=128)
+    settlement_qr_url: str = Field(default="", max_length=512)

@@ -3,7 +3,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,7 +15,19 @@ from .finance_summary import (
     build_user_finance_snapshots,
     ensure_finance_summary_initialized,
 )
-from .models import Announcement, ApiKey, PaymentOrder, RechargeLog, RedemptionCode, ReferralReward, RequestLog, UsageDaily, User
+from .models import (
+    Announcement,
+    ApiKey,
+    PaymentOrder,
+    RechargeLog,
+    RedemptionCode,
+    ReferralReward,
+    RequestLog,
+    Station,
+    StationCustomerLink,
+    UsageDaily,
+    User,
+)
 from .payment_common import PaymentConfirmError, confirm_paid_order
 from .schemas import (
     AdminKeyUpdate, AdminPaymentManualConfirmRequest, AdminUserUpdate,
@@ -27,10 +39,44 @@ from .security import generate_api_key, generate_id, hash_key, require_admin
 
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+ADMIN_UPLOAD_ROOT = Path(_settings.admin_upload_dir)
 
 
 def admin_guard(request: Request):
     require_admin(request)
+
+
+@router.post("/uploads/station-payout-proof", dependencies=[Depends(admin_guard)])
+async def upload_station_payout_proof(file: UploadFile = File(...)):
+    content_type = (file.content_type or "").lower()
+    if content_type not in {"image/png", "image/jpeg", "image/webp", "image/gif"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unsupported file type")
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="empty file")
+    if len(data) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="file too large")
+
+    ext = {
+        "image/png": ".png",
+        "image/jpeg": ".jpg",
+        "image/webp": ".webp",
+        "image/gif": ".gif",
+    }[content_type]
+    target_dir = ADMIN_UPLOAD_ROOT / "station-payout-proofs"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    filename = f"{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(8)}{ext}"
+    target_path = target_dir / filename
+    target_path.write_bytes(data)
+
+    return {
+        "success": True,
+        "url": f"/admin-uploads/station-payout-proofs/{filename}",
+        "filename": filename,
+        "content_type": content_type,
+        "size": len(data),
+    }
 
 
 @router.get("/ui")
@@ -43,7 +89,12 @@ async def admin_ui(token: str = ""):
 
 @router.get("/users", dependencies=[Depends(admin_guard)])
 async def list_users(search: Optional[str] = None, db: AsyncSession = Depends(get_db)):
-    query = select(User).order_by(User.created_at.desc())
+    query = (
+        select(User, StationCustomerLink, Station)
+        .outerjoin(StationCustomerLink, StationCustomerLink.user_id == User.id)
+        .outerjoin(Station, Station.id == StationCustomerLink.station_id)
+        .order_by(User.created_at.desc())
+    )
     if search:
         if search.startswith(_settings.key_prefix):
             key_hash_val = hash_key(search)
@@ -62,7 +113,7 @@ async def list_users(search: Optional[str] = None, db: AsyncSession = Depends(ge
                 | User.id.ilike(pat)
             )
     result = await db.execute(query.limit(200))
-    users = result.scalars().all()
+    rows = result.all()
     return [
         {
             "id": u.id,
@@ -80,8 +131,14 @@ async def list_users(search: Optional[str] = None, db: AsyncSession = Depends(ge
             "referred_by": u.referred_by,
             "created_at": u.created_at,
             "updated_at": u.updated_at,
+            "station_attribution": None if not station else {
+                "station_id": station.id,
+                "station_name": station.display_name,
+                "station_owner_user_id": station.owner_user_id,
+                "link_status": getattr(link, "status", None),
+            },
         }
-        for u in users
+        for u, link, station in rows
     ]
 
 
@@ -168,10 +225,18 @@ async def reset_user_usage(user_id: str, db: AsyncSession = Depends(get_db)):
 @router.get("/users/{user_id}", dependencies=[Depends(admin_guard)])
 async def get_user_detail(user_id: str, db: AsyncSession = Depends(get_db)):
     """获取用户详情，包含该用户的所有 Key"""
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
+    result = await db.execute(
+        select(User, StationCustomerLink, Station)
+        .outerjoin(StationCustomerLink, StationCustomerLink.user_id == User.id)
+        .outerjoin(Station, Station.id == StationCustomerLink.station_id)
+        .where(User.id == user_id)
+    )
+    row = result.first()
+    user = row[0] if row else None
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
+    link = row[1] if row else None
+    station = row[2] if row else None
     
     # 获取用户的所有 Key
     keys_result = await db.execute(
@@ -195,6 +260,16 @@ async def get_user_detail(user_id: str, db: AsyncSession = Depends(get_db)):
         "created_at": user.created_at,
         "updated_at": user.updated_at,
         "finance_summary": await build_user_finance_snapshot(db, user.id, user.balance),
+        "station_attribution": None if not station else {
+            "station_id": station.id,
+            "station_name": station.display_name,
+            "station_slug": station.slug,
+            "station_owner_user_id": station.owner_user_id,
+            "station_status": station.status,
+            "link_id": getattr(link, "id", None),
+            "link_status": getattr(link, "status", None),
+            "linked_at": getattr(link, "created_at", None),
+        },
         "keys": [
             {
                 "id": k.id,

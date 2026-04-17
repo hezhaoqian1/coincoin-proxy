@@ -1,6 +1,8 @@
+import { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { useTheme } from '../hooks/useTheme'
+import { getStationApplication } from '../api/client'
 import './Navbar.css'
 
 export default function Navbar() {
@@ -9,6 +11,27 @@ export default function Navbar() {
     const location = useLocation()
     const navigate = useNavigate()
     const pricingTarget = '/recharge'
+    const [hasStation, setHasStation] = useState(false)
+
+    useEffect(() => {
+        let active = true
+        if (!isLoggedIn) {
+            setHasStation(false)
+            return undefined
+        }
+        getStationApplication()
+            .then((data) => {
+                if (!active) return
+                setHasStation(Boolean(data?.station && data.station.status === 'active'))
+            })
+            .catch(() => {
+                if (!active) return
+                setHasStation(false)
+            })
+        return () => {
+            active = false
+        }
+    }, [isLoggedIn, username])
 
     const handleLogout = () => {
         logout()
@@ -47,8 +70,13 @@ export default function Navbar() {
                             </Link>
                             <div className="nav-secondary-links">
                                 <Link to="/usage" className={`nav-link nav-link-secondary ${isActive('/usage') ? 'active' : ''}`}>
-                                    请求日志
+                                请求日志
                                 </Link>
+                                {hasStation && (
+                                    <Link to="/station" className={`nav-link nav-link-secondary ${isActive('/station') ? 'active' : ''}`}>
+                                        站长中心
+                                    </Link>
+                                )}
                                 <Link to="/settings" className={`nav-link nav-link-secondary ${isActive('/settings') ? 'active' : ''}`}>
                                     接入配置
                                 </Link>

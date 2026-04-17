@@ -13,6 +13,7 @@ import Docs from './pages/Docs'
 import Settings from './pages/Settings'
 import Playground from './pages/Playground'
 import PayReturn from './pages/PayReturn'
+import Station from './pages/Station'
 
 function ProtectedRoute({ children }) {
     const { isLoggedIn } = useAuth()
@@ -52,6 +53,9 @@ export default function App() {
                     } />
                     <Route path="/settings" element={
                         <ProtectedRoute><Settings /></ProtectedRoute>
+                    } />
+                    <Route path="/station" element={
+                        <ProtectedRoute><Station /></ProtectedRoute>
                     } />
                     <Route path="/pay/return" element={<PayReturn />} />
                     <Route path="*" element={<Navigate to="/" replace />} />
