@@ -25,6 +25,7 @@ from .db import Base, engine
 from .usage_buffer import flush_loop, flush_once
 from .reconcile import reconcile_loop
 from .router import registry as model_registry
+from .stations import admin_router as admin_stations_router, router as stations_router
 
 
 logging.basicConfig(
@@ -34,6 +35,7 @@ logging.basicConfig(
 )
 
 WEB_DIR = Path(__file__).parent.parent / "static" / "web"
+ADMIN_UPLOAD_DIR = Path(settings.admin_upload_dir)
 
 
 async def _run_migrations(conn):
@@ -42,6 +44,11 @@ async def _run_migrations(conn):
     migrations = [
         ("coincoin_payment_orders", "trade_no", "VARCHAR(128) NULL"),
         ("coincoin_payment_orders", "pay_url", "VARCHAR(512) NULL"),
+        ("coincoin_payment_orders", "station_id", "VARCHAR(32) NULL"),
+        ("coincoin_payment_orders", "station_owner_user_id", "VARCHAR(32) NULL"),
+        ("coincoin_payment_orders", "station_commission_rate", "DOUBLE DEFAULT 0"),
+        ("coincoin_payment_orders", "station_commission_rmb_cents", "BIGINT DEFAULT 0"),
+        ("coincoin_payment_orders", "station_payout_status", "VARCHAR(16) DEFAULT 'none'"),
         ("coincoin_api_keys", "kind", "VARCHAR(16) DEFAULT 'api'"),
         ("coincoin_api_keys", "expires_at", "DATETIME NULL"),
         ("coincoin_users", "referral_code", "VARCHAR(16) NULL UNIQUE"),
@@ -67,6 +74,10 @@ async def _run_migrations(conn):
         ("coincoin_user_finance_summary", "legacy_unclassified_cents", "BIGINT DEFAULT 0"),
         ("coincoin_user_finance_summary", "total_paid_orders", "BIGINT DEFAULT 0"),
         ("coincoin_user_finance_summary", "last_payment_at", "DATETIME NULL"),
+        ("coincoin_stations", "commission_rate", "DOUBLE DEFAULT 0.15"),
+        ("coincoin_station_payout_batches", "payment_reference", "VARCHAR(128) DEFAULT ''"),
+        ("coincoin_station_payout_batches", "payment_screenshot_url", "VARCHAR(512) DEFAULT ''"),
+        ("coincoin_station_payout_batches", "payment_note", "TEXT NULL"),
     ]
     logger = logging.getLogger("coincoin.migrations")
     for table, col, ddl in migrations:
@@ -79,6 +90,128 @@ async def _run_migrations(conn):
                 logger.debug("column %s.%s already exists, skipping", table, col)
             else:
                 logger.warning("migration failed for %s.%s: %s", table, col, exc)
+
+    table_migrations = [
+        """
+        CREATE TABLE coincoin_station_applications (
+            id VARCHAR(32) PRIMARY KEY,
+            user_id VARCHAR(32) NOT NULL,
+            status VARCHAR(16) DEFAULT 'pending',
+            station_name VARCHAR(128) DEFAULT '',
+            contact_handle VARCHAR(128) DEFAULT '',
+            traffic_source VARCHAR(256) DEFAULT '',
+            audience_note TEXT NOT NULL,
+            settlement_method VARCHAR(32) DEFAULT 'alipay_manual',
+            settlement_payee_name VARCHAR(128) DEFAULT '',
+            settlement_payee_account VARCHAR(128) DEFAULT '',
+            settlement_qr_url VARCHAR(512) DEFAULT '',
+            review_note TEXT NULL,
+            reviewed_by VARCHAR(64) DEFAULT '',
+            reviewed_at DATETIME NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX ix_station_applications_user_id (user_id),
+            INDEX ix_station_applications_status (status),
+            INDEX ix_station_applications_created_at (created_at)
+        )
+        """,
+        """
+        CREATE TABLE coincoin_stations (
+            id VARCHAR(32) PRIMARY KEY,
+            owner_user_id VARCHAR(32) NOT NULL,
+            application_id VARCHAR(32) NULL UNIQUE,
+            slug VARCHAR(64) NOT NULL UNIQUE,
+            display_name VARCHAR(128) DEFAULT '',
+            status VARCHAR(16) DEFAULT 'active',
+            commission_rate DOUBLE DEFAULT 0.15,
+            settlement_method VARCHAR(32) DEFAULT 'alipay_manual',
+            settlement_payee_name VARCHAR(128) DEFAULT '',
+            settlement_payee_account VARCHAR(128) DEFAULT '',
+            settlement_qr_url VARCHAR(512) DEFAULT '',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX ix_stations_owner_user_id (owner_user_id),
+            INDEX ix_stations_status (status),
+            INDEX ix_stations_created_at (created_at)
+        )
+        """,
+        """
+        CREATE TABLE coincoin_station_customer_links (
+            id VARCHAR(32) PRIMARY KEY,
+            station_id VARCHAR(32) NOT NULL,
+            user_id VARCHAR(32) NOT NULL UNIQUE,
+            created_by_user_id VARCHAR(32) NOT NULL,
+            status VARCHAR(16) DEFAULT 'active',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX ix_station_customer_links_station_id (station_id),
+            INDEX ix_station_customer_links_user_id (user_id),
+            INDEX ix_station_customer_links_status (status),
+            INDEX ix_station_customer_links_created_at (created_at)
+        )
+        """,
+        """
+        CREATE TABLE coincoin_station_commission_ledger (
+            id VARCHAR(32) PRIMARY KEY,
+            station_id VARCHAR(32) NOT NULL,
+            user_id VARCHAR(32) NOT NULL,
+            payment_order_id VARCHAR(32) NOT NULL UNIQUE,
+            order_no VARCHAR(128) NOT NULL,
+            status VARCHAR(16) DEFAULT 'pending',
+            settlement_method VARCHAR(32) DEFAULT 'alipay_manual',
+            gross_rmb_cents BIGINT DEFAULT 0,
+            commission_rate DOUBLE DEFAULT 0,
+            commission_rmb_cents BIGINT DEFAULT 0,
+            hold_until DATETIME NULL,
+            payout_batch_id VARCHAR(32) NULL,
+            note TEXT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX ix_station_commission_ledger_station_id (station_id),
+            INDEX ix_station_commission_ledger_user_id (user_id),
+            INDEX ix_station_commission_ledger_order_no (order_no),
+            INDEX ix_station_commission_ledger_status (status),
+            INDEX ix_station_commission_ledger_hold_until (hold_until),
+            INDEX ix_station_commission_ledger_payout_batch_id (payout_batch_id),
+            INDEX ix_station_commission_ledger_created_at (created_at)
+        )
+        """,
+        """
+        CREATE TABLE coincoin_station_payout_batches (
+            id VARCHAR(32) PRIMARY KEY,
+            station_id VARCHAR(32) NOT NULL,
+            status VARCHAR(16) DEFAULT 'pending',
+            entry_count BIGINT DEFAULT 0,
+            total_commission_rmb_cents BIGINT DEFAULT 0,
+            settlement_method VARCHAR(32) DEFAULT 'alipay_manual',
+            payee_name VARCHAR(128) DEFAULT '',
+            payee_account VARCHAR(128) DEFAULT '',
+            qr_url VARCHAR(512) DEFAULT '',
+            notes TEXT NULL,
+            payment_reference VARCHAR(128) DEFAULT '',
+            payment_screenshot_url VARCHAR(512) DEFAULT '',
+            payment_note TEXT NULL,
+            created_by VARCHAR(64) DEFAULT '',
+            paid_by VARCHAR(64) DEFAULT '',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            paid_at DATETIME NULL,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX ix_station_payout_batches_station_id (station_id),
+            INDEX ix_station_payout_batches_status (status),
+            INDEX ix_station_payout_batches_created_at (created_at)
+        )
+        """,
+    ]
+    for ddl in table_migrations:
+        try:
+            await conn.execute(text(ddl))
+            logger.info("table migration OK")
+        except Exception as exc:
+            exc_msg = str(exc).lower()
+            if "already exists" in exc_msg or "table" in exc_msg and "exists" in exc_msg:
+                logger.debug("table already exists, skipping")
+            else:
+                logger.warning("table migration failed: %s", exc)
 
 
 @asynccontextmanager
@@ -135,6 +268,12 @@ app.include_router(admin_router)
 app.include_router(webhook_router)
 app.include_router(payment_router)
 app.include_router(auth_router)
+app.include_router(stations_router)
+app.include_router(admin_stations_router)
+
+if not ADMIN_UPLOAD_DIR.exists():
+    ADMIN_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/admin-uploads", StaticFiles(directory=ADMIN_UPLOAD_DIR), name="admin-uploads")
 
 
 @app.get("/health")

@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, CheckConstraint, Date, DateTime, ForeignKey, Index, String, Text
+from sqlalchemy import BigInteger, CheckConstraint, Date, DateTime, Float, ForeignKey, Index, String, Text
 from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
@@ -130,6 +130,11 @@ class PaymentOrder(Base):
     order_no: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     amount_rmb: Mapped[str] = mapped_column(String(16), default="0")
     add_balance_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    station_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True)
+    station_owner_user_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True)
+    station_commission_rate: Mapped[float] = mapped_column(Float, default=0.0)
+    station_commission_rmb_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    station_payout_status: Mapped[str] = mapped_column(String(16), default="none", index=True)
     status: Mapped[str] = mapped_column(String(16), default="pending")
     trade_no: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     pay_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
@@ -173,6 +178,112 @@ class ReferralReward(Base):
     order_amount_cents: Mapped[int] = mapped_column(BigInteger, default=0)
     reward_cents: Mapped[int] = mapped_column(BigInteger, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class StationApplication(Base):
+    __tablename__ = "coincoin_station_applications"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_users.id"), index=True)
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    station_name: Mapped[str] = mapped_column(String(128), default="")
+    contact_handle: Mapped[str] = mapped_column(String(128), default="")
+    traffic_source: Mapped[str] = mapped_column(String(256), default="")
+    audience_note: Mapped[str] = mapped_column(Text)
+    settlement_method: Mapped[str] = mapped_column(String(32), default="alipay_manual")
+    settlement_payee_name: Mapped[str] = mapped_column(String(128), default="")
+    settlement_payee_account: Mapped[str] = mapped_column(String(128), default="")
+    settlement_qr_url: Mapped[str] = mapped_column(String(512), default="")
+    review_note: Mapped[str] = mapped_column(Text, default="")
+    reviewed_by: Mapped[str] = mapped_column(String(64), default="")
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class Station(Base):
+    __tablename__ = "coincoin_stations"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    owner_user_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_users.id"), index=True)
+    application_id: Mapped[Optional[str]] = mapped_column(
+        String(32), ForeignKey("coincoin_station_applications.id"), nullable=True, unique=True
+    )
+    slug: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    display_name: Mapped[str] = mapped_column(String(128), default="")
+    status: Mapped[str] = mapped_column(String(16), default="active", index=True)
+    commission_rate: Mapped[float] = mapped_column(Float, default=0.15)
+    settlement_method: Mapped[str] = mapped_column(String(32), default="alipay_manual")
+    settlement_payee_name: Mapped[str] = mapped_column(String(128), default="")
+    settlement_payee_account: Mapped[str] = mapped_column(String(128), default="")
+    settlement_qr_url: Mapped[str] = mapped_column(String(512), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class StationCustomerLink(Base):
+    __tablename__ = "coincoin_station_customer_links"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    station_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_stations.id"), index=True)
+    user_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_users.id"), unique=True, index=True)
+    created_by_user_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_users.id"))
+    status: Mapped[str] = mapped_column(String(16), default="active", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class StationCommissionLedgerEntry(Base):
+    __tablename__ = "coincoin_station_commission_ledger"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    station_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_stations.id"), index=True)
+    user_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_users.id"), index=True)
+    payment_order_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_payment_orders.id"), unique=True, index=True)
+    order_no: Mapped[str] = mapped_column(String(128), index=True)
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    settlement_method: Mapped[str] = mapped_column(String(32), default="alipay_manual")
+    gross_rmb_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    commission_rate: Mapped[float] = mapped_column(Float, default=0.0)
+    commission_rmb_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    hold_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    payout_batch_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True)
+    note: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class StationPayoutBatch(Base):
+    __tablename__ = "coincoin_station_payout_batches"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    station_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_stations.id"), index=True)
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    entry_count: Mapped[int] = mapped_column(BigInteger, default=0)
+    total_commission_rmb_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    settlement_method: Mapped[str] = mapped_column(String(32), default="alipay_manual")
+    payee_name: Mapped[str] = mapped_column(String(128), default="")
+    payee_account: Mapped[str] = mapped_column(String(128), default="")
+    qr_url: Mapped[str] = mapped_column(String(512), default="")
+    notes: Mapped[str] = mapped_column(Text, default="")
+    payment_reference: Mapped[str] = mapped_column(String(128), default="")
+    payment_screenshot_url: Mapped[str] = mapped_column(String(512), default="")
+    payment_note: Mapped[str] = mapped_column(Text, default="")
+    created_by: Mapped[str] = mapped_column(String(64), default="")
+    paid_by: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    paid_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
 
 class UserFinanceSummary(Base):

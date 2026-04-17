@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { Line } from 'react-chartjs-2'
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler } from 'chart.js'
-import { MOCK_BALANCE, MOCK_USAGE, getBalance, getUsageLogs, getDailyUsage, getAnnouncements, activateKey, getReferralInfo, setGeneratedKey as storeGeneratedKey } from '../api/client'
+import { MOCK_BALANCE, MOCK_USAGE, getBalance, getUsageLogs, getDailyUsage, getAnnouncements, activateKey, getReferralInfo, getStationApplication, applyForStation, setGeneratedKey as storeGeneratedKey } from '../api/client'
 import useOrderConfirm from '../hooks/useOrderConfirm'
 import { useAuth } from '../hooks/useAuth'
 import { usePublicModels } from '../hooks/usePublicModels'
@@ -212,6 +212,172 @@ function KeyManagement({ copied, copy, username, generatedApiKey, authMode, effe
     )
 }
 
+function StationCard({ stationState, onSubmitted }) {
+    const [submitting, setSubmitting] = useState(false)
+    const [error, setError] = useState('')
+    const [form, setForm] = useState({
+        station_name: '',
+        contact_handle: '',
+        traffic_source: '',
+        audience_note: '',
+        settlement_payee_name: '',
+        settlement_payee_account: '',
+        settlement_qr_url: '',
+    })
+
+    const app = stationState?.application
+    const station = stationState?.station
+
+    const handleChange = (key, value) => {
+        setForm((prev) => ({ ...prev, [key]: value }))
+    }
+
+    const handleSubmit = async (e) => {
+        e.preventDefault()
+        setSubmitting(true)
+        setError('')
+        try {
+            await applyForStation({
+                station_name: form.station_name,
+                contact_handle: form.contact_handle,
+                traffic_source: form.traffic_source,
+                audience_note: form.audience_note,
+                settlement_method: 'alipay_manual',
+                settlement_payee_name: form.settlement_payee_name,
+                settlement_payee_account: form.settlement_payee_account,
+                settlement_qr_url: form.settlement_qr_url,
+            })
+            onSubmitted?.()
+        } catch (err) {
+            setError(err.message || '申请失败')
+        } finally {
+            setSubmitting(false)
+        }
+    }
+
+    if (station) {
+        return (
+            <div className="station-card glass-card animate-fade-in-up" style={{ animationDelay: '275ms' }}>
+                <div className="station-card-header">
+                    <div>
+                        <h3>站长中心</h3>
+                        <p className="station-card-desc">你的站长资格已开通。后续我们会在这里继续接入下游用户、分润和人工结算。</p>
+                    </div>
+                    <span className={`badge ${station.status === 'active' ? 'badge-success' : 'badge-warning'}`}>
+                        {station.status === 'active' ? '已开通' : station.status}
+                    </span>
+                </div>
+                <div className="station-summary-grid">
+                    <div className="station-summary-item">
+                        <span className="station-summary-label">站点名称</span>
+                        <strong>{station.display_name}</strong>
+                    </div>
+                    <div className="station-summary-item">
+                        <span className="station-summary-label">站点标识</span>
+                        <code>{station.slug}</code>
+                    </div>
+                    <div className="station-summary-item">
+                        <span className="station-summary-label">结算方式</span>
+                        <strong>{station.settlement_method === 'alipay_manual' ? '支付宝人工打款' : station.settlement_method}</strong>
+                    </div>
+                    <div className="station-summary-item">
+                        <span className="station-summary-label">收款账户</span>
+                        <strong>{station.settlement_payee_account || '待补充'}</strong>
+                    </div>
+                </div>
+            </div>
+        )
+    }
+
+    if (app) {
+        return (
+            <div className="station-card glass-card animate-fade-in-up" style={{ animationDelay: '275ms' }}>
+                <div className="station-card-header">
+                    <div>
+                        <h3>站长申请</h3>
+                        <p className="station-card-desc">申请已经提交。当前先走审核制，避免影响现有用户链路和支付流程。</p>
+                    </div>
+                    <span className={`badge ${app.status === 'pending' ? 'badge-warning' : app.status === 'approved' ? 'badge-success' : 'badge-error'}`}>
+                        {app.status === 'pending' ? '审核中' : app.status === 'approved' ? '已通过' : '已驳回'}
+                    </span>
+                </div>
+                <div className="station-summary-grid">
+                    <div className="station-summary-item">
+                        <span className="station-summary-label">申请站点</span>
+                        <strong>{app.station_name}</strong>
+                    </div>
+                    <div className="station-summary-item">
+                        <span className="station-summary-label">联系方式</span>
+                        <strong>{app.contact_handle || '未填写'}</strong>
+                    </div>
+                    <div className="station-summary-item station-summary-item-wide">
+                        <span className="station-summary-label">流量来源 / 受众说明</span>
+                        <p>{app.traffic_source || '未填写流量来源'}</p>
+                        <p>{app.audience_note}</p>
+                    </div>
+                    {app.review_note && (
+                        <div className="station-summary-item station-summary-item-wide">
+                            <span className="station-summary-label">审核备注</span>
+                            <p>{app.review_note}</p>
+                        </div>
+                    )}
+                </div>
+            </div>
+        )
+    }
+
+    return (
+        <div className="station-card glass-card animate-fade-in-up" style={{ animationDelay: '275ms' }}>
+            <div className="station-card-header">
+                <div>
+                    <h3>申请成为站长</h3>
+                    <p className="station-card-desc">想做自己的站长，就先提交这份申请。第一期只做审核制开通，不会影响你当前的使用和支付体验。</p>
+                </div>
+                <span className="station-badge">站长内测</span>
+            </div>
+            <form className="station-form" onSubmit={handleSubmit}>
+                <div className="station-form-grid">
+                    <label className="station-field">
+                        <span>站点名称</span>
+                        <input value={form.station_name} onChange={(e) => handleChange('station_name', e.target.value)} placeholder="例如：AI 工具分发站" required />
+                    </label>
+                    <label className="station-field">
+                        <span>联系方式</span>
+                        <input value={form.contact_handle} onChange={(e) => handleChange('contact_handle', e.target.value)} placeholder="微信 / TG / 邮箱" />
+                    </label>
+                    <label className="station-field station-field-wide">
+                        <span>流量来源</span>
+                        <input value={form.traffic_source} onChange={(e) => handleChange('traffic_source', e.target.value)} placeholder="公众号、社群、私域、B 站、客户资源等" />
+                    </label>
+                    <label className="station-field station-field-wide">
+                        <span>受众说明</span>
+                        <textarea value={form.audience_note} onChange={(e) => handleChange('audience_note', e.target.value)} placeholder="说清楚你准备服务谁、预估规模和你的运营方式" rows={4} required />
+                    </label>
+                    <label className="station-field">
+                        <span>支付宝姓名</span>
+                        <input value={form.settlement_payee_name} onChange={(e) => handleChange('settlement_payee_name', e.target.value)} placeholder="人工打款收款人" />
+                    </label>
+                    <label className="station-field">
+                        <span>支付宝账号</span>
+                        <input value={form.settlement_payee_account} onChange={(e) => handleChange('settlement_payee_account', e.target.value)} placeholder="手机号 / 邮箱 / UID" />
+                    </label>
+                    <label className="station-field station-field-wide">
+                        <span>收款码图片地址</span>
+                        <input value={form.settlement_qr_url} onChange={(e) => handleChange('settlement_qr_url', e.target.value)} placeholder="先填可访问的图片 URL，后续再做上传" />
+                    </label>
+                </div>
+                {error && <p className="station-error">{error}</p>}
+                <div className="station-actions">
+                    <button className="btn btn-primary btn-sm" type="submit" disabled={submitting}>
+                        {submitting ? '提交中...' : '提交站长申请'}
+                    </button>
+                    <span className="station-hint">现阶段为审核制。通过后会开通站长资格和人工结算信息。</span>
+                </div>
+            </form>
+        </div>
+    )
+}
+
 export default function Dashboard() {
     const { defaultTextModel, defaultImageModel } = usePublicModels()
     const { authMode, effectiveApiKey, generatedApiKey, hasDeveloperKey, username } = useAuth()
@@ -226,6 +392,7 @@ export default function Dashboard() {
     const [chartMode, setChartMode] = useState('cost')
     const [referral, setReferral] = useState(null)
     const [refCopied, setRefCopied] = useState(false)
+    const [stationState, setStationState] = useState(null)
     const { confirmResult: orderConfirmed, dismiss: dismissOrder } = useOrderConfirm()
 
     useEffect(() => {
@@ -248,9 +415,18 @@ export default function Dashboard() {
             try { setDailyData(await getDailyUsage(7)) } catch { /* ignore */ }
             try { setAnnouncements(await getAnnouncements()) } catch { /* ignore */ }
             try { setReferral(await getReferralInfo()) } catch { /* ignore */ }
+            try { setStationState(await getStationApplication()) } catch { /* ignore */ }
         }
         load()
     }, [])
+
+    const reloadStationState = async () => {
+        try {
+            setStationState(await getStationApplication())
+        } catch {
+            // ignore
+        }
+    }
 
     const copy = (text, label) => {
         navigator.clipboard.writeText(text)
@@ -534,6 +710,8 @@ export default function Dashboard() {
                         </div>
                     </div>
                 )}
+
+                <StationCard stationState={stationState} onSubmitted={reloadStationState} />
 
                 {/* Pricing Info */}
                 <div className="pricing-info glass-card animate-fade-in-up" style={{ animationDelay: '300ms' }}>

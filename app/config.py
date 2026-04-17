@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     image_job_async_max_inputs: int = 8
     image_job_max_total_bytes: int = 50 * 1024 * 1024
     image_edit_sync_gateway_timeout_seconds: int = 60
+    admin_upload_dir: str = "/tmp/coincoin-admin-uploads"
 
     # Database — prefer database_url (Railway ${{MySQL.MYSQL_URL}});
     # falls back to individual db_host/port/name/user/password fields.
@@ -87,6 +88,11 @@ class Settings(BaseSettings):
     referral_max_rewards_per_user: int = 3  # only first 3 orders from each referred user
     referral_reward_cap_cents: int = 5000  # max $50 cumulative per referred user
     referral_new_user_bonus_cents: int = 300  # $3 bonus for referred user on first purchase
+
+    # Station center
+    station_default_commission_rate: float = 0.15
+    station_payout_hold_days: int = 7
+    station_min_payout_rmb_cents: int = 20000
 
     # Payment (direct Epay integration)
     epay_api_url: str = ""

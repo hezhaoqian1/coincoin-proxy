@@ -19,6 +19,9 @@ class _FakeAllResult:
     def all(self):
         return self._rows
 
+    def first(self):
+        return self._rows[0] if self._rows else None
+
 
 class _FakeScalarResult:
     def __init__(self, value):
@@ -575,6 +578,18 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             created_at=datetime(2026, 3, 25, 10, 0, 0),
             updated_at=datetime(2026, 3, 25, 10, 0, 0),
         )
+        station_link = SimpleNamespace(
+            id="sclink_1",
+            status="active",
+            created_at=datetime(2026, 3, 25, 9, 30, 0),
+        )
+        station = SimpleNamespace(
+            id="st_1",
+            display_name="Alpha Station",
+            slug="alpha-station",
+            owner_user_id="u_owner",
+            status="active",
+        )
         finance_summary = SimpleNamespace(
             user_id="u_1",
             initialized_from_history=1,
@@ -590,7 +605,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         )
         fake_db = _FakeDB(
             execute_results=[
-                _FakeEntityResult(user),
+                _FakeAllResult([(user, station_link, station)]),
                 _FakeScalarsResult([]),
                 _FakeEntityResult(finance_summary),
             ],
@@ -614,6 +629,9 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["finance_summary"]["consumed_7d_cents"], 120)
         self.assertEqual(payload["finance_summary"]["consumed_30d_cents"], 450)
         self.assertEqual(payload["finance_summary"]["current_balance_cents"], 4321)
+        self.assertEqual(payload["station_attribution"]["station_id"], "st_1")
+        self.assertEqual(payload["station_attribution"]["station_name"], "Alpha Station")
+        self.assertEqual(payload["station_attribution"]["station_owner_user_id"], "u_owner")
 
 
 if __name__ == "__main__":
