@@ -408,15 +408,6 @@ async def _collect_responses_event_stream_payload(upstream: httpx.Response) -> d
     return data
 
 
-def _should_collapse_legacy_stream(public_model, cfg) -> bool:
-    if getattr(public_model, "routing_mode", None) != "legacy_auto":
-        return False
-
-    upstream_url = str(getattr(cfg, "upstream_url", "") or "").lower()
-    auth_style = str(getattr(cfg, "auth_style", "") or "").strip().lower()
-    return auth_style == "bearer" and "cognitiveservices.azure.com" not in upstream_url
-
-
 def _expand_previous_response_input(payload: dict, cached_conv: Optional[Tuple[list, list]]) -> Optional[Tuple[int, int, int]]:
     if not cached_conv:
         return None
@@ -1231,9 +1222,6 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         can_fallback = allow_fallback and (
             (used_cfg.upstream_url != fallback_cfg.upstream_url) or (used_cfg.model_id != fallback_cfg.model_id)
         )
-        if resolved_model.lock_model_selection and fallback_cfg.model_id != used_cfg.model_id:
-            can_fallback = False
-
         stream_client = await get_stream_client()
 
         async def _send_stream(cfg, *, is_fallback=False):
@@ -1416,191 +1404,103 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
     can_fallback = allow_fallback and (
         (used_cfg.upstream_url != fallback_cfg.upstream_url) or (used_cfg.model_id != fallback_cfg.model_id)
     )
-    if resolved_model.lock_model_selection and fallback_cfg.model_id != used_cfg.model_id:
-        can_fallback = False
+    client = await get_http_client()
 
-    collapse_legacy_stream = _should_collapse_legacy_stream(public_model, used_cfg)
+    async def _post_json(cfg, *, is_fallback=False):
+        send_payload = dict(base_payload)
+        send_payload["model"] = cfg.model_id
+        if is_fallback:
+            send_payload.pop("previous_response_id", None)
+        send_payload["store"] = True
+        if "cognitiveservices.azure.com" in (cfg.upstream_url or ""):
+            if "codex" not in (cfg.model_id or "").lower():
+                send_payload.pop("reasoning", None)
+        if cfg.strip_unsupported:
+            for param in _STRIP_PARAMS:
+                send_payload.pop(param, None)
+        req_url = f"{cfg.upstream_url.rstrip('/')}/responses"
+        req_headers = _build_upstream_headers(cfg)
+        logger.info("json → %s  model=%s  store=%s  has_prev_resp=%s",
+                    req_url, send_payload.get("model"), send_payload.get("store"),
+                    "previous_response_id" in send_payload)
+        t0 = time.monotonic()
+        r = await client.post(req_url, json=send_payload, headers=req_headers)
+        dur = int((time.monotonic() - t0) * 1000)
+        return r, dur
 
-    if collapse_legacy_stream:
-        stream_client = await get_stream_client()
-
-        async def _post_stream_json(cfg, *, is_fallback=False):
-            send_payload = dict(base_payload)
-            send_payload["model"] = cfg.model_id
-            if is_fallback:
-                send_payload.pop("previous_response_id", None)
-            send_payload["store"] = True
-            send_payload["stream"] = True
-            if "cognitiveservices.azure.com" in (cfg.upstream_url or ""):
-                if "codex" not in (cfg.model_id or "").lower():
-                    send_payload.pop("reasoning", None)
-            if cfg.strip_unsupported:
-                for param in _STRIP_PARAMS:
-                    send_payload.pop(param, None)
-            req_url = f"{cfg.upstream_url.rstrip('/')}/responses"
-            req_headers = _build_upstream_headers(cfg)
-            logger.info("json-via-stream → %s  model=%s", req_url, send_payload.get("model"))
-            req = stream_client.build_request("POST", req_url, json=send_payload, headers=req_headers)
-            t0 = time.monotonic()
-            r = await stream_client.send(req, stream=True)
-            dur = int((time.monotonic() - t0) * 1000)
-            return r, dur
-
-        try:
-            upstream, duration_ms = await _post_stream_json(used_cfg)
-        except (httpx.TimeoutException, httpx.RequestError) as exc:
-            if can_fallback:
-                _fb = "cheap" if is_cheap else "premium"
-                logger.warning("primary %s stream-collapsed failed (%s: %s), falling back", _fb, type(exc).__name__, exc)
-                used_cfg = fallback_cfg
-                used_route_reason = f"{_fb}_fallback_timeout"
-                can_fallback = False
-                is_cheap = False
-                upstream, duration_ms = await _post_stream_json(used_cfg, is_fallback=True)
-            else:
-                logger.error("upstream request error: %s", exc)
-                return JSONResponse(
-                    content={"error": {"message": "Upstream request failed", "type": "server_error", "code": "upstream_unreachable"}},
-                    status_code=502,
-                )
-
-        if can_fallback and upstream.status_code >= 400:
+    try:
+        upstream, duration_ms = await _post_json(used_cfg)
+    except (httpx.TimeoutException, httpx.RequestError) as exc:
+        if can_fallback:
             _fb = "cheap" if is_cheap else "premium"
-            logger.warning("primary %s stream-collapsed returned %s, falling back", _fb, upstream.status_code)
-            try:
-                await upstream.aclose()
-            except Exception:
-                pass
+            logger.warning("primary %s failed (%s: %s), falling back", _fb, type(exc).__name__, exc)
             used_cfg = fallback_cfg
-            used_route_reason = f"{_fb}_fallback_{upstream.status_code}"
+            used_route_reason = f"{_fb}_fallback_timeout"
             can_fallback = False
             is_cheap = False
-            upstream, duration_ms = await _post_stream_json(used_cfg, is_fallback=True)
+            upstream, duration_ms = await _post_json(used_cfg, is_fallback=True)
+        else:
+            logger.error("upstream request error: %s", exc)
+            return JSONResponse(
+                content={"error": {"message": "Upstream request failed", "type": "server_error", "code": "upstream_unreachable"}},
+                status_code=502,
+            )
 
+    if can_fallback and upstream.status_code >= 400:
+        _fb = "cheap" if is_cheap else "premium"
+        logger.warning("primary %s returned %s: %s — falling back",
+                       _fb, upstream.status_code, str(upstream.text)[:500])
+        used_cfg = fallback_cfg
+        used_route_reason = f"{_fb}_fallback_{upstream.status_code}"
+        can_fallback = False
+        is_cheap = False
+        upstream, duration_ms = await _post_json(used_cfg, is_fallback=True)
+    response_headers = filter_headers(dict(upstream.headers))
+    response_headers.pop("content-length", None)
+
+    content_type = upstream.headers.get("content-type", "application/json")
+    upstream_request_id = extract_upstream_request_id(upstream.headers)
+    if can_fallback and "application/json" not in content_type:
+        _fb = "cheap" if is_cheap else "premium"
+        used_cfg = fallback_cfg
+        used_route_reason = f"{_fb}_fallback_unexpected"
+        can_fallback = False
+        is_cheap = False
+        upstream, duration_ms = await _post_json(used_cfg, is_fallback=True)
         response_headers = filter_headers(dict(upstream.headers))
         response_headers.pop("content-length", None)
-        content_type = upstream.headers.get("content-type", "text/event-stream")
+        content_type = upstream.headers.get("content-type", "application/json")
         upstream_request_id = extract_upstream_request_id(upstream.headers)
 
-        if "text/event-stream" in content_type:
-            try:
-                data = await _collect_responses_event_stream_payload(upstream)
-            finally:
-                await upstream.aclose()
-        else:
-            try:
-                body = await upstream.aread()
-            finally:
-                await upstream.aclose()
-            if "application/json" in content_type:
-                try:
-                    data = json.loads(body.decode("utf-8"))
-                except Exception:
-                    return JSONResponse(
-                        content={"error": {"message": "Upstream returned invalid JSON", "type": "server_error", "code": "upstream_invalid_json"}},
-                        status_code=502,
-                        headers=response_headers,
-                    )
-            else:
-                data = body.decode("utf-8", errors="replace")
-    else:
-        client = await get_http_client()
-
-        async def _post_json(cfg, *, is_fallback=False):
-            send_payload = dict(base_payload)
-            send_payload["model"] = cfg.model_id
-            if is_fallback:
-                send_payload.pop("previous_response_id", None)
-            send_payload["store"] = True
-            if "cognitiveservices.azure.com" in (cfg.upstream_url or ""):
-                if "codex" not in (cfg.model_id or "").lower():
-                    send_payload.pop("reasoning", None)
-            if cfg.strip_unsupported:
-                for param in _STRIP_PARAMS:
-                    send_payload.pop(param, None)
-            req_url = f"{cfg.upstream_url.rstrip('/')}/responses"
-            req_headers = _build_upstream_headers(cfg)
-            logger.info("json → %s  model=%s  store=%s  has_prev_resp=%s",
-                        req_url, send_payload.get("model"), send_payload.get("store"),
-                        "previous_response_id" in send_payload)
-            t0 = time.monotonic()
-            r = await client.post(req_url, json=send_payload, headers=req_headers)
-            dur = int((time.monotonic() - t0) * 1000)
-            return r, dur
-
+    if "application/json" in content_type:
         try:
-            upstream, duration_ms = await _post_json(used_cfg)
-        except (httpx.TimeoutException, httpx.RequestError) as exc:
+            data = upstream.json()
+        except Exception:
             if can_fallback:
                 _fb = "cheap" if is_cheap else "premium"
-                logger.warning("primary %s failed (%s: %s), falling back", _fb, type(exc).__name__, exc)
                 used_cfg = fallback_cfg
-                used_route_reason = f"{_fb}_fallback_timeout"
+                used_route_reason = f"{_fb}_fallback_unexpected"
                 can_fallback = False
                 is_cheap = False
                 upstream, duration_ms = await _post_json(used_cfg, is_fallback=True)
-            else:
-                logger.error("upstream request error: %s", exc)
-                return JSONResponse(
-                    content={"error": {"message": "Upstream request failed", "type": "server_error", "code": "upstream_unreachable"}},
-                    status_code=502,
-                )
-
-        if can_fallback and upstream.status_code >= 400:
-            _fb = "cheap" if is_cheap else "premium"
-            logger.warning("primary %s returned %s: %s — falling back",
-                           _fb, upstream.status_code, str(upstream.text)[:500])
-            used_cfg = fallback_cfg
-            used_route_reason = f"{_fb}_fallback_{upstream.status_code}"
-            can_fallback = False
-            is_cheap = False
-            upstream, duration_ms = await _post_json(used_cfg, is_fallback=True)
-        response_headers = filter_headers(dict(upstream.headers))
-        response_headers.pop("content-length", None)
-    
-        content_type = upstream.headers.get("content-type", "application/json")
-        upstream_request_id = extract_upstream_request_id(upstream.headers)
-        if can_fallback and "application/json" not in content_type:
-            _fb = "cheap" if is_cheap else "premium"
-            used_cfg = fallback_cfg
-            used_route_reason = f"{_fb}_fallback_unexpected"
-            can_fallback = False
-            is_cheap = False
-            upstream, duration_ms = await _post_json(used_cfg, is_fallback=True)
-            response_headers = filter_headers(dict(upstream.headers))
-            response_headers.pop("content-length", None)
-            content_type = upstream.headers.get("content-type", "application/json")
-            upstream_request_id = extract_upstream_request_id(upstream.headers)
-
-        if "application/json" in content_type:
-            try:
-                data = upstream.json()
-            except Exception:
-                if can_fallback:
-                    _fb = "cheap" if is_cheap else "premium"
-                    used_cfg = fallback_cfg
-                    used_route_reason = f"{_fb}_fallback_unexpected"
-                    can_fallback = False
-                    is_cheap = False
-                    upstream, duration_ms = await _post_json(used_cfg, is_fallback=True)
-                    response_headers = filter_headers(dict(upstream.headers))
-                    response_headers.pop("content-length", None)
-                    content_type = upstream.headers.get("content-type", "application/json")
-                    upstream_request_id = extract_upstream_request_id(upstream.headers)
-                    try:
-                        data = upstream.json() if "application/json" in content_type else upstream.text
-                    except Exception:
-                        return JSONResponse(
-                            content={"error": {"message": "Upstream returned invalid JSON", "type": "server_error", "code": "upstream_invalid_json"}},
-                            status_code=502, headers=response_headers,
-                        )
-                else:
+                response_headers = filter_headers(dict(upstream.headers))
+                response_headers.pop("content-length", None)
+                content_type = upstream.headers.get("content-type", "application/json")
+                upstream_request_id = extract_upstream_request_id(upstream.headers)
+                try:
+                    data = upstream.json() if "application/json" in content_type else upstream.text
+                except Exception:
                     return JSONResponse(
                         content={"error": {"message": "Upstream returned invalid JSON", "type": "server_error", "code": "upstream_invalid_json"}},
                         status_code=502, headers=response_headers,
                     )
-        else:
-            data = upstream.text
+            else:
+                return JSONResponse(
+                    content={"error": {"message": "Upstream returned invalid JSON", "type": "server_error", "code": "upstream_invalid_json"}},
+                    status_code=502, headers=response_headers,
+                )
+    else:
+        data = upstream.text
 
     input_tokens_delta = 0
     output_tokens_delta = 0

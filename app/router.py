@@ -51,8 +51,17 @@ class PublicModelConfig:
 class ResolvedModel:
     public_model: PublicModelConfig
     backend: ModelConfig
+    execution_profile: str
+    execution_pool: str
     route_reason: str
-    lock_model_selection: bool = False
+
+
+@dataclass(frozen=True)
+class ExecutionProfile:
+    profile_id: str
+    pool_id: str
+    legacy_default_slot: Optional[str] = None
+    honor_tool_routing: bool = True
 
 
 class ModelResolutionError(ValueError):
@@ -71,6 +80,7 @@ PREMIUM = "premium"
 CHEAP = "cheap"
 FALLBACK = "fallback"
 EMBEDDING = "embedding"
+LEGACY_ROUTE_SLOTS = frozenset({PREMIUM, CHEAP, FALLBACK, EMBEDDING})
 
 TEXT_ENDPOINTS = frozenset({"chat/completions", "responses"})
 EMBEDDING_ENDPOINTS = frozenset({"embeddings"})
@@ -386,22 +396,6 @@ class ModelRegistry:
         requested_default_image = str(document.get("default_image_model") or "").strip()
         self.default_image_model_id = self._pick_default_model(requested_default_image, IMAGE_ENDPOINTS)
 
-    def _build_explicit_legacy_backend(self, public_model: PublicModelConfig) -> Optional[ModelConfig]:
-        target_model = str(public_model.upstream_model or public_model.provider_model or "").strip()
-        if not target_model:
-            return None
-
-        primary = self.get(PREMIUM)
-        return ModelConfig(
-            model_id=target_model,
-            upstream_url=primary.upstream_url,
-            api_key=primary.api_key,
-            price_input_per_million=primary.price_input_per_million,
-            price_output_per_million=primary.price_output_per_million,
-            strip_unsupported=primary.strip_unsupported or public_model.strip_unsupported or _is_codex_like(target_model),
-            auth_style=primary.auth_style,
-        )
-
     def _pick_default_model(self, requested_id: str, allowed_caps: frozenset[str]) -> str:
         if requested_id and requested_id in self.public_models:
             model = self.public_models[requested_id]
@@ -474,27 +468,22 @@ class ModelRegistry:
         tools: Optional[list] = None,
     ) -> ResolvedModel:
         public_model = self._select_public_model(requested_model, endpoint)
-        explicit_requested = bool((requested_model or "").strip())
+        execution_profile = self._resolve_execution_profile(public_model, endpoint)
         if endpoint in EMBEDDING_ENDPOINTS:
             return ResolvedModel(
                 public_model=public_model,
                 backend=self.get(EMBEDDING),
+                execution_profile=execution_profile.profile_id,
+                execution_pool=execution_profile.pool_id,
                 route_reason=f"catalog:{public_model.public_id}:{public_model.delivery_lane or 'upstream_direct'}",
             )
         if public_model.routing_mode == "legacy_auto":
-            if explicit_requested:
-                explicit_backend = self._build_explicit_legacy_backend(public_model)
-                if explicit_backend is not None:
-                    return ResolvedModel(
-                        public_model=public_model,
-                        backend=explicit_backend,
-                        route_reason=f"catalog:{public_model.public_id}:legacy_explicit",
-                        lock_model_selection=True,
-                    )
-            backend, route_reason = resolve(messages or [], tools)
+            backend, route_reason = resolve(messages or [], tools, execution_profile=execution_profile)
             return ResolvedModel(
                 public_model=public_model,
                 backend=backend,
+                execution_profile=execution_profile.profile_id,
+                execution_pool=execution_profile.pool_id,
                 route_reason=f"catalog:{public_model.public_id}:{route_reason}",
             )
 
@@ -510,7 +499,43 @@ class ModelRegistry:
         return ResolvedModel(
             public_model=public_model,
             backend=backend,
+            execution_profile=execution_profile.profile_id,
+            execution_pool=execution_profile.pool_id,
             route_reason=f"catalog:{public_model.public_id}:{public_model.delivery_lane}",
+        )
+
+    def _resolve_execution_profile(self, public_model: PublicModelConfig, endpoint: str) -> ExecutionProfile:
+        if endpoint in EMBEDDING_ENDPOINTS:
+            return ExecutionProfile(
+                profile_id="embedding_direct",
+                pool_id="upstream_embedding_pool",
+                legacy_default_slot=EMBEDDING,
+                honor_tool_routing=False,
+            )
+
+        if public_model.routing_mode != "legacy_auto":
+            return ExecutionProfile(
+                profile_id=f"{public_model.delivery_lane}_direct",
+                pool_id=f"{public_model.delivery_lane}_direct_pool",
+                honor_tool_routing=False,
+            )
+
+        metadata = public_model.metadata or {}
+        legacy_default_slot = str(metadata.get("legacy_default_slot") or CHEAP).strip().lower() or CHEAP
+        if legacy_default_slot not in LEGACY_ROUTE_SLOTS:
+            logger.warning(
+                "public model %s has unsupported legacy_default_slot=%r; falling back to %s",
+                public_model.public_id,
+                legacy_default_slot,
+                CHEAP,
+            )
+            legacy_default_slot = CHEAP
+
+        return ExecutionProfile(
+            profile_id=str(metadata.get("execution_profile") or "legacy_general").strip() or "legacy_general",
+            pool_id=str(metadata.get("execution_pool") or "cpa_general_pool").strip() or "cpa_general_pool",
+            legacy_default_slot=legacy_default_slot,
+            honor_tool_routing=_as_bool(metadata.get("honor_tool_routing"), True),
         )
 
 
@@ -526,11 +551,19 @@ def auto_route(messages: List[dict], tools: Optional[list]) -> str:
     return CHEAP
 
 
-def resolve(messages: List[dict], tools: Optional[list]) -> Tuple[ModelConfig, str]:
+def resolve(
+    messages: List[dict],
+    tools: Optional[list],
+    execution_profile: Optional[ExecutionProfile] = None,
+) -> Tuple[ModelConfig, str]:
     """Return (model_config, route_reason) for the legacy GPT lane."""
     registry.ensure_initialized()
     if not registry.router_enabled or CHEAP not in registry.models:
         return registry.get(PREMIUM), "router_disabled"
+
+    if execution_profile and not execution_profile.honor_tool_routing:
+        slot = execution_profile.legacy_default_slot or PREMIUM
+        return registry.get(slot), f"auto_{slot}"
 
     slot = auto_route(messages, tools)
     return registry.get(slot), f"auto_{slot}"
