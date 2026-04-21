@@ -22,7 +22,7 @@ LEGACY_PUBLIC_TEXT_MODELS = [
 
 
 def _legacy_text_model(model_id: str) -> dict:
-    return {
+    model = {
         "id": model_id,
         "owned_by": "openai",
         "provider_name": "OpenAI",
@@ -31,6 +31,21 @@ def _legacy_text_model(model_id: str) -> dict:
         "routing_mode": "legacy_auto",
         "delivery_lane": "legacy",
     }
+    if model_id == "gpt-5.4":
+        model["metadata"] = {
+            "execution_profile": "legacy_general",
+            "execution_pool": "cpa_general_pool",
+            "legacy_default_slot": "cheap",
+            "honor_tool_routing": True,
+        }
+    elif model_id == "gpt-5.3-codex":
+        model["metadata"] = {
+            "execution_profile": "legacy_coding",
+            "execution_pool": "cpa_coding_pool",
+            "legacy_default_slot": "premium",
+            "honor_tool_routing": False,
+        }
+    return model
 
 
 class ModelCatalogTests(unittest.TestCase):
@@ -163,6 +178,8 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertEqual(resolved.public_model.public_id, "gpt-5.4")
         self.assertEqual(resolved.backend.model_id, "gpt-4o-mini")
         self.assertEqual(resolved.backend.auth_style, "azure")
+        self.assertEqual(resolved.execution_profile, "legacy_general")
+        self.assertEqual(resolved.execution_pool, "cpa_general_pool")
 
     def test_explicit_gemini_text_model_uses_gateway_route(self) -> None:
         resolved = registry.resolve_public_model("gemini-fast", "responses")
@@ -173,6 +190,8 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertEqual(resolved.backend.model_id, "gemini-fast")
         self.assertEqual(resolved.backend.upstream_url, "https://gateway.example/v1")
         self.assertEqual(resolved.backend.auth_style, "bearer")
+        self.assertEqual(resolved.execution_profile, "gateway_direct")
+        self.assertEqual(resolved.execution_pool, "gateway_direct_pool")
         self.assertEqual(resolved.route_reason, "catalog:gemini-fast:gateway")
 
     def test_explicit_legacy_public_model_keeps_legacy_lane(self) -> None:
@@ -184,9 +203,10 @@ class ModelCatalogTests(unittest.TestCase):
         )
 
         self.assertEqual(resolved.public_model.public_id, "gpt-5.2-codex")
-        self.assertEqual(resolved.backend.model_id, "gpt-5.2-codex")
-        self.assertEqual(resolved.route_reason, "catalog:gpt-5.2-codex:legacy_explicit")
-        self.assertTrue(resolved.lock_model_selection)
+        self.assertEqual(resolved.backend.model_id, "gpt-4o-mini")
+        self.assertEqual(resolved.execution_profile, "legacy_general")
+        self.assertEqual(resolved.execution_pool, "cpa_general_pool")
+        self.assertEqual(resolved.route_reason, "catalog:gpt-5.2-codex:auto_cheap")
 
     def test_explicit_gpt_5_2_alias_keeps_legacy_lane(self) -> None:
         resolved = registry.resolve_public_model(
@@ -197,9 +217,10 @@ class ModelCatalogTests(unittest.TestCase):
         )
 
         self.assertEqual(resolved.public_model.public_id, "gpt-5.2")
-        self.assertEqual(resolved.backend.model_id, "gpt-5.2")
-        self.assertEqual(resolved.route_reason, "catalog:gpt-5.2:legacy_explicit")
-        self.assertTrue(resolved.lock_model_selection)
+        self.assertEqual(resolved.backend.model_id, "gpt-4o-mini")
+        self.assertEqual(resolved.execution_profile, "legacy_general")
+        self.assertEqual(resolved.execution_pool, "cpa_general_pool")
+        self.assertEqual(resolved.route_reason, "catalog:gpt-5.2:auto_cheap")
 
     def test_explicit_gpt_5_4_mini_alias_keeps_legacy_lane(self) -> None:
         resolved = registry.resolve_public_model(
@@ -210,9 +231,24 @@ class ModelCatalogTests(unittest.TestCase):
         )
 
         self.assertEqual(resolved.public_model.public_id, "gpt-5.4-mini")
-        self.assertEqual(resolved.backend.model_id, "gpt-5.4-mini")
-        self.assertEqual(resolved.route_reason, "catalog:gpt-5.4-mini:legacy_explicit")
-        self.assertTrue(resolved.lock_model_selection)
+        self.assertEqual(resolved.backend.model_id, "gpt-4o-mini")
+        self.assertEqual(resolved.execution_profile, "legacy_general")
+        self.assertEqual(resolved.execution_pool, "cpa_general_pool")
+        self.assertEqual(resolved.route_reason, "catalog:gpt-5.4-mini:auto_cheap")
+
+    def test_gpt_5_3_codex_uses_coding_profile_and_cpa_coding_pool(self) -> None:
+        resolved = registry.resolve_public_model(
+            "gpt-5.3-codex",
+            "responses",
+            messages=[{"role": "user", "content": "hello"}],
+            tools=None,
+        )
+
+        self.assertEqual(resolved.public_model.public_id, "gpt-5.3-codex")
+        self.assertEqual(resolved.execution_profile, "legacy_coding")
+        self.assertEqual(resolved.execution_pool, "cpa_coding_pool")
+        self.assertEqual(resolved.backend.model_id, "gpt-5.4")
+        self.assertEqual(resolved.route_reason, "catalog:gpt-5.3-codex:auto_premium")
 
     def test_catalog_lists_all_expected_legacy_gpt_aliases(self) -> None:
         text_model_ids = [
@@ -230,6 +266,8 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertEqual(resolved.public_model.delivery_lane, "gateway")
         self.assertEqual(resolved.backend.model_id, "vertex-gemini-3.1-flash-image-preview")
         self.assertEqual(resolved.backend.upstream_url, "https://gateway.example/v1")
+        self.assertEqual(resolved.execution_profile, "gateway_direct")
+        self.assertEqual(resolved.execution_pool, "gateway_direct_pool")
         self.assertEqual(resolved.route_reason, "catalog:gemini-image:gateway")
 
     def test_default_image_model_supports_image_edits(self) -> None:
@@ -239,6 +277,8 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertEqual(resolved.public_model.delivery_lane, "gateway")
         self.assertEqual(resolved.backend.model_id, "vertex-gemini-3.1-flash-image-preview")
         self.assertEqual(resolved.backend.upstream_url, "https://gateway.example/v1")
+        self.assertEqual(resolved.execution_profile, "gateway_direct")
+        self.assertEqual(resolved.execution_pool, "gateway_direct_pool")
         self.assertEqual(resolved.route_reason, "catalog:gemini-image:gateway")
 
     def test_default_embedding_model_uses_dedicated_azure_lane(self) -> None:
@@ -249,6 +289,8 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertEqual(resolved.backend.model_id, "text-embedding-3-small")
         self.assertEqual(resolved.backend.upstream_url, "https://fallback.example/v1")
         self.assertEqual(resolved.backend.auth_style, "azure")
+        self.assertEqual(resolved.execution_profile, "embedding_direct")
+        self.assertEqual(resolved.execution_pool, "upstream_embedding_pool")
         self.assertEqual(resolved.route_reason, "catalog:text-embedding-3-small:upstream_direct")
 
     def test_explicit_embedding_model_uses_dedicated_azure_lane(self) -> None:
@@ -258,6 +300,8 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertEqual(resolved.backend.model_id, "text-embedding-3-small")
         self.assertEqual(resolved.backend.upstream_url, "https://fallback.example/v1")
         self.assertEqual(resolved.backend.auth_style, "azure")
+        self.assertEqual(resolved.execution_profile, "embedding_direct")
+        self.assertEqual(resolved.execution_pool, "upstream_embedding_pool")
         self.assertEqual(resolved.route_reason, "catalog:text-embedding-3-small:upstream_direct")
 
     def test_image_model_rejects_chat_endpoint(self) -> None:

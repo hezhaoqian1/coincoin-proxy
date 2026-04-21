@@ -11,7 +11,13 @@
       "capabilities": ["chat/completions", "responses"],
       "routing_mode": "legacy_auto",
       "delivery_lane": "legacy",
-      "billable_sku": "legacy-default-text"
+      "billable_sku": "legacy-default-text",
+      "metadata": {
+        "execution_profile": "legacy_general",
+        "execution_pool": "cpa_general_pool",
+        "legacy_default_slot": "cheap",
+        "honor_tool_routing": true
+      }
     },
     {
       "id": "gpt-5",
@@ -91,7 +97,13 @@
       "capabilities": ["chat/completions", "responses"],
       "routing_mode": "legacy_auto",
       "delivery_lane": "legacy",
-      "billable_sku": "legacy-gpt-5.3-codex-text"
+      "billable_sku": "legacy-gpt-5.3-codex-text",
+      "metadata": {
+        "execution_profile": "legacy_coding",
+        "execution_pool": "cpa_coding_pool",
+        "legacy_default_slot": "premium",
+        "honor_tool_routing": false
+      }
     },
     {
       "id": "gpt-5.4-mini",
