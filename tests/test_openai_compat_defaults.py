@@ -1750,6 +1750,17 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["data"][14]["coincoin_default_for"], ["image"])
         self.assertEqual(payload["data"][14]["coincoin_delivery_lane"], "gateway")
 
+    async def test_openai_prefixed_models_endpoint_returns_curated_metadata(self) -> None:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get("/openai/v1/models")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["object"], "list")
+        self.assertEqual(payload["data"][0]["id"], "gpt-5.4")
+        self.assertEqual(payload["data"][13]["id"], "gemini-fast")
+
     async def test_model_detail_endpoint_returns_curated_metadata(self) -> None:
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
@@ -1777,6 +1788,81 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["error"]["type"], "invalid_request_error")
         self.assertEqual(payload["error"]["param"], "model")
         self.assertEqual(payload["error"]["code"], "model_not_found")
+
+    async def test_openai_prefixed_chat_completions_alias_matches_v1_behavior(self) -> None:
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "resp_prefixed_chat",
+                        "output": [
+                            {
+                                "type": "message",
+                                "content": [{"type": "output_text", "text": "OK"}],
+                            }
+                        ],
+                        "usage": {"input_tokens": 3, "output_tokens": 1, "total_tokens": 4},
+                    }
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(openai_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                openai_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ):
+                response = await client.post(
+                    "/openai/v1/chat/completions",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"messages": [{"role": "user", "content": "Reply with only: OK"}]},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["model"], "gpt-5.4")
+        self.assertEqual(payload["choices"][0]["message"]["content"], "OK")
+        self.assertEqual(upstream_client.calls[0]["url"], "https://legacy.example/v1/responses")
+
+    async def test_openai_prefixed_embeddings_alias_matches_v1_behavior(self) -> None:
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "object": "list",
+                        "data": [
+                            {
+                                "object": "embedding",
+                                "index": 0,
+                                "embedding": [0.1, 0.2, 0.3],
+                            }
+                        ],
+                        "model": "text-embedding-3-small",
+                        "usage": {"prompt_tokens": 8, "total_tokens": 8},
+                    }
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(openai_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                openai_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ):
+                response = await client.post(
+                    "/openai/v1/embeddings",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"input": "hello"},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["model"], "text-embedding-3-small")
+        self.assertEqual(upstream_client.calls[0]["url"], "https://fallback.example/v1/embeddings")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "text-embedding-3-small")
 
 
 if __name__ == "__main__":
