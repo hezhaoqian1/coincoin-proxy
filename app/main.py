@@ -17,7 +17,13 @@ from .image_jobs import (
 )
 from .keys import router as keys_router
 from .proxy import router as proxy_router, close_http_client
-from .openai_compat import router as openai_router
+from .openai_compat import (
+    chat_completions as openai_chat_completions,
+    embeddings as openai_embeddings,
+    get_model as openai_get_model,
+    list_models as openai_list_models,
+    router as openai_router,
+)
 from .webhook import router as webhook_router
 from .payment import router as payment_router
 from .config import settings
@@ -270,6 +276,13 @@ app.include_router(payment_router)
 app.include_router(auth_router)
 app.include_router(stations_router)
 app.include_router(admin_stations_router)
+
+# Some OpenAI-compatible clients use `/openai/v1` as their base URL and still
+# expect discovery/chat/embedding routes under that prefix.
+app.add_api_route("/openai/v1/models", openai_list_models, methods=["GET"], include_in_schema=False)
+app.add_api_route("/openai/v1/models/{model_id}", openai_get_model, methods=["GET"], include_in_schema=False)
+app.add_api_route("/openai/v1/chat/completions", openai_chat_completions, methods=["POST"], include_in_schema=False)
+app.add_api_route("/openai/v1/embeddings", openai_embeddings, methods=["POST"], include_in_schema=False)
 
 if not ADMIN_UPLOAD_DIR.exists():
     ADMIN_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
