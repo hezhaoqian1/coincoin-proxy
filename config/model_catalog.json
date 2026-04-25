@@ -116,6 +116,16 @@
       "billable_sku": "legacy-gpt-5.4-mini-text"
     },
     {
+      "id": "gpt-5.5",
+      "owned_by": "openai",
+      "provider_name": "OpenAI",
+      "provider_model": "gpt-5.5",
+      "capabilities": ["chat/completions", "responses"],
+      "routing_mode": "legacy_auto",
+      "delivery_lane": "legacy",
+      "billable_sku": "legacy-gpt-5.5-text"
+    },
+    {
       "id": "gpt-5-codex",
       "owned_by": "openai",
       "provider_name": "OpenAI",

@@ -16,6 +16,7 @@ import app.openai_compat as openai_module
 LEGACY_PUBLIC_TEXT_MODELS = [
     "gpt-5.4",
     "gpt-5",
+    "gpt-5.5",
     "gpt-5.1",
     "gpt-5.1-codex",
     "gpt-5.1-codex-mini",
@@ -1715,6 +1716,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             [
                 "gpt-5.4",
                 "gpt-5",
+                "gpt-5.5",
                 "gpt-5.1",
                 "gpt-5.1-codex",
                 "gpt-5.1-codex-mini",
@@ -1733,22 +1735,22 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["data"][0]["coincoin_provider"], "OpenAI")
         self.assertEqual(payload["data"][0]["coincoin_billable_sku"], "gpt-5.4")
         self.assertEqual(payload["data"][0]["coincoin_default_for"], ["text"])
-        self.assertEqual(payload["data"][7]["coincoin_provider"], "OpenAI")
-        self.assertEqual(payload["data"][7]["coincoin_billable_sku"], "gpt-5.2-codex")
-        self.assertEqual(payload["data"][12]["coincoin_provider"], "OpenAI")
-        self.assertEqual(payload["data"][12]["coincoin_provider_model"], "text-embedding-3-small")
-        self.assertEqual(payload["data"][12]["coincoin_capabilities"], ["embeddings"])
-        self.assertEqual(payload["data"][12]["coincoin_billable_sku"], "azure-text-embedding-3-small")
-        self.assertEqual(payload["data"][12]["coincoin_default_for"], ["embedding"])
-        self.assertEqual(payload["data"][12]["coincoin_delivery_lane"], "upstream_direct")
-        self.assertEqual(payload["data"][13]["coincoin_provider"], "Google")
-        self.assertEqual(payload["data"][13]["coincoin_provider_model"], "gemini-2.5-flash")
-        self.assertEqual(payload["data"][13]["coincoin_capabilities"], ["chat/completions", "responses"])
-        self.assertEqual(payload["data"][13]["coincoin_billable_sku"], "gemini-fast")
-        self.assertEqual(payload["data"][13]["coincoin_delivery_lane"], "gateway")
-        self.assertEqual(payload["data"][14]["coincoin_capabilities"], ["images/generations", "images/edits"])
-        self.assertEqual(payload["data"][14]["coincoin_default_for"], ["image"])
+        self.assertEqual(payload["data"][8]["coincoin_provider"], "OpenAI")
+        self.assertEqual(payload["data"][8]["coincoin_billable_sku"], "gpt-5.2-codex")
+        self.assertEqual(payload["data"][13]["coincoin_provider"], "OpenAI")
+        self.assertEqual(payload["data"][13]["coincoin_provider_model"], "text-embedding-3-small")
+        self.assertEqual(payload["data"][13]["coincoin_capabilities"], ["embeddings"])
+        self.assertEqual(payload["data"][13]["coincoin_billable_sku"], "azure-text-embedding-3-small")
+        self.assertEqual(payload["data"][13]["coincoin_default_for"], ["embedding"])
+        self.assertEqual(payload["data"][13]["coincoin_delivery_lane"], "upstream_direct")
+        self.assertEqual(payload["data"][14]["coincoin_provider"], "Google")
+        self.assertEqual(payload["data"][14]["coincoin_provider_model"], "gemini-2.5-flash")
+        self.assertEqual(payload["data"][14]["coincoin_capabilities"], ["chat/completions", "responses"])
+        self.assertEqual(payload["data"][14]["coincoin_billable_sku"], "gemini-fast")
         self.assertEqual(payload["data"][14]["coincoin_delivery_lane"], "gateway")
+        self.assertEqual(payload["data"][15]["coincoin_capabilities"], ["images/generations", "images/edits"])
+        self.assertEqual(payload["data"][15]["coincoin_default_for"], ["image"])
+        self.assertEqual(payload["data"][15]["coincoin_delivery_lane"], "gateway")
 
     async def test_openai_prefixed_models_endpoint_returns_curated_metadata(self) -> None:
         transport = httpx.ASGITransport(app=app)
