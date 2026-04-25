@@ -2,10 +2,46 @@ import asyncio
 import unittest
 from datetime import date
 
+from app.config import settings
 from app.usage_buffer import UsageBuffer
 
 
 class UsageBufferUnitsTests(unittest.TestCase):
+    def test_cached_tokens_follow_configured_discount_rate(self) -> None:
+        original_rate = settings.cache_discount_rate
+        settings.cache_discount_rate = 0.1
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        buffer = UsageBuffer()
+
+        async def scenario():
+            await buffer.add(
+                "u_cached",
+                input_tokens=1_000_000,
+                output_tokens=0,
+                cached_tokens=500_000,
+                requests=1,
+                endpoint="responses",
+                model="gpt-5.4",
+                customer_model_alias="gpt-5.4",
+                provider_model="gpt-4o-mini",
+                usage_unit_type="tokens",
+                billable_sku="legacy-default-text",
+                price_input_per_million=100,
+                price_output_per_million=0,
+            )
+            return await buffer.snapshot_and_reset()
+
+        try:
+            _, usage_by_user, request_logs = loop.run_until_complete(scenario())
+        finally:
+            settings.cache_discount_rate = original_rate
+            asyncio.set_event_loop(None)
+            loop.close()
+
+        self.assertEqual(round(usage_by_user["u_cached"]["cost_cents_f"]), 55)
+        self.assertEqual(request_logs[0]["cached_tokens"], 500_000)
+
     def test_tracks_image_generation_units_and_cost(self) -> None:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)

@@ -276,6 +276,13 @@ class ModelCatalogTests(unittest.TestCase):
 
         self.assertEqual(text_model_ids, LEGACY_PUBLIC_TEXT_MODELS)
 
+    def test_legacy_public_aliases_expose_default_text_prices(self) -> None:
+        model = registry.get_public_model("gpt-5.4")
+
+        self.assertIsNotNone(model)
+        self.assertEqual(model.price_input_per_million, 99)
+        self.assertEqual(model.price_output_per_million, 699)
+
     def test_default_image_model_is_used_when_model_is_omitted(self) -> None:
         resolved = registry.resolve_public_model(None, "images/generations")
 

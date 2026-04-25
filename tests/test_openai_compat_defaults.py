@@ -166,6 +166,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             "upstream_api_key": settings.upstream_api_key,
             "price_input_per_million": settings.price_input_per_million,
             "price_output_per_million": settings.price_output_per_million,
+            "cache_discount_rate": settings.cache_discount_rate,
             "primary_auth_style": settings.primary_auth_style,
             "primary_strip_unsupported": settings.primary_strip_unsupported,
             "cheap_model": settings.cheap_model,
@@ -199,6 +200,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         settings.upstream_api_key = "legacy-key"
         settings.price_input_per_million = 99
         settings.price_output_per_million = 699
+        settings.cache_discount_rate = 0.1
         settings.primary_auth_style = "azure"
         settings.primary_strip_unsupported = False
         settings.cheap_model = "gpt-4o-mini"
@@ -1796,6 +1798,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["data"][0]["coincoin_provider"], "OpenAI")
         self.assertEqual(payload["data"][0]["coincoin_billable_sku"], "gpt-5.4")
         self.assertEqual(payload["data"][0]["coincoin_default_for"], ["text"])
+        self.assertEqual(payload["data"][0]["coincoin_price_cached_input_per_million"], 9.9)
         self.assertEqual(payload["data"][8]["coincoin_provider"], "OpenAI")
         self.assertEqual(payload["data"][8]["coincoin_billable_sku"], "gpt-5.2-codex")
         self.assertEqual(payload["data"][13]["coincoin_provider"], "OpenAI")
@@ -1841,6 +1844,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["coincoin_billable_sku"], "gemini-fast")
         self.assertEqual(payload["coincoin_routing_mode"], "direct")
         self.assertEqual(payload["coincoin_delivery_lane"], "gateway")
+        self.assertEqual(payload["coincoin_price_cached_input_per_million"], 0.0)
 
     async def test_model_detail_endpoint_returns_openai_error_for_unknown_model(self) -> None:
         transport = httpx.ASGITransport(app=app)

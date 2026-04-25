@@ -385,6 +385,8 @@ class ModelRegistry:
         upstream_url = str(raw.get("upstream_url") or "").strip()
         api_key = str(raw.get("api_key") or "").strip()
         auth_style = str(raw.get("auth_style") or settings.gateway_auth_style or "bearer").strip() or "bearer"
+        default_price_input = settings.price_input_per_million if routing_mode == "legacy_auto" else 0
+        default_price_output = settings.price_output_per_million if routing_mode == "legacy_auto" else 0
 
         return PublicModelConfig(
             public_id=public_id,
@@ -398,8 +400,8 @@ class ModelRegistry:
             upstream_url=upstream_url,
             api_key=api_key,
             auth_style=auth_style,
-            price_input_per_million=_as_int(raw.get("price_input_per_million"), 0),
-            price_output_per_million=_as_int(raw.get("price_output_per_million"), 0),
+            price_input_per_million=_as_int(raw.get("price_input_per_million"), default_price_input),
+            price_output_per_million=_as_int(raw.get("price_output_per_million"), default_price_output),
             price_per_image_cents=_as_int(raw.get("price_per_image_cents"), 0),
             billable_sku=str(raw.get("billable_sku") or public_id).strip() or public_id,
             created=_as_int(raw.get("created"), 1700000000),

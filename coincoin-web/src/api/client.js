@@ -328,6 +328,9 @@ export function describePublicModel(model) {
     const id = model?.id || ''
     const capabilities = model?.coincoin_capabilities || []
     if (capabilities.includes('images/generations') || capabilities.includes('images/edits')) {
+        if ((model?.coincoin_provider || '').toLowerCase() === 'openai') {
+            return 'OpenAI 图片模型，适合文生图、图像编辑和通用视觉生成工作流'
+        }
         if (id.includes('3.1')) return 'Gemini 图片生成预览模型，适合更强视觉创作和风格探索'
         return 'Gemini 图片模型，支持文生图和图生图，适合营销图、插画和快速视觉草稿'
     }
@@ -352,15 +355,23 @@ export function describePublicModel(model) {
     return '公开可选模型'
 }
 
+export function getCachedInputPricePerMillion(model) {
+    const explicit = model?.coincoin_price_cached_input_per_million
+    if (explicit !== undefined && explicit !== null) return Number(explicit) || 0
+    const input = Number(model?.coincoin_price_input_per_million || 0)
+    return input > 0 ? input * 0.1 : 0
+}
+
 export function formatModelPrice(model) {
     if (isImageCapableModel(model)) {
         const cents = model?.coincoin_price_per_image_cents || 0
         return cents > 0 ? `$${(cents / 100).toFixed(2)} / image` : '按后台配置计费'
     }
-    const input = model?.coincoin_price_input_per_million || 0
-    const output = model?.coincoin_price_output_per_million || 0
+    const input = Number(model?.coincoin_price_input_per_million || 0)
+    const cachedInput = getCachedInputPricePerMillion(model)
+    const output = Number(model?.coincoin_price_output_per_million || 0)
     if (!input && !output) return '按后台配置计费'
-    return `Input $${(input / 100).toFixed(2)} / M · Output $${(output / 100).toFixed(2)} / M`
+    return `Input $${(input / 100).toFixed(2)} / M · Cached $${(cachedInput / 100).toFixed(3)} / M · Output $${(output / 100).toFixed(2)} / M`
 }
 
 // ===== Mock Data =====
@@ -375,6 +386,7 @@ export const MOCK_BALANCE = {
     token_limit: null,
     token_remaining: null,
     price_input_per_million: 0.99,
+    price_cached_input_per_million: 0.099,
     price_output_per_million: 6.99
 }
 
