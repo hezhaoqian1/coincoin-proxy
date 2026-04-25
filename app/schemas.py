@@ -69,6 +69,7 @@ class BalanceResponse(BaseModel):
     token_limit: Optional[int] = Field(default=None, description="Token 限额（null 表示无限）")
     token_remaining: Optional[int] = Field(default=None, description="剩余 tokens（null 表示无限）")
     price_input_per_million: float = Field(description="输入价格（美元/百万 tokens）")
+    price_cached_input_per_million: float = Field(description="缓存输入价格（美元/百万 tokens）")
     price_output_per_million: float = Field(description="输出价格（美元/百万 tokens）")
 
 

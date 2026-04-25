@@ -327,10 +327,15 @@ function ModelsAndPricing({ textModels, imageModels }) {
 
             <h3>计费说明</h3>
             <ul className="doc-list">
-                <li>文本模型按 Input / Output Token 计费；图片模型按图片张数计费。</li>
+                <li>文本模型按 Input / Cached Input / Output Token 计费；图片模型按图片张数计费。</li>
+                <li>当前 cached input 默认按 input 的 1/10 计费，模型目录里会直接返回单独的缓存输入价格。</li>
                 <li>同一个账户余额同时覆盖 GPT 文本、Gemini 文本和 Gemini 生图，不需要分开充值。</li>
                 <li>老客户端不传 <code>model</code> 时，仍然走默认文本 alias，以保证兼容。</li>
             </ul>
+            <div className="doc-callout">
+                <strong>缓存输入价格怎么读</strong>
+                <p>例如 <code>Input $0.99 / M · Cached $0.099 / M · Output $6.99 / M</code>，表示命中上游 cache 的输入 token 按正常输入价的 1/10 计费。</p>
+            </div>
         </div>
     )
 }

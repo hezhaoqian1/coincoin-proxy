@@ -722,9 +722,15 @@ export default function Dashboard() {
                             <span className="price-val">${balance.price_input_per_million} <small>/ 百万</small></span>
                         </div>
                         <div className="price-item">
+                            <span className="price-label">Cached Input</span>
+                            <span className="price-val">${balance.price_cached_input_per_million} <small>/ 百万</small></span>
+                        </div>
+                        <div className="price-item">
                             <span className="price-label">Output Token</span>
                             <span className="price-val">${balance.price_output_per_million} <small>/ 百万</small></span>
                         </div>
+                    </div>
+                    <div className="price-row">
                         <div className="price-item">
                             <span className="price-label">默认文本</span>
                             <span className="price-val model-tag">{defaultTextModel?.id || 'gpt-5.2-codex'}</span>

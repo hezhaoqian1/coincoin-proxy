@@ -34,8 +34,8 @@ class Settings(BaseSettings):
     vertex_gemini_api_base: str = "https://aiplatform.googleapis.com/v1/publishers/google"
 
     # Cached tokens discount (fraction of input price charged for cached tokens)
-    # Azure Standard: typically 50% off => 0.5, Provisioned can be 100% off => 0.0
-    cache_discount_rate: float = 0.5
+    # Public default follows the common 1/10 cache-read pricing convention.
+    cache_discount_rate: float = 0.1
 
     # Async multi-image jobs
     image_jobs_enabled: bool = True

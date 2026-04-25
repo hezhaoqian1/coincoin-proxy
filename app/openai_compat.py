@@ -66,6 +66,7 @@ def _serialize_public_model(public_model) -> Dict[str, Any]:
         default_for.append("embedding")
     if public_model.public_id == model_registry.default_image_model_id:
         default_for.append("image")
+    cached_input_price = round(float(public_model.price_input_per_million or 0) * float(settings.cache_discount_rate or 0), 4)
     return {
         "id": public_model.public_id,
         "object": "model",
@@ -80,6 +81,7 @@ def _serialize_public_model(public_model) -> Dict[str, Any]:
         "coincoin_default_for": default_for,
         "coincoin_metadata": dict(public_model.metadata or {}),
         "coincoin_price_input_per_million": public_model.price_input_per_million,
+        "coincoin_price_cached_input_per_million": cached_input_price,
         "coincoin_price_output_per_million": public_model.price_output_per_million,
         "coincoin_price_per_image_cents": public_model.price_per_image_cents,
     }
@@ -137,6 +139,7 @@ async def get_balance(request: Request, db: AsyncSession = Depends(get_db)):
         token_limit=token_limit,
         token_remaining=token_remaining,
         price_input_per_million=settings.price_input_per_million / 100,  # 分转美元
+        price_cached_input_per_million=(settings.price_input_per_million * settings.cache_discount_rate) / 100,  # 分转美元
         price_output_per_million=settings.price_output_per_million / 100,  # 分转美元
     )
 
