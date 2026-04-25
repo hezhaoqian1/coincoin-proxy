@@ -1,8 +1,10 @@
 import json
+import os
 import unittest
+from unittest.mock import patch
 
 from app.config import settings
-from app.router import ModelCapabilityError, registry
+from app.router import ModelCapabilityError, _resolve_placeholders, registry
 
 
 LEGACY_PUBLIC_TEXT_MODELS = [
@@ -373,6 +375,36 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertEqual(resolved.execution_profile, "embedding_direct")
         self.assertEqual(resolved.execution_pool, "upstream_embedding_pool")
         self.assertEqual(resolved.route_reason, "catalog:text-embedding-3-small:upstream_direct")
+
+    def test_nested_placeholder_prefers_explicit_image_upstream_url(self) -> None:
+        template = "${COINCOIN_IMAGE_UPSTREAM_URL:-${COINCOIN_FALLBACK_UPSTREAM_URL:-${COINCOIN_UPSTREAM_BASE_URL}}}"
+        with patch.dict(
+            os.environ,
+            {
+                "COINCOIN_IMAGE_UPSTREAM_URL": "https://cliproxyapi-deploy-production.up.railway.app/v1",
+                "COINCOIN_FALLBACK_UPSTREAM_URL": "https://fallback.example/v1",
+                "COINCOIN_UPSTREAM_BASE_URL": "https://legacy.example/v1",
+            },
+            clear=False,
+        ):
+            resolved = _resolve_placeholders(template)
+
+        self.assertEqual(resolved, "https://cliproxyapi-deploy-production.up.railway.app/v1")
+
+    def test_nested_placeholder_falls_back_cleanly_without_trailing_braces(self) -> None:
+        template = "${COINCOIN_IMAGE_UPSTREAM_URL:-${COINCOIN_FALLBACK_UPSTREAM_URL:-${COINCOIN_UPSTREAM_BASE_URL}}}"
+        with patch.dict(
+            os.environ,
+            {
+                "COINCOIN_IMAGE_UPSTREAM_URL": "",
+                "COINCOIN_FALLBACK_UPSTREAM_URL": "https://fallback.example/v1",
+                "COINCOIN_UPSTREAM_BASE_URL": "https://legacy.example/v1",
+            },
+            clear=False,
+        ):
+            resolved = _resolve_placeholders(template)
+
+        self.assertEqual(resolved, "https://fallback.example/v1")
 
     def test_image_model_rejects_chat_endpoint(self) -> None:
         with self.assertRaises(ModelCapabilityError):
