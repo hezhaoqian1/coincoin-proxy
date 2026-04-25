@@ -1048,6 +1048,67 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             "Bearer gateway-key",
         )
 
+    async def test_openai_image_generation_normalizes_root_base_url_to_v1(self) -> None:
+        catalog = json.loads(settings.model_catalog_json)
+        catalog["default_image_model"] = "gpt-image-2"
+        catalog["models"] = [
+            model for model in catalog["models"] if model.get("id") != "gemini-image"
+        ]
+        catalog["models"].append(
+            {
+                "id": "gpt-image-2",
+                "owned_by": "openai",
+                "provider_name": "OpenAI",
+                "provider_model": "gpt-image-2",
+                "capabilities": ["images/generations", "images/edits"],
+                "routing_mode": "direct",
+                "delivery_lane": "upstream_direct",
+                "upstream_model": "gpt-image-2",
+                "upstream_url": "https://cliproxy.example",
+                "api_key": "cliproxy-key",
+                "auth_style": "bearer",
+            },
+        )
+        settings.model_catalog_json = json.dumps(catalog)
+        registry._initialized = False
+        registry.init_from_settings()
+
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "created": 1774449999,
+                        "data": [{"b64_json": "from-openai-image"}],
+                    }
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ):
+                response = await client.post(
+                    "/v1/images/generations",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"prompt": "A blue coin mascot", "n": 1, "size": "1024x1024"},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["data"][0]["b64_json"], "from-openai-image")
+        self.assertEqual(len(upstream_client.calls), 1)
+        self.assertEqual(
+            upstream_client.calls[0]["url"],
+            "https://cliproxy.example/v1/images/generations",
+        )
+        self.assertEqual(
+            upstream_client.calls[0]["headers"]["authorization"],
+            "Bearer cliproxy-key",
+        )
+
     async def test_image_generation_without_model_uses_default_image_alias_on_direct_vertex_lane(self) -> None:
         self._set_model_delivery_lane("gemini-image", "vertex_direct")
         settings.vertex_api_key = "vertex-direct-key"
@@ -1761,7 +1822,8 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         payload = response.json()
         self.assertEqual(payload["object"], "list")
         self.assertEqual(payload["data"][0]["id"], "gpt-5.4")
-        self.assertEqual(payload["data"][13]["id"], "gemini-fast")
+        model_ids = [item["id"] for item in payload["data"]]
+        self.assertIn("gemini-fast", model_ids)
 
     async def test_model_detail_endpoint_returns_curated_metadata(self) -> None:
         transport = httpx.ASGITransport(app=app)

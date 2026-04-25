@@ -125,12 +125,67 @@ def _lookup_placeholder(name: str, default: str = "") -> str:
     return default
 
 
+def _split_placeholder_expr(expr: str) -> Tuple[str, str]:
+    depth = 0
+    i = 0
+    while i < len(expr) - 1:
+        if expr.startswith("${", i):
+            depth += 1
+            i += 2
+            continue
+        if expr[i] == "}" and depth > 0:
+            depth -= 1
+            i += 1
+            continue
+        if depth == 0 and expr.startswith(":-", i):
+            return expr[:i], expr[i + 2:]
+        i += 1
+    return expr, ""
+
+
+def _resolve_placeholder_string(value: str) -> str:
+    if "${" not in value:
+        return value
+
+    parts: List[str] = []
+    i = 0
+    while i < len(value):
+        if not value.startswith("${", i):
+            parts.append(value[i])
+            i += 1
+            continue
+
+        depth = 1
+        j = i + 2
+        while j < len(value) and depth > 0:
+            if value.startswith("${", j):
+                depth += 1
+                j += 2
+                continue
+            if value[j] == "}":
+                depth -= 1
+                j += 1
+                continue
+            j += 1
+
+        if depth != 0:
+            parts.append(value[i:])
+            break
+
+        expr = value[i + 2:j - 1]
+        name, default = _split_placeholder_expr(expr)
+        resolved = _lookup_placeholder(name.strip(), "")
+        if resolved in ("", None):
+            resolved = _resolve_placeholder_string(default) if default else ""
+        parts.append(str(resolved))
+        i = j
+
+    return "".join(parts)
+
+
 def _resolve_placeholders(value: Any) -> Any:
     if isinstance(value, str):
-        return _ENV_PATTERN.sub(
-            lambda match: _lookup_placeholder(match.group(1), match.group(3) or ""),
-            value,
-        )
+        return _resolve_placeholder_string(value)
     if isinstance(value, list):
         return [_resolve_placeholders(item) for item in value]
     if isinstance(value, dict):

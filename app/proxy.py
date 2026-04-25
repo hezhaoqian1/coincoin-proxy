@@ -4,6 +4,7 @@ import json
 import logging
 import secrets
 import time
+from urllib.parse import urlsplit, urlunsplit
 from collections import OrderedDict
 from copy import deepcopy
 from datetime import date, datetime
@@ -133,6 +134,27 @@ def _ensure_content_text(payload: dict) -> None:
                 c["text"] = ""
             cleaned.append(c)
         msg["content"] = cleaned if cleaned else [{"type": "input_text", "text": ""}]
+
+
+def _normalize_openai_image_base_url(base_url: str) -> str:
+    cleaned = str(base_url or "").strip()
+    while cleaned.endswith("}"):
+        cleaned = cleaned[:-1]
+    cleaned = cleaned.rstrip("/")
+    if not cleaned:
+        return cleaned
+
+    parsed = urlsplit(cleaned)
+    path = parsed.path.rstrip("/")
+    if not path:
+        path = "/v1"
+
+    return urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, parsed.fragment))
+
+
+def _build_openai_image_upstream_url(base_url: str, endpoint: str) -> str:
+    normalized = _normalize_openai_image_base_url(base_url)
+    return f"{normalized}/{endpoint.lstrip('/')}"
 
 
 def _responses_text_input_item(text: str) -> dict:
@@ -1650,7 +1672,7 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
         client = await get_http_client()
         payload["model"] = used_cfg.model_id
         payload.pop("model_provider", None)
-        upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/images/generations"
+        upstream_url = _build_openai_image_upstream_url(used_cfg.upstream_url, "images/generations")
         headers = _build_upstream_headers(used_cfg)
         t0 = time.monotonic()
         upstream = await client.post(
@@ -1977,7 +1999,7 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
             )
     else:
         client = await get_http_client()
-        upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/images/edits"
+        upstream_url = _build_openai_image_upstream_url(used_cfg.upstream_url, "images/edits")
         headers = _build_upstream_headers(used_cfg)
         headers.pop("content-type", None)
 
