@@ -364,7 +364,8 @@ class ModelRegistry:
         for raw in raw_models:
             if not isinstance(raw, dict):
                 continue
-            if raw.get("enabled") is False:
+            enabled = raw.get("enabled")
+            if enabled is not None and not _as_bool(enabled, True):
                 continue
             model = self._build_public_model(raw)
             if model is None:
