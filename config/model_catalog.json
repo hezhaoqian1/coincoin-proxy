@@ -165,7 +165,27 @@
       }
     },
     {
+      "id": "${COINCOIN_IMAGE_MODEL:-gpt-image-1}",
+      "enabled": "${COINCOIN_PUBLIC_OPENAI_IMAGE_ENABLED:-false}",
+      "owned_by": "openai",
+      "provider_name": "OpenAI",
+      "provider_model": "${COINCOIN_IMAGE_MODEL:-gpt-image-1}",
+      "capabilities": ["images/generations", "images/edits"],
+      "routing_mode": "direct",
+      "delivery_lane": "upstream_direct",
+      "upstream_model": "${COINCOIN_IMAGE_MODEL:-gpt-image-1}",
+      "upstream_url": "${COINCOIN_IMAGE_UPSTREAM_URL:-${COINCOIN_FALLBACK_UPSTREAM_URL:-${COINCOIN_UPSTREAM_BASE_URL}}}",
+      "api_key": "${COINCOIN_IMAGE_API_KEY:-${COINCOIN_FALLBACK_API_KEY:-${COINCOIN_UPSTREAM_API_KEY}}}",
+      "auth_style": "${COINCOIN_IMAGE_AUTH_STYLE:-${COINCOIN_FALLBACK_AUTH_STYLE:-${COINCOIN_PRIMARY_AUTH_STYLE:-azure}}}",
+      "price_per_image_cents": "${COINCOIN_IMAGE_PRICE_PER_IMAGE_CENTS:-0}",
+      "billable_sku": "openai-image",
+      "metadata": {
+        "tier": "stable"
+      }
+    },
+    {
       "id": "gemini-balanced",
+      "enabled": "${COINCOIN_PUBLIC_GEMINI_ENABLED:-true}",
       "owned_by": "google",
       "provider_name": "Google",
       "provider_model": "gemini-2.5-flash-lite",
@@ -185,6 +205,7 @@
     },
     {
       "id": "gemini-fast",
+      "enabled": "${COINCOIN_PUBLIC_GEMINI_ENABLED:-true}",
       "owned_by": "google",
       "provider_name": "Google",
       "provider_model": "gemini-2.5-flash",
@@ -204,6 +225,7 @@
     },
     {
       "id": "gemini-reasoning",
+      "enabled": "${COINCOIN_PUBLIC_GEMINI_ENABLED:-true}",
       "owned_by": "google",
       "provider_name": "Google",
       "provider_model": "gemini-2.5-pro",
@@ -223,6 +245,7 @@
     },
     {
       "id": "vertex-gemini-2.5-flash-lite",
+      "enabled": "${COINCOIN_PUBLIC_GEMINI_ENABLED:-true}",
       "owned_by": "google",
       "provider_name": "Google",
       "provider_model": "gemini-2.5-flash-lite",
@@ -242,6 +265,7 @@
     },
     {
       "id": "vertex-gemini-2.5-flash",
+      "enabled": "${COINCOIN_PUBLIC_GEMINI_ENABLED:-true}",
       "owned_by": "google",
       "provider_name": "Google",
       "provider_model": "gemini-2.5-flash",
@@ -261,6 +285,7 @@
     },
     {
       "id": "vertex-gemini-2.5-pro",
+      "enabled": "${COINCOIN_PUBLIC_GEMINI_ENABLED:-true}",
       "owned_by": "google",
       "provider_name": "Google",
       "provider_model": "gemini-2.5-pro",
@@ -280,6 +305,7 @@
     },
     {
       "id": "vertex-gemini-3.1-flash-lite-preview",
+      "enabled": "${COINCOIN_PUBLIC_GEMINI_ENABLED:-true}",
       "owned_by": "google",
       "provider_name": "Google",
       "provider_model": "gemini-3.1-flash-lite-preview",
@@ -299,6 +325,7 @@
     },
     {
       "id": "vertex-gemini-3-flash-preview",
+      "enabled": "${COINCOIN_PUBLIC_GEMINI_ENABLED:-true}",
       "owned_by": "google",
       "provider_name": "Google",
       "provider_model": "gemini-3-flash-preview",
@@ -318,6 +345,7 @@
     },
     {
       "id": "vertex-gemini-3.1-pro-preview",
+      "enabled": "${COINCOIN_PUBLIC_GEMINI_ENABLED:-true}",
       "owned_by": "google",
       "provider_name": "Google",
       "provider_model": "gemini-3.1-pro-preview",
@@ -337,6 +365,7 @@
     },
     {
       "id": "gemini-image",
+      "enabled": "${COINCOIN_PUBLIC_GEMINI_ENABLED:-true}",
       "owned_by": "google",
       "provider_name": "Google",
       "provider_model": "gemini-3.1-flash-image-preview",
@@ -352,6 +381,7 @@
     },
     {
       "id": "vertex-gemini-2.5-flash-image",
+      "enabled": "${COINCOIN_PUBLIC_GEMINI_ENABLED:-true}",
       "owned_by": "google",
       "provider_name": "Google",
       "provider_model": "gemini-2.5-flash-image",
@@ -367,6 +397,7 @@
     },
     {
       "id": "vertex-gemini-3.1-flash-image-preview",
+      "enabled": "${COINCOIN_PUBLIC_GEMINI_ENABLED:-true}",
       "owned_by": "google",
       "provider_name": "Google",
       "provider_model": "gemini-3.1-flash-image-preview",
