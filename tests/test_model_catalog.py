@@ -8,6 +8,7 @@ from app.router import ModelCapabilityError, registry
 LEGACY_PUBLIC_TEXT_MODELS = [
     "gpt-5.4",
     "gpt-5",
+    "gpt-5.5",
     "gpt-5.1",
     "gpt-5.1-codex",
     "gpt-5.1-codex-mini",
@@ -221,6 +222,20 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertEqual(resolved.execution_profile, "legacy_general")
         self.assertEqual(resolved.execution_pool, "cpa_general_pool")
         self.assertEqual(resolved.route_reason, "catalog:gpt-5.2:auto_cheap")
+
+    def test_explicit_gpt_5_5_alias_keeps_legacy_lane(self) -> None:
+        resolved = registry.resolve_public_model(
+            "gpt-5.5",
+            "responses",
+            messages=[{"role": "user", "content": "hello"}],
+            tools=None,
+        )
+
+        self.assertEqual(resolved.public_model.public_id, "gpt-5.5")
+        self.assertEqual(resolved.backend.model_id, "gpt-4o-mini")
+        self.assertEqual(resolved.execution_profile, "legacy_general")
+        self.assertEqual(resolved.execution_pool, "cpa_general_pool")
+        self.assertEqual(resolved.route_reason, "catalog:gpt-5.5:auto_cheap")
 
     def test_explicit_gpt_5_4_mini_alias_keeps_legacy_lane(self) -> None:
         resolved = registry.resolve_public_model(
