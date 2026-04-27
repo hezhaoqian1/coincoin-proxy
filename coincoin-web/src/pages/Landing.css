@@ -260,7 +260,8 @@
 }
 
 .landing-pricing-card {
-    padding: var(--space-xl);
+    padding: var(--space-lg);
+    min-height: 100%;
 }
 
 .landing-pricing-card.is-highlight {
@@ -325,14 +326,17 @@
 @media (max-width: 1024px) {
     .landing-hero-grid,
     .landing-feature-grid,
-    .landing-step-grid,
-    .landing-pricing-grid {
+    .landing-step-grid {
         grid-template-columns: 1fr;
     }
 
     .landing-section-head {
         flex-direction: column;
         align-items: start;
+    }
+
+    .landing-pricing-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 }
 
@@ -360,5 +364,9 @@
 
     .landing-console-head {
         flex-direction: column;
+    }
+
+    .landing-pricing-grid {
+        grid-template-columns: 1fr;
     }
 }

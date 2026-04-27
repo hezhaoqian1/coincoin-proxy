@@ -13,18 +13,18 @@
     inset: 0;
     z-index: 0;
     background:
-        linear-gradient(180deg, rgba(15, 23, 42, 0.96), rgba(15, 23, 42, 0.9)),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.98)),
         repeating-linear-gradient(
             0deg,
-            rgba(148, 163, 184, 0.06) 0,
-            rgba(148, 163, 184, 0.06) 1px,
+            rgba(148, 163, 184, 0.08) 0,
+            rgba(148, 163, 184, 0.08) 1px,
             transparent 1px,
             transparent 36px
         ),
         repeating-linear-gradient(
             90deg,
-            rgba(148, 163, 184, 0.06) 0,
-            rgba(148, 163, 184, 0.06) 1px,
+            rgba(148, 163, 184, 0.08) 0,
+            rgba(148, 163, 184, 0.08) 1px,
             transparent 1px,
             transparent 36px
         );
@@ -33,7 +33,9 @@
 .auth-grid {
     position: absolute;
     inset: 0;
-    background: radial-gradient(circle at top, rgba(99, 102, 241, 0.14), transparent 36%);
+    background:
+        radial-gradient(circle at top, rgba(99, 102, 241, 0.08), transparent 34%),
+        radial-gradient(circle at bottom right, rgba(6, 182, 212, 0.06), transparent 30%);
 }
 
 .auth-card {
@@ -42,6 +44,8 @@
     width: 100%;
     max-width: 440px;
     padding: var(--space-xl);
+    background: rgba(255, 255, 255, 0.82);
+    box-shadow: var(--shadow-md);
 }
 
 .auth-header {
@@ -79,7 +83,7 @@
     padding: var(--space-sm) var(--space-md);
     font-size: 0.88rem;
     font-weight: 600;
-    background: transparent;
+    background: rgba(255, 255, 255, 0.4);
     border: none;
     color: var(--text-secondary);
     cursor: pointer;
@@ -92,7 +96,7 @@
 }
 
 .auth-tab:hover:not(.active) {
-    background: rgba(99, 102, 241, 0.1);
+    background: rgba(99, 102, 241, 0.08);
 }
 
 .auth-form {
@@ -124,7 +128,7 @@
 
 .auth-callout-muted {
     border-color: var(--border-color);
-    background: var(--bg-glass);
+    background: rgba(255, 255, 255, 0.46);
 }
 
 .input-group {
