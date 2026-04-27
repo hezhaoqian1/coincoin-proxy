@@ -17,10 +17,10 @@ function ReadinessCard({ authMode, username, hasDeveloperKey }) {
             eyebrow: '下一步',
             title: '先生成开发者 API Key',
             description: `${username || '当前账户'} 已经登录控制台。还差一把开发者 Key，生成后就可以直接复制到 CLI、SDK 和客户端。`,
-            checklist: [
-                '控制台登录已完成',
-                '开发者 API Key 尚未生成',
-                '生成后可直接去接入配置页复制片段',
+            statusItems: [
+                { label: '登录方式', value: '控制台账号' },
+                { label: 'API 调用', value: '尚未开通' },
+                { label: '下一步', value: '生成开发者 Key' },
             ],
             actions: [
                 { href: '#developer-key', label: '去生成 API Key', style: 'btn btn-primary btn-sm' },
@@ -32,10 +32,10 @@ function ReadinessCard({ authMode, username, hasDeveloperKey }) {
             eyebrow: '已就绪',
             title: '账户和开发者 Key 都已准备好',
             description: `${username || '当前账户'} 已经可以直接接入。常用下一步通常只有两件事：复制配置，或者发一条真实请求测试。`,
-            checklist: [
-                '控制台登录已完成',
-                '开发者 API Key 已就绪',
-                '可以去配置页复制片段或去测试页验证',
+            statusItems: [
+                { label: '登录方式', value: '控制台账号' },
+                { label: 'API 调用', value: '可直接请求' },
+                { label: '常用动作', value: '复制配置 / 发请求' },
             ],
             actions: [
                 { to: '/settings', label: '复制配置片段', style: 'btn btn-primary btn-sm' },
@@ -47,10 +47,10 @@ function ReadinessCard({ authMode, username, hasDeveloperKey }) {
             eyebrow: '当前状态',
             title: '你正在用开发者 API Key 直登',
             description: '这种模式可以直接测试调用和复制配置。需要账户管理、充值或重新生成密钥时，再切回控制台账号登录。',
-            checklist: [
-                '当前会话可直接调用 API',
-                '可直接验证模型、日志和配置',
-                '需要完整账户管理时再切回控制台登录',
+            statusItems: [
+                { label: '登录方式', value: '开发者 Key 直登' },
+                { label: 'API 调用', value: '可直接请求' },
+                { label: '账户管理', value: '回控制台处理' },
             ],
             actions: [
                 { to: '/settings', label: '查看接入配置', style: 'btn btn-primary btn-sm' },
@@ -66,11 +66,14 @@ function ReadinessCard({ authMode, username, hasDeveloperKey }) {
                 <span className="readiness-eyebrow">{content.eyebrow}</span>
                 <h2>{content.title}</h2>
                 <p>{content.description}</p>
-                <ul className="readiness-list">
-                    {content.checklist.map((item) => (
-                        <li key={item}>{item}</li>
+                <div className="readiness-matrix">
+                    {content.statusItems.map((item) => (
+                        <div key={item.label} className="readiness-metric">
+                            <span className="readiness-metric-label">{item.label}</span>
+                            <strong>{item.value}</strong>
+                        </div>
                     ))}
-                </ul>
+                </div>
                 <div className="readiness-tags">
                     <span className="readiness-tag">{authMode === 'session_only' ? '控制台会话' : '当前可继续接入'}</span>
                     <span className="readiness-tag">{hasDeveloperKey ? '开发者 Key 已就绪' : '尚未生成开发者 Key'}</span>
@@ -509,7 +512,7 @@ export default function Dashboard() {
             <div className="container">
                 <div className="page-header">
                     <h1 className="page-title">仪表盘</h1>
-                    <p className="page-desc">先看余额和接入状态，再决定是复制配置、充值还是排查请求</p>
+                    <p className="page-desc">先看余额和接入状态，再决定是复制配置、充值还是排查请求。</p>
                 </div>
 
                 {/* Announcements */}

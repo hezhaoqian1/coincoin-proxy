@@ -72,28 +72,6 @@ export default function Usage() {
                     <p className="page-desc">查看每次请求的模型 alias、上游模型、计量和费用。</p>
                 </div>
 
-                <div className="usage-overview glass-card animate-fade-in-up">
-                    <div className="usage-overview-copy">
-                        <span className="usage-kicker">Request Logs</span>
-                        <h2>在这里看请求、路由和计费</h2>
-                        <p>需要确认某次调用用了哪个公开模型、落到哪个上游、花了多少钱或为什么失败时，先看这里。</p>
-                    </div>
-                    <div className="usage-overview-points">
-                        <div className="usage-overview-item">
-                            <strong>看模型路由</strong>
-                            <p>同时看公开模型 alias 和上游模型，确认是否走对提供方。</p>
-                        </div>
-                        <div className="usage-overview-item">
-                            <strong>看计费单位</strong>
-                            <p>文本请求看 tokens，图片请求看 images 和记费变化。</p>
-                        </div>
-                        <div className="usage-overview-item">
-                            <strong>看错误状态</strong>
-                            <p>403、402、429 这些状态码在这里最容易结合上下文判断。</p>
-                        </div>
-                    </div>
-                </div>
-
                 <div className="stats-grid stagger-children">
                     <div className="stat-card glass-card animate-fade-in-up">
                         <div className="stat-icon" style={{ background: 'rgba(99,102,241,0.12)' }}>
@@ -129,6 +107,27 @@ export default function Usage() {
                         <div className="stat-info">
                             <span className="stat-label">页内图片</span>
                             <span className="stat-value">{totalImages}</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="usage-guide glass-card animate-fade-in-up">
+                    <div className="usage-guide-copy">
+                        <span className="usage-kicker">Request Logs</span>
+                        <p>查模型路由、计量和状态码时先看这里。</p>
+                    </div>
+                    <div className="usage-guide-pills">
+                        <div className="usage-guide-pill">
+                            <strong>路由</strong>
+                            <span>alias / provider_model</span>
+                        </div>
+                        <div className="usage-guide-pill">
+                            <strong>计量</strong>
+                            <span>tokens / images / cost</span>
+                        </div>
+                        <div className="usage-guide-pill">
+                            <strong>状态</strong>
+                            <span>403 / 402 / 429</span>
                         </div>
                     </div>
                 </div>

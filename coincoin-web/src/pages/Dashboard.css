@@ -8,9 +8,9 @@
 
 .readiness-card {
     display: flex;
-    align-items: flex-start;
+    align-items: stretch;
     justify-content: space-between;
-    gap: var(--space-xl);
+    gap: var(--space-lg);
     border-color: rgba(99, 102, 241, 0.24);
     background: linear-gradient(135deg, rgba(99, 102, 241, 0.12), rgba(6, 182, 212, 0.07));
     min-height: 100%;
@@ -36,40 +36,48 @@
 
 .readiness-copy h2 {
     margin: 0 0 var(--space-sm);
-    font-size: 1.5rem;
+    font-size: 1.2rem;
     line-height: 1.2;
 }
 
 .readiness-copy p {
     margin: 0;
-    max-width: 780px;
+    max-width: 640px;
     color: var(--text-secondary);
-    font-size: 0.94rem;
-    line-height: 1.75;
+    font-size: 0.9rem;
+    line-height: 1.65;
 }
 
-.readiness-list {
-    list-style: none;
-    margin: var(--space-lg) 0 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-sm);
+.readiness-matrix {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: var(--space-lg);
 }
 
-.readiness-list li {
-    position: relative;
-    padding-left: 20px;
-    color: var(--text-secondary);
-    font-size: 0.86rem;
+.readiness-metric {
+    padding: 12px 14px;
+    border-radius: var(--radius-md);
+    border: 1px solid rgba(255, 255, 255, 0.4);
+    background: rgba(255, 255, 255, 0.46);
+    min-width: 0;
 }
 
-.readiness-list li::before {
-    content: '•';
-    position: absolute;
-    left: 0;
-    color: var(--accent-emerald);
+.readiness-metric-label {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 0.74rem;
     font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+}
+
+.readiness-metric strong {
+    display: block;
+    overflow-wrap: anywhere;
+    font-size: 0.88rem;
+    line-height: 1.45;
 }
 
 .readiness-eyebrow {
@@ -86,7 +94,7 @@
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-sm);
-    margin-top: var(--space-lg);
+    margin-top: var(--space-md);
 }
 
 .readiness-tag {
@@ -102,14 +110,17 @@
 
 .readiness-actions {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    align-content: flex-start;
     gap: var(--space-sm);
-    min-width: 180px;
+    min-width: 220px;
 }
 
 .developer-setup-grid {
     display: grid;
-    grid-template-columns: minmax(0, 1.3fr) minmax(320px, 0.9fr);
+    grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
     gap: var(--space-lg);
     margin: var(--space-lg) 0;
     align-items: stretch;
@@ -359,10 +370,10 @@
 }
 
 .key-panel-copy {
-    font-size: 0.9rem;
+    font-size: 0.88rem;
     color: var(--text-secondary);
     margin-bottom: var(--space-md);
-    line-height: 1.7;
+    line-height: 1.6;
 }
 
 .key-warning-box {
@@ -779,9 +790,14 @@
         flex-direction: column;
     }
 
+    .readiness-matrix {
+        grid-template-columns: 1fr;
+    }
+
     .readiness-actions {
         width: 100%;
         min-width: 0;
+        justify-content: flex-start;
     }
 
     .price-row {
