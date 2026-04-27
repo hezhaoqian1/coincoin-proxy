@@ -42,6 +42,12 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 ADMIN_UPLOAD_ROOT = Path(_settings.admin_upload_dir)
 
 
+def _key_fingerprint(key_hash: str) -> str:
+    if not key_hash:
+        return ""
+    return key_hash[:12]
+
+
 def admin_guard(request: Request):
     require_admin(request)
 
@@ -273,12 +279,21 @@ async def get_user_detail(user_id: str, db: AsyncSession = Depends(get_db)):
         "keys": [
             {
                 "id": k.id,
+                "kind": k.kind,
                 "status": k.status,
+                "fingerprint": _key_fingerprint(k.key_hash),
+                "shared_balance": user.balance,
+                "shared_balance_usd": user.balance / 100,
                 "created_at": k.created_at,
                 "last_used_at": k.last_used_at,
             }
             for k in keys
-        ]
+        ],
+        "key_display_policy": {
+            "raw_key_recoverable": False,
+            "shared_balance_scope": "user",
+            "message": "Raw API keys are only shown once at creation time. Existing keys are stored as irreversible hashes, and all keys under the same user share one balance.",
+        },
     }
 
 
@@ -433,7 +448,11 @@ async def list_keys(user_id: Optional[str] = None, db: AsyncSession = Depends(ge
             "user_id": key.user_id,
             "username": user.username,
             "external_id": user.external_id,
+            "kind": key.kind,
             "status": key.status,
+            "fingerprint": _key_fingerprint(key.key_hash),
+            "shared_balance": user.balance,
+            "shared_balance_usd": user.balance / 100,
             "created_at": key.created_at,
             "last_used_at": key.last_used_at,
         }
