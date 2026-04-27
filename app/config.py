@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     webhook_secret: str = "change-me-webhook"  # 支付回调验证
     key_prefix: str = "sk_cc_"
     key_pepper: str = "coincoin-pepper"
+    key_encryption_secret: str = ""
 
     # Upstream (Azure OpenAI compatible)
     upstream_base_url: str = "https://hc-instance-eastus2.cognitiveservices.azure.com/openai/v1"

@@ -17,6 +17,7 @@ from .models import Account, ApiKey, User
 from .rate_limiter import rate_limiter
 from .schemas import AuthLoginRequest, AuthRegisterRequest, AuthResponse
 from .security import (
+    encrypt_api_key,
     generate_api_key,
     generate_id,
     generate_referral_code,
@@ -47,6 +48,7 @@ def _create_session_key(user_id: str) -> tuple[str, ApiKey]:
         id=generate_id("k_"),
         user_id=user_id,
         key_hash=hash_key(raw_key),
+        encrypted_key=encrypt_api_key(raw_key),
         kind="session",
         status="active",
         expires_at=datetime.utcnow() + timedelta(days=SESSION_KEY_DAYS),

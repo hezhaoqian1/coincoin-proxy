@@ -12,7 +12,7 @@ from .finance_summary import ensure_finance_summary_initialized, increment_finan
 from .models import ApiKey, User
 from .rate_limiter import rate_limiter
 from .schemas import KeyActivateRequest, KeyActivateResponse
-from .security import generate_api_key, generate_id, generate_referral_code, hash_key
+from .security import encrypt_api_key, generate_api_key, generate_id, generate_referral_code, hash_key
 
 
 router = APIRouter(prefix="/v1/keys", tags=["keys"])
@@ -78,6 +78,7 @@ async def activate_key(
             id=generate_id("k_"),
             user_id=user.id,
             key_hash=hash_key(api_key_value),
+            encrypted_key=encrypt_api_key(api_key_value),
             kind="api",
             status="active",
             last_used_at=None,

@@ -2,11 +2,13 @@ import asyncio
 import base64
 import hashlib
 import hmac as _hmac
+import json
 import os
 import secrets
 from typing import Optional
 
 from fastapi import HTTPException, Request, status
+from cryptography.fernet import Fernet
 
 from .config import settings
 
@@ -30,6 +32,33 @@ def generate_api_key() -> str:
 def hash_key(key: str) -> str:
     payload = f"{settings.key_pepper}:{key}".encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
+
+
+def _encryption_secret() -> str:
+    secret = (settings.key_encryption_secret or settings.key_pepper or "").strip()
+    if not secret:
+        raise RuntimeError("key encryption secret is not configured")
+    return secret
+
+
+def _fernet() -> Fernet:
+    digest = hashlib.sha256(_encryption_secret().encode("utf-8")).digest()
+    return Fernet(base64.urlsafe_b64encode(digest))
+
+
+def encrypt_api_key(key: str) -> str:
+    token = _fernet().encrypt(key.encode("utf-8")).decode("ascii")
+    return json.dumps({"v": 1, "alg": "fernet-sha256", "token": token}, separators=(",", ":"))
+
+
+def decrypt_api_key(payload: Optional[str]) -> Optional[str]:
+    if not payload:
+        return None
+    data = json.loads(payload)
+    token = data.get("token")
+    if not token:
+        return None
+    return _fernet().decrypt(token.encode("ascii")).decode("utf-8")
 
 
 def _pbkdf2_derive(password_bytes: bytes, salt: bytes, iterations: int) -> bytes:

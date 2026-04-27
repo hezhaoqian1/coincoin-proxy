@@ -1106,7 +1106,7 @@
       <div id="page-keys" class="page">
         <div class="page-header">
           <h1 class="page-title">API 密钥</h1>
-          <p class="page-desc">查看并管理所有 API 密钥。现有 Key 只保存不可逆摘要，完整明文仅在创建时显示一次；同一用户下所有 Key 共用一个余额。</p>
+          <p class="page-desc">查看并管理所有 API 密钥。新生成的 Key 会加密保存，管理员可查看完整值；更早的老 Key 可能仍然只能看到摘要。同一用户下所有 Key 共用一个余额。</p>
         </div>
         <div class="card">
           <div class="card-header">
@@ -1483,7 +1483,7 @@
         <button class="modal-close" onclick="closeModal('keyModal')">&times;</button>
       </div>
       <div class="modal-body">
-        <p class="text-muted" style="margin-bottom:16px">请立即复制这个 Key，关闭后将不会再次显示。后台后续只能看到它的摘要和归属用户，无法恢复完整明文。</p>
+        <p class="text-muted" style="margin-bottom:16px">请立即复制这个 Key。后台会加密保存这把新 Key，后续管理员仍可查看；老 Key 若生成于本次升级之前，可能仍无法恢复完整明文。</p>
         <div class="code-display" id="newKeyValue"></div>
         <button class="btn btn-secondary mt-4" onclick="copyToClipboard(document.getElementById('newKeyValue').textContent)" style="width:100%">复制到剪贴板</button>
       </div>
@@ -1922,6 +1922,7 @@
             <div>
               <div class="text-mono text-sm">${k.id}</div>
               <div class="text-sm text-muted">类型: ${k.kind === 'session' ? 'session' : 'api'} · 指纹: ${escapeHtml(k.fingerprint || '-')}</div>
+              <div class="text-sm text-muted">完整 Key: ${k.raw_key ? `<code>${escapeHtml(k.raw_key)}</code>` : '历史 Key，当前不可恢复'}</div>
               <div class="text-sm text-muted">共享余额: ${formatMoney(k.shared_balance || 0)} · ${k.last_used_at ? '最近使用: ' + formatDate(k.last_used_at) : '从未使用'}</div>
             </div>
             <span class="badge ${k.status === 'active' ? 'badge-success' : 'badge-error'}">${k.status === 'active' ? '正常' : '已禁用'}</span>
@@ -2036,7 +2037,7 @@
           return;
         }
         body.innerHTML = data.map(k => `<tr>
-          <td class="text-mono text-sm">${k.id}<div class="text-muted" style="font-size:11px">摘要 ${escapeHtml(k.fingerprint || '-')}</div></td>
+          <td class="text-mono text-sm">${k.id}<div class="text-muted" style="font-size:11px">摘要 ${escapeHtml(k.fingerprint || '-')}</div>${k.raw_key ? `<div class="text-muted" style="font-size:11px"><code>${escapeHtml(k.raw_key)}</code></div>` : '<div class="text-muted" style="font-size:11px">历史 Key 不可恢复</div>'}</td>
           <td><span class="badge ${k.kind === 'session' ? 'badge-warning' : 'badge-info'}">${k.kind === 'session' ? 'session' : 'api'}</span></td>
           <td><div class="user-cell"><div class="user-avatar" style="width:32px;height:32px;font-size:12px">${getInitials(k.username||k.external_id)}</div><div class="user-info"><strong>${k.username||k.external_id||'-'}</strong><span>${k.user_id}</span></div></div></td>
           <td><strong>${formatMoney(k.shared_balance || 0)}</strong><div class="text-sm text-muted">同用户 Key 共用</div></td>
