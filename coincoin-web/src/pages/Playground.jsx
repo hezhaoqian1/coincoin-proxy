@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { describePublicModel, getApiKey } from '../api/client'
+import { describePublicModel } from '../api/client'
+import { useAuth } from '../hooks/useAuth'
 import { usePublicModels } from '../hooks/usePublicModels'
 import './Playground.css'
 
 export default function Playground() {
+    const { authMode, effectiveApiKey, hasDeveloperKey } = useAuth()
     const { textModels, defaultTextModel, loading: loadingModels } = usePublicModels()
-    const [selectedModel, setSelectedModel] = useState(defaultTextModel?.id || 'gpt-5.2-codex')
+    const [selectedModel, setSelectedModel] = useState('')
     const [systemPrompt, setSystemPrompt] = useState('')
     const [userPrompt, setUserPrompt] = useState('')
     const [temperature, setTemperature] = useState(0.7)
@@ -17,7 +19,7 @@ export default function Playground() {
     const abortRef = useRef(null)
 
     useEffect(() => {
-        if (!textModels.find((model) => model.id === selectedModel) && defaultTextModel?.id) {
+        if ((!selectedModel || !textModels.find((model) => model.id === selectedModel)) && defaultTextModel?.id) {
             setSelectedModel(defaultTextModel.id)
         }
     }, [defaultTextModel, selectedModel, textModels])
@@ -26,6 +28,11 @@ export default function Playground() {
 
     const handleSend = async () => {
         if (!userPrompt.trim() || loading) return
+        if (!effectiveApiKey) {
+            setResponse('Error: 当前没有可用的开发者 API Key。请先去仪表盘生成开发者 Key，或使用开发者 Key 直登。')
+            setStats(null)
+            return
+        }
         setResponse('')
         setStats(null)
         setLoading(true)
@@ -42,7 +49,7 @@ export default function Playground() {
             const res = await fetch('/v1/chat/completions', {
                 method: 'POST',
                 headers: {
-                    Authorization: `Bearer ${getApiKey()}`,
+                    Authorization: `Bearer ${effectiveApiKey}`,
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
@@ -144,6 +151,16 @@ export default function Playground() {
                                 <p>选模型、写提示词、调温度，然后直接发起一条真实请求。</p>
                             </div>
                         </div>
+                        {!hasDeveloperKey && (
+                            <div className="settings-alert settings-alert-warning" style={{ marginBottom: 'var(--space-lg)' }}>
+                                <h3 style={{ marginBottom: 'var(--space-xs)' }}>当前没有可用的开发者 API Key</h3>
+                                <p className="settings-text" style={{ marginBottom: 0 }}>
+                                    {authMode === 'session_only'
+                                        ? '你现在用的是控制台 session。它能登录站内页面，但不能直接调用 API。请先回仪表盘生成开发者 API Key。'
+                                        : '请先使用开发者 API Key 登录，或者回仪表盘生成一个新的开发者 API Key。'}
+                                </p>
+                            </div>
+                        )}
                         <div className="pg-section">
                             <label className="pg-label">Text Model</label>
                             <select className="pg-select" value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)} disabled={loadingModels || loading}>
@@ -192,7 +209,7 @@ export default function Playground() {
                             {loading ? (
                                 <button className="btn btn-secondary" onClick={handleStop}>&#9632; 停止</button>
                             ) : (
-                                <button className="btn btn-primary" onClick={handleSend} disabled={!userPrompt.trim()}>
+                                <button className="btn btn-primary" onClick={handleSend} disabled={!userPrompt.trim() || !effectiveApiKey || !selectedModel}>
                                     &#9654; 发送 <small>(&#8984;+Enter)</small>
                                 </button>
                             )}
