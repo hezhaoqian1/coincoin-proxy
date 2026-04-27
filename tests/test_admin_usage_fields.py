@@ -633,6 +633,115 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["station_attribution"]["station_name"], "Alpha Station")
         self.assertEqual(payload["station_attribution"]["station_owner_user_id"], "u_owner")
 
+    async def test_user_detail_exposes_key_policy_and_shared_balance(self) -> None:
+        user = SimpleNamespace(
+            id="u_1",
+            username="alice",
+            external_id="ext_alice",
+            status="active",
+            balance=2500,
+            token_limit=None,
+            token_used=0,
+            input_tokens_used=0,
+            output_tokens_used=0,
+            request_limit_per_minute=None,
+            request_limit_per_day=None,
+            created_at=datetime(2026, 3, 25, 10, 0, 0),
+            updated_at=datetime(2026, 3, 25, 10, 0, 0),
+        )
+        api_key = SimpleNamespace(
+            id="k_api",
+            kind="api",
+            status="active",
+            key_hash="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            created_at=datetime(2026, 3, 25, 11, 0, 0),
+            last_used_at=None,
+        )
+        session_key = SimpleNamespace(
+            id="k_session",
+            kind="session",
+            status="active",
+            key_hash="fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+            created_at=datetime(2026, 3, 25, 12, 0, 0),
+            last_used_at=datetime(2026, 3, 25, 12, 30, 0),
+        )
+        finance_summary = SimpleNamespace(
+            user_id="u_1",
+            initialized_from_history=1,
+            total_paid_rmb_cents=0,
+            total_paid_balance_cents=0,
+            total_ops_credit_cents=0,
+            total_bonus_cents=0,
+            total_consumed_cents=0,
+            total_ops_debit_cents=0,
+            legacy_unclassified_cents=0,
+            total_paid_orders=0,
+            last_payment_at=None,
+        )
+        fake_db = _FakeDB(
+            execute_results=[
+                _FakeAllResult([(user, None, None)]),
+                _FakeScalarsResult([session_key, api_key]),
+                _FakeEntityResult(finance_summary),
+            ],
+            scalar_results=[0, 0],
+        )
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get("/admin/users/u_1")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["key_display_policy"]["raw_key_recoverable"], False)
+        self.assertEqual(payload["key_display_policy"]["shared_balance_scope"], "user")
+        self.assertEqual(payload["keys"][0]["kind"], "session")
+        self.assertEqual(payload["keys"][0]["shared_balance"], 2500)
+        self.assertEqual(payload["keys"][0]["fingerprint"], "fedcba987654")
+        self.assertEqual(payload["keys"][1]["kind"], "api")
+        self.assertEqual(payload["keys"][1]["fingerprint"], "0123456789ab")
+
+    async def test_list_keys_exposes_kind_fingerprint_and_shared_balance(self) -> None:
+        key = SimpleNamespace(
+            id="k_api",
+            user_id="u_1",
+            kind="api",
+            status="active",
+            key_hash="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            created_at=datetime(2026, 3, 25, 11, 0, 0),
+            last_used_at=datetime(2026, 3, 25, 12, 30, 0),
+        )
+        user = SimpleNamespace(
+            id="u_1",
+            username="alice",
+            external_id="ext_alice",
+            balance=2500,
+        )
+        fake_db = _FakeDB(execute_results=[_FakeAllResult([(key, user)])])
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get("/admin/keys")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload[0]["kind"], "api")
+        self.assertEqual(payload[0]["shared_balance"], 2500)
+        self.assertEqual(payload[0]["shared_balance_usd"], 25.0)
+        self.assertEqual(payload[0]["fingerprint"], "0123456789ab")
+
 
 if __name__ == "__main__":
     unittest.main()
