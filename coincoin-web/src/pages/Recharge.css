@@ -1,8 +1,8 @@
 .recharge-overview {
     display: grid;
     grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr);
-    gap: var(--space-xl);
-    padding: var(--space-xl);
+    gap: var(--space-lg);
+    padding: var(--space-lg);
     margin-bottom: var(--space-lg);
 }
 
@@ -18,14 +18,14 @@
 
 .recharge-overview-copy h2 {
     margin-bottom: var(--space-sm);
-    font-size: 1.5rem;
+    font-size: 1.35rem;
     line-height: 1.2;
 }
 
 .recharge-overview-copy p {
     margin: 0;
     color: var(--text-secondary);
-    line-height: 1.75;
+    line-height: 1.65;
 }
 
 .recharge-overview-points {
@@ -35,8 +35,8 @@
 }
 
 .recharge-point {
-    padding: var(--space-lg);
-    border-radius: var(--radius-lg);
+    padding: 14px;
+    border-radius: var(--radius-md);
     border: 1px solid var(--border-color);
     background: var(--bg-glass);
 }
@@ -62,7 +62,7 @@
 }
 
 .recharge-path-card {
-    padding: var(--space-lg);
+    padding: 14px;
 }
 
 .recharge-path-label {
@@ -72,7 +72,7 @@
     font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: var(--text-tertiary);
+    color: var(--accent-cyan);
 }
 
 .recharge-path-card strong {
@@ -98,7 +98,7 @@
 .recharge-plan {
     position: relative;
     cursor: pointer;
-    padding: var(--space-xl);
+    padding: var(--space-lg);
     transition: all var(--transition-base);
     border: 2px solid transparent;
 }
@@ -134,7 +134,7 @@
 }
 
 .plan-amount {
-    font-size: 2rem;
+    font-size: 1.8rem;
     font-weight: 800;
     color: var(--text-primary);
 }
@@ -164,7 +164,7 @@
 /* Custom Amount */
 .custom-amount {
     margin-bottom: var(--space-xl);
-    padding: var(--space-xl);
+    padding: var(--space-lg);
 }
 
 .custom-header {
@@ -257,6 +257,14 @@
     margin-top: var(--space-md);
     font-size: 0.85rem;
     color: var(--text-tertiary);
+}
+
+.recharge-next-links {
+    display: flex;
+    gap: var(--space-sm);
+    justify-content: center;
+    flex-wrap: wrap;
+    margin-top: var(--space-md);
 }
 
 .recharge-next-links {

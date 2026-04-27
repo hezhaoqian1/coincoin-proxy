@@ -40,31 +40,13 @@ export default function Login() {
     return (
         <div className="auth-page page-wrapper">
             <div className="auth-bg">
-                <div className="hero-orb hero-orb-1"></div>
-                <div className="hero-orb hero-orb-2"></div>
+                <div className="auth-grid"></div>
             </div>
             <div className="auth-card glass-card animate-fade-in-up">
                 <div className="auth-header">
                     <div className="logo-icon" style={{ width: 48, height: 48, fontSize: '1.1rem', borderRadius: 14 }}>CC</div>
                     <h1>登录控制台</h1>
-                    <p>默认入口只有一个：先登录控制台账号。只有你已经拿到开发者 API Key 时，才需要用下面的直登入口。</p>
-                </div>
-
-                <div className="auth-flow-note">
-                    <div className="auth-flow-item auth-flow-item-primary">
-                        <span className="auth-flow-index">01</span>
-                        <div>
-                            <strong>登录控制台</strong>
-                            <p>查看余额、充值、请求日志和账户状态。</p>
-                        </div>
-                    </div>
-                    <div className="auth-flow-item">
-                        <span className="auth-flow-index">02</span>
-                        <div>
-                            <strong>生成开发者 API Key</strong>
-                            <p>真正给 Codex、OpenClaw、cURL 和服务端程序使用。</p>
-                        </div>
-                    </div>
+                    <p>默认先用控制台账号登录。已经拿到开发者 API Key 时，再用下面的直登入口。</p>
                 </div>
 
                 <div className="auth-tabs">
@@ -80,10 +62,6 @@ export default function Login() {
 
                 {tab === 'password' ? (
                     <form onSubmit={handlePasswordLogin} className="auth-form">
-                        <div className="auth-callout">
-                            <strong>适合需要站内管理的人</strong>
-                            <p>控制台登录可以看余额、充值、查看用量，并在仪表盘生成开发者 API Key。</p>
-                        </div>
                         <div className="input-group">
                             <label>用户名</label>
                             <input
@@ -110,14 +88,14 @@ export default function Login() {
                             {loading ? '登录中...' : '进入控制台'}
                         </button>
                         <p className="auth-helper-text">
-                            还没有控制台账号？注册后先进入控制台，再在仪表盘里生成开发者 API Key。
+                            还没有控制台账号？先注册，再去仪表盘生成开发者 API Key。
                         </p>
                     </form>
                 ) : (
                     <form onSubmit={handleKeyLogin} className="auth-form">
                         <div className="auth-callout auth-callout-muted">
-                            <strong>适合已经拿到开发者 Key 的人</strong>
-                            <p>这个入口只验证你的开发者 API Key 是否可用，不会自动拥有控制台账号管理能力，也不适合第一次来站的新用户。</p>
+                            <strong>这个入口只做 Key 验证</strong>
+                            <p>适合已经拿到开发者 API Key 的人。第一次来站，先注册或登录控制台账号。</p>
                         </div>
                         <div className="input-group">
                             <label>开发者 API Key</label>
@@ -135,7 +113,7 @@ export default function Login() {
                             {loading ? '验证中...' : '验证并进入'}
                         </button>
                         <p className="auth-helper-text">
-                            如果你还没有开发者 API Key，请不要走这条路，先注册或登录控制台账号。
+                            没有开发者 API Key 时，回到控制台登录。
                         </p>
                     </form>
                 )}

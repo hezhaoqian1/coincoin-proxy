@@ -14,47 +14,47 @@ function ReadinessCard({ authMode, username, hasDeveloperKey }) {
     const contentMap = {
         session_only: {
             tone: 'warning',
-            eyebrow: '开发接入',
-            title: '还差一步：生成开发者 API Key',
-            description: `${username || '当前账户'} 已进入控制台。现在可以看余额、充值和用量；真正给 Codex CLI、Continue、Aider 或 cURL 用的开发者 API Key 还没有生成。`,
+            eyebrow: '下一步',
+            title: '先生成开发者 API Key',
+            description: `${username || '当前账户'} 已经登录控制台。还差一把开发者 Key，生成后就可以直接复制到 CLI、SDK 和客户端。`,
             checklist: [
                 '控制台登录已完成',
                 '开发者 API Key 尚未生成',
-                '生成后即可直接复制到客户端配置',
+                '生成后可直接去接入配置页复制片段',
             ],
             actions: [
                 { href: '#developer-key', label: '去生成 API Key', style: 'btn btn-primary btn-sm' },
-                { to: '/docs', label: '阅读接入文档', style: 'btn btn-secondary btn-sm' },
+                { to: '/settings', label: '打开接入配置', style: 'btn btn-secondary btn-sm' },
             ],
         },
         session_with_api: {
             tone: 'success',
-            eyebrow: '开发接入',
-            title: '控制台账号和开发者密钥都已准备好',
-            description: `${username || '当前账户'} 已生成开发者 API Key。余额、日志和接入配置都可以在当前页面继续完成。`,
+            eyebrow: '已就绪',
+            title: '账户和开发者 Key 都已准备好',
+            description: `${username || '当前账户'} 已经可以直接接入。常用下一步通常只有两件事：复制配置，或者发一条真实请求测试。`,
             checklist: [
                 '控制台登录已完成',
                 '开发者 API Key 已就绪',
-                '可以直接复制配置片段接入客户端',
+                '可以去配置页复制片段或去测试页验证',
             ],
             actions: [
                 { to: '/settings', label: '复制配置片段', style: 'btn btn-primary btn-sm' },
-                { to: '/playground', label: '在线测试模型', style: 'btn btn-secondary btn-sm' },
+                { to: '/playground', label: '发起测试请求', style: 'btn btn-secondary btn-sm' },
             ],
         },
         api: {
             tone: 'info',
-            eyebrow: '会话模式',
-            title: '当前正在用开发者 API Key 直接登录',
-            description: '这种方式适合验证开发者 Key 是否可用，但它不等同于控制台账号登录。如果你还要做账户管理，建议改用用户名密码登录控制台。',
+            eyebrow: '当前状态',
+            title: '你正在用开发者 API Key 直登',
+            description: '这种模式可以直接测试调用和复制配置。需要账户管理、充值或重新生成密钥时，再切回控制台账号登录。',
             checklist: [
                 '当前会话可直接调用 API',
-                '不会自动拥有控制台管理能力',
-                '需要站内管理时请改用用户名密码登录',
+                '可直接验证模型、日志和配置',
+                '需要完整账户管理时再切回控制台登录',
             ],
             actions: [
                 { to: '/settings', label: '查看接入配置', style: 'btn btn-primary btn-sm' },
-                { to: '/docs', label: '查看客户端示例', style: 'btn btn-secondary btn-sm' },
+                { to: '/playground', label: '开始测试', style: 'btn btn-secondary btn-sm' },
             ],
         },
     }
@@ -72,7 +72,7 @@ function ReadinessCard({ authMode, username, hasDeveloperKey }) {
                     ))}
                 </ul>
                 <div className="readiness-tags">
-                    <span className="readiness-tag">{authMode === 'session_only' ? '当前为控制台会话' : '站内状态正常'}</span>
+                    <span className="readiness-tag">{authMode === 'session_only' ? '控制台会话' : '当前可继续接入'}</span>
                     <span className="readiness-tag">{hasDeveloperKey ? '开发者 Key 已就绪' : '尚未生成开发者 Key'}</span>
                 </div>
             </div>
@@ -133,8 +133,8 @@ function KeyManagement({ copied, copy, username, generatedApiKey, authMode, effe
             {!username ? (
                 <div className="key-panel-copy">
                     <p>
-                        当前会话是通过开发者 API Key 直接登录的。你可以复制并继续使用这个 Key，
-                        但如果要在站内重新生成或管理 Key，需要改用用户名密码登录控制台。
+                        当前会话使用的是开发者 API Key。可以继续复制和使用它；
+                        需要重新生成、轮换或做账户管理时，再回到控制台账号登录。
                     </p>
                     <div className="action-grid" style={{ marginTop: 'var(--space-md)' }}>
                         <div className="action-item" onClick={() => copy(effectiveApiKey, 'key')}>
@@ -153,8 +153,8 @@ function KeyManagement({ copied, copy, username, generatedApiKey, authMode, effe
             ) : generatedKey && !showKey ? (
                 <div>
                     <p className="key-panel-copy">
-                        你已经生成过开发者 API Key，可直接用于 Codex CLI、Continue、Aider 和其他 OpenAI 兼容客户端。
-                        当前站内登录依然走控制台 session，两者职责不同。
+                        你已经生成过开发者 API Key。平时直接复制这个 Key 去接入即可，
+                        不需要每次回到这里重新理解一遍登录方式。
                     </p>
                     <div className="action-grid">
                         <div className="action-item" onClick={() => copy(generatedKey, 'apikey')}>
@@ -178,7 +178,7 @@ function KeyManagement({ copied, copy, username, generatedApiKey, authMode, effe
                 <div>
                     <div className="key-warning-box">
                         <span className="key-warning-eyebrow">请立即保存</span>
-                        <p>这是重新生成后的完整开发者 API Key。完整值只会在这一刻明文展示，隐藏后请使用你已经保存的副本继续配置客户端。</p>
+                        <p>这是重新生成后的完整开发者 API Key。完整值只会显示这一次，保存后再继续配置客户端。</p>
                     </div>
                     <div className="key-secret-panel">
                         <div className="key-secret-meta">
@@ -199,8 +199,7 @@ function KeyManagement({ copied, copy, username, generatedApiKey, authMode, effe
             ) : (
                 <div>
                     <p className="key-panel-copy">
-                        为你的控制台账户生成一个开发者 API Key，用于第三方客户端。
-                        当前这次登录拿到的是 session key，只能访问 Dashboard、充值和设置页面，不能直接调用 API。
+                        给当前控制台账户生成一把开发者 API Key。生成后就能直接接 SDK、CLI 和第三方客户端。
                     </p>
                     <button className="btn btn-primary btn-sm" onClick={handleGenerate} disabled={generating}>
                         {generating ? '生成中...' : '生成开发者 API Key'}
@@ -510,7 +509,7 @@ export default function Dashboard() {
             <div className="container">
                 <div className="page-header">
                     <h1 className="page-title">仪表盘</h1>
-                    <p className="page-desc">余额、调用记录、开发者接入状态都集中在这里</p>
+                    <p className="page-desc">先看余额和接入状态，再决定是复制配置、充值还是排查请求</p>
                 </div>
 
                 {/* Announcements */}
@@ -617,7 +616,7 @@ export default function Dashboard() {
                     <div className="quick-actions-header">
                         <div>
                             <h3>快速操作</h3>
-                            <p className="quick-actions-desc">充值、接入、排查和在线测试都集中在这里，避免你在控制台里来回找入口。</p>
+                            <p className="quick-actions-desc">把常用动作收在这里。先复制入口和配置，再按需去充值或查日志。</p>
                         </div>
                         <Link to="/recharge" className="btn btn-primary btn-sm">进入充值中心</Link>
                     </div>
@@ -634,7 +633,7 @@ export default function Dashboard() {
                             <span className="shortcut-icon">&#128176;</span>
                             <div>
                                 <strong>充值</strong>
-                                <p>账户续费、查看余额变化和支付结果。</p>
+                                <p>补余额，继续跑请求。</p>
                             </div>
                         </Link>
                         <Link to="/usage" className="shortcut-card">
@@ -648,28 +647,28 @@ export default function Dashboard() {
                             <span className="shortcut-icon">&#128736;</span>
                             <div>
                                 <strong>接入配置</strong>
-                                <p>复制 SDK、CLI 和 OpenClaw 配置片段。</p>
+                                <p>复制 SDK、CLI 和常用客户端片段。</p>
                             </div>
                         </Link>
                         <Link to="/docs" className="shortcut-card">
                             <span className="shortcut-icon">&#128214;</span>
                             <div>
                                 <strong>接入文档</strong>
-                                <p>查协议、模型目录、错误码和生图规则。</p>
+                                <p>查协议、模型目录和图片接口规则。</p>
                             </div>
                         </Link>
                         <Link to="/playground" className="shortcut-card">
                             <span className="shortcut-icon">&#9881;</span>
                             <div>
-                                <strong>在线测试</strong>
-                                <p>不改本地环境，直接验证模型是否可用。</p>
+                                <strong>测试请求</strong>
+                                <p>直接发一条真实请求，验证模型和 Key。</p>
                             </div>
                         </Link>
                         <a href="#developer-key" className="shortcut-card">
                             <span className="shortcut-icon">&#128273;</span>
                             <div>
                                 <strong>开发者 Key</strong>
-                                <p>生成、复制或重新生成开发者 API Key。</p>
+                                <p>生成、复制或轮换开发者 API Key。</p>
                             </div>
                         </a>
                     </div>
@@ -716,6 +715,7 @@ export default function Dashboard() {
                 {/* Pricing Info */}
                 <div className="pricing-info glass-card animate-fade-in-up" style={{ animationDelay: '300ms' }}>
                     <h3>当前价格</h3>
+                    <p className="pricing-note-row">价格和默认模型只做简表展示。更细的模型说明和完整接法放到接入配置页。</p>
                     <div className="price-row">
                         <div className="price-item">
                             <span className="price-label">Input Token</span>
