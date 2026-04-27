@@ -32,11 +32,11 @@ export default function Settings() {
     const { authMode, effectiveApiKey, generatedApiKey, hasDeveloperKey, isConsoleSession, username } = useAuth()
     const { models, textModels, defaultTextModel, defaultImageModel } = usePublicModels()
     const [copied, setCopied] = useState(false)
-    const [selectedModel, setSelectedModel] = useState(defaultTextModel?.id || 'gpt-5.2-codex')
+    const [selectedModel, setSelectedModel] = useState('')
     const [activeSnippet, setActiveSnippet] = useState('Python (openai SDK)')
 
     useEffect(() => {
-        if (!textModels.find(model => model.id === selectedModel) && defaultTextModel?.id) {
+        if ((!selectedModel || !textModels.find(model => model.id === selectedModel)) && defaultTextModel?.id) {
             setSelectedModel(defaultTextModel.id)
         }
     }, [defaultTextModel, selectedModel, textModels])
