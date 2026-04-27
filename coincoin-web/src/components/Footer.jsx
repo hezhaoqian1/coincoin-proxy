@@ -16,7 +16,7 @@ export default function Footer() {
                             <span className="logo-text">CoinCoin</span>
                         </div>
                         <p className="footer-desc">
-                            高性能 AI API 中转站<br />
+                            开发者中转站控制台<br />
                             公开模型目录 · 按量计费 · OpenAI 兼容
                         </p>
                     </div>

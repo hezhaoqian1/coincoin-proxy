@@ -16,7 +16,7 @@
     align-items: center;
     justify-content: space-between;
     height: 100%;
-    gap: var(--space-lg);
+    gap: var(--space-md);
 }
 
 .navbar-logo {
@@ -53,7 +53,7 @@
 .navbar-links {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
     flex-wrap: wrap;
     justify-content: flex-end;
 }
@@ -61,16 +61,16 @@
 .nav-secondary-links {
     display: flex;
     align-items: center;
-    gap: 4px;
-    padding-left: 8px;
+    gap: 6px;
+    padding-left: 12px;
     border-left: 1px solid var(--border-color);
 }
 
 .nav-link {
-    padding: 8px 14px;
+    padding: 8px 12px;
     color: var(--text-secondary);
-    font-size: 0.9rem;
-    font-weight: 500;
+    font-size: 0.88rem;
+    font-weight: 600;
     border-radius: var(--radius-sm);
     transition: all var(--transition-fast);
     text-decoration: none;
@@ -87,8 +87,8 @@
 }
 
 .nav-link-secondary {
-    font-size: 0.82rem;
-    color: var(--text-tertiary);
+    font-size: 0.84rem;
+    color: var(--text-secondary);
 }
 
 .nav-session-badge {
@@ -100,6 +100,24 @@
     margin-right: 4px;
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
+    background: var(--bg-glass);
+}
+
+.theme-toggle {
+    width: 36px;
+    height: 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-card);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.theme-toggle:hover {
+    border-color: var(--border-color-hover);
     background: var(--bg-glass);
 }
 
@@ -148,6 +166,7 @@
         border-left: none;
         padding-left: 0;
         gap: 4px;
+        flex-wrap: wrap;
     }
 
     .logo-text {

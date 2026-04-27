@@ -1,8 +1,8 @@
 .usage-overview {
     display: grid;
     grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
-    gap: var(--space-xl);
-    padding: var(--space-xl);
+    gap: var(--space-lg);
+    padding: var(--space-lg);
     margin-bottom: var(--space-lg);
 }
 
@@ -18,14 +18,14 @@
 
 .usage-overview-copy h2 {
     margin-bottom: var(--space-sm);
-    font-size: 1.45rem;
+    font-size: 1.32rem;
     line-height: 1.2;
 }
 
 .usage-overview-copy p {
     margin: 0;
     color: var(--text-secondary);
-    line-height: 1.75;
+    line-height: 1.65;
 }
 
 .usage-overview-points {
@@ -35,8 +35,8 @@
 }
 
 .usage-overview-item {
-    padding: var(--space-lg);
-    border-radius: var(--radius-lg);
+    padding: 14px;
+    border-radius: var(--radius-md);
     border: 1px solid var(--border-color);
     background: var(--bg-glass);
 }
@@ -55,7 +55,7 @@
 
 /* Filters */
 .usage-filters {
-    padding: var(--space-lg);
+    padding: 14px 16px;
     margin-bottom: var(--space-lg);
 }
 
@@ -99,7 +99,7 @@
 }
 
 .usage-table {
-    padding: var(--space-xl);
+    padding: var(--space-lg);
 }
 
 .model-tag-sm {

@@ -3,7 +3,7 @@
     justify-content: space-between;
     gap: var(--space-lg);
     align-items: flex-start;
-    padding: var(--space-xl);
+    padding: var(--space-lg);
     margin-bottom: var(--space-lg);
 }
 
@@ -19,14 +19,14 @@
 
 .playground-overview-copy h2 {
     margin-bottom: var(--space-sm);
-    font-size: 1.45rem;
+    font-size: 1.32rem;
     line-height: 1.2;
 }
 
 .playground-overview-copy p {
     margin: 0;
     color: var(--text-secondary);
-    line-height: 1.75;
+    line-height: 1.65;
 }
 
 .playground-overview-links {
@@ -44,7 +44,7 @@
 }
 
 .playground-input, .playground-output {
-    padding: var(--space-xl);
+    padding: var(--space-lg);
 }
 
 .pg-panel-head {
@@ -66,7 +66,7 @@
 }
 
 .pg-section {
-    margin-bottom: var(--space-lg);
+    margin-bottom: var(--space-md);
 }
 
 .pg-label {
@@ -110,7 +110,7 @@
 
 .pg-textarea {
     width: 100%;
-    padding: var(--space-md);
+    padding: 12px;
     border: 1px solid var(--border-color);
     border-radius: var(--radius-sm);
     background: var(--bg-glass);
@@ -127,13 +127,13 @@
 }
 
 .pg-main-input {
-    min-height: 120px;
+    min-height: 132px;
 }
 
 .pg-params {
     display: flex;
-    gap: var(--space-xl);
-    margin-bottom: var(--space-lg);
+    gap: var(--space-lg);
+    margin-bottom: var(--space-md);
 }
 
 .pg-param {
@@ -184,7 +184,7 @@
     min-height: 300px;
     max-height: 60vh;
     overflow-y: auto;
-    padding: var(--space-md);
+    padding: 12px;
     background: var(--bg-glass);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-sm);
@@ -207,11 +207,13 @@
     height: 200px;
     color: var(--text-tertiary);
     font-size: 0.88rem;
+    text-align: center;
 }
 
 .pg-stats {
     display: flex;
-    gap: var(--space-lg);
+    gap: var(--space-md);
+    flex-wrap: wrap;
     margin-top: var(--space-md);
     padding-top: var(--space-md);
     border-top: 1px solid var(--border-color);

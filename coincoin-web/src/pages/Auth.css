@@ -12,6 +12,28 @@
     position: absolute;
     inset: 0;
     z-index: 0;
+    background:
+        linear-gradient(180deg, rgba(15, 23, 42, 0.96), rgba(15, 23, 42, 0.9)),
+        repeating-linear-gradient(
+            0deg,
+            rgba(148, 163, 184, 0.06) 0,
+            rgba(148, 163, 184, 0.06) 1px,
+            transparent 1px,
+            transparent 36px
+        ),
+        repeating-linear-gradient(
+            90deg,
+            rgba(148, 163, 184, 0.06) 0,
+            rgba(148, 163, 184, 0.06) 1px,
+            transparent 1px,
+            transparent 36px
+        );
+}
+
+.auth-grid {
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(circle at top, rgba(99, 102, 241, 0.14), transparent 36%);
 }
 
 .auth-card {
@@ -19,12 +41,12 @@
     z-index: 1;
     width: 100%;
     max-width: 440px;
-    padding: var(--space-2xl);
+    padding: var(--space-xl);
 }
 
 .auth-header {
     text-align: center;
-    margin-bottom: var(--space-xl);
+    margin-bottom: var(--space-lg);
 }
 
 .auth-header .logo-icon {
@@ -40,56 +62,7 @@
 .auth-header p {
     color: var(--text-secondary);
     font-size: 0.9rem;
-}
-
-.auth-flow-note {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    margin-bottom: var(--space-lg);
-}
-
-.auth-flow-item {
-    display: flex;
-    gap: 12px;
-    align-items: flex-start;
-    padding: 12px 14px;
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border-color);
-    background: var(--bg-glass);
-}
-
-.auth-flow-item-primary {
-    border-color: rgba(99, 102, 241, 0.22);
-    background: rgba(99, 102, 241, 0.08);
-}
-
-.auth-flow-index {
-    width: 28px;
-    height: 28px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 10px;
-    background: rgba(15, 23, 42, 0.75);
-    color: var(--accent-cyan);
-    font-size: 0.78rem;
-    font-weight: 800;
-    flex-shrink: 0;
-}
-
-.auth-flow-item strong {
-    display: block;
-    margin-bottom: 4px;
-    font-size: 0.88rem;
-    color: var(--text-primary);
-}
-
-.auth-flow-item p {
-    margin: 0;
-    font-size: 0.82rem;
     line-height: 1.6;
-    color: var(--text-secondary);
 }
 
 .auth-tabs {
@@ -125,11 +98,11 @@
 .auth-form {
     display: flex;
     flex-direction: column;
-    gap: var(--space-lg);
+    gap: var(--space-md);
 }
 
 .auth-callout {
-    padding: var(--space-md);
+    padding: 12px 14px;
     border-radius: var(--radius-md);
     border: 1px solid rgba(99, 102, 241, 0.18);
     background: rgba(99, 102, 241, 0.08);

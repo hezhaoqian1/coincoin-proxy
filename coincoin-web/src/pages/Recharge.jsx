@@ -172,15 +172,15 @@ export default function Recharge() {
             <div className="container">
                 <div className="page-header">
                     <h1 className="page-title">充值中心</h1>
-                    <p className="page-desc">这里是控制台里最直接的续费入口。先给账户充值，再由所有文本和图片请求统一扣费。</p>
+                    <p className="page-desc">给账户充值，之后所有文本和图片请求都从这里统一扣费。</p>
                 </div>
 
                 {!isLoggedIn && (
                     <div className="glass-card animate-fade-in" style={{ padding: 'var(--space-lg)', marginBottom: 'var(--space-lg)', background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 'var(--space-md)', alignItems: 'center', flexWrap: 'wrap' }}>
                             <div>
-                                <strong style={{ display: 'block', marginBottom: 'var(--space-xs)' }}>套餐和额度可以先看，真正支付前再登录</strong>
-                                <span style={{ color: 'var(--text-secondary)' }}>未登录用户现在也能查看充值页；但创建订单和兑换码到账仍需要先登录，这样余额才能准确充到你的账户。</span>
+                                <strong style={{ display: 'block', marginBottom: 'var(--space-xs)' }}>可以先看套餐，支付前再登录</strong>
+                                <span style={{ color: 'var(--text-secondary)' }}>未登录也能查看充值页；创建订单和兑换码到账仍需要先登录，这样余额才会进到正确账户。</span>
                             </div>
                             <div style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
                                 <Link to="/login" className="btn btn-primary btn-sm">登录后充值</Link>
@@ -192,36 +192,36 @@ export default function Recharge() {
 
                 <div className="recharge-overview glass-card animate-fade-in-up">
                     <div className="recharge-overview-copy">
-                        <span className="recharge-kicker">Billing Flow</span>
-                        <h2>充值之后，同一个余额覆盖全部公开模型</h2>
-                        <p>不需要为 GPT 文本、Gemini 文本、Gemini 生图分别开账户。你只维护一个 CoinCoin 余额，所有公开模型都从这里统一扣费。</p>
+                        <span className="recharge-kicker">Billing</span>
+                        <h2>一个余额，覆盖全部公开模型</h2>
+                        <p>GPT 文本、Gemini 文本和 Gemini 生图统一从 CoinCoin 余额扣费，不需要分开维护。</p>
                     </div>
                     <div className="recharge-overview-points">
                         <div className="recharge-point">
                             <strong>先选套餐</strong>
-                            <p>大多数用户直接选预设套餐就够了，单价和到账额度更直观。</p>
+                            <p>大多数情况直接选预设套餐就够了，到账额度也更直观。</p>
                         </div>
                         <div className="recharge-point">
                             <strong>再去支付</strong>
-                            <p>点击后会在新标签打开支付宝，本页自动轮询到账结果，不需要手动刷新。</p>
+                            <p>点击后会在新标签打开支付宝，本页自动轮询到账结果。</p>
                         </div>
                         <div className="recharge-point">
-                            <strong>到账后继续接入</strong>
-                            <p>完成支付后可直接回仪表盘、请求日志或接入配置页继续操作。</p>
+                            <strong>到账后继续操作</strong>
+                            <p>支付完成后可以直接回仪表盘、请求日志或接入配置页。</p>
                         </div>
                     </div>
                 </div>
 
                 <div className="recharge-path-grid">
                     <div className="recharge-path-card glass-card animate-fade-in-up">
-                        <span className="recharge-path-label">推荐路径</span>
+                        <span className="recharge-path-label">套餐充值</span>
                         <strong>选择套餐充值</strong>
-                        <p>适合第一次充值或想快速补余额的用户。直接选一个金额档位，然后支付即可。</p>
+                        <p>直接选金额档位并支付，适合第一次充值或快速补余额。</p>
                     </div>
                     <div className="recharge-path-card glass-card animate-fade-in-up" style={{ animationDelay: '80ms' }}>
-                        <span className="recharge-path-label">另一种方式</span>
+                        <span className="recharge-path-label">兑换码</span>
                         <strong>兑换码到账</strong>
-                        <p>适合活动码、管理员发放额度或内部测试场景。无需走支付流程，兑换后即时到账。</p>
+                        <p>适合活动码、管理员发放额度或内部测试。无需支付，兑换后即时到账。</p>
                     </div>
                 </div>
 
@@ -355,7 +355,7 @@ export default function Recharge() {
                                 </>
                             )}
                         </button>
-                        <p className="pay-note">{isLoggedIn ? '点击后会在新标签打开支付页面，支付完成后本页自动检测到账并跳转到仪表盘' : '充值页现在公开可见；登录后才会真正创建订单并把余额充到你的账户。'}</p>
+                        <p className="pay-note">{isLoggedIn ? '点击后会在新标签打开支付页，到账后本页自动更新。' : '当前可以先看套餐；登录后才能创建订单并把余额充到你的账户。'}</p>
                         <div className="recharge-next-links">
                             {isLoggedIn ? (
                                 <>
@@ -376,7 +376,7 @@ export default function Recharge() {
 
                 <div className="redeem-section glass-card animate-fade-in-up" style={{ animationDelay: '500ms' }}>
                     <h3>兑换码充值</h3>
-                    <p className="redeem-desc">{isLoggedIn ? '输入兑换码立即充值到账' : '兑换码也需要先登录，避免把余额充到错误账户。'}</p>
+                    <p className="redeem-desc">{isLoggedIn ? '输入兑换码后立即到账。' : '兑换码也需要先登录，避免充到错误账户。'}</p>
                     {isLoggedIn ? (
                         <>
                             <div className="redeem-row">

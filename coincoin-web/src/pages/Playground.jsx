@@ -126,15 +126,15 @@ export default function Playground() {
         <div className="page-wrapper">
             <div className="container">
                 <div className="page-header">
-                    <h1 className="page-title">API Playground</h1>
-                    <p className="page-desc">在线测试真实公开模型目录，验证只改 <code>model</code> 的实际效果</p>
+                    <h1 className="page-title">测试请求</h1>
+                    <p className="page-desc">直接发一条真实请求，确认模型、速度和返回内容。</p>
                 </div>
 
                 <div className="playground-overview glass-card animate-fade-in-up">
                     <div className="playground-overview-copy">
-                        <span className="playground-kicker">Verification</span>
-                        <h2>这里是验证页，不是正式接入配置页</h2>
-                        <p>如果你只是想确认某个公开模型能不能正常返回、速度如何、提示词效果如何，可以先在这里试。真正要复制 SDK、CLI 或 OpenClaw 配置，请回接入配置页。</p>
+                        <span className="playground-kicker">Live Request</span>
+                        <h2>用真实流量试一条请求</h2>
+                        <p>这里适合快速试模型、提示词和返回速度。需要复制 SDK 或 CLI 配置时，再去接入配置页。</p>
                     </div>
                     <div className="playground-overview-links">
                         <Link to="/settings" className="btn btn-secondary btn-sm">去接入配置</Link>
@@ -148,7 +148,7 @@ export default function Playground() {
                         <div className="pg-panel-head">
                             <div>
                                 <h3>请求参数</h3>
-                                <p>选模型、写提示词、调温度，然后直接发起一条真实请求。</p>
+                                <p>选模型、写提示词、调参数，然后直接发送。</p>
                             </div>
                         </div>
                         {!hasDeveloperKey && (
@@ -156,8 +156,8 @@ export default function Playground() {
                                 <h3 style={{ marginBottom: 'var(--space-xs)' }}>当前没有可用的开发者 API Key</h3>
                                 <p className="settings-text" style={{ marginBottom: 0 }}>
                                     {authMode === 'session_only'
-                                        ? '你现在用的是控制台 session。它能登录站内页面，但不能直接调用 API。请先回仪表盘生成开发者 API Key。'
-                                        : '请先使用开发者 API Key 登录，或者回仪表盘生成一个新的开发者 API Key。'}
+                                        ? '你现在用的是控制台 session。请先回仪表盘生成开发者 API Key。'
+                                        : '请先使用开发者 API Key 登录，或者回仪表盘生成新的开发者 API Key。'}
                                 </p>
                             </div>
                         )}
@@ -176,7 +176,7 @@ export default function Playground() {
                             <textarea
                                 className="pg-textarea"
                                 rows="3"
-                                placeholder="设定 AI 的角色和行为..."
+                                placeholder="给模型一段额外约束，例如回答格式或角色。"
                                 value={systemPrompt}
                                 onChange={e => setSystemPrompt(e.target.value)}
                             />
@@ -187,7 +187,7 @@ export default function Playground() {
                             <textarea
                                 className="pg-textarea pg-main-input"
                                 rows="6"
-                                placeholder="输入你的问题..."
+                                placeholder="输入本次请求内容..."
                                 value={userPrompt}
                                 onChange={e => setUserPrompt(e.target.value)}
                                 onKeyDown={e => { if (e.key === 'Enter' && e.metaKey) handleSend() }}
@@ -220,7 +220,7 @@ export default function Playground() {
                         <div className="pg-output-header">
                             <div>
                                 <span className="pg-label">响应</span>
-                                <p className="pg-output-desc">这里展示实时返回内容和这次请求的基础统计。</p>
+                                <p className="pg-output-desc">实时返回内容和本次请求的基础统计。</p>
                             </div>
                             {loading && <div className="loading-spinner" style={{ width: 16, height: 16 }}></div>}
                         </div>
@@ -232,7 +232,7 @@ export default function Playground() {
                             ) : response ? (
                                 <pre className="pg-response-text">{response}</pre>
                             ) : (
-                                <div className="pg-empty">发送消息查看响应...</div>
+                                <div className="pg-empty">发送请求后在这里查看响应。</div>
                             )}
                         </div>
                         {stats && (

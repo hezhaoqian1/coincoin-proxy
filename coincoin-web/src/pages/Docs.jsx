@@ -7,27 +7,23 @@ const SITE = typeof window !== 'undefined' ? window.location.origin : ''
 const TABS = [
     {
         label: '快速开始',
-        icon: '🚀',
-        kicker: 'Onboarding',
-        intro: '先搞清控制台账号、开发者 Key 和客户端接入的关系，再开始复制配置。'
+        kicker: 'Getting Started',
+        intro: '先拿开发者 Key，再复制最短配置。'
     },
     {
         label: '模型与价格',
-        icon: '💎',
         kicker: 'Catalog',
-        intro: '这里展示的是线上真实公开模型目录和计费方式，不是想象中的规划表。'
+        intro: '查看公开模型、上游映射和计费。'
     },
     {
         label: 'API 参考',
-        icon: '📡',
         kicker: 'Protocol',
-        intro: '把 OpenAI 兼容端点、错误码和图片接口边界一次讲清，减少误接。'
+        intro: '看端点、认证方式和图片接口边界。'
     },
     {
         label: '代码示例',
-        icon: '💻',
         kicker: 'Snippets',
-        intro: '给常见客户端和 SDK 一份最短可用配置，别让用户再自己猜。'
+        intro: '常见客户端和 SDK 的最短配置。'
     }
 ]
 
@@ -62,7 +58,7 @@ export default function Docs() {
                     <nav className="docs-nav glass-card">
                         <div className="docs-nav-header">
                             <span className="docs-nav-kicker">{activeSection.kicker}</span>
-                            <h2>{activeSection.icon} {activeSection.label}</h2>
+                            <h2>{activeSection.label}</h2>
                             <p>{activeSection.intro}</p>
                         </div>
                         {TABS.map((tab, i) => (
@@ -71,7 +67,7 @@ export default function Docs() {
                                 className={`docs-nav-item ${activeTab === i ? 'active' : ''}`}
                                 onClick={() => setActiveTab(i)}
                             >
-                                {tab.icon} {tab.label}
+                                {tab.label}
                             </button>
                         ))}
                     </nav>
@@ -93,25 +89,31 @@ function AudienceGuide() {
         {
             title: '直连 API / cURL',
             tag: '最短路径',
-            desc: '适合服务端脚本、后端接口和想直接调 OpenAI 兼容协议的人。',
-            bullets: ['先看 API 参考', '重点看 chat / responses / models', '排错时再看错误码']
+            desc: '服务端脚本、后端接口和直接请求 OpenAI 兼容端点。',
+            bullets: ['先看 API 参考', '优先看 chat / responses / models', '排错再看错误码']
         },
         {
             title: 'Codex CLI',
             tag: '一等支持',
-            desc: '适合命令行工作流，需要稳定的 OpenAI 兼容入口和明确的 model 选择方式。',
+            desc: '命令行工作流，直接走稳定的 OpenAI 兼容入口。',
             bullets: ['先生成开发者 Key', '在代码示例里抄 config.toml', '默认推荐 responses']
+        },
+        {
+            title: 'OpenCode',
+            tag: '已实测',
+            desc: '本地 coding agent 工作流，已跑通模型发现和基础 run 流程。',
+            bullets: ['先看 OpenCode quickstart', '默认先用 gpt-5.3-codex', '需要更快时再试 gemini-fast']
         },
         {
             title: 'OpenClaw',
             tag: '兼容接入',
-            desc: '适合已有 OpenAI 风格 provider 配置的人，重点是 provider 字段和默认模型。',
+            desc: '已有 OpenAI 风格 provider 配置时，直接替换 provider 和默认模型。',
             bullets: ['看代码示例里的 OpenClaw', '优先走 openai-completions', '上下文窗口按示例填']
         },
         {
             title: '生图 / 图生图',
             tag: '图片工作流',
-            desc: '适合只关心图片生成、1-2 图同步编辑、3+ 图异步任务的人。',
+            desc: '图片生成、1-2 图同步编辑、3+ 图异步任务。',
             bullets: ['看 API 参考里的 images', '1-2 张图走 edits', '3-8 张图走 image-jobs']
         }
     ]
@@ -143,11 +145,11 @@ function QuickStart({ primaryTextModel, primaryImageModel }) {
     const quickstartSteps = [
         {
             title: '进入控制台',
-            desc: '先创建控制台账号，拿到的是站内管理能力，不是给代码用的 API Key。'
+            desc: '先登录控制台，后续操作都从这里开始。'
         },
         {
             title: '生成开发者 Key',
-            desc: '在仪表盘里生成真正给 Codex CLI、Continue、Aider、cURL 使用的开发者 Key。'
+            desc: '在仪表盘生成给 CLI、SDK、cURL 和客户端使用的开发者 Key。'
         },
         {
             title: '复制客户端配置',
@@ -157,8 +159,8 @@ function QuickStart({ primaryTextModel, primaryImageModel }) {
 
     return (
         <div className="doc-section animate-fade-in">
-            <h2>🚀 快速开始</h2>
-            <p className="doc-intro">CoinCoin 对外保持 OpenAI 兼容协议，但接入流程现在更清晰了：先创建控制台账号，再生成开发者 API Key，最后把它放进你的客户端配置里。</p>
+            <h2>快速开始</h2>
+            <p className="doc-intro">先登录控制台，生成开发者 Key，再把它放进客户端配置。</p>
 
             <div className="quickstart-rail">
                 {quickstartSteps.map((step, index) => (
@@ -175,15 +177,15 @@ function QuickStart({ primaryTextModel, primaryImageModel }) {
             <AudienceGuide />
 
             <div className="doc-callout">
-                <strong>先分清两种 Key</strong>
-                <p>控制台登录后拿到的是站内 session key，只能看仪表盘、充值和日志；真正给 Codex CLI、Continue、Aider、cURL 使用的，是你在仪表盘里单独生成的开发者 API Key。</p>
+                <strong>先用对 Key</strong>
+                <p>控制台登录态只用来进站内页面。程序调用统一使用你在仪表盘里生成的开发者 API Key。</p>
             </div>
 
             <h3>Step 1: 创建控制台账号</h3>
             <p>在 <a href="/register">注册页面</a> 创建账户并进入控制台。</p>
 
             <h3>Step 2: 生成开发者 API Key</h3>
-            <p>进入仪表盘后，在“开发者 Key 管理”区域生成你的专属开发者 API Key。这个 Key 才能用于 SDK、CLI 和服务端请求。</p>
+            <p>进入仪表盘后，在“开发者 Key 管理”区域生成开发者 API Key。这个 Key 用于 SDK、CLI 和服务端请求。</p>
 
             <h3>Step 3: 配置客户端</h3>
             <p>以 Codex CLI 为例，编辑 <code>~/.codex/config.toml</code>：</p>
@@ -207,11 +209,11 @@ source ~/.zshrc`}</pre>
 
             <div className="doc-callout">
                 <strong>模型切换规则</strong>
-                <p>现在可以直接通过请求里的 <code>model</code> 选择公开模型。老客户端如果不传 <code>model</code>，仍然会默认走兼容 GPT 文本模型，不会被这次升级打断。</p>
+                <p>平时只改请求里的 <code>model</code>。老客户端如果不传 <code>model</code>，仍然会默认走兼容 GPT 文本模型。</p>
             </div>
 
             <h3>第三方客户端配置</h3>
-            <p>支持所有 OpenAI 兼容客户端。大多数客户端只需要这 3 个值：</p>
+            <p>大多数 OpenAI 兼容客户端只需要这 3 个值：</p>
             <div className="config-table">
                 <div className="config-row">
                     <span className="config-label">Base URL</span>
@@ -237,19 +239,25 @@ source ~/.zshrc`}</pre>
                         <td>Codex CLI</td>
                         <td><span className="badge badge-success">一等支持</span></td>
                         <td><code>/v1 + responses</code></td>
-                        <td>最推荐的命令行客户端路径，直接通过 <code>model</code> 选择公开 alias。建议使用你在控制台生成的开发者 API Key。</td>
+                        <td>推荐的命令行接法，直接通过 <code>model</code> 选择公开 alias。</td>
+                    </tr>
+                    <tr>
+                        <td>OpenCode</td>
+                        <td><span className="badge badge-success">已实测支持</span></td>
+                        <td><code>/v1 + 自定义 provider</code></td>
+                        <td>已实测通过 <code>opencode run</code>、模型发现和基础文件读取。默认推荐 <code>coincoin/gpt-5.3-codex</code>。</td>
                     </tr>
                     <tr>
                         <td>OpenClaw</td>
                         <td><span className="badge badge-success">支持</span></td>
                         <td><code>/v1 + openai-completions</code></td>
-                        <td>建议优先走 <code>chat/completions</code> 兼容面，不把 <code>responses</code> 作为默认承诺。</td>
+                        <td>优先走 <code>chat/completions</code> 兼容面。</td>
                     </tr>
                     <tr>
                         <td>Gemini CLI</td>
                         <td><span className="badge badge-warning">暂缓</span></td>
                         <td><code>不建议直连 CoinCoin</code></td>
-                        <td>它仍偏 Google 原生协议面。后续若要支持，建议单独做 CLI sidecar，而不是直接膨胀公共入口。</td>
+                        <td>它仍偏 Google 原生协议面，当前不建议直接接到公共入口。</td>
                     </tr>
                 </tbody>
             </table>
@@ -268,7 +276,7 @@ source ~/.zshrc`}</pre>
 function ModelsAndPricing({ textModels, imageModels }) {
     return (
         <div className="doc-section animate-fade-in">
-            <h2>💎 模型与价格</h2>
+            <h2>模型与价格</h2>
             <p className="doc-intro">公开模型目录来自 CoinCoin 的真实运行配置。你可以直接通过 <code>GET /v1/models</code> 拉取。</p>
 
             <h3>文本模型</h3>
@@ -346,7 +354,7 @@ function ApiReference({ primaryTextModel, primaryImageModel }) {
 
     return (
         <div className="doc-section animate-fade-in">
-            <h2>📡 API 参考</h2>
+            <h2>API 参考</h2>
             <p className="doc-intro">所有接口均兼容 OpenAI API 风格。当前推荐先从 <code>/v1/models</code> 拉取公开目录，再决定请求用哪个 alias。</p>
 
             <h3>认证方式</h3>
@@ -355,13 +363,12 @@ function ApiReference({ primaryTextModel, primaryImageModel }) {
             <ul className="doc-list">
                 <li>这里要求的是开发者 API Key，不是控制台 session key。</li>
                 <li>如果你把 session key 拿来请求 API，服务端会返回 <code>403</code>。</li>
-                <li>控制台账号负责余额、日志和充值；开发者 API Key 负责真正的程序调用。</li>
+                <li>控制台账号负责余额、日志和充值；开发者 API Key 负责程序调用。</li>
             </ul>
 
             <div className="doc-callout">
-                <strong>给同事和 AI agent 的契约入口</strong>
-                <p>当前真正部署并对外使用的文档入口，就是这个 CoinCoin 站点本身。对同事、对接方和 AI agent，先以这里的公开文档和接口说明为准。</p>
-                <p>工作区根目录里虽然还有更偏工程内部的文档和实验性 docs portal 方案，但那部分当前没有部署，不应被当成线上正式入口。</p>
+                <strong>线上入口以这里为准</strong>
+                <p>当前对外使用的公开文档入口就是这个 CoinCoin 站点本身。工作区里的内部文档和实验性 docs portal 不算正式入口。</p>
             </div>
 
             <h3>模型目录</h3>
@@ -483,12 +490,12 @@ function CodeExamples({ primaryTextModel, primaryImageModel }) {
 
     return (
         <div className="doc-section animate-fade-in">
-            <h2>💻 代码示例</h2>
-            <p className="doc-intro">核心原则只有一条：Base URL 不变，只改 <code>model</code> 就能切换到 CoinCoin 公开目录里的不同模型。图片能力的上游细节由平台控制，不需要终端用户理解内部 gateway。</p>
+            <h2>代码示例</h2>
+            <p className="doc-intro">Base URL 固定，切模型时优先改 <code>model</code>。</p>
 
             <div className="doc-callout">
-                <strong>使用示例前先确认</strong>
-                <p>下面所有代码示例都默认你已经在控制台里生成了开发者 API Key。没有开发者 Key 时，请先回仪表盘完成生成，而不是把控制台登录态直接塞进客户端。</p>
+                <strong>示例默认你已经有开发者 API Key</strong>
+                <p>没有开发者 API Key 时，先回仪表盘生成，不要把控制台登录态直接塞进客户端。</p>
             </div>
 
             <h3>cURL（直连文本接口）</h3>
@@ -564,11 +571,11 @@ wire_api = "responses"`}</pre>
   }
 }`}</pre>
 
-            <h3>为什么还要看 Vertex 官方文档？</h3>
+            <h3>什么时候还要看 Vertex 官方文档？</h3>
             <ul className="doc-list">
                 <li>LiteLLM 负责代理和协议适配，但上游 Gemini 的真实能力边界仍以 Vertex 官方文档为准。</li>
                 <li>当你遇到 function calling、参数支持或模型生命周期问题时，先查 Vertex 官方文档，再看 CoinCoin/LiteLLM 配置。</li>
-                <li>简单说：客户端接 CoinCoin，网关看 LiteLLM，模型能力和鉴权边界看 Vertex。</li>
+                <li>简化理解：客户端接 CoinCoin，网关看 LiteLLM，模型能力边界看 Vertex。</li>
             </ul>
         </div>
     )

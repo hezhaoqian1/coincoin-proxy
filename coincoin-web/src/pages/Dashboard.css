@@ -167,7 +167,7 @@
 .recent-usage h3 {
     font-size: 1rem;
     font-weight: 700;
-    margin-bottom: var(--space-lg);
+    margin-bottom: var(--space-md);
 }
 
 .action-grid {
@@ -552,6 +552,13 @@
     gap: var(--space-md);
 }
 
+.pricing-note-row {
+    margin: 0 0 var(--space-lg);
+    color: var(--text-tertiary);
+    font-size: 0.84rem;
+    line-height: 1.7;
+}
+
 .price-item {
     text-align: center;
     padding: var(--space-lg);
@@ -592,6 +599,7 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    margin-bottom: var(--space-md);
 }
 
 .table-wrapper {
@@ -716,7 +724,6 @@
 
 .chart-container {
     height: 220px;
-    margin-top: var(--space-md);
 }
 
 /* Referral Card */
