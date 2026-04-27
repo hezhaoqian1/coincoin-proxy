@@ -130,13 +130,12 @@ export default function Playground() {
                     <p className="page-desc">直接发一条真实请求，确认模型、速度和返回内容。</p>
                 </div>
 
-                <div className="playground-overview glass-card animate-fade-in-up">
-                    <div className="playground-overview-copy">
+                <div className="playground-toolbar glass-card animate-fade-in-up">
+                    <div className="playground-toolbar-copy">
                         <span className="playground-kicker">Live Request</span>
-                        <h2>用真实流量试一条请求</h2>
-                        <p>这里适合快速试模型、提示词和返回速度。需要复制 SDK 或 CLI 配置时，再去接入配置页。</p>
+                        <p>{hasDeveloperKey ? '直接试模型、提示词和返回速度。需要复制配置时再去接入配置页。' : '先生成开发者 API Key，再发送真实请求。'}</p>
                     </div>
-                    <div className="playground-overview-links">
+                    <div className="playground-toolbar-links">
                         <Link to="/settings" className="btn btn-secondary btn-sm">去接入配置</Link>
                         <Link to="/docs" className="btn btn-ghost btn-sm">阅读文档</Link>
                         <Link to="/recharge" className="btn btn-ghost btn-sm">账户充值</Link>
