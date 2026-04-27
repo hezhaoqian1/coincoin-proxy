@@ -42,7 +42,7 @@ const ENTRY_POINTS = [
 ]
 
 function PricingPreview({ isLoggedIn }) {
-    const plans = PRICING_PLANS.slice(0, 3)
+    const plans = PRICING_PLANS
 
     return (
         <section className="landing-band">
@@ -50,9 +50,9 @@ function PricingPreview({ isLoggedIn }) {
                 <div className="landing-section-head">
                     <div>
                         <span className="landing-eyebrow">充值</span>
-                        <h2>先开通账户，再按量使用</h2>
+                        <h2>六档套餐，按量扣费</h2>
                     </div>
-                    <p>常用档位放在首页。更多套餐和自定义充值放到充值页处理。</p>
+                    <p>先选合适额度，再按请求量扣费。自定义金额和兑换码放到充值页处理。</p>
                 </div>
                 <div className="landing-pricing-grid">
                     {plans.map((plan) => (
