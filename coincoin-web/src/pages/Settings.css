@@ -9,6 +9,42 @@
     padding: var(--space-xl);
 }
 
+.settings-connection-bar {
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(260px, 0.8fr);
+    gap: var(--space-md);
+    padding: 14px 16px;
+}
+
+.connection-bar-main {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.connection-bar-item {
+    min-width: 0;
+    padding: 12px 14px;
+    background: var(--bg-glass);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+}
+
+.connection-bar-item code {
+    display: block;
+    overflow-wrap: anywhere;
+    font-size: 0.84rem;
+    color: var(--accent-cyan);
+}
+
+.connection-bar-side {
+    display: flex;
+    flex-wrap: wrap;
+    align-content: flex-start;
+    justify-content: flex-end;
+    gap: var(--space-sm);
+}
+
 .settings-section-head {
     display: flex;
     justify-content: space-between;
@@ -78,6 +114,10 @@
     display: grid;
     grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
     gap: var(--space-lg);
+}
+
+.settings-top-layout {
+    align-items: start;
 }
 
 .meta-pill {
@@ -168,6 +208,53 @@
     position: absolute;
     left: 0;
     color: var(--accent-indigo);
+}
+
+.settings-troubleshooting {
+    padding-top: var(--space-lg);
+}
+
+.settings-action-links {
+    display: flex;
+    gap: var(--space-md);
+    flex-wrap: wrap;
+}
+
+.settings-action-links a {
+    color: var(--accent-indigo);
+    font-size: 0.84rem;
+    font-weight: 600;
+    text-decoration: none;
+}
+
+.settings-troubleshooting-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-md);
+}
+
+.troubleshooting-card {
+    padding: 14px;
+    background: var(--bg-glass);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+}
+
+.troubleshooting-index {
+    display: inline-flex;
+    margin-bottom: 8px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+}
+
+.troubleshooting-card p {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 0.88rem;
+    line-height: 1.6;
 }
 
 .model-picker {
@@ -297,6 +384,18 @@
 }
 
 @media (max-width: 768px) {
+    .settings-connection-bar {
+        grid-template-columns: 1fr;
+    }
+
+    .connection-bar-main {
+        grid-template-columns: 1fr;
+    }
+
+    .connection-bar-side {
+        justify-content: flex-start;
+    }
+
     .settings-two-column {
         grid-template-columns: 1fr;
     }
@@ -312,6 +411,10 @@
 
     .settings-section-head {
         flex-direction: column;
+    }
+
+    .settings-troubleshooting-grid {
+        grid-template-columns: 1fr;
     }
 
     .snippet-tabs {

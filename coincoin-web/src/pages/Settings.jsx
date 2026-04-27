@@ -163,7 +163,7 @@ wire_api = "responses"
             <div className="container">
                 <div className="page-header">
                     <h1 className="page-title">接入配置</h1>
-                    <p className="page-desc">这里解决三件事：拿对 Key、选对模型、复制可直接使用的配置片段</p>
+                    <p className="page-desc">先确认连接信息，再选模型，最后复制代码片段。</p>
                 </div>
 
                 <div className="settings-grid">
@@ -224,14 +224,39 @@ wire_api = "responses"
                         </p>
                     </div>
 
-                    <div className="settings-two-column">
+                    <div className="settings-connection-bar glass-card animate-fade-in-up" style={{ animationDelay: '80ms' }}>
+                        <div className="connection-bar-main">
+                            <div className="connection-bar-item">
+                                <span className="info-label">Base URL</span>
+                                <code>{baseUrl}</code>
+                            </div>
+                            <div className="connection-bar-item">
+                                <span className="info-label">认证</span>
+                                <code>{hasDeveloperKey ? 'Bearer 开发者 Key' : '先生成开发者 Key'}</code>
+                            </div>
+                            <div className="connection-bar-item">
+                                <span className="info-label">默认文本模型</span>
+                                <code>{defaultTextModel?.id || 'gpt-5.2-codex'}</code>
+                            </div>
+                            <div className="connection-bar-item">
+                                <span className="info-label">默认图片模型</span>
+                                <code>{imageModel}</code>
+                            </div>
+                        </div>
+                        <div className="connection-bar-side">
+                            <span className="meta-pill">{authMode === 'api' ? 'API Key 直登' : isConsoleSession ? '控制台登录' : '未登录或 Demo'}</span>
+                            <span className="meta-pill">支持: chat / responses / models / images</span>
+                        </div>
+                    </div>
+
+                    <div className="settings-two-column settings-top-layout">
                         <div className="glass-card settings-section animate-fade-in-up" style={{ animationDelay: '100ms' }}>
                             <div className="settings-section-head">
                                 <div>
-                                    <h3>&#127760; 接入信息</h3>
-                                    <p className="settings-subtitle">先记住统一入口，再决定默认文本模型和图片模型。</p>
+                                    <h3>&#127760; 连接信息</h3>
+                                    <p className="settings-subtitle">先确认统一入口和当前会话，再决定怎么复制配置。</p>
                                 </div>
-                                <span className="meta-pill">统一入口</span>
+                                <span className="meta-pill">连接概览</span>
                             </div>
                             <div className="info-grid">
                                 <div className="info-item">
@@ -273,9 +298,9 @@ wire_api = "responses"
                             <div className="settings-section-head">
                                 <div>
                                     <h3>&#129302; 模型配置</h3>
-                                    <p className="settings-subtitle">默认先用推荐模型。只有明确需要时，再切到更长尾的显式模型。</p>
+                                    <p className="settings-subtitle">默认先用推荐模型，只有明确需要时再切换。</p>
                                 </div>
-                                <span className="meta-pill">模型工作区</span>
+                                <span className="meta-pill">模型选择</span>
                             </div>
                             <div className="model-picker">
                                 <label className="info-label">文本模型</label>
@@ -301,7 +326,7 @@ wire_api = "responses"
                         <div className="settings-section-head">
                             <div>
                                 <h3>&#9881; 配置片段</h3>
-                                <p className="settings-subtitle">先选客户端，再复制最短可用片段。这里一次只展示一个片段，避免把页面堆满。</p>
+                                <p className="settings-subtitle">先选客户端，再复制最短可用片段。</p>
                             </div>
                             <span className="meta-pill">可直接复制</span>
                         </div>
@@ -325,34 +350,25 @@ wire_api = "responses"
                         </div>
                     </div>
 
-                    <div className="settings-two-column">
-                        <div className="glass-card settings-section animate-fade-in-up" style={{ animationDelay: '260ms' }}>
-                            <div className="settings-section-head">
-                                <div>
-                                    <h3>&#128269; 接入前检查</h3>
-                                    <p className="settings-subtitle">先查这几个最容易出错的地方，再往上游模型和网络问题排。</p>
-                                </div>
+                    <div className="glass-card settings-section settings-troubleshooting animate-fade-in-up" style={{ animationDelay: '260ms' }}>
+                        <div className="settings-section-head">
+                            <div>
+                                <h3>&#128269; 常见问题</h3>
+                                <p className="settings-subtitle">接不上时先排这几项，通常不用先怀疑上游。</p>
                             </div>
-                            <ul className="settings-list">
-                                {troubleshootingItems.map((item) => (
-                                    <li key={item}>{item}</li>
-                                ))}
-                            </ul>
+                            <div className="settings-action-links">
+                                <a href="/dashboard">回仪表盘</a>
+                                <a href="/usage">请求日志</a>
+                                <a href="/docs">接入文档</a>
+                            </div>
                         </div>
-
-                        <div className="glass-card settings-section animate-fade-in-up" style={{ animationDelay: '300ms' }}>
-                            <div className="settings-section-head">
-                                <div>
-                                    <h3>&#128241; 下一步建议</h3>
-                                    <p className="settings-subtitle">当前这页解决的是“怎么接”。接完以后，下一步通常回到这些页面。</p>
+                        <div className="settings-troubleshooting-grid">
+                            {troubleshootingItems.map((item) => (
+                                <div key={item} className="troubleshooting-card">
+                                    <span className="troubleshooting-index">Check</span>
+                                    <p>{item}</p>
                                 </div>
-                            </div>
-                            <ul className="settings-list">
-                                <li>回仪表盘看余额、生成或轮换开发者 Key。</li>
-                                <li>去请求日志确认每次调用的模型、耗时和扣费记录。</li>
-                                <li>去文档页查支持矩阵、错误码和图片接口规则。</li>
-                                <li>团队协作时，统一从这页复制配置，减少野生接法。</li>
-                            </ul>
+                            ))}
                         </div>
                     </div>
                 </div>
