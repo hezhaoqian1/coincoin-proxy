@@ -35,7 +35,7 @@ from .schemas import (
     RedemptionGenerateRequest, RedemptionGenerateResponse,
 )
 from .config import settings as _settings
-from .security import generate_api_key, generate_id, hash_key, require_admin
+from .security import decrypt_api_key, encrypt_api_key, generate_api_key, generate_id, hash_key, require_admin
 
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -46,6 +46,15 @@ def _key_fingerprint(key_hash: str) -> str:
     if not key_hash:
         return ""
     return key_hash[:12]
+
+
+def _recover_raw_key(encrypted_key: Optional[str]) -> Optional[str]:
+    if not encrypted_key:
+        return None
+    try:
+        return decrypt_api_key(encrypted_key)
+    except Exception:
+        return None
 
 
 def admin_guard(request: Request):
@@ -282,6 +291,7 @@ async def get_user_detail(user_id: str, db: AsyncSession = Depends(get_db)):
                 "kind": k.kind,
                 "status": k.status,
                 "fingerprint": _key_fingerprint(k.key_hash),
+                "raw_key": _recover_raw_key(k.encrypted_key),
                 "shared_balance": user.balance,
                 "shared_balance_usd": user.balance / 100,
                 "created_at": k.created_at,
@@ -290,9 +300,9 @@ async def get_user_detail(user_id: str, db: AsyncSession = Depends(get_db)):
             for k in keys
         ],
         "key_display_policy": {
-            "raw_key_recoverable": False,
+            "raw_key_recoverable": True,
             "shared_balance_scope": "user",
-            "message": "Raw API keys are only shown once at creation time. Existing keys are stored as irreversible hashes, and all keys under the same user share one balance.",
+            "message": "New keys are stored encrypted for admin recovery. Older keys created before this change may still be unrecoverable. All keys under the same user share one balance.",
         },
     }
 
@@ -309,6 +319,7 @@ async def create_user_key(user_id: str, db: AsyncSession = Depends(get_db)):
         id=generate_id("k_"),
         user_id=user.id,
         key_hash=hash_key(api_key_value),
+        encrypted_key=encrypt_api_key(api_key_value),
         status="active",
         created_at=datetime.utcnow(),
     )
@@ -451,6 +462,7 @@ async def list_keys(user_id: Optional[str] = None, db: AsyncSession = Depends(ge
             "kind": key.kind,
             "status": key.status,
             "fingerprint": _key_fingerprint(key.key_hash),
+            "raw_key": _recover_raw_key(key.encrypted_key),
             "shared_balance": user.balance,
             "shared_balance_usd": user.balance / 100,
             "created_at": key.created_at,

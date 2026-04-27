@@ -107,6 +107,9 @@ class StationCenterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fake_db.flushes, 1)
         self.assertEqual(fake_db.commits, 1)
         self.assertEqual(len(fake_db.added), 3)
+        api_key_row = fake_db.added[2]
+        self.assertEqual(api_key_row.kind, "api")
+        self.assertTrue(bool(api_key_row.encrypted_key))
 
     async def test_create_station_payout_batch_batches_ready_entries(self):
         original_min = station_settlement_module.settings.station_min_payout_rmb_cents

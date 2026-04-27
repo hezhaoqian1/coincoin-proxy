@@ -55,6 +55,7 @@ class ApiKey(Base):
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_users.id"))
     key_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    encrypted_key: Mapped[Optional[str]] = mapped_column(LONGTEXT, nullable=True)
     kind: Mapped[str] = mapped_column(String(16), default="api")  # api / session
     status: Mapped[str] = mapped_column(String(16), default="active")
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)

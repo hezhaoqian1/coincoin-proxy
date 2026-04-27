@@ -12,7 +12,7 @@ from .db import get_db
 from .models import ApiKey, Station, StationApplication, StationCommissionLedgerEntry, StationCustomerLink, StationPayoutBatch, User
 from .proxy import authenticate_user
 from .schemas import StationApplicationCreateRequest, StationApplicationReviewRequest, StationCustomerCreateRequest, StationPayoutBatchCreateRequest, StationPayoutBatchMarkPaidRequest, StationSettlementUpdateRequest
-from .security import generate_api_key, generate_id, generate_referral_code, hash_key, require_admin
+from .security import encrypt_api_key, generate_api_key, generate_id, generate_referral_code, hash_key, require_admin
 
 
 router = APIRouter(prefix="/v1/stations", tags=["stations"])
@@ -389,6 +389,7 @@ async def create_station_customer(
                 id=generate_id("k_"),
                 user_id=user.id,
                 key_hash=hash_key(raw_api_key),
+                encrypted_key=encrypt_api_key(raw_api_key),
                 kind="api",
                 status="active",
             )

@@ -57,6 +57,7 @@ async def _run_migrations(conn):
         ("coincoin_payment_orders", "station_payout_status", "VARCHAR(16) DEFAULT 'none'"),
         ("coincoin_api_keys", "kind", "VARCHAR(16) DEFAULT 'api'"),
         ("coincoin_api_keys", "expires_at", "DATETIME NULL"),
+        ("coincoin_api_keys", "encrypted_key", "LONGTEXT NULL"),
         ("coincoin_users", "referral_code", "VARCHAR(16) NULL UNIQUE"),
         ("coincoin_users", "referred_by", "VARCHAR(32) NULL"),
         ("coincoin_users", "register_ip", "VARCHAR(64) NULL"),

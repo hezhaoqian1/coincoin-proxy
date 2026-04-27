@@ -1,6 +1,7 @@
 import unittest
 from datetime import date, datetime
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import httpx
 
@@ -619,8 +620,9 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         app.dependency_overrides[admin_module.admin_guard] = lambda: None
 
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-            response = await client.get("/admin/users/u_1")
+        with patch.object(admin_module, "decrypt_api_key", side_effect=lambda value: "sk_cc_test_admin_visible" if value else None):
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                response = await client.get("/admin/users/u_1")
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
@@ -654,6 +656,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             kind="api",
             status="active",
             key_hash="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            encrypted_key='{"v":1,"alg":"fernet-sha256","token":"gAAAAABoBocdya4b4vsRvw5TTAZ1q3fhdEqjzHJO8xU5zJ5wI4_7-Vih82hAz5YJ2vVY4jAO2AK4etkqvP-MU0ExyqusywOwBA=="}',
             created_at=datetime(2026, 3, 25, 11, 0, 0),
             last_used_at=None,
         )
@@ -662,6 +665,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             kind="session",
             status="active",
             key_hash="fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+            encrypted_key=None,
             created_at=datetime(2026, 3, 25, 12, 0, 0),
             last_used_at=datetime(2026, 3, 25, 12, 30, 0),
         )
@@ -694,18 +698,22 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         app.dependency_overrides[admin_module.admin_guard] = lambda: None
 
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-            response = await client.get("/admin/users/u_1")
+        with patch.object(admin_module, "decrypt_api_key", side_effect=lambda value: "sk_cc_test_admin_visible" if value else None):
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                response = await client.get("/admin/users/u_1")
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
-        self.assertEqual(payload["key_display_policy"]["raw_key_recoverable"], False)
+        self.assertEqual(payload["key_display_policy"]["raw_key_recoverable"], True)
         self.assertEqual(payload["key_display_policy"]["shared_balance_scope"], "user")
-        self.assertEqual(payload["keys"][0]["kind"], "session")
-        self.assertEqual(payload["keys"][0]["shared_balance"], 2500)
-        self.assertEqual(payload["keys"][0]["fingerprint"], "fedcba987654")
-        self.assertEqual(payload["keys"][1]["kind"], "api")
-        self.assertEqual(payload["keys"][1]["fingerprint"], "0123456789ab")
+        keys_by_id = {item["id"]: item for item in payload["keys"]}
+        self.assertEqual(keys_by_id["k_session"]["kind"], "session")
+        self.assertEqual(keys_by_id["k_session"]["shared_balance"], 2500)
+        self.assertEqual(keys_by_id["k_session"]["fingerprint"], "fedcba987654")
+        self.assertIsNone(keys_by_id["k_session"]["raw_key"])
+        self.assertEqual(keys_by_id["k_api"]["kind"], "api")
+        self.assertEqual(keys_by_id["k_api"]["fingerprint"], "0123456789ab")
+        self.assertEqual(keys_by_id["k_api"]["raw_key"], "sk_cc_test_admin_visible")
 
     async def test_list_keys_exposes_kind_fingerprint_and_shared_balance(self) -> None:
         key = SimpleNamespace(
@@ -714,6 +722,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             kind="api",
             status="active",
             key_hash="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            encrypted_key='{"v":1,"alg":"fernet-sha256","token":"gAAAAABoBocdya4b4vsRvw5TTAZ1q3fhdEqjzHJO8xU5zJ5wI4_7-Vih82hAz5YJ2vVY4jAO2AK4etkqvP-MU0ExyqusywOwBA=="}',
             created_at=datetime(2026, 3, 25, 11, 0, 0),
             last_used_at=datetime(2026, 3, 25, 12, 30, 0),
         )
@@ -732,8 +741,9 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         app.dependency_overrides[admin_module.admin_guard] = lambda: None
 
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-            response = await client.get("/admin/keys")
+        with patch.object(admin_module, "decrypt_api_key", return_value="sk_cc_test_admin_visible"):
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                response = await client.get("/admin/keys")
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
@@ -741,6 +751,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload[0]["shared_balance"], 2500)
         self.assertEqual(payload[0]["shared_balance_usd"], 25.0)
         self.assertEqual(payload[0]["fingerprint"], "0123456789ab")
+        self.assertEqual(payload[0]["raw_key"], "sk_cc_test_admin_visible")
 
 
 if __name__ == "__main__":
