@@ -16,8 +16,8 @@ function ReadinessCard({ authMode, username, hasDeveloperKey }) {
         session_only: {
             tone: 'warning',
             eyebrow: '还差一步',
-            title: '先把开发者 Key 开出来',
-            description: `${username || '当前账户'} 已经登录控制台。再补一把开发者 Key，就能直接接 Claude Code、Codex、SDK 和常见客户端。`,
+            title: '还没有开发者 Key',
+            description: `${username || '当前账户'} 已登录控制台。生成开发者 Key 后，CLI、SDK 和常见客户端就能直接使用。`,
             statusItems: [
                 { label: '登录方式', value: '控制台账号' },
                 { label: 'API 调用', value: '尚未开通' },
@@ -25,18 +25,18 @@ function ReadinessCard({ authMode, username, hasDeveloperKey }) {
             ],
             actions: [
                 { href: '#developer-key', label: '去生成 API Key', style: 'btn btn-primary btn-sm' },
-                { to: '/settings', label: '打开接入配置', style: 'btn btn-secondary btn-sm' },
+                { to: '/settings', label: '查看接入配置', style: 'btn btn-secondary btn-sm' },
             ],
         },
         session_with_api: {
             tone: 'success',
-            eyebrow: '可以开跑',
-            title: '账户和开发者 Key 都已就绪',
-            description: `${username || '当前账户'} 现在可以直接接入。先复制配置，或者先发一条真实请求把链路跑通。`,
+            eyebrow: '已就绪',
+            title: '账户可直接调用',
+            description: `${username || '当前账户'} 已有可用的开发者 Key。下一步通常是复制配置，或者直接发一条测试请求。`,
             statusItems: [
                 { label: '登录方式', value: '控制台账号' },
                 { label: 'API 调用', value: '可直接请求' },
-                { label: '常用动作', value: '复制配置 / 发请求' },
+                { label: '常用动作', value: '复制配置 / 测试请求' },
             ],
             actions: [
                 { to: '/settings', label: '复制配置片段', style: 'btn btn-primary btn-sm' },
@@ -47,7 +47,7 @@ function ReadinessCard({ authMode, username, hasDeveloperKey }) {
             tone: 'info',
             eyebrow: '当前会话',
             title: '你现在是用开发者 Key 直登',
-            description: '这种模式适合直接测试调用和复制配置。要做充值、账户管理或重新生成密钥，再切回控制台账号登录。',
+            description: '这种方式适合直接调接口。充值、账户管理和重新生成密钥，还是回控制台账号处理。',
             statusItems: [
                 { label: '登录方式', value: '开发者 Key 直登' },
                 { label: 'API 调用', value: '可直接请求' },
@@ -76,7 +76,7 @@ function ReadinessCard({ authMode, username, hasDeveloperKey }) {
                     ))}
                 </div>
                 <div className="readiness-tags">
-                    <span className="readiness-tag">{authMode === 'session_only' ? '控制台会话' : '当前可继续接入'}</span>
+                    <span className="readiness-tag">{authMode === 'session_only' ? '控制台会话' : '可直接继续'}</span>
                     <span className="readiness-tag">{hasDeveloperKey ? '开发者 Key 已就绪' : '尚未生成开发者 Key'}</span>
                 </div>
             </div>
@@ -137,8 +137,8 @@ function KeyManagement({ copied, copy, username, generatedApiKey, authMode, effe
             {!username ? (
                 <div className="key-panel-copy">
                     <p>
-                        当前会话就是开发者 Key 登录。你可以继续复制和使用它；
-                        要轮换密钥或做账户管理，再回到控制台账号登录。
+                        当前就是开发者 Key 登录。
+                        需要轮换密钥或处理账户设置时，再回控制台账号。
                     </p>
                     <div className="action-grid" style={{ marginTop: 'var(--space-md)' }}>
                         <div className="action-item" onClick={() => copy(effectiveApiKey, 'key')}>
@@ -157,7 +157,7 @@ function KeyManagement({ copied, copy, username, generatedApiKey, authMode, effe
             ) : generatedKey && !showKey ? (
                 <div>
                     <p className="key-panel-copy">
-                        这把开发者 Key 已经可以用了。平时直接复制去接入，不需要每次回到这里重新找说明。
+                        这把 Key 已可使用。平时直接复制即可。
                     </p>
                     <div className="action-grid">
                         <div className="action-item" onClick={() => copy(generatedKey, 'apikey')}>
@@ -173,7 +173,7 @@ function KeyManagement({ copied, copy, username, generatedApiKey, authMode, effe
                         <button className="btn btn-secondary btn-sm" onClick={handleGenerate} disabled={generating}>
                             {generating ? '生成中...' : '重新生成 Key'}
                         </button>
-                        <Link to="/settings" className="btn btn-ghost btn-sm">查看完整配置</Link>
+                        <Link to="/settings" className="btn btn-ghost btn-sm">查看配置</Link>
                     </div>
                     {genError && <p style={{ color: 'var(--accent-rose)', fontSize: '0.85rem', marginTop: 'var(--space-sm)' }}>{genError}</p>}
                 </div>
@@ -181,7 +181,7 @@ function KeyManagement({ copied, copy, username, generatedApiKey, authMode, effe
                 <div>
                     <div className="key-warning-box">
                         <span className="key-warning-eyebrow">这次会显示完整值</span>
-                        <p>这是重新生成后的完整开发者 Key。完整值只会显示这一次，先保存，再继续配客户端。</p>
+                        <p>这是新生成的完整 Key。明文只显示这一次。</p>
                     </div>
                     <div className="key-secret-panel">
                         <div className="key-secret-meta">
@@ -202,7 +202,7 @@ function KeyManagement({ copied, copy, username, generatedApiKey, authMode, effe
             ) : (
                 <div>
                     <p className="key-panel-copy">
-                        给当前控制台账户生成一把开发者 Key。生成后就能直接接 SDK、CLI 和第三方客户端。
+                        给当前账户生成一把开发者 Key。
                     </p>
                     <button className="btn btn-primary btn-sm" onClick={handleGenerate} disabled={generating}>
                         {generating ? '生成中...' : '生成开发者 Key'}
@@ -508,9 +508,9 @@ export default function Dashboard() {
     }
 
     return (
-        <AppShell
+            <AppShell
             title="概览"
-            description="先看余额和接入状态，再决定是复制配置、充值还是排查请求。"
+            description="余额、密钥状态和最近请求都在这里。"
             actions={<Link to="/recharge" className="btn btn-primary btn-sm">充值</Link>}
         >
             <div className="dashboard-page dashboard">
@@ -529,13 +529,13 @@ export default function Dashboard() {
                 {/* Low balance warning */}
                 {balance.balance_usd < 0.10 && (
                     <div className="low-balance-banner critical animate-fade-in">
-                        <span>&#9888; 余额快见底了 (${balance.balance_usd.toFixed(2)})，建议现在就补一点，别等请求被打断。</span>
+                        <span>&#9888; 余额只剩 ${balance.balance_usd.toFixed(2)}，再发几次请求就可能扣空。</span>
                         <Link to="/recharge" className="btn btn-sm btn-primary">立即充值</Link>
                     </div>
                 )}
                 {balance.balance_usd >= 0.10 && balance.balance_usd < 1.00 && (
                     <div className="low-balance-banner warning animate-fade-in">
-                        <span>&#9888; 余额不足 $1.00 (${balance.balance_usd.toFixed(2)})，可以顺手补一点，免得后面断请求。</span>
+                        <span>&#9888; 余额低于 $1.00，当前剩余 ${balance.balance_usd.toFixed(2)}。</span>
                         <Link to="/recharge" className="btn btn-sm btn-secondary">去充值</Link>
                     </div>
                 )}
@@ -619,7 +619,7 @@ export default function Dashboard() {
                     <div className="quick-actions-header">
                         <div>
                             <h3>快速操作</h3>
-                            <p className="quick-actions-desc">高频操作都收在这里。先复制入口和配置，再决定是去充值还是查日志。</p>
+                            <p className="quick-actions-desc">常用入口都收在这里。</p>
                         </div>
                         <Link to="/recharge" className="btn btn-primary btn-sm">进入充值中心</Link>
                     </div>
@@ -644,49 +644,49 @@ export default function Dashboard() {
                             <span className="shortcut-icon">&#129302;</span>
                             <div>
                                 <strong>Claude Code</strong>
-                                <p>复制 ANTHROPIC_BASE_URL 和默认模型配置。</p>
+                                <p>查看 Claude Code 的环境变量配置。</p>
                             </div>
                         </Link>
                         <Link to="/recharge" className="shortcut-card shortcut-card-primary">
                             <span className="shortcut-icon">&#128176;</span>
                             <div>
                                 <strong>充值</strong>
-                                <p>补余额，继续发请求。</p>
+                                <p>给账户补余额。</p>
                             </div>
                         </Link>
                         <Link to="/usage" className="shortcut-card">
                             <span className="shortcut-icon">&#128202;</span>
                             <div>
                                 <strong>请求日志</strong>
-                                <p>查模型、耗时、扣费和状态码。</p>
+                                <p>查看请求明细和状态码。</p>
                             </div>
                         </Link>
                         <Link to="/settings" className="shortcut-card">
                             <span className="shortcut-icon">&#128736;</span>
                             <div>
                                 <strong>接入配置</strong>
-                                <p>复制 SDK、Codex、Claude Code 和常用客户端配置。</p>
+                                <p>复制各类客户端配置。</p>
                             </div>
                         </Link>
                         <Link to="/docs" className="shortcut-card">
                             <span className="shortcut-icon">&#128214;</span>
                             <div>
                                 <strong>接入文档</strong>
-                                <p>查协议、模型目录和图片接口。</p>
+                                <p>查看接口、模型和示例。</p>
                             </div>
                         </Link>
                         <Link to="/playground" className="shortcut-card">
                             <span className="shortcut-icon">&#9881;</span>
                             <div>
                                 <strong>测试请求</strong>
-                                <p>发一条真实请求，验证模型和 Key。</p>
+                                <p>发起一条测试请求。</p>
                             </div>
                         </Link>
                         <a href="#developer-key" className="shortcut-card">
                             <span className="shortcut-icon">&#128273;</span>
                             <div>
                                 <strong>开发者 Key</strong>
-                                <p>生成、复制或轮换开发者 Key。</p>
+                                <p>生成或复制开发者 Key。</p>
                             </div>
                         </a>
                     </div>
@@ -733,7 +733,7 @@ export default function Dashboard() {
                 {/* Pricing Info */}
                 <div className="pricing-info glass-card animate-fade-in-up" style={{ animationDelay: '300ms' }}>
                     <h3>当前价格</h3>
-                    <p className="pricing-note-row">这里只放简表。更细的模型说明和完整接法，去接入配置页看。</p>
+                    <p className="pricing-note-row">这里只展示简表。完整模型目录和接入示例在文档页。</p>
                     <div className="price-row">
                         <div className="price-item">
                             <span className="price-label">Input Token</span>

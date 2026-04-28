@@ -17,7 +17,7 @@ export default function Footer() {
                         </div>
                         <p className="footer-desc">
                             开发者控制台<br />
-                            公开模型目录 · 统一余额 · OpenAI 与 Claude Code 兼容
+                            模型目录 · 统一余额 · OpenAI 与 Claude Code
                         </p>
                     </div>
 
@@ -32,13 +32,13 @@ export default function Footer() {
                         <h4>支持</h4>
                         <Link to="/docs">快速开始</Link>
                         <Link to="/#faq">常见问题</Link>
-                        <Link to="/docs">联系我们</Link>
+                        <Link to="/docs">接口说明</Link>
                     </div>
 
                     <div className="footer-col">
                         <h4>模型</h4>
                         <span className="footer-model">gpt-5.5 / claude-opus-4-7 / gemini-fast</span>
-                        <span className="footer-model-note">支持 GPT、Claude Code 兼容与 Gemini 图片</span>
+                        <span className="footer-model-note">文本与图片统一接入</span>
                     </div>
                 </div>
 

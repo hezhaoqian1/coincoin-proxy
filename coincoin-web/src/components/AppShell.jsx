@@ -195,32 +195,32 @@ export default function AppShell({ title, description, actions, children }) {
     }, [])
 
     const accountLabel = authMode === 'api' ? '开发者 Key 会话' : (username || '控制台账号')
-    const accountSub = hasDeveloperKey ? '已具备真实调用权限' : '先生成开发者 Key'
+    const accountSub = hasDeveloperKey ? '可直接发请求' : '还没有开发者 Key'
     const navGroups = useMemo(() => {
         const groups = [
             {
                 title: '工作台',
                 items: [
                     { to: '/dashboard', pathname: '/dashboard', label: '控制台', caption: '余额、密钥、最近请求', icon: 'dashboard' },
-                    { to: '/settings?panel=keys', pathname: '/settings', search: { panel: 'keys' }, label: 'API 密钥', caption: '复制密钥，确认统一入口', icon: 'key' },
-                    { to: '/usage', pathname: '/usage', label: '使用记录', caption: '状态码、计量、路由日志', icon: 'logs' },
-                    { to: '/docs?tab=models', pathname: '/docs', search: { tab: 'models' }, label: '模型价格', caption: '公开目录、计费和默认模型', icon: 'pricing' },
+                    { to: '/settings?panel=keys', pathname: '/settings', search: { panel: 'keys' }, label: 'API 密钥', caption: '密钥、入口、认证方式', icon: 'key' },
+                    { to: '/usage', pathname: '/usage', label: '使用记录', caption: '状态码、计量、请求明细', icon: 'logs' },
+                    { to: '/docs?tab=models', pathname: '/docs', search: { tab: 'models' }, label: '模型价格', caption: '模型目录与计费', icon: 'pricing' },
                 ],
             },
             {
                 title: '资金',
                 items: [
-                    { to: '/recharge?section=recharge', pathname: '/recharge', search: { section: 'recharge' }, label: '充值', caption: '套餐、自定义金额、支付', icon: 'billing' },
-                    { to: '/recharge?section=orders', pathname: '/recharge', search: { section: 'orders' }, label: '我的订单', caption: '最近订单、到账状态、回跳', icon: 'order' },
-                    { to: '/recharge?section=redeem', pathname: '/recharge', search: { section: 'redeem' }, label: '兑换', caption: '活动码、内部码、补额度', icon: 'redeem' },
+                    { to: '/recharge?section=recharge', pathname: '/recharge', search: { section: 'recharge' }, label: '充值', caption: '套餐与支付', icon: 'billing' },
+                    { to: '/recharge?section=orders', pathname: '/recharge', search: { section: 'orders' }, label: '我的订单', caption: '最近订单与到账状态', icon: 'order' },
+                    { to: '/recharge?section=redeem', pathname: '/recharge', search: { section: 'redeem' }, label: '兑换', caption: '兑换码入账', icon: 'redeem' },
                 ],
             },
             {
                 title: '教程',
                 items: [
-                    { to: '/docs?tab=quickstart', pathname: '/docs', search: { tab: 'quickstart' }, label: '默认 API 教程', caption: '先跑通第一条请求', icon: 'docs' },
+                    { to: '/docs?tab=quickstart', pathname: '/docs', search: { tab: 'quickstart' }, label: '默认 API 教程', caption: '第一条请求怎么发', icon: 'docs' },
                     { to: '/settings?snippet=Codex%20CLI%20(config.toml)&panel=snippets', pathname: '/settings', search: { snippet: 'Codex CLI (config.toml)', panel: 'snippets' }, label: 'Codex 配置', caption: 'config.toml 与环境变量', icon: 'terminal' },
-                    { to: '/settings?snippet=Claude%20Code&panel=snippets', pathname: '/settings', search: { snippet: 'Claude Code', panel: 'snippets' }, label: 'Claude Code 配置', caption: 'ANTHROPIC_BASE_URL 与模型名', icon: 'access' },
+                    { to: '/settings?snippet=Claude%20Code&panel=snippets', pathname: '/settings', search: { snippet: 'Claude Code', panel: 'snippets' }, label: 'Claude Code 配置', caption: 'Anthropic 兼容配置', icon: 'access' },
                 ],
             },
         ]
@@ -255,7 +255,7 @@ export default function AppShell({ title, description, actions, children }) {
                     </Link>
 
                     <div className="app-sidebar-badge-row">
-                        <span className="app-sidebar-badge">OpenAI / Anthropic 兼容</span>
+                        <span className="app-sidebar-badge">OpenAI / Anthropic</span>
                     </div>
 
                     <div className="app-sidebar-session">

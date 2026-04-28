@@ -184,7 +184,7 @@ export default function Recharge() {
     return (
         <AppShell
             title="充值与套餐"
-            description="给账户充值，之后文本和图片请求都从这里统一扣费。"
+            description="充值、订单状态和兑换码都在这一页。"
         >
             <div className="recharge-page">
                 <div className="recharge-local-nav glass-card animate-fade-in-up">
@@ -213,8 +213,8 @@ export default function Recharge() {
                     <div className="glass-card animate-fade-in" style={{ padding: 'var(--space-lg)', marginBottom: 'var(--space-lg)', background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 'var(--space-md)', alignItems: 'center', flexWrap: 'wrap' }}>
                             <div>
-                                <strong style={{ display: 'block', marginBottom: 'var(--space-xs)' }}>可以先看套餐，支付前再登录</strong>
-                                <span style={{ color: 'var(--text-secondary)' }}>未登录也能看充值页；真正创建订单和兑换码到账，还是要先登录，这样余额才会进到正确账户。</span>
+                                <strong style={{ display: 'block', marginBottom: 'var(--space-xs)' }}>未登录也能看套餐</strong>
+                                <span style={{ color: 'var(--text-secondary)' }}>创建订单和兑换码入账需要先登录，避免充到错误账户。</span>
                             </div>
                             <div style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
                                 <Link to="/login" className="btn btn-primary btn-sm">登录后充值</Link>
@@ -227,21 +227,21 @@ export default function Recharge() {
                 <div className="recharge-overview glass-card animate-fade-in-up">
                     <div className="recharge-overview-copy">
                         <span className="recharge-kicker">Billing</span>
-                        <h2>一个余额，覆盖全部公开模型</h2>
-                        <p>GPT 文本、Gemini 文本和 Gemini 生图统一从 ClawFather 余额扣费，不用分开维护。</p>
+                        <h2>一个余额，覆盖全部模型</h2>
+                        <p>文本和图片请求共用一个余额，不需要分开充值。</p>
                     </div>
                     <div className="recharge-overview-points">
                         <div className="recharge-point">
-                            <strong>先选套餐</strong>
-                            <p>大多数情况直接选预设套餐就够，到账额度也更直观。</p>
+                            <strong>选套餐</strong>
+                            <p>大多数情况直接选预设档位就够了。</p>
                         </div>
                         <div className="recharge-point">
-                            <strong>再去支付</strong>
-                            <p>点击后会在新标签打开支付宝，本页自动轮询到账结果。</p>
+                            <strong>支付</strong>
+                            <p>支付页会在新标签打开，本页自动查询到账结果。</p>
                         </div>
                         <div className="recharge-point">
-                            <strong>到账后继续操作</strong>
-                            <p>支付完成后可以直接回概览、请求日志或接入配置页。</p>
+                            <strong>到账后继续</strong>
+                            <p>支付完成后可以直接回概览或日志页。</p>
                         </div>
                     </div>
                 </div>
@@ -249,20 +249,20 @@ export default function Recharge() {
                 <div className="recharge-path-grid">
                     <div className="recharge-path-card glass-card animate-fade-in-up">
                         <span className="recharge-path-label">套餐充值</span>
-                        <strong>选择套餐充值</strong>
-                        <p>直接选金额档位并支付，适合第一次充值或快速补余额。</p>
+                        <strong>套餐充值</strong>
+                        <p>适合第一次充值，或者临时补余额。</p>
                     </div>
                     <div className="recharge-path-card glass-card animate-fade-in-up" style={{ animationDelay: '80ms' }}>
                         <span className="recharge-path-label">兑换码</span>
-                        <strong>兑换码到账</strong>
-                        <p>适合活动码、管理员发放额度或内部测试。无需支付，兑换后即时到账。</p>
+                        <strong>兑换码</strong>
+                        <p>适合活动码、补偿码和测试额度。</p>
                     </div>
                 </div>
 
                 {orderConfirmed && (
                     <div className="glass-card animate-fade-in" style={{ padding: 'var(--space-lg)', marginBottom: 'var(--space-lg)', background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.25)' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <span style={{ color: 'var(--accent-emerald)' }}>&#10003; 上笔充值已到账！+${(orderConfirmed.added_cents / 100).toFixed(2)}，当前余额 ${orderConfirmed.new_balance_usd?.toFixed(2)}</span>
+                            <span style={{ color: 'var(--accent-emerald)' }}>&#10003; 上一笔充值已到账。+${(orderConfirmed.added_cents / 100).toFixed(2)}，当前余额 ${orderConfirmed.new_balance_usd?.toFixed(2)}</span>
                             <button className="btn btn-sm btn-secondary" onClick={dismissOrder}>知道了</button>
                         </div>
                     </div>
@@ -321,7 +321,7 @@ export default function Recharge() {
                                 step="0.01"
                             />
                             {customAmount && parseFloat(customAmount) > 0 && (
-                                <span className="custom-hint">&#8776; ${(parseFloat(customAmount) * 0.14).toFixed(2)} 余额（选套餐更划算！）</span>
+                                <span className="custom-hint">&#8776; ${(parseFloat(customAmount) * 0.14).toFixed(2)} 余额</span>
                             )}
                         </div>
                     )}
@@ -337,7 +337,7 @@ export default function Recharge() {
                             +${(payResult.added_cents / 100).toFixed(2)} 已到账，当前余额 ${payResult.new_balance_usd?.toFixed(2)}
                         </p>
                         <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: 'var(--space-md)' }}>
-                            {autoRedirect} 秒后自动跳转到仪表盘...
+                            {autoRedirect} 秒后自动跳转到概览页...
                         </p>
                         <div style={{ display: 'flex', gap: 'var(--space-md)', justifyContent: 'center' }}>
                             <button className="btn btn-primary" onClick={() => navigate('/dashboard')}>立即前往仪表盘</button>
@@ -347,17 +347,17 @@ export default function Recharge() {
                 ) : polling ? (
                     <div className="glass-card animate-fade-in" style={{ padding: 'var(--space-xl)', textAlign: 'center', marginBottom: 'var(--space-lg)' }}>
                         <div className="loading-spinner" style={{ width: 48, height: 48, margin: '0 auto var(--space-md)' }}></div>
-                        <h2 style={{ marginBottom: 'var(--space-sm)' }}>等待支付完成...</h2>
+                        <h2 style={{ marginBottom: 'var(--space-sm)' }}>等待支付完成</h2>
                         <p style={{ color: 'var(--text-secondary)', marginBottom: 'var(--space-sm)' }}>
                             {pollInfo?.planName} ¥{pollInfo?.money}
                         </p>
                         <p style={{ color: 'var(--accent-amber)', fontSize: '0.9rem', marginBottom: 'var(--space-md)', background: 'rgba(245,158,11,0.08)', padding: 'var(--space-sm) var(--space-md)', borderRadius: 'var(--radius-sm)', border: '1px solid rgba(245,158,11,0.2)' }}>
-                            请在新打开的标签页完成支付宝付款，支付成功后<strong>无需操作</strong>，本页面会自动检测到账并跳转
+                            请在新标签完成支付。成功后本页会自动更新。
                         </p>
                         {popupBlocked && pollInfo?.payUrl && (
                             <div style={{ marginBottom: 'var(--space-md)' }}>
                                 <p style={{ color: 'var(--accent-amber)', marginBottom: 'var(--space-sm)' }}>
-                                    浏览器可能拦截了新窗口。请点击下方按钮在新标签打开支付页面，并保持此页面不要关闭。
+                                    浏览器可能拦截了新窗口。点下面的按钮重新打开支付页即可。
                                 </p>
                                 <div style={{ display: 'flex', gap: 'var(--space-md)', justifyContent: 'center', flexWrap: 'wrap' }}>
                                     <a className="btn btn-primary" href={pollInfo.payUrl} target="_blank" rel="noopener noreferrer">
@@ -393,7 +393,7 @@ export default function Recharge() {
                                 </>
                             )}
                         </button>
-                        <p className="pay-note">{isLoggedIn ? '点击后会在新标签打开支付页，到账后本页自动更新。' : '当前可以先看套餐；登录后才能创建订单并把余额充到你的账户。'}</p>
+                        <p className="pay-note">{isLoggedIn ? '支付页会在新标签打开，到账后本页自动更新。' : '登录后才能创建订单和入账。'}</p>
                         <div className="recharge-next-links">
                             {isLoggedIn ? (
                                 <>
@@ -416,7 +416,7 @@ export default function Recharge() {
                     <div className="settings-section-head" style={{ marginBottom: 'var(--space-md)' }}>
                         <div>
                             <h3>最近订单</h3>
-                            <p className="settings-subtitle">这里会显示当前支付状态，支付成功后自动到账。</p>
+                            <p className="settings-subtitle">当前支付状态会显示在这里。</p>
                         </div>
                     </div>
                     <div className="config-table">
@@ -443,7 +443,7 @@ export default function Recharge() {
 
                 <div className="redeem-section glass-card animate-fade-in-up" style={{ animationDelay: '500ms' }}>
                     <h3>兑换码充值</h3>
-                    <p className="redeem-desc">{isLoggedIn ? '输入兑换码后立即到账。' : '兑换码也需要先登录，避免充到错误账户。'}</p>
+                    <p className="redeem-desc">{isLoggedIn ? '输入兑换码后会立即入账。' : '兑换码入账也需要先登录。'}</p>
                     {isLoggedIn ? (
                         <>
                             <div className="redeem-row">
