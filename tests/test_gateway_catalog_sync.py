@@ -157,10 +157,9 @@ class GatewayCatalogSyncTests(unittest.TestCase):
                         model.get("api_key"),
                         "${COINCOIN_UPSTREAM_API_KEY}",
                     )
-                    self.assertEqual(
-                        model.get("auth_style"),
-                        "${COINCOIN_PRIMARY_AUTH_STYLE:-azure}",
-                    )
+                    compat_family = ((model.get("metadata") or {}).get("compat_family") if isinstance(model.get("metadata"), dict) else None)
+                    expected_auth_style = "bearer" if compat_family == "claude-code" else "${COINCOIN_PRIMARY_AUTH_STYLE:-azure}"
+                    self.assertEqual(model.get("auth_style"), expected_auth_style)
                     continue
 
                 self.fail(f"unexpected upstream_direct capability set for {model['id']}: {sorted(capabilities)}")
