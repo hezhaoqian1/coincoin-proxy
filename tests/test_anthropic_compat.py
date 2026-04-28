@@ -369,7 +369,7 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"type":"tool_use"', response.text)
         self.assertIn('"name":"read_file"', response.text)
         self.assertIn('"type":"input_json_delta"', response.text)
-        self.assertIn('"index":1', response.text)
+        self.assertIn('"index":0', response.text)
         self.assertIn('\\"path\\":\\"foo.txt\\"', response.text)
         self.assertIn('"stop_reason":"tool_use"', response.text)
 
@@ -416,6 +416,103 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"signature":"sig_abc"', response.text)
         self.assertIn('Final answer', response.text)
         self.assertIn('"stop_reason":"end_turn"', response.text)
+
+    async def test_streaming_reasoning_block_stops_before_text_block_starts(self):
+        fake_user = SimpleNamespace(id="u_test", status="active")
+        stream_client = _RecordingStreamClient(
+            [
+                _FakeEventStreamResponse(
+                    [
+                        'data: {"id":"chatcmpl_reasoning_order","model":"gpt-5.5","choices":[{"delta":{"reasoning_content":[{"type":"reasoning","text":"Thinking step. ","signature":"sig_order"}]},"finish_reason":null}]}',
+                        'data: {"id":"chatcmpl_reasoning_order","model":"gpt-5.5","choices":[{"delta":{"content":"Question for user?"},"finish_reason":"stop"}],"usage":{"prompt_tokens":18,"completion_tokens":5,"total_tokens":23}}',
+                        "data: [DONE]",
+                    ]
+                )
+            ]
+        )
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_stream_client", AsyncMock(return_value=stream_client)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()),
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={
+                        "authorization": "Bearer sk_test",
+                        "anthropic-version": "2023-06-01",
+                        "user-agent": "claude-cli/2.1.121 (external, cli)",
+                    },
+                    json={
+                        "model": "claude-opus-4-7",
+                        "max_tokens": 128,
+                        "stream": True,
+                        "messages": [{"role": "user", "content": "Research first, then ask me a question"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.text
+        thinking_start = body.find('"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}')
+        signature_delta = body.find('"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig_order"}}')
+        thinking_stop = body.find('"type":"content_block_stop","index":0}')
+        text_start = body.find('"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}')
+        text_delta = body.find('"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Question for user?"}}')
+
+        self.assertGreaterEqual(thinking_start, 0)
+        self.assertGreater(signature_delta, thinking_start)
+        self.assertGreater(thinking_stop, signature_delta)
+        self.assertGreater(text_start, thinking_stop)
+        self.assertGreater(text_delta, text_start)
+
+    async def test_streaming_reasoning_block_stops_before_tool_block_starts(self):
+        fake_user = SimpleNamespace(id="u_test", status="active")
+        stream_client = _RecordingStreamClient(
+            [
+                _FakeEventStreamResponse(
+                    [
+                        'data: {"id":"chatcmpl_reasoning_tool","model":"gpt-5.5","choices":[{"delta":{"reasoning_content":[{"type":"reasoning","text":"Need a tool. ","signature":"sig_tool"}]},"finish_reason":null}]}',
+                        'data: {"id":"chatcmpl_reasoning_tool","model":"gpt-5.5","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_789","type":"function","function":{"name":"ask_user","arguments":""}}]},"finish_reason":null}]}',
+                        'data: {"id":"chatcmpl_reasoning_tool","model":"gpt-5.5","choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\"question\\":\\"Proceed?\\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":20,"completion_tokens":7,"total_tokens":27}}',
+                        "data: [DONE]",
+                    ]
+                )
+            ]
+        )
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_stream_client", AsyncMock(return_value=stream_client)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()),
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={
+                        "authorization": "Bearer sk_test",
+                        "anthropic-version": "2023-06-01",
+                        "user-agent": "claude-cli/2.1.121 (external, cli)",
+                    },
+                    json={
+                        "model": "claude-opus-4-7",
+                        "max_tokens": 128,
+                        "stream": True,
+                        "messages": [{"role": "user", "content": "Think, then ask for confirmation"}],
+                        "tools": [{"name": "ask_user", "input_schema": {"type": "object", "properties": {"question": {"type": "string"}}}}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.text
+        thinking_stop = body.find('"type":"content_block_stop","index":0}')
+        tool_start = body.find('"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"call_789","name":"ask_user","input":{}}}')
+        tool_delta = body.find('"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\\"question\\":\\"Proceed?\\"}"}}')
+
+        self.assertGreaterEqual(thinking_stop, 0)
+        self.assertGreater(tool_start, thinking_stop)
+        self.assertGreater(tool_delta, tool_start)
+        self.assertIn('"stop_reason":"tool_use"', body)
 
     async def test_tool_result_non_text_blocks_are_preserved_in_tool_message(self):
         fake_user = SimpleNamespace(id="u_test", status="active")
