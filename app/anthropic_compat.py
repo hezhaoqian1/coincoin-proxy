@@ -50,13 +50,13 @@ class _AnthropicStreamState:
     message_stopped: bool = False
     message_delta_sent: bool = False
     text_block_started: bool = False
-    text_block_index: int = 0
+    text_block_index: Optional[int] = None
     thinking_block_started: bool = False
-    thinking_block_index: int = 0
+    thinking_block_index: Optional[int] = None
     saw_tool_call: bool = False
     finish_reason: str = ""
     usage: Dict[str, Any] = field(default_factory=dict)
-    next_block_index: int = 1
+    next_block_index: int = 0
     tool_states: Dict[int, _AnthropicToolStreamState] = field(default_factory=dict)
 
 
@@ -368,8 +368,12 @@ def _ensure_anthropic_message_start(
 def _start_text_block(state: _AnthropicStreamState) -> List[bytes]:
     if state.text_block_started:
         return []
+    if state.thinking_block_started:
+        return _stop_thinking_block(state) + _start_text_block(state)
     state.text_block_started = True
-    state.next_block_index = max(state.next_block_index, state.text_block_index + 1)
+    if state.text_block_index is None:
+        state.text_block_index = state.next_block_index
+        state.next_block_index += 1
     payload = {
         "type": "content_block_start",
         "index": state.text_block_index,
@@ -379,7 +383,7 @@ def _start_text_block(state: _AnthropicStreamState) -> List[bytes]:
 
 
 def _stop_text_block(state: _AnthropicStreamState) -> List[bytes]:
-    if not state.text_block_started:
+    if not state.text_block_started or state.text_block_index is None:
         return []
     state.text_block_started = False
     payload = {"type": "content_block_stop", "index": state.text_block_index}
@@ -389,19 +393,22 @@ def _stop_text_block(state: _AnthropicStreamState) -> List[bytes]:
 def _start_thinking_block(state: _AnthropicStreamState) -> List[bytes]:
     if state.thinking_block_started:
         return []
+    if state.text_block_started:
+        return _stop_text_block(state) + _start_thinking_block(state)
     state.thinking_block_started = True
-    state.thinking_block_index = state.next_block_index
-    state.next_block_index += 1
+    if state.thinking_block_index is None:
+        state.thinking_block_index = state.next_block_index
+        state.next_block_index += 1
     payload = {
         "type": "content_block_start",
         "index": state.thinking_block_index,
-        "content_block": {"type": "thinking", "thinking": ""},
+        "content_block": {"type": "thinking", "thinking": "", "signature": ""},
     }
     return [_anthropic_sse_bytes("content_block_start", payload)]
 
 
 def _stop_thinking_block(state: _AnthropicStreamState) -> List[bytes]:
-    if not state.thinking_block_started:
+    if not state.thinking_block_started or state.thinking_block_index is None:
         return []
     state.thinking_block_started = False
     payload = {"type": "content_block_stop", "index": state.thinking_block_index}
