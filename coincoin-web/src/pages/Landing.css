@@ -19,10 +19,10 @@
 
 .landing-copy h1 {
     margin: 0 0 var(--space-lg);
-    font-size: clamp(2.6rem, 5vw, 4.3rem);
-    line-height: 1.02;
+    font-size: clamp(2.8rem, 5vw, 4.8rem);
+    line-height: 0.98;
     letter-spacing: 0;
-    max-width: 10ch;
+    max-width: 11ch;
 }
 
 .landing-kicker,
@@ -44,11 +44,11 @@
 }
 
 .landing-summary {
-    max-width: 60ch;
+    max-width: 54ch;
     margin: 0 0 var(--space-xl);
     color: var(--text-secondary);
-    font-size: 1.03rem;
-    line-height: 1.75;
+    font-size: 1rem;
+    line-height: 1.72;
 }
 
 .landing-inline-actions {
@@ -108,7 +108,8 @@
 .landing-console-head strong {
     display: block;
     margin-top: 8px;
-    font-size: 1.15rem;
+    font-size: 1.08rem;
+    line-height: 1.35;
 }
 
 .landing-console-status {
@@ -171,8 +172,8 @@
 .landing-feature-card p {
     margin: 0;
     color: var(--text-secondary);
-    font-size: 0.9rem;
-    line-height: 1.7;
+    font-size: 0.92rem;
+    line-height: 1.65;
 }
 
 .landing-code-card {
@@ -190,8 +191,8 @@
 .landing-code-card pre {
     margin: 0;
     color: #7dd3fc;
-    font-size: 0.9rem;
-    line-height: 1.7;
+    font-size: 0.84rem;
+    line-height: 1.75;
     white-space: pre-wrap;
 }
 
@@ -213,7 +214,7 @@
 
 .landing-section-head h2 {
     margin: 8px 0 0;
-    font-size: 2rem;
+    font-size: 1.8rem;
     line-height: 1.15;
 }
 
@@ -232,7 +233,7 @@
 
 .landing-feature-card,
 .landing-step-card {
-    padding: var(--space-xl);
+    padding: 24px;
 }
 
 .landing-step-grid {
@@ -260,7 +261,7 @@
 }
 
 .landing-pricing-card {
-    padding: var(--space-lg);
+    padding: 24px;
     min-height: 100%;
 }
 
@@ -350,7 +351,7 @@
     }
 
     .landing-copy h1 {
-        font-size: 2.35rem;
+        font-size: 2.1rem;
     }
 
     .landing-summary {

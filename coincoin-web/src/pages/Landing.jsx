@@ -5,20 +5,21 @@ import './Landing.css'
 
 const ACCESS_STEPS = [
     {
-        title: '注册控制台账号',
-        body: '先进入控制台，拿到余额、日志和账户管理入口。',
+        title: '创建控制台账号',
+        body: '先登录控制台，后面的余额、日志和密钥都从这里管。',
     },
     {
         title: '生成开发者 Key',
-        body: 'Codex CLI、SDK、cURL 和第三方客户端统一使用这把开发者 Key。',
+        body: '给程序调用单独生成一把 Key，不要拿网页登录态去发请求。',
     },
     {
-        title: '复制配置开始用',
-        body: 'Base URL 固定为同一个 /v1。平时主要改 model，不要手改内部链路。',
+        title: '复制配置直接开跑',
+        body: 'OpenAI 客户端走 /v1，Claude Code 走根地址。平时只改 model，不要自己猜上游地址。',
     },
 ]
 
 const CLIENTS = [
+    'Claude Code',
     'Codex CLI',
     'Continue',
     'Aider',
@@ -29,15 +30,15 @@ const CLIENTS = [
 const ENTRY_POINTS = [
     {
         title: '统一入口',
-        detail: '一个 OpenAI 兼容地址，覆盖 GPT 文本、Gemini 文本和 Gemini 生图。',
+        detail: '一个 OpenAI 兼容地址，接 GPT 文本、Gemini 文本和 Gemini 生图。',
     },
     {
-        title: '控制台优先',
-        detail: '充值、请求日志、开发者 Key 和接入配置都在一处完成。',
+        title: '控制台集中管理',
+        detail: '充值、请求日志、开发者 Key 和接入配置都放在一个后台里。',
     },
     {
-        title: '接入路径短',
-        detail: '拿到 Key 后直接复制配置片段，不需要维护多套脚本。',
+        title: '接入链路短',
+        detail: '拿到 Key 之后直接复制配置，不用维护多套脚本和地址。',
     },
 ]
 
@@ -50,9 +51,9 @@ function PricingPreview({ isLoggedIn }) {
                 <div className="landing-section-head">
                     <div>
                         <span className="landing-eyebrow">充值</span>
-                        <h2>六档套餐，按量扣费</h2>
+                        <h2>先充余额，再按量扣费</h2>
                     </div>
-                    <p>先选合适额度，再按请求量扣费。自定义金额和兑换码放到充值页处理。</p>
+                    <p>先选合适额度。后续文本和图片请求统一从余额扣，不再拆开结算。</p>
                 </div>
                 <div className="landing-pricing-grid">
                     {plans.map((plan) => (
@@ -95,11 +96,11 @@ export default function Landing() {
             <section className="landing-hero">
                 <div className="container landing-hero-grid">
                     <div className="landing-copy">
-                        <span className="landing-kicker">OpenAI Compatible Relay</span>
-                        <h1>一个入口接 GPT、Gemini 和生图</h1>
+                        <span className="landing-kicker">ClawFather</span>
+                        <h1>ClawFather：一个入口，接 GPT、Gemini 和生图</h1>
                         <p className="landing-summary">
-                            这是一个给开发者用的中转站控制台。先注册控制台账号，再生成开发者 Key，
-                            然后把配置直接复制到你的 CLI、SDK 或客户端里。
+                            面向开发者的统一入口。先登录控制台，生成开发者 Key，
+                            再把配置复制到 CLI、SDK 或你常用的客户端里。
                         </p>
                         <div className="landing-inline-actions">
                             <Link to={startTarget} className="btn btn-primary btn-lg">
@@ -123,9 +124,9 @@ export default function Landing() {
                         <div className="landing-console-head">
                             <div>
                                 <span className="landing-console-label">接入路径</span>
-                                <strong>控制台 {'->'} 开发者 Key {'->'} /v1</strong>
+                                <strong>控制台 {'->'} 开发者 Key {'->'} OpenAI / Claude Code</strong>
                             </div>
-                            <span className="landing-console-status">推荐流程</span>
+                            <span className="landing-console-status">当前推荐</span>
                         </div>
                         <div className="landing-console-body">
                             {ACCESS_STEPS.map((step, index) => (
@@ -140,9 +141,15 @@ export default function Landing() {
                         </div>
                         <div className="landing-code-card">
                             <span className="landing-code-label">最短配置</span>
-                            <pre>{`base_url = "your-domain/v1"
+                            <pre>{`# OpenAI-compatible
+base_url = "https://your-domain/v1"
 api_key = "sk_cc_xxxxx"
-model = "gpt-5.2-codex"`}</pre>
+model = "gpt-5.5"
+
+# Claude Code
+ANTHROPIC_BASE_URL = "https://your-domain"
+ANTHROPIC_AUTH_TOKEN = "sk_cc_xxxxx"
+model = "claude-opus-4-7"`}</pre>
                         </div>
                     </div>
                 </div>
@@ -153,9 +160,9 @@ model = "gpt-5.2-codex"`}</pre>
                     <div className="landing-section-head">
                         <div>
                             <span className="landing-eyebrow">控制台结构</span>
-                            <h2>首页给入口，控制台管接入</h2>
+                            <h2>公开页讲清楚，控制台干正事</h2>
                         </div>
-                        <p>接入、计费、日志和密钥管理都收在一个工作流里。</p>
+                        <p>接入、计费、日志和密钥管理放在同一个工作台里，少跳页，少猜路径。</p>
                     </div>
                     <div className="landing-feature-grid">
                         {ENTRY_POINTS.map((item) => (
@@ -173,9 +180,9 @@ model = "gpt-5.2-codex"`}</pre>
                     <div className="landing-section-head">
                         <div>
                             <span className="landing-eyebrow">开始使用</span>
-                            <h2>三步就够了</h2>
+                            <h2>三步就能接起来</h2>
                         </div>
-                        <p>先注册，再生成 Key，最后复制配置。</p>
+                        <p>先登录，再生成 Key，最后复制配置。</p>
                     </div>
                     <div className="landing-step-grid">
                         {ACCESS_STEPS.map((step, index) => (
