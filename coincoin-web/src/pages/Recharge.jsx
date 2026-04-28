@@ -181,12 +181,9 @@ export default function Recharge() {
         }
     }, [isLoggedIn, searchParams])
 
-    return (
-        <AppShell
-            title="充值与套餐"
-            description="充值、订单状态和兑换码都在这一页。"
-        >
-            <div className="recharge-page">
+    const pageContent = (
+        <div className="recharge-page">
+            {isLoggedIn && (
                 <div className="recharge-local-nav glass-card animate-fade-in-up">
                     {[
                         ['recharge', '充值'],
@@ -208,56 +205,57 @@ export default function Recharge() {
                         </button>
                     ))}
                 </div>
+            )}
 
-                {!isLoggedIn && (
-                    <div className="glass-card animate-fade-in" style={{ padding: 'var(--space-lg)', marginBottom: 'var(--space-lg)', background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 'var(--space-md)', alignItems: 'center', flexWrap: 'wrap' }}>
-                            <div>
-                                <strong style={{ display: 'block', marginBottom: 'var(--space-xs)' }}>未登录也能看套餐</strong>
-                                <span style={{ color: 'var(--text-secondary)' }}>创建订单和兑换码入账需要先登录，避免充到错误账户。</span>
-                            </div>
-                            <div style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
-                                <Link to="/login" className="btn btn-primary btn-sm">登录后充值</Link>
-                                <Link to="/register" className="btn btn-secondary btn-sm">注册账号</Link>
-                            </div>
+            {!isLoggedIn && (
+                <div className="glass-card animate-fade-in" style={{ padding: 'var(--space-lg)', marginBottom: 'var(--space-lg)', background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 'var(--space-md)', alignItems: 'center', flexWrap: 'wrap' }}>
+                        <div>
+                            <strong style={{ display: 'block', marginBottom: 'var(--space-xs)' }}>未登录也能看套餐</strong>
+                            <span style={{ color: 'var(--text-secondary)' }}>创建订单和兑换码入账需要先登录，避免充到错误账户。</span>
                         </div>
-                    </div>
-                )}
-
-                <div className="recharge-overview glass-card animate-fade-in-up">
-                    <div className="recharge-overview-copy">
-                        <span className="recharge-kicker">Billing</span>
-                        <h2>一个余额，覆盖全部模型</h2>
-                        <p>文本和图片请求共用一个余额，不需要分开充值。</p>
-                    </div>
-                    <div className="recharge-overview-points">
-                        <div className="recharge-point">
-                            <strong>选套餐</strong>
-                            <p>大多数情况直接选预设档位就够了。</p>
-                        </div>
-                        <div className="recharge-point">
-                            <strong>支付</strong>
-                            <p>支付页会在新标签打开，本页自动查询到账结果。</p>
-                        </div>
-                        <div className="recharge-point">
-                            <strong>到账后继续</strong>
-                            <p>支付完成后可以直接回概览或日志页。</p>
+                        <div style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
+                            <Link to="/login" className="btn btn-primary btn-sm">登录后充值</Link>
+                            <Link to="/register" className="btn btn-secondary btn-sm">注册账号</Link>
                         </div>
                     </div>
                 </div>
+            )}
 
-                <div className="recharge-path-grid">
-                    <div className="recharge-path-card glass-card animate-fade-in-up">
-                        <span className="recharge-path-label">套餐充值</span>
-                        <strong>套餐充值</strong>
-                        <p>适合第一次充值，或者临时补余额。</p>
+            <div className="recharge-overview glass-card animate-fade-in-up">
+                <div className="recharge-overview-copy">
+                    <span className="recharge-kicker">Billing</span>
+                    <h2>一个余额，覆盖全部模型</h2>
+                    <p>文本和图片请求共用一个余额，不需要分开充值。</p>
+                </div>
+                <div className="recharge-overview-points">
+                    <div className="recharge-point">
+                        <strong>选套餐</strong>
+                        <p>大多数情况直接选预设档位就够了。</p>
                     </div>
-                    <div className="recharge-path-card glass-card animate-fade-in-up" style={{ animationDelay: '80ms' }}>
-                        <span className="recharge-path-label">兑换码</span>
-                        <strong>兑换码</strong>
-                        <p>适合活动码、补偿码和测试额度。</p>
+                    <div className="recharge-point">
+                        <strong>支付</strong>
+                        <p>支付页会在新标签打开，本页自动查询到账结果。</p>
+                    </div>
+                    <div className="recharge-point">
+                        <strong>到账后继续</strong>
+                        <p>支付完成后可以直接回概览或日志页。</p>
                     </div>
                 </div>
+            </div>
+
+            <div className="recharge-path-grid">
+                <div className="recharge-path-card glass-card animate-fade-in-up">
+                    <span className="recharge-path-label">套餐充值</span>
+                    <strong>套餐充值</strong>
+                    <p>适合第一次充值，或者临时补余额。</p>
+                </div>
+                <div className="recharge-path-card glass-card animate-fade-in-up" style={{ animationDelay: '80ms' }}>
+                    <span className="recharge-path-label">兑换码</span>
+                    <strong>兑换码</strong>
+                    <p>适合活动码、补偿码和测试额度。</p>
+                </div>
+            </div>
 
                 {orderConfirmed && (
                     <div className="glass-card animate-fade-in" style={{ padding: 'var(--space-lg)', marginBottom: 'var(--space-lg)', background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.25)' }}>
@@ -474,7 +472,29 @@ export default function Recharge() {
                         </div>
                     )}
                 </div>
+        </div>
+    )
+
+    if (isLoggedIn) {
+        return (
+            <AppShell
+                title="充值与套餐"
+                description="充值、订单状态和兑换码都在这一页。"
+            >
+                {pageContent}
+            </AppShell>
+        )
+    }
+
+    return (
+        <div className="page-wrapper">
+            <div className="container">
+                <div className="page-header">
+                    <h1 className="page-title">充值与套餐</h1>
+                    <p className="page-desc">先看套餐和支付方式，登录后再创建订单和入账。</p>
+                </div>
+                {pageContent}
             </div>
-        </AppShell>
+        </div>
     )
 }

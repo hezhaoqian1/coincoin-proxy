@@ -15,6 +15,16 @@ import Playground from './pages/Playground'
 import PayReturn from './pages/PayReturn'
 import Station from './pages/Station'
 
+function PublicShell({ children }) {
+    return (
+        <>
+            <Navbar />
+            {children}
+            <Footer />
+        </>
+    )
+}
+
 function ProtectedRoute({ children }) {
     const { isLoggedIn } = useAuth()
     if (!isLoggedIn) return <Navigate to="/login" replace />
@@ -31,14 +41,13 @@ export default function App() {
     return (
         <ThemeProvider>
             <BrowserRouter>
-                <Navbar />
                 <Routes>
-                    <Route path="/" element={<Landing />} />
+                    <Route path="/" element={<PublicShell><Landing /></PublicShell>} />
                     <Route path="/login" element={
-                        <GuestOnlyRoute><Login /></GuestOnlyRoute>
+                        <GuestOnlyRoute><PublicShell><Login /></PublicShell></GuestOnlyRoute>
                     } />
                     <Route path="/register" element={
-                        <GuestOnlyRoute><Register /></GuestOnlyRoute>
+                        <GuestOnlyRoute><PublicShell><Register /></PublicShell></GuestOnlyRoute>
                     } />
                     <Route path="/dashboard" element={
                         <ProtectedRoute><Dashboard /></ProtectedRoute>
@@ -57,10 +66,9 @@ export default function App() {
                     <Route path="/station" element={
                         <ProtectedRoute><Station /></ProtectedRoute>
                     } />
-                    <Route path="/pay/return" element={<PayReturn />} />
+                    <Route path="/pay/return" element={<PublicShell><PayReturn /></PublicShell>} />
                     <Route path="*" element={<Navigate to="/" replace />} />
                 </Routes>
-                <Footer />
             </BrowserRouter>
         </ThemeProvider>
     )
