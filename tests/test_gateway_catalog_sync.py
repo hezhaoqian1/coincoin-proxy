@@ -6,6 +6,7 @@ import yaml
 
 IMAGE_CAPABILITIES = {"images/generations", "images/edits"}
 EMBEDDING_CAPABILITIES = {"embeddings"}
+TEXT_CAPABILITIES = {"chat/completions", "responses"}
 
 
 class GatewayCatalogSyncTests(unittest.TestCase):
@@ -118,21 +119,51 @@ class GatewayCatalogSyncTests(unittest.TestCase):
     def test_upstream_direct_models_use_azure_openai_shape(self) -> None:
         for model in self.upstream_direct_models:
             capabilities = set(model.get("capabilities") or [])
-            if not capabilities.intersection(EMBEDDING_CAPABILITIES):
-                continue
-
             with self.subTest(model=model["id"]):
-                self.assertEqual(capabilities, EMBEDDING_CAPABILITIES)
-                self.assertEqual(model.get("provider_name"), "OpenAI")
-                self.assertEqual(model.get("upstream_model"), model.get("provider_model"))
-                self.assertEqual(
-                    model.get("upstream_url"),
-                    "${COINCOIN_EMBEDDING_UPSTREAM_URL:-${COINCOIN_FALLBACK_UPSTREAM_URL:-${COINCOIN_UPSTREAM_BASE_URL}}}",
-                )
-                self.assertEqual(
-                    model.get("api_key"),
-                    "${COINCOIN_EMBEDDING_API_KEY:-${COINCOIN_FALLBACK_API_KEY:-${COINCOIN_UPSTREAM_API_KEY}}}",
-                )
+                if capabilities.intersection(EMBEDDING_CAPABILITIES):
+                    self.assertEqual(capabilities, EMBEDDING_CAPABILITIES)
+                    self.assertEqual(model.get("provider_name"), "OpenAI")
+                    self.assertEqual(model.get("upstream_model"), model.get("provider_model"))
+                    self.assertEqual(
+                        model.get("upstream_url"),
+                        "${COINCOIN_EMBEDDING_UPSTREAM_URL:-${COINCOIN_FALLBACK_UPSTREAM_URL:-${COINCOIN_UPSTREAM_BASE_URL}}}",
+                    )
+                    self.assertEqual(
+                        model.get("api_key"),
+                        "${COINCOIN_EMBEDDING_API_KEY:-${COINCOIN_FALLBACK_API_KEY:-${COINCOIN_UPSTREAM_API_KEY}}}",
+                    )
+                    continue
+
+                if capabilities.intersection(IMAGE_CAPABILITIES):
+                    self.assertEqual(model.get("provider_name"), "OpenAI")
+                    self.assertEqual(model.get("upstream_model"), model.get("provider_model"))
+                    self.assertEqual(
+                        model.get("upstream_url"),
+                        "${COINCOIN_IMAGE_UPSTREAM_URL:-${COINCOIN_FALLBACK_UPSTREAM_URL:-${COINCOIN_UPSTREAM_BASE_URL}}}",
+                    )
+                    self.assertEqual(
+                        model.get("api_key"),
+                        "${COINCOIN_IMAGE_API_KEY:-${COINCOIN_FALLBACK_API_KEY:-${COINCOIN_UPSTREAM_API_KEY}}}",
+                    )
+                    continue
+
+                if capabilities.intersection(TEXT_CAPABILITIES):
+                    self.assertEqual(model.get("upstream_model"), model.get("provider_model"))
+                    self.assertEqual(
+                        model.get("upstream_url"),
+                        "${COINCOIN_UPSTREAM_BASE_URL}",
+                    )
+                    self.assertEqual(
+                        model.get("api_key"),
+                        "${COINCOIN_UPSTREAM_API_KEY}",
+                    )
+                    self.assertEqual(
+                        model.get("auth_style"),
+                        "${COINCOIN_PRIMARY_AUTH_STYLE:-azure}",
+                    )
+                    continue
+
+                self.fail(f"unexpected upstream_direct capability set for {model['id']}: {sorted(capabilities)}")
 
 
 if __name__ == "__main__":

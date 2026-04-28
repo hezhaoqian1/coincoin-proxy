@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .admin import router as admin_router
+from .anthropic_compat import router as anthropic_router
 from .auth import router as auth_router
 from .image_jobs import (
     image_job_loop,
@@ -267,6 +268,7 @@ app.add_middleware(
 )
 
 app.include_router(proxy_router)
+app.include_router(anthropic_router)
 app.include_router(openai_router)
 app.include_router(image_jobs_router)
 app.include_router(image_jobs_openai_router)

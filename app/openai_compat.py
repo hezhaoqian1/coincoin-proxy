@@ -412,8 +412,27 @@ async def list_announcements(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/models")
-async def list_models():
+async def list_models(request: Request):
     """列出可用模型目录。"""
+    user_agent = request.headers.get("user-agent", "")
+    if user_agent.startswith("claude-cli"):
+        models = []
+        for public_model in model_registry.list_public_models("chat/completions"):
+            models.append(
+                {
+                    "type": "model",
+                    "id": public_model.public_id,
+                    "display_name": public_model.public_id,
+                    "created_at": public_model.created,
+                }
+            )
+        return {
+            "data": models,
+            "has_more": False,
+            "first_id": models[0]["id"] if models else None,
+            "last_id": models[-1]["id"] if models else None,
+        }
+
     models = [_serialize_public_model(public_model) for public_model in model_registry.list_public_models()]
     return {
         "object": "list",
