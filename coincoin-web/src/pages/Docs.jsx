@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { describePublicModel, formatModelPrice } from '../api/client'
 import AppShell from '../components/AppShell'
 import { useAuth } from '../hooks/useAuth'
@@ -29,6 +30,15 @@ const TABS = [
     }
 ]
 
+const TAB_INDEX_BY_KEY = {
+    quickstart: 0,
+    models: 1,
+    api: 2,
+    snippets: 3,
+}
+
+const TAB_KEY_BY_INDEX = ['quickstart', 'models', 'api', 'snippets']
+
 function formatCaps(model) {
     return (model.coincoin_capabilities || []).join(' · ')
 }
@@ -43,11 +53,31 @@ function formatTier(model) {
 
 export default function Docs() {
     const { isLoggedIn } = useAuth()
-    const [activeTab, setActiveTab] = useState(0)
+    const [searchParams, setSearchParams] = useSearchParams()
+    const requestedTab = searchParams.get('tab')
+    const [activeTab, setActiveTab] = useState(TAB_INDEX_BY_KEY[requestedTab] ?? 0)
     const { models, textModels, imageModels, defaultTextModel, defaultImageModel } = usePublicModels()
     const primaryTextModel = defaultTextModel || textModels[0] || models[0]
     const primaryImageModel = defaultImageModel || imageModels[0] || null
     const activeSection = TABS[activeTab]
+
+    useEffect(() => {
+        setActiveTab(TAB_INDEX_BY_KEY[requestedTab] ?? 0)
+    }, [requestedTab])
+
+    const docsIntro = useMemo(() => {
+        if (requestedTab === 'models') return '公开模型目录、上游映射和计费都从这里看。'
+        if (requestedTab === 'api') return '端点、认证方式和兼容边界都在这里。'
+        if (requestedTab === 'snippets') return '常见客户端、CLI 和 SDK 的直接可用配置在这里。'
+        return '先拿开发者 Key，再完成第一条成功请求。'
+    }, [requestedTab])
+
+    const handleTabChange = (index) => {
+        setActiveTab(index)
+        const next = new URLSearchParams(searchParams)
+        next.set('tab', TAB_KEY_BY_INDEX[index])
+        setSearchParams(next, { replace: true })
+    }
 
     const content = (
         <div className="page-wrapper">
@@ -68,7 +98,7 @@ export default function Docs() {
                             <button
                                 key={tab.label}
                                 className={`docs-nav-item ${activeTab === i ? 'active' : ''}`}
-                                onClick={() => setActiveTab(i)}
+                                onClick={() => handleTabChange(i)}
                             >
                                 {tab.label}
                             </button>
@@ -90,6 +120,13 @@ export default function Docs() {
         return (
             <AppShell title="接入文档" description="公开模型目录、兼容规则和常见客户端接法都在这里。">
                 <div className="docs-shell-page">
+                    <div className="docs-shell-hero glass-card">
+                        <div>
+                            <span className="docs-shell-kicker">Documentation</span>
+                            <h2>{activeSection.label}</h2>
+                            <p>{docsIntro}</p>
+                        </div>
+                    </div>
                     <div className="docs-layout">
                         <nav className="docs-nav glass-card">
                             <div className="docs-nav-header">
@@ -101,7 +138,7 @@ export default function Docs() {
                                 <button
                                     key={tab.label}
                                     className={`docs-nav-item ${activeTab === i ? 'active' : ''}`}
-                                    onClick={() => setActiveTab(i)}
+                                    onClick={() => handleTabChange(i)}
                                 >
                                     {tab.label}
                                 </button>

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { describePublicModel } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
 import { usePublicModels } from '../hooks/usePublicModels'
@@ -30,17 +31,25 @@ function ConfigSnippet({ title, code }) {
 }
 
 export default function Settings() {
+    const [searchParams, setSearchParams] = useSearchParams()
     const { authMode, effectiveApiKey, generatedApiKey, hasDeveloperKey, isConsoleSession, username } = useAuth()
     const { models, textModels, defaultTextModel, defaultImageModel } = usePublicModels()
     const [copied, setCopied] = useState(false)
     const [selectedModel, setSelectedModel] = useState('')
-    const [activeSnippet, setActiveSnippet] = useState('Python (openai SDK)')
+    const [activeSnippet, setActiveSnippet] = useState(searchParams.get('snippet') || 'Python (openai SDK)')
 
     useEffect(() => {
         if ((!selectedModel || !textModels.find(model => model.id === selectedModel)) && defaultTextModel?.id) {
             setSelectedModel(defaultTextModel.id)
         }
     }, [defaultTextModel, selectedModel, textModels])
+
+    useEffect(() => {
+        const requestedSnippet = searchParams.get('snippet')
+        if (requestedSnippet) {
+            setActiveSnippet(requestedSnippet)
+        }
+    }, [searchParams])
 
     const maskedKey = effectiveApiKey
         ? `${effectiveApiKey.substring(0, 8)}\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022${effectiveApiKey.substring(effectiveApiKey.length - 4)}`
@@ -162,6 +171,7 @@ claude --model claude-opus-4-7`
         }
     ]
     const activeSnippetContent = snippets.find((snippet) => snippet.title === activeSnippet) || snippets[0]
+    const activePanel = searchParams.get('panel') || 'keys'
     const readinessChecks = [
         hasDeveloperKey ? '当前已有开发者 Key，可直接接 SDK / CLI。' : '当前只有控制台会话，先回概览页生成开发者 Key。',
         'Base URL 固定为同一个 /v1 入口。',
@@ -222,7 +232,7 @@ claude --model claude-opus-4-7`
                         </div>
                     )}
 
-                    <div className="glass-card settings-section animate-fade-in-up">
+                    <div className="glass-card settings-section animate-fade-in-up" id="api-keys">
                         <h3>&#128273; 开发者 Key</h3>
                         <div className="key-info-row">
                             <code className="masked-key">{maskedKey || '尚未生成开发者 Key'}</code>
@@ -263,6 +273,23 @@ claude --model claude-opus-4-7`
                             <span className="meta-pill">支持: chat / responses / models / images</span>
                         </div>
                     </div>
+
+                    {activePanel === 'keys' && (
+                        <div className="glass-card settings-section animate-fade-in-up" style={{ animationDelay: '90ms' }}>
+                            <div className="settings-section-head">
+                                <div>
+                                    <h3>这页怎么用</h3>
+                                    <p className="settings-subtitle">先复制开发者 Key，再确认统一 Base URL，最后去下面挑客户端片段。</p>
+                                </div>
+                                <span className="meta-pill">建议顺序</span>
+                            </div>
+                            <div className="settings-checklist">
+                                <div className="settings-check-item"><span className="settings-check-dot"></span><span>程序调用只用开发者 Key，不用控制台登录态。</span></div>
+                                <div className="settings-check-item"><span className="settings-check-dot"></span><span>OpenAI 兼容客户端走 <code>{baseUrl}</code>。</span></div>
+                                <div className="settings-check-item"><span className="settings-check-dot"></span><span>Claude Code 例外，根地址直接填站点域名，不带 <code>/v1</code>。</span></div>
+                            </div>
+                        </div>
+                    )}
 
                     <div className="settings-two-column settings-top-layout">
                         <div className="glass-card settings-section animate-fade-in-up" style={{ animationDelay: '100ms' }}>
@@ -337,7 +364,7 @@ claude --model claude-opus-4-7`
                         </div>
                     </div>
 
-                    <div className="glass-card settings-section animate-fade-in-up" style={{ animationDelay: '200ms' }}>
+                    <div className="glass-card settings-section animate-fade-in-up" style={{ animationDelay: '200ms' }} id="snippets">
                         <div className="settings-section-head">
                             <div>
                                 <h3>&#9881; 配置片段</h3>
@@ -354,7 +381,13 @@ claude --model claude-opus-4-7`
                                 <button
                                     key={snippet.title}
                                     className={`snippet-tab ${activeSnippet === snippet.title ? 'active' : ''}`}
-                                    onClick={() => setActiveSnippet(snippet.title)}
+                                    onClick={() => {
+                                        setActiveSnippet(snippet.title)
+                                        const next = new URLSearchParams(searchParams)
+                                        next.set('panel', 'snippets')
+                                        next.set('snippet', snippet.title)
+                                        setSearchParams(next, { replace: true })
+                                    }}
                                 >
                                     {snippet.title}
                                 </button>

@@ -1,14 +1,17 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { useSearchParams } from 'react-router-dom'
 import { PRICING_PLANS, redeemCode, getApiKey, confirmOrder } from '../api/client'
 import useOrderConfirm from '../hooks/useOrderConfirm'
 import { useAuth } from '../hooks/useAuth'
+import AppShell from '../components/AppShell'
 import './Recharge.css'
 
 const POLL_INTERVAL = 3000
 const MAX_POLL_ATTEMPTS = 200
 
 export default function Recharge() {
+    const [searchParams, setSearchParams] = useSearchParams()
     const { isLoggedIn } = useAuth()
     const [selectedPlan, setSelectedPlan] = useState(2)
     const [customAmount, setCustomAmount] = useState('')
@@ -27,6 +30,7 @@ export default function Recharge() {
     const [autoRedirect, setAutoRedirect] = useState(5)
     const [popupBlocked, setPopupBlocked] = useState(false)
     const navigate = useNavigate()
+    const activeSection = searchParams.get('section') || 'recharge'
 
     useEffect(() => {
         return () => { pollingRef.current = false }
@@ -56,7 +60,7 @@ export default function Recharge() {
                     setPayResult(result)
                     localStorage.removeItem('coincoin_last_order')
                     document.title = '\u2705 \u5145\u503c\u6210\u529f\uff01'
-                    setTimeout(() => { document.title = 'CoinCoin' }, 8000)
+                    setTimeout(() => { document.title = 'ClawFather' }, 8000)
                     return
                 }
             } catch {
@@ -167,12 +171,42 @@ export default function Recharge() {
         }
     }
 
+    useEffect(() => {
+        if (!isLoggedIn) return
+        const target = searchParams.get('section')
+        if (!target) return
+        const sectionEl = document.getElementById(`recharge-section-${target}`)
+        if (sectionEl) {
+            sectionEl.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        }
+    }, [isLoggedIn, searchParams])
+
     return (
-        <div className="page-wrapper">
-            <div className="container">
-                <div className="page-header">
-                    <h1 className="page-title">充值中心</h1>
-                    <p className="page-desc">给账户充值，之后所有文本和图片请求都从这里统一扣费。</p>
+        <AppShell
+            title="充值与套餐"
+            description="给账户充值，之后文本和图片请求都从这里统一扣费。"
+        >
+            <div className="recharge-page">
+                <div className="recharge-local-nav glass-card animate-fade-in-up">
+                    {[
+                        ['recharge', '充值'],
+                        ['orders', '我的订单'],
+                        ['redeem', '兑换'],
+                    ].map(([key, label]) => (
+                        <button
+                            key={key}
+                            className={`recharge-local-nav-item ${activeSection === key ? 'active' : ''}`}
+                            onClick={() => {
+                                const next = new URLSearchParams(searchParams)
+                                next.set('section', key)
+                                setSearchParams(next, { replace: true })
+                                const sectionEl = document.getElementById(`recharge-section-${key}`)
+                                if (sectionEl) sectionEl.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                            }}
+                        >
+                            {label}
+                        </button>
+                    ))}
                 </div>
 
                 {!isLoggedIn && (
@@ -180,7 +214,7 @@ export default function Recharge() {
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 'var(--space-md)', alignItems: 'center', flexWrap: 'wrap' }}>
                             <div>
                                 <strong style={{ display: 'block', marginBottom: 'var(--space-xs)' }}>可以先看套餐，支付前再登录</strong>
-                                <span style={{ color: 'var(--text-secondary)' }}>未登录也能查看充值页；创建订单和兑换码到账仍需要先登录，这样余额才会进到正确账户。</span>
+                                <span style={{ color: 'var(--text-secondary)' }}>未登录也能看充值页；真正创建订单和兑换码到账，还是要先登录，这样余额才会进到正确账户。</span>
                             </div>
                             <div style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
                                 <Link to="/login" className="btn btn-primary btn-sm">登录后充值</Link>
@@ -194,12 +228,12 @@ export default function Recharge() {
                     <div className="recharge-overview-copy">
                         <span className="recharge-kicker">Billing</span>
                         <h2>一个余额，覆盖全部公开模型</h2>
-                        <p>GPT 文本、Gemini 文本和 Gemini 生图统一从 CoinCoin 余额扣费，不需要分开维护。</p>
+                        <p>GPT 文本、Gemini 文本和 Gemini 生图统一从 ClawFather 余额扣费，不用分开维护。</p>
                     </div>
                     <div className="recharge-overview-points">
                         <div className="recharge-point">
                             <strong>先选套餐</strong>
-                            <p>大多数情况直接选预设套餐就够了，到账额度也更直观。</p>
+                            <p>大多数情况直接选预设套餐就够，到账额度也更直观。</p>
                         </div>
                         <div className="recharge-point">
                             <strong>再去支付</strong>
@@ -207,7 +241,7 @@ export default function Recharge() {
                         </div>
                         <div className="recharge-point">
                             <strong>到账后继续操作</strong>
-                            <p>支付完成后可以直接回仪表盘、请求日志或接入配置页。</p>
+                            <p>支付完成后可以直接回概览、请求日志或接入配置页。</p>
                         </div>
                     </div>
                 </div>
@@ -233,6 +267,8 @@ export default function Recharge() {
                         </div>
                     </div>
                 )}
+
+                <div id="recharge-section-recharge" className="recharge-anchor"></div>
 
                 <div className="recharge-plans stagger-children">
                     {PRICING_PLANS.map((plan, i) => (
@@ -290,6 +326,8 @@ export default function Recharge() {
                         </div>
                     )}
                 </div>
+
+                <div id="recharge-section-orders" className="recharge-anchor"></div>
 
                 {payResult ? (
                     <div className="glass-card animate-fade-in" style={{ padding: 'var(--space-xl)', textAlign: 'center', marginBottom: 'var(--space-lg)' }}>
@@ -374,6 +412,35 @@ export default function Recharge() {
                     </div>
                 )}
 
+                <div className="glass-card animate-fade-in-up" style={{ animationDelay: '460ms', padding: 'var(--space-lg)', marginBottom: 'var(--space-lg)' }}>
+                    <div className="settings-section-head" style={{ marginBottom: 'var(--space-md)' }}>
+                        <div>
+                            <h3>最近订单</h3>
+                            <p className="settings-subtitle">这里会显示当前支付状态，支付成功后自动到账。</p>
+                        </div>
+                    </div>
+                    <div className="config-table">
+                        <div className="config-row">
+                            <span className="config-label">当前状态</span>
+                            <code>{payResult ? '已到账' : polling ? '等待支付' : pollInfo?.orderNo ? '待确认' : '暂无订单'}</code>
+                        </div>
+                        <div className="config-row">
+                            <span className="config-label">订单号</span>
+                            <code>{pollInfo?.orderNo || '-'}</code>
+                        </div>
+                        <div className="config-row">
+                            <span className="config-label">充值项目</span>
+                            <code>{pollInfo?.planName || '-'}</code>
+                        </div>
+                        <div className="config-row">
+                            <span className="config-label">金额</span>
+                            <code>{pollInfo?.money ? `¥${pollInfo.money}` : '-'}</code>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="recharge-section-redeem" className="recharge-anchor"></div>
+
                 <div className="redeem-section glass-card animate-fade-in-up" style={{ animationDelay: '500ms' }}>
                     <h3>兑换码充值</h3>
                     <p className="redeem-desc">{isLoggedIn ? '输入兑换码后立即到账。' : '兑换码也需要先登录，避免充到错误账户。'}</p>
@@ -408,6 +475,6 @@ export default function Recharge() {
                     )}
                 </div>
             </div>
-        </div>
+        </AppShell>
     )
 }
