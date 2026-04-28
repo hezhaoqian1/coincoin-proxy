@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { getStationApplication } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
 import { useTheme } from '../hooks/useTheme'
@@ -54,6 +54,46 @@ function ShellIcon({ kind }) {
                     <path d="M17 6.5c0-1.7-2.2-3-5-3s-5 1.3-5 3 1.4 2.5 5 3 5 1.3 5 3-2.2 3-5 3-5-1.3-5-3" />
                 </svg>
             )
+        case 'key':
+            return (
+                <svg {...common}>
+                    <path d="M14.5 10.5a3.5 3.5 0 1 0-3.3-4.7L3 14v4h4l1.8-1.8H11v-2.2l1.8-1.8a3.5 3.5 0 0 0 1.7.3Z" />
+                    <path d="M16.5 7.5h.01" />
+                </svg>
+            )
+        case 'pricing':
+            return (
+                <svg {...common}>
+                    <path d="M7 7h10" />
+                    <path d="M7 12h10" />
+                    <path d="M7 17h6" />
+                    <path d="M4 4h16v16H4z" />
+                </svg>
+            )
+        case 'order':
+            return (
+                <svg {...common}>
+                    <path d="M7 4h10l2 3v13H5V7z" />
+                    <path d="M7 4v3h10V4" />
+                    <path d="M9 12h6" />
+                    <path d="M9 16h4" />
+                </svg>
+            )
+        case 'redeem':
+            return (
+                <svg {...common}>
+                    <path d="M20 12v7H4v-7" />
+                    <path d="M12 4v15" />
+                    <path d="M7 9.5 12 4l5 5.5" />
+                </svg>
+            )
+        case 'terminal':
+            return (
+                <svg {...common}>
+                    <path d="M4.5 6.5 9 11l-4.5 4.5" />
+                    <path d="M11.5 16.5H19.5" />
+                </svg>
+            )
         case 'station':
             return (
                 <svg {...common}>
@@ -96,23 +136,35 @@ function ShellIcon({ kind }) {
     }
 }
 
-function ShellGroup({ title, items }) {
+function isNavItemActive(item, location) {
+    if (location.pathname !== item.pathname) return false
+    if (item.search) {
+        const params = new URLSearchParams(location.search)
+        return Object.entries(item.search).every(([key, value]) => params.get(key) === value)
+    }
+    if (item.hash) {
+        return location.hash === item.hash
+    }
+    return !location.search || location.pathname === '/dashboard' || location.pathname === '/usage' || location.pathname === '/station'
+}
+
+function ShellGroup({ title, items, location }) {
     return (
         <div className="shell-group">
             <div className="shell-group-title">{title}</div>
             <div className="shell-group-items">
                 {items.map((item) => (
-                    <NavLink
+                    <Link
                         key={item.to}
                         to={item.to}
-                        className={({ isActive }) => `shell-link ${isActive ? 'active' : ''}`}
+                        className={`shell-link ${isNavItemActive(item, location) ? 'active' : ''}`}
                     >
                         <span className="shell-link-icon"><ShellIcon kind={item.icon} /></span>
                         <span className="shell-link-copy">
                             <span className="shell-link-label">{item.label}</span>
                             {item.caption ? <span className="shell-link-caption">{item.caption}</span> : null}
                         </span>
-                    </NavLink>
+                    </Link>
                 ))}
             </div>
         </div>
@@ -144,38 +196,40 @@ export default function AppShell({ title, description, actions, children }) {
 
     const accountLabel = authMode === 'api' ? '开发者 Key 会话' : (username || '控制台账号')
     const accountSub = hasDeveloperKey ? '已具备真实调用权限' : '先生成开发者 Key'
-    const pathLabel = location.pathname === '/dashboard' ? '控制台总览' : title
-
     const navGroups = useMemo(() => {
         const groups = [
             {
-                title: '控制台',
+                title: '工作台',
                 items: [
-                    { to: '/dashboard', label: '概览', caption: '余额、Key、最近请求', icon: 'dashboard' },
-                    { to: '/settings', label: '接入配置', caption: '复制客户端配置', icon: 'access' },
-                    { to: '/usage', label: '请求日志', caption: '路由、计量、状态码', icon: 'logs' },
+                    { to: '/dashboard', pathname: '/dashboard', label: '控制台', caption: '余额、密钥、最近请求', icon: 'dashboard' },
+                    { to: '/settings?panel=keys', pathname: '/settings', search: { panel: 'keys' }, label: 'API 密钥', caption: '复制密钥，确认统一入口', icon: 'key' },
+                    { to: '/usage', pathname: '/usage', label: '使用记录', caption: '状态码、计量、路由日志', icon: 'logs' },
+                    { to: '/docs?tab=models', pathname: '/docs', search: { tab: 'models' }, label: '模型价格', caption: '公开目录、计费和默认模型', icon: 'pricing' },
                 ],
             },
             {
-                title: '工具与支持',
+                title: '资金',
                 items: [
-                    { to: '/playground', label: '测试请求', caption: '直接发一条真实调用', icon: 'playground' },
-                    { to: '/docs', label: '接入文档', caption: 'Claude Code / Codex / SDK', icon: 'docs' },
+                    { to: '/recharge?section=recharge', pathname: '/recharge', search: { section: 'recharge' }, label: '充值', caption: '套餐、自定义金额、支付', icon: 'billing' },
+                    { to: '/recharge?section=orders', pathname: '/recharge', search: { section: 'orders' }, label: '我的订单', caption: '最近订单、到账状态、回跳', icon: 'order' },
+                    { to: '/recharge?section=redeem', pathname: '/recharge', search: { section: 'redeem' }, label: '兑换', caption: '活动码、内部码、补额度', icon: 'redeem' },
                 ],
             },
             {
-                title: '资金与结算',
+                title: '教程',
                 items: [
-                    { to: '/recharge', label: '充值与套餐', caption: '余额、订单、兑换码', icon: 'billing' },
+                    { to: '/docs?tab=quickstart', pathname: '/docs', search: { tab: 'quickstart' }, label: '默认 API 教程', caption: '先跑通第一条请求', icon: 'docs' },
+                    { to: '/settings?snippet=Codex%20CLI%20(config.toml)&panel=snippets', pathname: '/settings', search: { snippet: 'Codex CLI (config.toml)', panel: 'snippets' }, label: 'Codex 配置', caption: 'config.toml 与环境变量', icon: 'terminal' },
+                    { to: '/settings?snippet=Claude%20Code&panel=snippets', pathname: '/settings', search: { snippet: 'Claude Code', panel: 'snippets' }, label: 'Claude Code 配置', caption: 'ANTHROPIC_BASE_URL 与模型名', icon: 'access' },
                 ],
             },
         ]
 
         if (hasStation) {
             groups.push({
-                title: '分发与渠道',
+                title: '分发',
                 items: [
-                    { to: '/station', label: '站长中心', caption: '下游用户、分润、结算', icon: 'station' },
+                    { to: '/station', pathname: '/station', label: '站长中心', caption: '下游用户、分润、结算', icon: 'station' },
                 ],
             })
         }
@@ -213,7 +267,7 @@ export default function AppShell({ title, description, actions, children }) {
 
                 <nav className="app-sidebar-nav">
                     {navGroups.map((group) => (
-                        <ShellGroup key={group.title} title={group.title} items={group.items} />
+                        <ShellGroup key={group.title} title={group.title} items={group.items} location={location} />
                     ))}
                 </nav>
 
@@ -230,29 +284,16 @@ export default function AppShell({ title, description, actions, children }) {
             </aside>
 
             <div className="app-main">
-                <header className="app-topbar">
-                    <div className="app-topbar-copy">
-                        <div className="app-topbar-eyebrow">{pathLabel}</div>
-                        <h1 className="app-topbar-title">{title}</h1>
-                        {description ? <p className="app-topbar-desc">{description}</p> : null}
-                    </div>
-
-                    <div className="app-topbar-side">
-                        <div className="app-topbar-meta">
-                            <div className="app-topbar-meta-card">
-                                <span className="app-topbar-meta-label">工作区</span>
-                                <strong>API 分发</strong>
-                            </div>
-                            <div className="app-topbar-meta-card">
-                                <span className="app-topbar-meta-label">状态</span>
-                                <strong>{hasDeveloperKey ? '可调用' : '待配置'}</strong>
-                            </div>
-                        </div>
-                        {actions ? <div className="app-topbar-actions">{actions}</div> : null}
-                    </div>
-                </header>
-
                 <main className="app-main-content">
+                    {(title || description || actions) ? (
+                        <section className="app-page-intro">
+                            <div className="app-page-intro-copy">
+                                {title ? <h1 className="app-page-intro-title">{title}</h1> : null}
+                                {description ? <p className="app-page-intro-desc">{description}</p> : null}
+                            </div>
+                            {actions ? <div className="app-page-intro-actions">{actions}</div> : null}
+                        </section>
+                    ) : null}
                     {children}
                 </main>
             </div>

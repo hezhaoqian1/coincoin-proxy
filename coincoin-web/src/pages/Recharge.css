@@ -1,3 +1,38 @@
+.recharge-local-nav {
+    display: flex;
+    gap: var(--space-sm);
+    flex-wrap: wrap;
+    padding: 10px;
+    margin-bottom: var(--space-lg);
+}
+
+.recharge-local-nav-item {
+    border: 1px solid var(--border-color);
+    background: transparent;
+    color: var(--text-secondary);
+    border-radius: 10px;
+    padding: 9px 12px;
+    font: inherit;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.recharge-local-nav-item:hover {
+    color: var(--text-primary);
+    background: var(--bg-glass);
+}
+
+.recharge-local-nav-item.active {
+    color: var(--text-primary);
+    border-color: rgba(99, 102, 241, 0.22);
+    background: rgba(99, 102, 241, 0.1);
+}
+
+.recharge-anchor {
+    position: relative;
+    top: -10px;
+}
+
 .recharge-overview {
     display: grid;
     grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr);

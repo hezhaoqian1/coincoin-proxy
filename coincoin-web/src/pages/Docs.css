@@ -5,6 +5,32 @@
     align-items: start;
 }
 
+.docs-shell-hero {
+    margin-bottom: var(--space-lg);
+    padding: 18px 20px;
+}
+
+.docs-shell-kicker {
+    display: inline-flex;
+    margin-bottom: 8px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent-cyan);
+}
+
+.docs-shell-hero h2 {
+    font-size: 1.35rem;
+    margin-bottom: 8px;
+}
+
+.docs-shell-hero p {
+    margin: 0;
+    color: var(--text-secondary);
+    line-height: 1.65;
+}
+
 .docs-nav {
     position: sticky;
     top: calc(var(--navbar-height) + var(--space-lg));
@@ -209,6 +235,19 @@
 .doc-list {
     list-style: none;
     padding: 0;
+}
+
+.doc-list.ordered {
+    list-style: decimal;
+    padding-left: 20px;
+}
+
+.doc-list.ordered li {
+    padding-left: 0;
+}
+
+.doc-list.ordered li::before {
+    content: none;
 }
 
 .doc-list li {
