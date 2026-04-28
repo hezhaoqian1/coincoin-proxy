@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -29,6 +30,32 @@ from .usage_buffer import usage_buffer
 
 
 router = APIRouter(prefix="/v1", tags=["anthropic-compat"])
+
+
+@dataclass
+class _AnthropicToolStreamState:
+    index: int
+    block_index: int
+    tool_id: str = ""
+    name: str = ""
+    started: bool = False
+    stopped: bool = False
+
+
+@dataclass
+class _AnthropicStreamState:
+    response_id: str = ""
+    created_at: int = 0
+    message_started: bool = False
+    message_stopped: bool = False
+    message_delta_sent: bool = False
+    text_block_started: bool = False
+    text_block_index: int = 0
+    saw_tool_call: bool = False
+    finish_reason: str = ""
+    usage: Dict[str, Any] = field(default_factory=dict)
+    next_block_index: int = 1
+    tool_states: Dict[int, _AnthropicToolStreamState] = field(default_factory=dict)
 
 
 def anthropic_error(
@@ -198,6 +225,224 @@ def _extract_usage_from_openai_chat_response(data: Dict[str, Any]) -> Dict[str, 
     return usage
 
 
+def _anthropic_sse_bytes(event_type: str, payload: Dict[str, Any]) -> bytes:
+    data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    return f"event: {event_type}\ndata: {data}\n\n".encode("utf-8")
+
+
+def _normalize_anthropic_stop_reason(finish_reason: str, saw_tool_call: bool) -> str:
+    reason = str(finish_reason or "").strip()
+    if saw_tool_call or reason == "tool_calls":
+        return "tool_use"
+    if reason in {"length", "max_tokens"}:
+        return "max_tokens"
+    return "end_turn"
+
+
+def _ensure_anthropic_message_start(
+    state: _AnthropicStreamState,
+    *,
+    display_model: str,
+    response_id: str,
+) -> List[bytes]:
+    if state.message_started:
+        return []
+    state.message_started = True
+    state.response_id = response_id or state.response_id or f"msg_coincoin_{int(time.time() * 1000)}"
+    payload = {
+        "type": "message_start",
+        "message": {
+            "id": state.response_id,
+            "type": "message",
+            "role": "assistant",
+            "model": display_model,
+            "content": [],
+            "stop_reason": None,
+            "stop_sequence": None,
+            "usage": {"input_tokens": 0, "output_tokens": 0},
+        },
+    }
+    return [_anthropic_sse_bytes("message_start", payload)]
+
+
+def _start_text_block(state: _AnthropicStreamState) -> List[bytes]:
+    if state.text_block_started:
+        return []
+    state.text_block_started = True
+    payload = {
+        "type": "content_block_start",
+        "index": state.text_block_index,
+        "content_block": {"type": "text", "text": ""},
+    }
+    return [_anthropic_sse_bytes("content_block_start", payload)]
+
+
+def _stop_text_block(state: _AnthropicStreamState) -> List[bytes]:
+    if not state.text_block_started:
+        return []
+    state.text_block_started = False
+    payload = {"type": "content_block_stop", "index": state.text_block_index}
+    return [_anthropic_sse_bytes("content_block_stop", payload)]
+
+
+def _ensure_tool_state(state: _AnthropicStreamState, tool_index: int) -> _AnthropicToolStreamState:
+    tool_state = state.tool_states.get(tool_index)
+    if tool_state is None:
+        tool_state = _AnthropicToolStreamState(index=tool_index, block_index=state.next_block_index)
+        state.tool_states[tool_index] = tool_state
+        state.next_block_index += 1
+    return tool_state
+
+
+def _start_tool_block(tool_state: _AnthropicToolStreamState) -> List[bytes]:
+    if tool_state.started:
+        return []
+    tool_state.started = True
+    payload = {
+        "type": "content_block_start",
+        "index": tool_state.block_index,
+        "content_block": {
+            "type": "tool_use",
+            "id": tool_state.tool_id or f"call_{tool_state.index}",
+            "name": tool_state.name or f"tool_{tool_state.index}",
+            "input": {},
+        },
+    }
+    return [_anthropic_sse_bytes("content_block_start", payload)]
+
+
+def _stop_tool_blocks(state: _AnthropicStreamState) -> List[bytes]:
+    events: List[bytes] = []
+    for tool_index in sorted(state.tool_states):
+        tool_state = state.tool_states[tool_index]
+        if not tool_state.started or tool_state.stopped:
+            continue
+        tool_state.stopped = True
+        payload = {"type": "content_block_stop", "index": tool_state.block_index}
+        events.append(_anthropic_sse_bytes("content_block_stop", payload))
+    return events
+
+
+def _finalize_anthropic_stream(
+    state: _AnthropicStreamState,
+    *,
+    display_model: str,
+) -> List[bytes]:
+    if state.message_stopped:
+        return []
+
+    events: List[bytes] = []
+    if not state.message_started:
+        events.extend(_ensure_anthropic_message_start(state, display_model=display_model, response_id=state.response_id))
+
+    events.extend(_stop_text_block(state))
+    events.extend(_stop_tool_blocks(state))
+
+    if not state.message_delta_sent:
+        state.message_delta_sent = True
+        usage = {
+            "input_tokens": int(state.usage.get("prompt_tokens") or state.usage.get("input_tokens") or 0),
+            "output_tokens": int(state.usage.get("completion_tokens") or state.usage.get("output_tokens") or 0),
+        }
+        payload = {
+            "type": "message_delta",
+            "delta": {
+                "stop_reason": _normalize_anthropic_stop_reason(state.finish_reason, state.saw_tool_call),
+                "stop_sequence": None,
+            },
+            "usage": usage,
+        }
+        events.append(_anthropic_sse_bytes("message_delta", payload))
+
+    state.message_stopped = True
+    events.append(_anthropic_sse_bytes("message_stop", {"type": "message_stop"}))
+    return events
+
+
+def _translate_openai_chunk_to_anthropic_events(
+    state: _AnthropicStreamState,
+    *,
+    display_model: str,
+    raw_line: str,
+) -> List[bytes]:
+    line = raw_line.strip()
+    if not line or not line.startswith("data:"):
+        return []
+
+    payload = line[5:].strip()
+    if not payload:
+        return []
+    if payload == "[DONE]":
+        return _finalize_anthropic_stream(state, display_model=display_model)
+
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError:
+        return []
+
+    if not isinstance(data, dict):
+        return []
+
+    events: List[bytes] = []
+    response_id = str(data.get("id") or state.response_id or "")
+    if response_id:
+        state.response_id = response_id
+    created = data.get("created")
+    if isinstance(created, int) and created > 0:
+        state.created_at = created
+
+    choices = data.get("choices")
+    choice = choices[0] if isinstance(choices, list) and choices and isinstance(choices[0], dict) else {}
+    delta = choice.get("delta") if isinstance(choice.get("delta"), dict) else {}
+
+    if delta:
+        events.extend(_ensure_anthropic_message_start(state, display_model=display_model, response_id=response_id))
+
+    content = delta.get("content")
+    if isinstance(content, str) and content:
+        events.extend(_start_text_block(state))
+        payload = {
+            "type": "content_block_delta",
+            "index": state.text_block_index,
+            "delta": {"type": "text_delta", "text": content},
+        }
+        events.append(_anthropic_sse_bytes("content_block_delta", payload))
+
+    tool_calls = delta.get("tool_calls")
+    if isinstance(tool_calls, list) and tool_calls:
+        state.saw_tool_call = True
+        events.extend(_stop_text_block(state))
+        for item in tool_calls:
+            if not isinstance(item, dict):
+                continue
+            tool_index = int(item.get("index") or 0)
+            tool_state = _ensure_tool_state(state, tool_index)
+            if item.get("id"):
+                tool_state.tool_id = str(item.get("id") or tool_state.tool_id)
+            function = item.get("function") if isinstance(item.get("function"), dict) else {}
+            if function.get("name"):
+                tool_state.name = str(function.get("name") or tool_state.name)
+            events.extend(_start_tool_block(tool_state))
+            arguments = function.get("arguments")
+            if isinstance(arguments, str) and arguments:
+                payload = {
+                    "type": "content_block_delta",
+                    "index": tool_state.block_index,
+                    "delta": {"type": "input_json_delta", "partial_json": arguments},
+                }
+                events.append(_anthropic_sse_bytes("content_block_delta", payload))
+
+    finish_reason = choice.get("finish_reason") or choice.get("native_finish_reason")
+    if isinstance(finish_reason, str) and finish_reason:
+        state.finish_reason = finish_reason
+
+    usage = data.get("usage")
+    if isinstance(usage, dict):
+        state.usage = usage
+
+    return events
+
+
 @router.get("/models")
 async def anthropic_models(request: Request):
     user_agent = request.headers.get("user-agent", "")
@@ -310,19 +555,49 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
         stream_headers.pop("content-length", None)
         stream_headers.setdefault("cache-control", "no-cache")
         stream_headers.setdefault("x-accel-buffering", "no")
+        stream_headers["content-type"] = "text/event-stream; charset=utf-8"
+        stream_state = _AnthropicStreamState()
 
         async def iter_bytes():
             try:
-                async for chunk in upstream.aiter_bytes():
-                    yield chunk
+                async for line in upstream.aiter_lines():
+                    for event in _translate_openai_chunk_to_anthropic_events(
+                        stream_state,
+                        display_model=display_model,
+                        raw_line=line,
+                    ):
+                        yield event
             finally:
+                if not stream_state.message_stopped:
+                    for event in _finalize_anthropic_stream(stream_state, display_model=display_model):
+                        yield event
+                if stream_state.usage:
+                    await usage_buffer.add(
+                        user.id,
+                        input_tokens=int(stream_state.usage.get("prompt_tokens") or stream_state.usage.get("input_tokens") or 0),
+                        output_tokens=int(stream_state.usage.get("completion_tokens") or stream_state.usage.get("output_tokens") or 0),
+                        cached_tokens=0,
+                        requests=1,
+                        endpoint="messages",
+                        model=display_model,
+                        customer_model_alias=display_model,
+                        provider_model=public_model.provider_model or used_cfg.model_id,
+                        route_reason=used_route_reason,
+                        duration_ms=0,
+                        status_code=upstream.status_code,
+                        price_input_per_million=used_cfg.price_input_per_million,
+                        price_output_per_million=used_cfg.price_output_per_million,
+                        usage_unit_type="tokens",
+                        billable_sku=public_model.billable_sku or display_model,
+                        upstream_request_id=upstream_request_id,
+                    )
                 await upstream.aclose()
 
         return StreamingResponse(
             iter_bytes(),
             status_code=upstream.status_code,
             headers=stream_headers,
-            media_type=upstream.headers.get("content-type"),
+            media_type="text/event-stream",
         )
 
     client = await get_http_client()

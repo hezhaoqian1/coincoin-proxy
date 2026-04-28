@@ -38,6 +38,36 @@ class _RecordingClient:
         return self.responses.pop(0)
 
 
+class _FakeEventStreamResponse:
+    def __init__(self, lines, status_code=200, headers=None):
+        self._lines = list(lines)
+        self.status_code = status_code
+        self.headers = {"content-type": "text/event-stream", **(headers or {})}
+        self._closed = False
+
+    async def aiter_lines(self):
+        for line in self._lines:
+            yield line
+
+    async def aclose(self):
+        self._closed = True
+
+
+class _RecordingStreamClient:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    def build_request(self, method, url, **kwargs):
+        request = {"method": method, "url": url, **kwargs}
+        self.calls.append(request)
+        return request
+
+    async def send(self, request, stream=False):
+        self.calls.append({"send_request": request, "stream": stream})
+        return self.responses.pop(0)
+
+
 class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         settings.upstream_base_url = "https://cliproxyapi-deploy-production.up.railway.app/v1"
@@ -156,3 +186,91 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         body = response.json()
         self.assertEqual(body["model"], "claude-opus-4-7")
         self.assertEqual(client.calls[0]["json"]["model"], "gpt-5.5")
+
+    async def test_streaming_messages_translate_openai_sse_to_anthropic_sse(self):
+        fake_user = SimpleNamespace(id="u_test", status="active")
+        stream_client = _RecordingStreamClient(
+            [
+                _FakeEventStreamResponse(
+                    [
+                        'data: {"id":"chatcmpl_stream","model":"gpt-5.5","choices":[{"delta":{"role":"assistant","content":"Hello"},"finish_reason":null}]}',
+                        'data: {"id":"chatcmpl_stream","model":"gpt-5.5","choices":[{"delta":{"content":" world"},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":3,"total_tokens":15}}',
+                        "data: [DONE]",
+                    ]
+                )
+            ]
+        )
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_stream_client", AsyncMock(return_value=stream_client)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()) as add_usage,
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={
+                        "authorization": "Bearer sk_test",
+                        "anthropic-version": "2023-06-01",
+                        "user-agent": "claude-cli/2.0.76 (external, cli)",
+                    },
+                    json={
+                        "model": "claude-opus-4-7",
+                        "max_tokens": 64,
+                        "stream": True,
+                        "messages": [{"role": "user", "content": "Reply with hello"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("event: message_start", response.text)
+        self.assertIn("event: content_block_start", response.text)
+        self.assertIn('"type":"text_delta"', response.text)
+        self.assertIn("Hello", response.text)
+        self.assertIn("event: message_stop", response.text)
+        self.assertIn('"stop_reason":"end_turn"', response.text)
+        add_usage.assert_awaited_once()
+
+    async def test_streaming_tool_calls_translate_to_tool_use_events(self):
+        fake_user = SimpleNamespace(id="u_test", status="active")
+        stream_client = _RecordingStreamClient(
+            [
+                _FakeEventStreamResponse(
+                    [
+                        'data: {"id":"chatcmpl_tool","model":"gpt-5.5","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_123","type":"function","function":{"name":"read_file","arguments":""}}]},"finish_reason":null}]}',
+                        'data: {"id":"chatcmpl_tool","model":"gpt-5.5","choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\"path\\":\\"foo.txt\\"}"}}]},"finish_reason":null}]}',
+                        'data: {"id":"chatcmpl_tool","model":"gpt-5.5","choices":[{"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":9,"completion_tokens":4,"total_tokens":13}}',
+                        "data: [DONE]",
+                    ]
+                )
+            ]
+        )
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_stream_client", AsyncMock(return_value=stream_client)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()),
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={
+                        "authorization": "Bearer sk_test",
+                        "anthropic-version": "2023-06-01",
+                        "user-agent": "claude-cli/2.0.76 (external, cli)",
+                    },
+                    json={
+                        "model": "claude-opus-4-7",
+                        "max_tokens": 64,
+                        "stream": True,
+                        "messages": [{"role": "user", "content": "Read foo.txt"}],
+                        "tools": [{"name": "read_file", "input_schema": {"type": "object", "properties": {"path": {"type": "string"}}}}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('"type":"tool_use"', response.text)
+        self.assertIn('"name":"read_file"', response.text)
+        self.assertIn('"type":"input_json_delta"', response.text)
+        self.assertIn('\\"path\\":\\"foo.txt\\"', response.text)
+        self.assertIn('"stop_reason":"tool_use"', response.text)
