@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { describePublicModel } from '../api/client'
+import AppShell from '../components/AppShell'
 import { useAuth } from '../hooks/useAuth'
 import { usePublicModels } from '../hooks/usePublicModels'
 import './Playground.css'
@@ -123,128 +124,124 @@ export default function Playground() {
     }
 
     return (
-        <div className="page-wrapper">
-            <div className="container">
-                <div className="page-header">
-                    <h1 className="page-title">测试请求</h1>
-                    <p className="page-desc">直接发一条真实请求，确认模型、速度和返回内容。</p>
+        <AppShell
+            title="测试请求"
+            description="直接发一条真实请求，确认模型、速度和返回内容。"
+        >
+            <div className="playground-toolbar glass-card animate-fade-in-up">
+                <div className="playground-toolbar-copy">
+                    <span className="playground-kicker">Live Request</span>
+                    <p>{hasDeveloperKey ? '直接试模型、提示词和返回速度。需要复制配置时再去接入配置页。' : '先生成开发者 Key，再发送真实请求。'}</p>
                 </div>
-
-                <div className="playground-toolbar glass-card animate-fade-in-up">
-                    <div className="playground-toolbar-copy">
-                        <span className="playground-kicker">Live Request</span>
-                        <p>{hasDeveloperKey ? '直接试模型、提示词和返回速度。需要复制配置时再去接入配置页。' : '先生成开发者 API Key，再发送真实请求。'}</p>
-                    </div>
-                    <div className="playground-toolbar-links">
-                        <Link to="/settings" className="btn btn-secondary btn-sm">去接入配置</Link>
-                        <Link to="/docs" className="btn btn-ghost btn-sm">阅读文档</Link>
-                        <Link to="/recharge" className="btn btn-ghost btn-sm">账户充值</Link>
-                    </div>
-                </div>
-
-                <div className="playground-layout">
-                    <div className="playground-input glass-card animate-fade-in-up">
-                        <div className="pg-panel-head">
-                            <div>
-                                <h3>请求参数</h3>
-                                <p>选模型、写提示词、调参数，然后直接发送。</p>
-                            </div>
-                        </div>
-                        {!hasDeveloperKey && (
-                            <div className="settings-alert settings-alert-warning" style={{ marginBottom: 'var(--space-lg)' }}>
-                                <h3 style={{ marginBottom: 'var(--space-xs)' }}>当前没有可用的开发者 API Key</h3>
-                                <p className="settings-text" style={{ marginBottom: 0 }}>
-                                    {authMode === 'session_only'
-                                        ? '你现在用的是控制台 session。请先回仪表盘生成开发者 API Key。'
-                                        : '请先使用开发者 API Key 登录，或者回仪表盘生成新的开发者 API Key。'}
-                                </p>
-                            </div>
-                        )}
-                        <div className="pg-section">
-                            <label className="pg-label">Text Model</label>
-                            <select className="pg-select" value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)} disabled={loadingModels || loading}>
-                                {textModels.map((model) => (
-                                    <option key={model.id} value={model.id}>{model.id}</option>
-                                ))}
-                            </select>
-                            {selectedModelInfo && <p className="pg-model-note">{describePublicModel(selectedModelInfo)}</p>}
-                        </div>
-
-                        <div className="pg-section">
-                            <label className="pg-label">System Prompt <small>(可选)</small></label>
-                            <textarea
-                                className="pg-textarea"
-                                rows="3"
-                                placeholder="给模型一段额外约束，例如回答格式或角色。"
-                                value={systemPrompt}
-                                onChange={e => setSystemPrompt(e.target.value)}
-                            />
-                        </div>
-
-                        <div className="pg-section">
-                            <label className="pg-label">User Prompt</label>
-                            <textarea
-                                className="pg-textarea pg-main-input"
-                                rows="6"
-                                placeholder="输入本次请求内容..."
-                                value={userPrompt}
-                                onChange={e => setUserPrompt(e.target.value)}
-                                onKeyDown={e => { if (e.key === 'Enter' && e.metaKey) handleSend() }}
-                            />
-                        </div>
-
-                        <div className="pg-params">
-                            <div className="pg-param">
-                                <label>Temperature: {temperature}</label>
-                                <input type="range" min="0" max="2" step="0.1" value={temperature} onChange={e => setTemperature(e.target.value)} />
-                            </div>
-                            <div className="pg-param">
-                                <label>Max Tokens</label>
-                                <input type="number" className="pg-number" value={maxTokens} onChange={e => setMaxTokens(e.target.value)} min="1" max="16384" />
-                            </div>
-                        </div>
-
-                        <div className="pg-actions">
-                            {loading ? (
-                                <button className="btn btn-secondary" onClick={handleStop}>&#9632; 停止</button>
-                            ) : (
-                                <button className="btn btn-primary" onClick={handleSend} disabled={!userPrompt.trim() || !effectiveApiKey || !selectedModel}>
-                                    &#9654; 发送 <small>(&#8984;+Enter)</small>
-                                </button>
-                            )}
-                        </div>
-                    </div>
-
-                    <div className="playground-output glass-card animate-fade-in-up" style={{ animationDelay: '100ms' }}>
-                        <div className="pg-output-header">
-                            <div>
-                                <span className="pg-label">响应</span>
-                                <p className="pg-output-desc">实时返回内容和本次请求的基础统计。</p>
-                            </div>
-                            {loading && <div className="loading-spinner" style={{ width: 16, height: 16 }}></div>}
-                        </div>
-                        <div className="pg-response">
-                            {response === '__INSUFFICIENT_BALANCE__' ? (
-                                <div className="pg-empty" style={{ color: 'var(--accent-amber)' }}>
-                                    余额不足，请先 <Link to="/recharge" style={{ color: 'var(--accent-emerald)', textDecoration: 'underline' }}>充值</Link> 后再试。
-                                </div>
-                            ) : response ? (
-                                <pre className="pg-response-text">{response}</pre>
-                            ) : (
-                                <div className="pg-empty">发送请求后在这里查看响应。</div>
-                            )}
-                        </div>
-                        {stats && (
-                            <div className="pg-stats">
-                                <span>{stats.model}</span>
-                                <span>&#9201; {(stats.duration / 1000).toFixed(1)}s</span>
-                                <span>&#8593; {stats.input_tokens.toLocaleString()} tokens</span>
-                                <span>&#8595; {stats.output_tokens.toLocaleString()} tokens</span>
-                            </div>
-                        )}
-                    </div>
+                <div className="playground-toolbar-links">
+                    <Link to="/settings" className="btn btn-secondary btn-sm">去接入配置</Link>
+                    <Link to="/docs" className="btn btn-ghost btn-sm">阅读文档</Link>
+                    <Link to="/recharge" className="btn btn-ghost btn-sm">账户充值</Link>
                 </div>
             </div>
-        </div>
+
+            <div className="playground-layout">
+                <div className="playground-input glass-card animate-fade-in-up">
+                    <div className="pg-panel-head">
+                        <div>
+                            <h3>请求参数</h3>
+                            <p>选模型、写提示词、调参数，然后直接发送。</p>
+                        </div>
+                    </div>
+                    {!hasDeveloperKey && (
+                        <div className="settings-alert settings-alert-warning" style={{ marginBottom: 'var(--space-lg)' }}>
+                            <h3 style={{ marginBottom: 'var(--space-xs)' }}>当前没有可用的开发者 Key</h3>
+                            <p className="settings-text" style={{ marginBottom: 0 }}>
+                                {authMode === 'session_only'
+                                    ? '你现在用的是控制台 session。请先回概览页生成开发者 Key。'
+                                    : '请先使用开发者 Key 登录，或者回概览页生成新的开发者 Key。'}
+                            </p>
+                        </div>
+                    )}
+                    <div className="pg-section">
+                        <label className="pg-label">Text Model</label>
+                        <select className="pg-select" value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)} disabled={loadingModels || loading}>
+                            {textModels.map((model) => (
+                                <option key={model.id} value={model.id}>{model.id}</option>
+                            ))}
+                        </select>
+                        {selectedModelInfo && <p className="pg-model-note">{describePublicModel(selectedModelInfo)}</p>}
+                    </div>
+
+                    <div className="pg-section">
+                        <label className="pg-label">System Prompt <small>(可选)</small></label>
+                        <textarea
+                            className="pg-textarea"
+                            rows="3"
+                            placeholder="给模型一段额外约束，例如回答格式或角色。"
+                            value={systemPrompt}
+                            onChange={e => setSystemPrompt(e.target.value)}
+                        />
+                    </div>
+
+                    <div className="pg-section">
+                        <label className="pg-label">User Prompt</label>
+                        <textarea
+                            className="pg-textarea pg-main-input"
+                            rows="6"
+                            placeholder="输入本次请求内容..."
+                            value={userPrompt}
+                            onChange={e => setUserPrompt(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter' && e.metaKey) handleSend() }}
+                        />
+                    </div>
+
+                    <div className="pg-params">
+                        <div className="pg-param">
+                            <label>Temperature: {temperature}</label>
+                            <input type="range" min="0" max="2" step="0.1" value={temperature} onChange={e => setTemperature(e.target.value)} />
+                        </div>
+                        <div className="pg-param">
+                            <label>Max Tokens</label>
+                            <input type="number" className="pg-number" value={maxTokens} onChange={e => setMaxTokens(e.target.value)} min="1" max="16384" />
+                        </div>
+                    </div>
+
+                    <div className="pg-actions">
+                        {loading ? (
+                            <button className="btn btn-secondary" onClick={handleStop}>&#9632; 停止</button>
+                        ) : (
+                            <button className="btn btn-primary" onClick={handleSend} disabled={!userPrompt.trim() || !effectiveApiKey || !selectedModel}>
+                                &#9654; 发送 <small>(&#8984;+Enter)</small>
+                            </button>
+                        )}
+                    </div>
+                </div>
+
+                <div className="playground-output glass-card animate-fade-in-up" style={{ animationDelay: '100ms' }}>
+                    <div className="pg-output-header">
+                        <div>
+                            <span className="pg-label">响应</span>
+                            <p className="pg-output-desc">实时返回内容和本次请求的基础统计。</p>
+                        </div>
+                        {loading && <div className="loading-spinner" style={{ width: 16, height: 16 }}></div>}
+                    </div>
+                    <div className="pg-response">
+                        {response === '__INSUFFICIENT_BALANCE__' ? (
+                            <div className="pg-empty" style={{ color: 'var(--accent-amber)' }}>
+                                余额不足，请先 <Link to="/recharge" style={{ color: 'var(--accent-emerald)', textDecoration: 'underline' }}>充值</Link> 后再试。
+                            </div>
+                        ) : response ? (
+                            <pre className="pg-response-text">{response}</pre>
+                        ) : (
+                            <div className="pg-empty">发送请求后在这里查看响应。</div>
+                        )}
+                    </div>
+                    {stats && (
+                        <div className="pg-stats">
+                            <span>{stats.model}</span>
+                            <span>&#9201; {(stats.duration / 1000).toFixed(1)}s</span>
+                            <span>&#8593; {stats.input_tokens.toLocaleString()} tokens</span>
+                            <span>&#8595; {stats.output_tokens.toLocaleString()} tokens</span>
+                        </div>
+                    )}
+                </div>
+            </div>
+        </AppShell>
     )
 }
