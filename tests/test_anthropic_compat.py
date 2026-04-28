@@ -115,7 +115,7 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["type"], "message")
         self.assertEqual(body["model"], "gpt-5.5")
         self.assertEqual(body["content"][0]["text"], "OK")
-        self.assertEqual(client.calls[0]["url"], "https://cliproxyapi-deploy-production.up.railway.app/v1/messages")
+        self.assertEqual(client.calls[0]["url"], "https://cliproxyapi-deploy-production.up.railway.app/v1/chat/completions")
         self.assertEqual(client.calls[0]["json"]["model"], "gpt-5.5")
 
     async def test_claude_alias_resolves_to_gpt_55_upstream(self):
