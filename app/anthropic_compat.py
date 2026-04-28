@@ -51,6 +51,8 @@ class _AnthropicStreamState:
     message_delta_sent: bool = False
     text_block_started: bool = False
     text_block_index: int = 0
+    thinking_block_started: bool = False
+    thinking_block_index: int = 0
     saw_tool_call: bool = False
     finish_reason: str = ""
     usage: Dict[str, Any] = field(default_factory=dict)
@@ -153,13 +155,7 @@ def _anthropic_messages_to_openai_messages(payload: Dict[str, Any]) -> List[Dict
             if role == "user" and block_type == "tool_result":
                 _flush_user_text()
                 result_content = block.get("content")
-                result_parts: List[str] = []
-                if isinstance(result_content, str):
-                    result_parts.append(result_content)
-                elif isinstance(result_content, list):
-                    for result_block in result_content:
-                        if isinstance(result_block, dict) and result_block.get("type") == "text":
-                            result_parts.append(str(result_block.get("text") or ""))
+                result_parts = _stringify_anthropic_result_content(result_content)
 
                 tool_message: Dict[str, Any] = {
                     "role": "tool",
@@ -181,6 +177,24 @@ def _anthropic_messages_to_openai_messages(payload: Dict[str, Any]) -> List[Dict
                 message["content"] = None
         messages.append(message)
     return messages
+
+
+def _stringify_anthropic_result_content(content: Any) -> List[str]:
+    if isinstance(content, str):
+        return [content]
+    if not isinstance(content, list):
+        return []
+
+    result_parts: List[str] = []
+    for block in content:
+        if isinstance(block, dict):
+            if block.get("type") == "text":
+                result_parts.append(str(block.get("text") or ""))
+            else:
+                result_parts.append(json.dumps(block, ensure_ascii=False, separators=(",", ":")))
+        elif block is not None:
+            result_parts.append(str(block))
+    return result_parts
 
 
 def _anthropic_tools_to_openai_tools(payload: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
@@ -372,6 +386,28 @@ def _stop_text_block(state: _AnthropicStreamState) -> List[bytes]:
     return [_anthropic_sse_bytes("content_block_stop", payload)]
 
 
+def _start_thinking_block(state: _AnthropicStreamState) -> List[bytes]:
+    if state.thinking_block_started:
+        return []
+    state.thinking_block_started = True
+    state.thinking_block_index = state.next_block_index
+    state.next_block_index += 1
+    payload = {
+        "type": "content_block_start",
+        "index": state.thinking_block_index,
+        "content_block": {"type": "thinking", "thinking": ""},
+    }
+    return [_anthropic_sse_bytes("content_block_start", payload)]
+
+
+def _stop_thinking_block(state: _AnthropicStreamState) -> List[bytes]:
+    if not state.thinking_block_started:
+        return []
+    state.thinking_block_started = False
+    payload = {"type": "content_block_stop", "index": state.thinking_block_index}
+    return [_anthropic_sse_bytes("content_block_stop", payload)]
+
+
 def _ensure_tool_state(state: _AnthropicStreamState, tool_index: int) -> _AnthropicToolStreamState:
     tool_state = state.tool_states.get(tool_index)
     if tool_state is None:
@@ -423,6 +459,7 @@ def _finalize_anthropic_stream(
         events.extend(_ensure_anthropic_message_start(state, display_model=display_model, response_id=state.response_id))
 
     events.extend(_stop_text_block(state))
+    events.extend(_stop_thinking_block(state))
     events.extend(_stop_tool_blocks(state))
 
     if not state.message_delta_sent:
@@ -495,10 +532,37 @@ def _translate_openai_chunk_to_anthropic_events(
         }
         events.append(_anthropic_sse_bytes("content_block_delta", payload))
 
+    reasoning_content = delta.get("reasoning_content")
+    if isinstance(reasoning_content, list):
+        events.extend(_stop_text_block(state))
+        for reasoning_item in reasoning_content:
+            if not isinstance(reasoning_item, dict):
+                continue
+            reasoning_text = str(reasoning_item.get("text") or reasoning_item.get("thinking") or "")
+            if reasoning_text:
+                events.extend(_start_thinking_block(state))
+                payload = {
+                    "type": "content_block_delta",
+                    "index": state.thinking_block_index,
+                    "delta": {"type": "thinking_delta", "thinking": reasoning_text},
+                }
+                events.append(_anthropic_sse_bytes("content_block_delta", payload))
+
+            signature = reasoning_item.get("signature")
+            if isinstance(signature, str) and signature:
+                events.extend(_start_thinking_block(state))
+                payload = {
+                    "type": "content_block_delta",
+                    "index": state.thinking_block_index,
+                    "delta": {"type": "signature_delta", "signature": signature},
+                }
+                events.append(_anthropic_sse_bytes("content_block_delta", payload))
+
     tool_calls = delta.get("tool_calls")
     if isinstance(tool_calls, list) and tool_calls:
         state.saw_tool_call = True
         events.extend(_stop_text_block(state))
+        events.extend(_stop_thinking_block(state))
         for item in tool_calls:
             if not isinstance(item, dict):
                 continue

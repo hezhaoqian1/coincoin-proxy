@@ -372,3 +372,103 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"index":1', response.text)
         self.assertIn('\\"path\\":\\"foo.txt\\"', response.text)
         self.assertIn('"stop_reason":"tool_use"', response.text)
+
+    async def test_streaming_reasoning_content_translates_to_thinking_and_signature_deltas(self):
+        fake_user = SimpleNamespace(id="u_test", status="active")
+        stream_client = _RecordingStreamClient(
+            [
+                _FakeEventStreamResponse(
+                    [
+                        'data: {"id":"chatcmpl_reasoning","model":"gpt-5.5","choices":[{"delta":{"reasoning_content":[{"type":"reasoning","text":"Thinking step 1. ","signature":"sig_abc"},{"type":"reasoning","text":"Thinking step 2."}]},"finish_reason":null}]}',
+                        'data: {"id":"chatcmpl_reasoning","model":"gpt-5.5","choices":[{"delta":{"content":"Final answer"},"finish_reason":"stop"}],"usage":{"prompt_tokens":14,"completion_tokens":6,"total_tokens":20}}',
+                        "data: [DONE]",
+                    ]
+                )
+            ]
+        )
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_stream_client", AsyncMock(return_value=stream_client)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()),
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={
+                        "authorization": "Bearer sk_test",
+                        "anthropic-version": "2023-06-01",
+                        "user-agent": "claude-cli/2.1.121 (external, cli)",
+                    },
+                    json={
+                        "model": "claude-opus-4-7",
+                        "max_tokens": 128,
+                        "stream": True,
+                        "messages": [{"role": "user", "content": "Reason step by step"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('"type":"thinking_delta"', response.text)
+        self.assertIn('Thinking step 1.', response.text)
+        self.assertIn('Thinking step 2.', response.text)
+        self.assertIn('"type":"signature_delta"', response.text)
+        self.assertIn('"signature":"sig_abc"', response.text)
+        self.assertIn('Final answer', response.text)
+        self.assertIn('"stop_reason":"end_turn"', response.text)
+
+    async def test_tool_result_non_text_blocks_are_preserved_in_tool_message(self):
+        fake_user = SimpleNamespace(id="u_test", status="active")
+        client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "chatcmpl_tool_result_shape",
+                        "choices": [{"message": {"role": "assistant", "content": "OK"}}],
+                        "usage": {"prompt_tokens": 11, "completion_tokens": 1, "total_tokens": 12},
+                    }
+                )
+            ]
+        )
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_http_client", AsyncMock(return_value=client)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()),
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={
+                        "authorization": "Bearer sk_test",
+                        "anthropic-version": "2023-06-01",
+                        "user-agent": "claude-cli/2.1.121 (external, cli)",
+                    },
+                    json={
+                        "model": "claude-opus-4-7",
+                        "max_tokens": 64,
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "tool_result",
+                                        "tool_use_id": "toolu_123",
+                                        "content": [
+                                            {"type": "tool_reference", "tool_name": "mcp__nia__manage_resource"},
+                                            {"type": "text", "text": "plain result"},
+                                        ],
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200)
+        upstream_messages = client.calls[0]["json"]["messages"]
+        tool_messages = [msg for msg in upstream_messages if msg.get("role") == "tool"]
+        self.assertTrue(tool_messages)
+        self.assertEqual(tool_messages[0]["tool_call_id"], "toolu_123")
+        self.assertIn('"type":"tool_reference"', tool_messages[0]["content"])
+        self.assertIn('plain result', tool_messages[0]["content"])
