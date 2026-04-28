@@ -182,6 +182,8 @@ def _anthropic_messages_to_openai_messages(payload: Dict[str, Any]) -> List[Dict
 def _stringify_anthropic_result_content(content: Any) -> List[str]:
     if isinstance(content, str):
         return [content]
+    if isinstance(content, dict):
+        return [json.dumps(content, ensure_ascii=False, separators=(",", ":"))]
     if not isinstance(content, list):
         return []
 
