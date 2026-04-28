@@ -84,21 +84,6 @@ def _model_resolution_to_anthropic_error(exc: Exception) -> JSONResponse:
     return anthropic_error("Unable to resolve model", error_type="api_error", status_code=500)
 
 
-def _coerce_message_text(content: Any) -> str:
-    if isinstance(content, str):
-        return content
-    if not isinstance(content, list):
-        return ""
-
-    text_parts: List[str] = []
-    for block in content:
-        if not isinstance(block, dict):
-            continue
-        if block.get("type") == "text":
-            text_parts.append(str(block.get("text") or ""))
-    return "".join(text_parts)
-
-
 def _anthropic_messages_to_openai_messages(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     messages: List[Dict[str, Any]] = []
 
@@ -121,12 +106,80 @@ def _anthropic_messages_to_openai_messages(payload: Dict[str, Any]) -> List[Dict
         if not isinstance(item, dict):
             continue
         role = str(item.get("role") or "user")
-        messages.append(
-            {
-                "role": role,
-                "content": _coerce_message_text(item.get("content")),
-            }
-        )
+        content = item.get("content")
+
+        if isinstance(content, str):
+            messages.append({"role": role, "content": content})
+            continue
+
+        if not isinstance(content, list):
+            messages.append({"role": role, "content": ""})
+            continue
+
+        text_parts: List[str] = []
+        assistant_tool_calls: List[Dict[str, Any]] = []
+
+        def _flush_user_text() -> None:
+            if role == "user" and text_parts:
+                messages.append({"role": "user", "content": "".join(text_parts)})
+                text_parts.clear()
+
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            block_type = str(block.get("type") or "")
+
+            if block_type == "text":
+                text_parts.append(str(block.get("text") or ""))
+                continue
+
+            if role == "assistant" and block_type == "tool_use":
+                tool_id = str(block.get("id") or f"call_{len(assistant_tool_calls)}")
+                tool_name = str(block.get("name") or "")
+                tool_input = block.get("input")
+                if isinstance(tool_input, str):
+                    arguments = tool_input
+                else:
+                    arguments = json.dumps(tool_input or {}, ensure_ascii=False)
+                assistant_tool_calls.append(
+                    {
+                        "id": tool_id,
+                        "type": "function",
+                        "function": {"name": tool_name, "arguments": arguments},
+                    }
+                )
+                continue
+
+            if role == "user" and block_type == "tool_result":
+                _flush_user_text()
+                result_content = block.get("content")
+                result_parts: List[str] = []
+                if isinstance(result_content, str):
+                    result_parts.append(result_content)
+                elif isinstance(result_content, list):
+                    for result_block in result_content:
+                        if isinstance(result_block, dict) and result_block.get("type") == "text":
+                            result_parts.append(str(result_block.get("text") or ""))
+
+                tool_message: Dict[str, Any] = {
+                    "role": "tool",
+                    "tool_call_id": str(block.get("tool_use_id") or ""),
+                    "content": "".join(result_parts),
+                }
+                if tool_message["tool_call_id"]:
+                    messages.append(tool_message)
+                continue
+
+        if role == "user":
+            _flush_user_text()
+            continue
+
+        message: Dict[str, Any] = {"role": role, "content": "".join(text_parts)}
+        if assistant_tool_calls:
+            message["tool_calls"] = assistant_tool_calls
+            if not text_parts:
+                message["content"] = None
+        messages.append(message)
     return messages
 
 
@@ -179,8 +232,8 @@ def _build_anthropic_upstream_headers(cfg, request: Request) -> Dict[str, str]:
 def _build_anthropic_response(
     *,
     display_model: str,
-    public_model,
-    content_text: str,
+    message_content: List[Dict[str, Any]],
+    stop_reason: str,
     usage: Dict[str, Any],
     response_id: str = "",
 ) -> Dict[str, Any]:
@@ -189,8 +242,8 @@ def _build_anthropic_response(
         "type": "message",
         "role": "assistant",
         "model": display_model,
-        "content": [{"type": "text", "text": content_text}],
-        "stop_reason": "end_turn",
+        "content": message_content,
+        "stop_reason": stop_reason,
         "stop_sequence": None,
         "usage": {
             "input_tokens": int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0),
@@ -199,23 +252,56 @@ def _build_anthropic_response(
     }
 
 
-def _extract_text_from_openai_chat_response(data: Dict[str, Any]) -> str:
+def _extract_anthropic_content_from_openai_chat_response(data: Dict[str, Any]) -> List[Dict[str, Any]]:
     choices = data.get("choices")
     if not isinstance(choices, list) or not choices:
-        return ""
+        return []
     message = choices[0].get("message") if isinstance(choices[0], dict) else None
     if not isinstance(message, dict):
-        return ""
+        return []
+    content_blocks: List[Dict[str, Any]] = []
     content = message.get("content")
     if isinstance(content, str):
-        return content
+        if content:
+            content_blocks.append({"type": "text", "text": content})
     if isinstance(content, list):
-        text_parts: List[str] = []
         for block in content:
             if isinstance(block, dict) and block.get("type") == "text":
-                text_parts.append(str(block.get("text") or ""))
-        return "".join(text_parts)
-    return ""
+                content_blocks.append({"type": "text", "text": str(block.get("text") or "")})
+
+    tool_calls = message.get("tool_calls")
+    if isinstance(tool_calls, list):
+        for index, tool_call in enumerate(tool_calls):
+            if not isinstance(tool_call, dict):
+                continue
+            function = tool_call.get("function") if isinstance(tool_call.get("function"), dict) else {}
+            arguments = function.get("arguments", {})
+            if isinstance(arguments, str):
+                try:
+                    parsed_input = json.loads(arguments)
+                except Exception:
+                    parsed_input = {"raw": arguments}
+            elif isinstance(arguments, dict):
+                parsed_input = arguments
+            else:
+                parsed_input = {}
+            content_blocks.append(
+                {
+                    "type": "tool_use",
+                    "id": str(tool_call.get("id") or f"call_{index}"),
+                    "name": str(function.get("name") or ""),
+                    "input": parsed_input,
+                }
+            )
+    return content_blocks
+
+
+def _extract_anthropic_stop_reason_from_openai_chat_response(data: Dict[str, Any]) -> str:
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        return "end_turn"
+    finish_reason = str(choices[0].get("finish_reason") or choices[0].get("native_finish_reason") or "")
+    return _normalize_anthropic_stop_reason(finish_reason, finish_reason == "tool_calls")
 
 
 def _extract_usage_from_openai_chat_response(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -269,6 +355,7 @@ def _start_text_block(state: _AnthropicStreamState) -> List[bytes]:
     if state.text_block_started:
         return []
     state.text_block_started = True
+    state.next_block_index = max(state.next_block_index, state.text_block_index + 1)
     payload = {
         "type": "content_block_start",
         "index": state.text_block_index,
@@ -624,8 +711,9 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
             return anthropic_error(message or "Upstream request failed", error_type=error_type or "api_error", status_code=upstream.status_code)
         return anthropic_error("Upstream request failed", error_type="api_error", status_code=upstream.status_code)
 
-    text = _extract_text_from_openai_chat_response(data)
+    content_blocks = _extract_anthropic_content_from_openai_chat_response(data)
     usage = _extract_usage_from_openai_chat_response(data)
+    stop_reason = _extract_anthropic_stop_reason_from_openai_chat_response(data)
 
     await usage_buffer.add(
         user.id,
@@ -649,8 +737,8 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
 
     response_body = _build_anthropic_response(
         display_model=display_model,
-        public_model=public_model,
-        content_text=text,
+        message_content=content_blocks,
+        stop_reason=stop_reason,
         usage=usage,
         response_id=str(data.get("id") or ""),
     )

@@ -187,6 +187,102 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["model"], "claude-opus-4-7")
         self.assertEqual(client.calls[0]["json"]["model"], "gpt-5.5")
 
+    async def test_messages_preserve_tool_roundtrip_semantics(self):
+        fake_user = SimpleNamespace(id="u_test", status="active")
+        client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "chatcmpl_tool_roundtrip",
+                        "choices": [
+                            {
+                                "message": {
+                                    "role": "assistant",
+                                    "content": None,
+                                    "tool_calls": [
+                                        {
+                                            "id": "call_read_1",
+                                            "type": "function",
+                                            "function": {
+                                                "name": "read_file",
+                                                "arguments": "{\"path\":\"foo.txt\"}",
+                                            },
+                                        }
+                                    ],
+                                },
+                                "finish_reason": "tool_calls",
+                            }
+                        ],
+                        "usage": {"prompt_tokens": 21, "completion_tokens": 7, "total_tokens": 28},
+                    }
+                )
+            ]
+        )
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_http_client", AsyncMock(return_value=client)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()),
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={
+                        "authorization": "Bearer sk_test",
+                        "anthropic-version": "2023-06-01",
+                        "user-agent": "claude-cli/2.1.121 (external, cli)",
+                    },
+                    json={
+                        "model": "claude-opus-4-7",
+                        "max_tokens": 256,
+                        "tools": [
+                            {
+                                "name": "read_file",
+                                "description": "Read a file",
+                                "input_schema": {"type": "object", "properties": {"path": {"type": "string"}}},
+                            }
+                        ],
+                        "messages": [
+                            {"role": "user", "content": [{"type": "text", "text": "Read foo.txt"}]},
+                            {
+                                "role": "assistant",
+                                "content": [
+                                    {
+                                        "type": "tool_use",
+                                        "id": "call_read_1",
+                                        "name": "read_file",
+                                        "input": {"path": "foo.txt"},
+                                    }
+                                ],
+                            },
+                            {
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "tool_result",
+                                        "tool_use_id": "call_read_1",
+                                        "content": [{"type": "text", "text": "file contents"}],
+                                    }
+                                ],
+                            },
+                        ],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200)
+        upstream_messages = client.calls[0]["json"]["messages"]
+        self.assertEqual(upstream_messages[0], {"role": "user", "content": "Read foo.txt"})
+        self.assertEqual(upstream_messages[1]["role"], "assistant")
+        self.assertEqual(upstream_messages[1]["content"], None)
+        self.assertEqual(upstream_messages[1]["tool_calls"][0]["function"]["name"], "read_file")
+        self.assertEqual(upstream_messages[2], {"role": "tool", "tool_call_id": "call_read_1", "content": "file contents"})
+
+        body = response.json()
+        self.assertEqual(body["stop_reason"], "tool_use")
+        self.assertEqual(body["content"][0]["type"], "tool_use")
+        self.assertEqual(body["content"][0]["name"], "read_file")
+        self.assertEqual(body["content"][0]["input"]["path"], "foo.txt")
+
     async def test_streaming_messages_translate_openai_sse_to_anthropic_sse(self):
         fake_user = SimpleNamespace(id="u_test", status="active")
         stream_client = _RecordingStreamClient(
@@ -225,6 +321,7 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("event: message_start", response.text)
         self.assertIn("event: content_block_start", response.text)
+        self.assertIn('"index":0', response.text)
         self.assertIn('"type":"text_delta"', response.text)
         self.assertIn("Hello", response.text)
         self.assertIn("event: message_stop", response.text)
@@ -272,5 +369,6 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"type":"tool_use"', response.text)
         self.assertIn('"name":"read_file"', response.text)
         self.assertIn('"type":"input_json_delta"', response.text)
+        self.assertIn('"index":1', response.text)
         self.assertIn('\\"path\\":\\"foo.txt\\"', response.text)
         self.assertIn('"stop_reason":"tool_use"', response.text)
