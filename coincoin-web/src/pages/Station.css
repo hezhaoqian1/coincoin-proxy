@@ -64,7 +64,7 @@
     gap: 10px;
     padding: 20px;
     border-radius: var(--radius-lg);
-    background: var(--card-bg);
+    background: var(--bg-card);
 }
 
 .station-stat span {
@@ -95,7 +95,7 @@
 .station-panel {
     padding: 24px;
     border-radius: var(--radius-xl);
-    background: var(--card-bg);
+    background: var(--bg-card);
 }
 
 .station-panel-header {
