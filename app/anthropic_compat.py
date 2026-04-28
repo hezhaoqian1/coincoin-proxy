@@ -170,6 +170,9 @@ def _anthropic_messages_to_openai_messages(payload: Dict[str, Any]) -> List[Dict
             _flush_user_text()
             continue
 
+        if role == "assistant" and not text_parts and not assistant_tool_calls:
+            continue
+
         message: Dict[str, Any] = {"role": role, "content": "".join(text_parts)}
         if assistant_tool_calls:
             message["tool_calls"] = assistant_tool_calls

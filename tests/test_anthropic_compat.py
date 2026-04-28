@@ -651,3 +651,51 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(tool_messages)
         self.assertEqual(tool_messages[0]["tool_call_id"], "toolu_ask_1")
         self.assertIn('"questions":[{"header":"Scope","question":"Which direction?","answer":"A"}]', tool_messages[0]["content"])
+
+    async def test_assistant_thinking_only_history_is_dropped_in_follow_up_turns(self):
+        fake_user = SimpleNamespace(id="u_test", status="active")
+        client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "chatcmpl_thinking_only",
+                        "choices": [{"message": {"role": "assistant", "content": "continue"}}],
+                        "usage": {"prompt_tokens": 15, "completion_tokens": 2, "total_tokens": 17},
+                    }
+                )
+            ]
+        )
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_http_client", AsyncMock(return_value=client)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()),
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={
+                        "authorization": "Bearer sk_test",
+                        "anthropic-version": "2023-06-01",
+                        "user-agent": "claude-cli/2.1.121 (external, cli)",
+                    },
+                    json={
+                        "model": "claude-opus-4-7",
+                        "max_tokens": 64,
+                        "messages": [
+                            {
+                                "role": "assistant",
+                                "content": [
+                                    {"type": "thinking", "thinking": "internal only", "signature": "sig_valid"}
+                                ],
+                            },
+                            {"role": "user", "content": [{"type": "text", "text": "继续"}]},
+                        ],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200)
+        upstream_messages = client.calls[0]["json"]["messages"]
+        assistant_messages = [msg for msg in upstream_messages if msg.get("role") == "assistant"]
+        self.assertFalse(assistant_messages)
+        self.assertIn({"role": "user", "content": "继续"}, upstream_messages)
