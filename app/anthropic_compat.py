@@ -298,7 +298,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
         else:
             openai_payload["messages"] = [{"role": "system", "content": cloak.strip()}] + messages
 
-    upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/messages"
+    upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/chat/completions"
     headers = _build_anthropic_upstream_headers(used_cfg, request)
 
     if openai_payload.get("stream"):
