@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { MOCK_USAGE, getApiKey, getUsageLogs } from '../api/client'
+import AppShell from '../components/AppShell'
 import './Usage.css'
 
 export default function Usage() {
@@ -54,9 +55,9 @@ export default function Usage() {
 
     if (!usage) {
         return (
-            <div className="page-wrapper"><div className="container">
+            <AppShell title="请求日志" description="看每次请求的模型、计量、状态码和花费。">
                 <div className="loading-state"><div className="loading-spinner"></div><p>加载中...</p></div>
-            </div></div>
+            </AppShell>
         )
     }
 
@@ -65,12 +66,12 @@ export default function Usage() {
     const totalImages = usage.data.reduce((s, d) => s + (d.image_count || 0), 0)
 
     return (
-        <div className="page-wrapper">
-            <div className="container">
-                <div className="page-header">
-                    <h1 className="page-title">使用明细</h1>
-                    <p className="page-desc">查看每次请求的模型 alias、上游模型、计量和费用。</p>
-                </div>
+        <AppShell
+            title="请求日志"
+            description="看每次请求的公开模型、上游模型、计量和花费。"
+            actions={<button className="btn btn-secondary btn-sm" onClick={exportCSV}>导出 CSV</button>}
+        >
+            <div className="usage-page">
 
                 <div className="stats-grid stagger-children">
                     <div className="stat-card glass-card animate-fade-in-up">
@@ -87,7 +88,7 @@ export default function Usage() {
                             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent-emerald)" strokeWidth="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" /></svg>
                         </div>
                         <div className="stat-info">
-                            <span className="stat-label">页内花费</span>
+                            <span className="stat-label">当前筛选花费</span>
                             <span className="stat-value">${totalCost.toFixed(2)}</span>
                         </div>
                     </div>
@@ -96,7 +97,7 @@ export default function Usage() {
                             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" strokeWidth="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2" /></svg>
                         </div>
                         <div className="stat-info">
-                            <span className="stat-label">页内 Token</span>
+                            <span className="stat-label">当前筛选 Token</span>
                             <span className="stat-value">{totalTokens.toLocaleString()}</span>
                         </div>
                     </div>
@@ -105,7 +106,7 @@ export default function Usage() {
                             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent-amber)" strokeWidth="2"><path d="M4 7h16M4 17h16M7 4v16M17 4v16" /></svg>
                         </div>
                         <div className="stat-info">
-                            <span className="stat-label">页内图片</span>
+                            <span className="stat-label">当前筛选图片</span>
                             <span className="stat-value">{totalImages}</span>
                         </div>
                     </div>
@@ -114,7 +115,7 @@ export default function Usage() {
                 <div className="usage-guide glass-card animate-fade-in-up">
                     <div className="usage-guide-copy">
                         <span className="usage-kicker">Request Logs</span>
-                        <p>查模型路由、计量和状态码时先看这里。</p>
+                        <p>排查模型路由、计量和状态码时，先看这里。</p>
                     </div>
                     <div className="usage-guide-pills">
                         <div className="usage-guide-pill">
@@ -137,7 +138,7 @@ export default function Usage() {
                     <div className="usage-filters-header">
                         <div>
                             <h3>筛选与导出</h3>
-                            <p>按端点、状态码和时间区间缩小范围，再导出 CSV 排查。</p>
+                            <p>先缩小范围，再导出 CSV。看问题会快很多。</p>
                         </div>
                     </div>
                     <div className="filter-row">
@@ -223,6 +224,6 @@ export default function Usage() {
                     </div>
                 </div>
             </div>
-        </div>
+        </AppShell>
     )
 }

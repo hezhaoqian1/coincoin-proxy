@@ -8,6 +8,7 @@ import {
     getStationSummary,
     updateStationSettlement,
 } from '../api/client'
+import AppShell from '../components/AppShell'
 import './Station.css'
 
 function formatMoney(cents) {
@@ -122,57 +123,53 @@ export default function Station() {
 
     if (loading) {
         return (
-            <div className="page-wrapper">
-                <div className="container">
+            <AppShell title="站长中心" description="管理下游用户、分润账本和结算资料。">
                     <div className="loading-state">
                         <div className="loading-spinner"></div>
                         <p>加载站长中心...</p>
                     </div>
-                </div>
-            </div>
+            </AppShell>
         )
     }
 
     if (error && !station) {
         return (
-            <div className="page-wrapper">
-                <div className="container">
+            <AppShell title="站长中心" description="管理下游用户、分润账本和结算资料。">
                     <div className="station-empty glass-card">
                         <h1>站长中心暂不可用</h1>
                         <p>{error}</p>
                     </div>
-                </div>
-            </div>
+            </AppShell>
         )
     }
 
     if (!station) {
         const application = applicationState?.application
         return (
-            <div className="page-wrapper">
-                <div className="container">
+            <AppShell title="站长中心" description="管理下游用户、分润账本和结算资料。">
+                <div className="station-page">
                     <section className="station-hero glass-card">
                         <span className="station-kicker">Station Center</span>
                         <h1>你还没有开通站长资格</h1>
-                        <p>站长中心只对审核通过后的站长开放。先回到概览页提交申请，平台统一收款后再按账本人工打款给你。</p>
+                        <p>站长中心只对审核通过后的站长开放。先回概览页提交申请，平台统一收款后再按账本人工打款给你。</p>
                     </section>
                     <section className="station-empty glass-card">
                         <h2>{application ? '当前申请状态' : '下一步'}</h2>
-                        <p>{application ? `当前状态：${application.status}` : '请到 Dashboard 提交“申请成为站长”。'}</p>
+                        <p>{application ? `当前状态：${application.status}` : '先到概览页提交“申请成为站长”。'}</p>
                     </section>
                 </div>
-            </div>
+            </AppShell>
         )
     }
 
     return (
-        <div className="page-wrapper">
-            <div className="container station-page">
+        <AppShell title="站长中心" description="管理下游用户、分润账本和结算资料。">
+            <div className="station-page">
                 <section className="station-hero glass-card">
                     <div>
                         <span className="station-kicker">Station Center</span>
                         <h1>{station.display_name}</h1>
-                        <p>平台统一收款，站长配置支付宝收款信息，后台按可结算账本手动打款。这里负责下游开户、分润追踪和结算资料维护。</p>
+                        <p>平台统一收款，站长配置支付宝收款信息，后台按可结算账本手动打款。这里负责下游开户、分润追踪和结算资料。</p>
                     </div>
                     <div className="station-hero-meta">
                         <span className="badge badge-success">已开通</span>
@@ -211,7 +208,7 @@ export default function Station() {
                         <div className="station-panel-header">
                             <div>
                                 <h2>结算信息</h2>
-                                <p>用户付款仍进入平台支付宝。这里保存你收款用的支付宝信息，后台人工扫你二维码或转你账号后，再把批次标记为已打款。</p>
+                                <p>用户付款仍进入平台支付宝。这里保存你收款用的支付宝信息，后台打款后再把批次标记为已打款。</p>
                             </div>
                         </div>
                         <form className="station-form" onSubmit={handleSettlementSubmit}>
@@ -276,7 +273,7 @@ export default function Station() {
                         <div className="station-panel-header">
                             <div>
                                 <h2>最近佣金账本</h2>
-                                <p>仅显示与你站点相关的订单佣金，不会扫描全站支付链路。</p>
+                                <p>这里只显示与你站点相关的订单佣金。</p>
                             </div>
                         </div>
                         <div className="station-table-wrap">
@@ -390,6 +387,6 @@ export default function Station() {
                     </div>
                 </section>
             </div>
-        </div>
+        </AppShell>
     )
 }

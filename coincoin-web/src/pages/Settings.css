@@ -360,15 +360,29 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 16px;
     padding: var(--space-sm) var(--space-md);
     background: var(--bg-glass-strong);
     border-bottom: 1px solid var(--border-color);
+}
+
+.snippet-heading {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
 }
 
 .snippet-title {
     font-size: 0.82rem;
     font-weight: 600;
     color: var(--text-secondary);
+}
+
+.snippet-summary {
+    font-size: 0.78rem;
+    color: var(--text-tertiary);
+    line-height: 1.45;
 }
 
 .snippet-code {
@@ -425,5 +439,10 @@
         width: 100%;
         text-align: left;
         border-radius: var(--radius-md);
+    }
+
+    .snippet-header {
+        flex-direction: column;
+        align-items: stretch;
     }
 }

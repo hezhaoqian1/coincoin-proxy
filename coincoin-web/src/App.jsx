@@ -1,4 +1,5 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { useEffect } from 'react'
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from './hooks/useAuth'
 import { ThemeProvider } from './hooks/useTheme'
 import Navbar from './components/Navbar'
@@ -37,10 +38,27 @@ function GuestOnlyRoute({ children }) {
     return children
 }
 
+function ScrollManager() {
+    const location = useLocation()
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return
+        window.history.scrollRestoration = 'manual'
+    }, [])
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return
+        window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
+    }, [location.pathname])
+
+    return null
+}
+
 export default function App() {
     return (
         <ThemeProvider>
             <BrowserRouter>
+                <ScrollManager />
                 <Routes>
                     <Route path="/" element={<PublicShell><Landing /></PublicShell>} />
                     <Route path="/login" element={

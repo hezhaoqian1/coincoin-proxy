@@ -5,8 +5,8 @@
     right: 0;
     height: var(--navbar-height);
     background: var(--navbar-bg);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
     border-bottom: 1px solid var(--border-color);
     z-index: 1000;
 }
@@ -44,30 +44,19 @@
 .logo-text {
     font-size: 1.2rem;
     font-weight: 700;
-    background: var(--gradient-accent);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
+    color: var(--text-primary);
 }
 
 .navbar-links {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
     flex-wrap: wrap;
     justify-content: flex-end;
 }
 
-.nav-secondary-links {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding-left: 12px;
-    border-left: 1px solid var(--border-color);
-}
-
 .nav-link {
-    padding: 8px 12px;
+    padding: 8px 10px;
     color: var(--text-secondary);
     font-size: 0.88rem;
     font-weight: 600;
@@ -83,55 +72,7 @@
 
 .nav-link.active {
     color: var(--text-primary);
-    background: var(--bg-glass-strong);
-}
-
-.nav-link-secondary {
-    font-size: 0.84rem;
-    color: var(--text-secondary);
-}
-
-.nav-session-badge {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    min-width: 120px;
-    padding: 8px 12px;
-    margin-right: 4px;
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-md);
-    background: var(--bg-glass);
-}
-
-.theme-toggle {
-    width: 36px;
-    height: 36px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 10px;
-    border: 1px solid var(--border-color);
-    background: var(--bg-card);
-    cursor: pointer;
-    transition: all var(--transition-fast);
-}
-
-.theme-toggle:hover {
-    border-color: var(--border-color-hover);
-    background: var(--bg-glass);
-}
-
-.nav-session-title {
-    font-size: 0.8rem;
-    font-weight: 700;
-    color: var(--text-primary);
-    line-height: 1.1;
-}
-
-.nav-session-sub {
-    font-size: 0.72rem;
-    color: var(--text-tertiary);
-    line-height: 1.1;
+    background: transparent;
 }
 
 @media (max-width: 768px) {
@@ -153,20 +94,6 @@
     .nav-link {
         padding: 6px 10px;
         font-size: 0.8rem;
-    }
-
-    .nav-session-badge {
-        width: 100%;
-        margin-right: 0;
-        order: -1;
-    }
-
-    .nav-secondary-links {
-        width: 100%;
-        border-left: none;
-        padding-left: 0;
-        gap: 4px;
-        flex-wrap: wrap;
     }
 
     .logo-text {
