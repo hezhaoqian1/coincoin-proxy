@@ -126,6 +126,234 @@
       "billable_sku": "legacy-gpt-5.5-text"
     },
     {
+      "id": "claude-opus-4-7",
+      "owned_by": "coincoin",
+      "provider_name": "",
+      "provider_model": "${COINCOIN_FIXED_MODEL}",
+      "capabilities": ["chat/completions", "responses"],
+      "routing_mode": "direct",
+      "delivery_lane": "upstream_direct",
+      "upstream_model": "${COINCOIN_FIXED_MODEL}",
+      "upstream_url": "${COINCOIN_UPSTREAM_BASE_URL}",
+      "api_key": "${COINCOIN_UPSTREAM_API_KEY}",
+      "auth_style": "${COINCOIN_PRIMARY_AUTH_STYLE:-azure}",
+      "price_input_per_million": "${COINCOIN_PRICE_INPUT_PER_MILLION:-99}",
+      "price_output_per_million": "${COINCOIN_PRICE_OUTPUT_PER_MILLION:-699}",
+      "billable_sku": "claude-code-compat-text",
+      "metadata": {
+        "compat_family": "claude-code"
+      }
+    },
+    {
+      "id": "claude-sonnet-4-6",
+      "owned_by": "coincoin",
+      "provider_name": "",
+      "provider_model": "${COINCOIN_FIXED_MODEL}",
+      "capabilities": ["chat/completions", "responses"],
+      "routing_mode": "direct",
+      "delivery_lane": "upstream_direct",
+      "upstream_model": "${COINCOIN_FIXED_MODEL}",
+      "upstream_url": "${COINCOIN_UPSTREAM_BASE_URL}",
+      "api_key": "${COINCOIN_UPSTREAM_API_KEY}",
+      "auth_style": "${COINCOIN_PRIMARY_AUTH_STYLE:-azure}",
+      "price_input_per_million": "${COINCOIN_PRICE_INPUT_PER_MILLION:-99}",
+      "price_output_per_million": "${COINCOIN_PRICE_OUTPUT_PER_MILLION:-699}",
+      "billable_sku": "claude-code-compat-text",
+      "metadata": {
+        "compat_family": "claude-code"
+      }
+    },
+    {
+      "id": "claude-haiku-4-5",
+      "owned_by": "coincoin",
+      "provider_name": "",
+      "provider_model": "${COINCOIN_FIXED_MODEL}",
+      "capabilities": ["chat/completions", "responses"],
+      "routing_mode": "direct",
+      "delivery_lane": "upstream_direct",
+      "upstream_model": "${COINCOIN_FIXED_MODEL}",
+      "upstream_url": "${COINCOIN_UPSTREAM_BASE_URL}",
+      "api_key": "${COINCOIN_UPSTREAM_API_KEY}",
+      "auth_style": "${COINCOIN_PRIMARY_AUTH_STYLE:-azure}",
+      "price_input_per_million": "${COINCOIN_PRICE_INPUT_PER_MILLION:-99}",
+      "price_output_per_million": "${COINCOIN_PRICE_OUTPUT_PER_MILLION:-699}",
+      "billable_sku": "claude-code-compat-text",
+      "metadata": {
+        "compat_family": "claude-code"
+      }
+    },
+    {
+      "id": "claude-haiku-4-5-20251001",
+      "owned_by": "coincoin",
+      "provider_name": "",
+      "provider_model": "${COINCOIN_FIXED_MODEL}",
+      "capabilities": ["chat/completions", "responses"],
+      "routing_mode": "direct",
+      "delivery_lane": "upstream_direct",
+      "upstream_model": "${COINCOIN_FIXED_MODEL}",
+      "upstream_url": "${COINCOIN_UPSTREAM_BASE_URL}",
+      "api_key": "${COINCOIN_UPSTREAM_API_KEY}",
+      "auth_style": "${COINCOIN_PRIMARY_AUTH_STYLE:-azure}",
+      "price_input_per_million": "${COINCOIN_PRICE_INPUT_PER_MILLION:-99}",
+      "price_output_per_million": "${COINCOIN_PRICE_OUTPUT_PER_MILLION:-699}",
+      "billable_sku": "claude-code-compat-text",
+      "metadata": {
+        "compat_family": "claude-code"
+      }
+    },
+    {
+      "id": "opus",
+      "owned_by": "coincoin",
+      "provider_name": "",
+      "provider_model": "${COINCOIN_FIXED_MODEL}",
+      "capabilities": ["chat/completions", "responses"],
+      "routing_mode": "direct",
+      "delivery_lane": "upstream_direct",
+      "upstream_model": "${COINCOIN_FIXED_MODEL}",
+      "upstream_url": "${COINCOIN_UPSTREAM_BASE_URL}",
+      "api_key": "${COINCOIN_UPSTREAM_API_KEY}",
+      "auth_style": "${COINCOIN_PRIMARY_AUTH_STYLE:-azure}",
+      "price_input_per_million": "${COINCOIN_PRICE_INPUT_PER_MILLION:-99}",
+      "price_output_per_million": "${COINCOIN_PRICE_OUTPUT_PER_MILLION:-699}",
+      "billable_sku": "claude-code-compat-text",
+      "metadata": {
+        "compat_family": "claude-code"
+      }
+    },
+    {
+      "id": "sonnet",
+      "owned_by": "coincoin",
+      "provider_name": "",
+      "provider_model": "${COINCOIN_FIXED_MODEL}",
+      "capabilities": ["chat/completions", "responses"],
+      "routing_mode": "direct",
+      "delivery_lane": "upstream_direct",
+      "upstream_model": "${COINCOIN_FIXED_MODEL}",
+      "upstream_url": "${COINCOIN_UPSTREAM_BASE_URL}",
+      "api_key": "${COINCOIN_UPSTREAM_API_KEY}",
+      "auth_style": "${COINCOIN_PRIMARY_AUTH_STYLE:-azure}",
+      "price_input_per_million": "${COINCOIN_PRICE_INPUT_PER_MILLION:-99}",
+      "price_output_per_million": "${COINCOIN_PRICE_OUTPUT_PER_MILLION:-699}",
+      "billable_sku": "claude-code-compat-text",
+      "metadata": {
+        "compat_family": "claude-code"
+      }
+    },
+    {
+      "id": "haiku",
+      "owned_by": "coincoin",
+      "provider_name": "",
+      "provider_model": "${COINCOIN_FIXED_MODEL}",
+      "capabilities": ["chat/completions", "responses"],
+      "routing_mode": "direct",
+      "delivery_lane": "upstream_direct",
+      "upstream_model": "${COINCOIN_FIXED_MODEL}",
+      "upstream_url": "${COINCOIN_UPSTREAM_BASE_URL}",
+      "api_key": "${COINCOIN_UPSTREAM_API_KEY}",
+      "auth_style": "${COINCOIN_PRIMARY_AUTH_STYLE:-azure}",
+      "price_input_per_million": "${COINCOIN_PRICE_INPUT_PER_MILLION:-99}",
+      "price_output_per_million": "${COINCOIN_PRICE_OUTPUT_PER_MILLION:-699}",
+      "billable_sku": "claude-code-compat-text",
+      "metadata": {
+        "compat_family": "claude-code"
+      }
+    },
+    {
+      "id": "best",
+      "owned_by": "coincoin",
+      "provider_name": "",
+      "provider_model": "${COINCOIN_FIXED_MODEL}",
+      "capabilities": ["chat/completions", "responses"],
+      "routing_mode": "direct",
+      "delivery_lane": "upstream_direct",
+      "upstream_model": "${COINCOIN_FIXED_MODEL}",
+      "upstream_url": "${COINCOIN_UPSTREAM_BASE_URL}",
+      "api_key": "${COINCOIN_UPSTREAM_API_KEY}",
+      "auth_style": "${COINCOIN_PRIMARY_AUTH_STYLE:-azure}",
+      "price_input_per_million": "${COINCOIN_PRICE_INPUT_PER_MILLION:-99}",
+      "price_output_per_million": "${COINCOIN_PRICE_OUTPUT_PER_MILLION:-699}",
+      "billable_sku": "claude-code-compat-text",
+      "metadata": {
+        "compat_family": "claude-code"
+      }
+    },
+    {
+      "id": "default",
+      "owned_by": "coincoin",
+      "provider_name": "",
+      "provider_model": "${COINCOIN_FIXED_MODEL}",
+      "capabilities": ["chat/completions", "responses"],
+      "routing_mode": "direct",
+      "delivery_lane": "upstream_direct",
+      "upstream_model": "${COINCOIN_FIXED_MODEL}",
+      "upstream_url": "${COINCOIN_UPSTREAM_BASE_URL}",
+      "api_key": "${COINCOIN_UPSTREAM_API_KEY}",
+      "auth_style": "${COINCOIN_PRIMARY_AUTH_STYLE:-azure}",
+      "price_input_per_million": "${COINCOIN_PRICE_INPUT_PER_MILLION:-99}",
+      "price_output_per_million": "${COINCOIN_PRICE_OUTPUT_PER_MILLION:-699}",
+      "billable_sku": "claude-code-compat-text",
+      "metadata": {
+        "compat_family": "claude-code"
+      }
+    },
+    {
+      "id": "opus[1m]",
+      "owned_by": "coincoin",
+      "provider_name": "",
+      "provider_model": "${COINCOIN_FIXED_MODEL}",
+      "capabilities": ["chat/completions", "responses"],
+      "routing_mode": "direct",
+      "delivery_lane": "upstream_direct",
+      "upstream_model": "${COINCOIN_FIXED_MODEL}",
+      "upstream_url": "${COINCOIN_UPSTREAM_BASE_URL}",
+      "api_key": "${COINCOIN_UPSTREAM_API_KEY}",
+      "auth_style": "${COINCOIN_PRIMARY_AUTH_STYLE:-azure}",
+      "price_input_per_million": "${COINCOIN_PRICE_INPUT_PER_MILLION:-99}",
+      "price_output_per_million": "${COINCOIN_PRICE_OUTPUT_PER_MILLION:-699}",
+      "billable_sku": "claude-code-compat-text",
+      "metadata": {
+        "compat_family": "claude-code"
+      }
+    },
+    {
+      "id": "sonnet[1m]",
+      "owned_by": "coincoin",
+      "provider_name": "",
+      "provider_model": "${COINCOIN_FIXED_MODEL}",
+      "capabilities": ["chat/completions", "responses"],
+      "routing_mode": "direct",
+      "delivery_lane": "upstream_direct",
+      "upstream_model": "${COINCOIN_FIXED_MODEL}",
+      "upstream_url": "${COINCOIN_UPSTREAM_BASE_URL}",
+      "api_key": "${COINCOIN_UPSTREAM_API_KEY}",
+      "auth_style": "${COINCOIN_PRIMARY_AUTH_STYLE:-azure}",
+      "price_input_per_million": "${COINCOIN_PRICE_INPUT_PER_MILLION:-99}",
+      "price_output_per_million": "${COINCOIN_PRICE_OUTPUT_PER_MILLION:-699}",
+      "billable_sku": "claude-code-compat-text",
+      "metadata": {
+        "compat_family": "claude-code"
+      }
+    },
+    {
+      "id": "opusplan",
+      "owned_by": "coincoin",
+      "provider_name": "",
+      "provider_model": "${COINCOIN_FIXED_MODEL}",
+      "capabilities": ["chat/completions", "responses"],
+      "routing_mode": "direct",
+      "delivery_lane": "upstream_direct",
+      "upstream_model": "${COINCOIN_FIXED_MODEL}",
+      "upstream_url": "${COINCOIN_UPSTREAM_BASE_URL}",
+      "api_key": "${COINCOIN_UPSTREAM_API_KEY}",
+      "auth_style": "${COINCOIN_PRIMARY_AUTH_STYLE:-azure}",
+      "price_input_per_million": "${COINCOIN_PRICE_INPUT_PER_MILLION:-99}",
+      "price_output_per_million": "${COINCOIN_PRICE_OUTPUT_PER_MILLION:-699}",
+      "billable_sku": "claude-code-compat-text",
+      "metadata": {
+        "compat_family": "claude-code"
+      }
+    },
+    {
       "id": "gpt-5-codex",
       "owned_by": "openai",
       "provider_name": "OpenAI",
