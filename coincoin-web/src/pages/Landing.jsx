@@ -6,15 +6,15 @@ import './Landing.css'
 const ACCESS_STEPS = [
     {
         title: '创建控制台账号',
-        body: '先登录控制台，后面的余额、日志和密钥都从这里管。',
+        body: '账户、余额、日志和密钥都从控制台管理。',
     },
     {
         title: '生成开发者 Key',
-        body: '给程序调用单独生成一把 Key，不要拿网页登录态去发请求。',
+        body: '程序调用单独使用开发者 Key，不用网页登录态。',
     },
     {
-        title: '复制配置直接开跑',
-        body: 'OpenAI 客户端走 /v1，Claude Code 走根地址。平时只改 model，不要自己猜上游地址。',
+        title: '复制配置',
+        body: 'OpenAI 客户端走 /v1，Claude Code 走根地址。平时主要改 model。',
     },
 ]
 
@@ -30,15 +30,15 @@ const CLIENTS = [
 const ENTRY_POINTS = [
     {
         title: '统一入口',
-        detail: '一个 OpenAI 兼容地址，接 GPT 文本、Gemini 文本和 Gemini 生图。',
+        detail: '一个 OpenAI 兼容地址，接文本和图片请求。',
     },
     {
-        title: '控制台集中管理',
-        detail: '充值、请求日志、开发者 Key 和接入配置都放在一个后台里。',
+        title: '控制台管理',
+        detail: '充值、请求日志、开发者 Key 和接入配置都在同一个后台里。',
     },
     {
-        title: '接入链路短',
-        detail: '拿到 Key 之后直接复制配置，不用维护多套脚本和地址。',
+        title: '接入简单',
+        detail: '拿到 Key 后直接复制配置，不用维护多套地址。',
     },
 ]
 
@@ -51,9 +51,9 @@ function PricingPreview({ isLoggedIn }) {
                 <div className="landing-section-head">
                     <div>
                         <span className="landing-eyebrow">充值</span>
-                        <h2>先充余额，再按量扣费</h2>
+                        <h2>充值后按量扣费</h2>
                     </div>
-                    <p>先选合适额度。后续文本和图片请求统一从余额扣，不再拆开结算。</p>
+                    <p>文本和图片请求共用一个余额。</p>
                 </div>
                 <div className="landing-pricing-grid">
                     {plans.map((plan) => (
@@ -79,7 +79,7 @@ function PricingPreview({ isLoggedIn }) {
                         {isLoggedIn ? '去充值' : '查看充值页'}
                     </Link>
                     <Link to="/docs" className="btn btn-secondary">
-                        先看接入文档
+                        查看接入文档
                     </Link>
                 </div>
             </div>
@@ -99,8 +99,8 @@ export default function Landing() {
                         <span className="landing-kicker">ClawFather</span>
                         <h1>ClawFather：一个入口，接 GPT、Gemini 和生图</h1>
                         <p className="landing-summary">
-                            面向开发者的统一入口。先登录控制台，生成开发者 Key，
-                            再把配置复制到 CLI、SDK 或你常用的客户端里。
+                            面向开发者的统一入口。
+                            登录控制台、生成开发者 Key，然后把配置复制到 CLI、SDK 或常用客户端。
                         </p>
                         <div className="landing-inline-actions">
                             <Link to={startTarget} className="btn btn-primary btn-lg">
@@ -126,7 +126,7 @@ export default function Landing() {
                                 <span className="landing-console-label">接入路径</span>
                                 <strong>控制台 {'->'} 开发者 Key {'->'} OpenAI / Claude Code</strong>
                             </div>
-                            <span className="landing-console-status">当前推荐</span>
+                            <span className="landing-console-status">常用路径</span>
                         </div>
                         <div className="landing-console-body">
                             {ACCESS_STEPS.map((step, index) => (
@@ -140,7 +140,7 @@ export default function Landing() {
                             ))}
                         </div>
                         <div className="landing-code-card">
-                            <span className="landing-code-label">最短配置</span>
+                            <span className="landing-code-label">示例配置</span>
                             <pre>{`# OpenAI-compatible
 base_url = "https://your-domain/v1"
 api_key = "sk_cc_xxxxx"
@@ -160,9 +160,9 @@ model = "claude-opus-4-7"`}</pre>
                     <div className="landing-section-head">
                         <div>
                             <span className="landing-eyebrow">控制台结构</span>
-                            <h2>公开页讲清楚，控制台干正事</h2>
+                            <h2>公开页负责说明，控制台负责操作</h2>
                         </div>
-                        <p>接入、计费、日志和密钥管理放在同一个工作台里，少跳页，少猜路径。</p>
+                        <p>接入、计费、日志和密钥管理放在同一个工作台里。</p>
                     </div>
                     <div className="landing-feature-grid">
                         {ENTRY_POINTS.map((item) => (
@@ -180,9 +180,9 @@ model = "claude-opus-4-7"`}</pre>
                     <div className="landing-section-head">
                         <div>
                             <span className="landing-eyebrow">开始使用</span>
-                            <h2>三步就能接起来</h2>
+                            <h2>三步完成接入</h2>
                         </div>
-                        <p>先登录，再生成 Key，最后复制配置。</p>
+                        <p>登录、生成 Key、复制配置。</p>
                     </div>
                     <div className="landing-step-grid">
                         {ACCESS_STEPS.map((step, index) => (

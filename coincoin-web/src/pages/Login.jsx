@@ -44,9 +44,9 @@ export default function Login() {
             </div>
             <div className="auth-card glass-card animate-fade-in-up">
                 <div className="auth-header">
-                    <div className="logo-icon" style={{ width: 48, height: 48, fontSize: '1.1rem', borderRadius: 14 }}>CC</div>
+                    <div className="logo-icon" style={{ width: 48, height: 48, fontSize: '1.1rem', borderRadius: 14 }}>CF</div>
                     <h1>登录控制台</h1>
-                    <p>默认先用控制台账号登录。已经拿到开发者 API Key 时，再用下面的直登入口。</p>
+                    <p>默认使用控制台账号登录。已有开发者 Key 时，再走下面的直登入口。</p>
                 </div>
 
                 <div className="auth-tabs">
@@ -88,17 +88,17 @@ export default function Login() {
                             {loading ? '登录中...' : '进入控制台'}
                         </button>
                         <p className="auth-helper-text">
-                            还没有控制台账号？先注册，再去仪表盘生成开发者 API Key。
+                            还没有控制台账号？先注册。
                         </p>
                     </form>
                 ) : (
                     <form onSubmit={handleKeyLogin} className="auth-form">
                         <div className="auth-callout auth-callout-muted">
                             <strong>这个入口只做 Key 验证</strong>
-                            <p>适合已经拿到开发者 API Key 的人。第一次来站，先注册或登录控制台账号。</p>
+                            <p>适合已经拿到开发者 Key 的用户。第一次来站，先注册或登录控制台账号。</p>
                         </div>
                         <div className="input-group">
-                            <label>开发者 API Key</label>
+                            <label>开发者 Key</label>
                             <input
                                 type="password"
                                 className="input-field"
@@ -113,7 +113,7 @@ export default function Login() {
                             {loading ? '验证中...' : '验证并进入'}
                         </button>
                         <p className="auth-helper-text">
-                            没有开发者 API Key 时，回到控制台登录。
+                            没有开发者 Key 时，用控制台账号登录。
                         </p>
                     </form>
                 )}

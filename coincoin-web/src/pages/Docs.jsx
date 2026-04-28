@@ -11,12 +11,12 @@ const TABS = [
     {
         label: '快速开始',
         kicker: 'Getting Started',
-        intro: '先拿开发者 Key，再完成第一条成功请求。'
+        intro: '从开发者 Key 到第一条请求。'
     },
     {
         label: '模型与价格',
         kicker: 'Catalog',
-        intro: '查看公开模型、上游映射和计费。'
+        intro: '模型目录、上游映射和计费。'
     },
     {
         label: 'API 参考',
@@ -26,7 +26,7 @@ const TABS = [
     {
         label: '代码示例',
         kicker: 'Snippets',
-        intro: '常见客户端、CLI 和 SDK 的可直接复制配置。'
+        intro: '常见客户端、CLI 和 SDK 配置。'
     }
 ]
 
@@ -66,10 +66,10 @@ export default function Docs() {
     }, [requestedTab])
 
     const docsIntro = useMemo(() => {
-        if (requestedTab === 'models') return '公开模型目录、上游映射和计费都从这里看。'
-        if (requestedTab === 'api') return '端点、认证方式和兼容边界都在这里。'
-        if (requestedTab === 'snippets') return '常见客户端、CLI 和 SDK 的直接可用配置在这里。'
-        return '先拿开发者 Key，再完成第一条成功请求。'
+        if (requestedTab === 'models') return '模型目录、上游映射和计费。'
+        if (requestedTab === 'api') return '端点、认证方式和兼容边界。'
+        if (requestedTab === 'snippets') return '常见客户端、CLI 和 SDK 配置。'
+        return '从开发者 Key 到第一条请求。'
     }, [requestedTab])
 
     const handleTabChange = (index) => {
@@ -84,7 +84,7 @@ export default function Docs() {
             <div className="container">
                 <div className="page-header">
                     <h1 className="page-title">接入文档</h1>
-                    <p className="page-desc">公开模型目录、兼容规则和多客户端接入方式都在这里</p>
+                    <p className="page-desc">模型目录、接口说明和客户端配置</p>
                 </div>
 
                 <div className="docs-layout">
@@ -118,7 +118,7 @@ export default function Docs() {
 
     if (isLoggedIn) {
         return (
-            <AppShell title="接入文档" description="公开模型目录、兼容规则和常见客户端接法都在这里。">
+            <AppShell title="接入文档" description="模型目录、接口说明和客户端配置。">
                 <div className="docs-shell-page">
                     <div className="docs-shell-hero glass-card">
                         <div>
@@ -164,51 +164,51 @@ function AudienceGuide() {
     const routes = [
         {
             title: '直连 API / cURL',
-            tag: '最短路径',
-            desc: '服务端脚本、后端接口和直接请求 OpenAI 兼容端点。',
-            bullets: ['先看 API 参考', '优先看 chat / responses / models', '失败再查错误码和余额']
+            tag: '通用',
+            desc: '服务端脚本、后端接口和 OpenAI 兼容调用。',
+            bullets: ['先看 API 参考', '常用端点是 chat / responses / models', '失败时再查错误码和余额']
         },
         {
             title: 'Codex CLI',
-            tag: '一等支持',
-            desc: '命令行工作流，直接走稳定的 OpenAI 兼容入口。',
-            bullets: ['先生成开发者 Key', '在代码示例里抄 config.toml', '默认推荐 responses']
+            tag: '推荐',
+            desc: '命令行工作流，走 OpenAI 兼容入口。',
+            bullets: ['准备开发者 Key', '直接照抄 config.toml', '通常用 responses']
         },
         {
             title: 'OpenCode',
             tag: '已实测',
-            desc: '本地 coding agent 工作流，已跑通模型发现和基础 run 流程。',
-            bullets: ['先看 OpenCode quickstart', '默认先用 gpt-5.3-codex', '需要更快时再试 gemini-fast']
+            desc: '本地 coding agent 工作流，已验证基础可用。',
+            bullets: ['先看 OpenCode quickstart', '默认用 gpt-5.3-codex', '需要更快时再试 gemini-fast']
         },
         {
             title: 'Continue / Aider',
             tag: '常见客户端',
-            desc: '能自定义 OpenAI-compatible base URL、api key 和 model 的客户端，都按这条接法走。',
-            bullets: ['填 Base URL + API Key + model', '先用 gpt-5.3-codex 或 gemini-fast', '接不上先确认不是 session key']
+            desc: '只要支持 OpenAI-compatible 配置，基本都能按这套接。',
+            bullets: ['填 Base URL + API Key + model', '默认用 gpt-5.3-codex 或 gemini-fast', '接不上时先排查 key 类型']
         },
         {
             title: 'Claude Code',
-            tag: '一等支持',
-            desc: '官方 Claude Code 现在直接走 Anthropic 兼容入口，不再需要伪装成通用 OpenAI 客户端。',
-            bullets: ['用 ANTHROPIC_BASE_URL 根域名', '用 ANTHROPIC_AUTH_TOKEN', '模型可填 claude-opus-4-7 / sonnet / haiku']
+            tag: '推荐',
+            desc: 'Claude Code 走 Anthropic 兼容入口。',
+            bullets: ['用 ANTHROPIC_BASE_URL 根域名', '用 ANTHROPIC_AUTH_TOKEN', '模型名可填 opus / sonnet / haiku']
         },
         {
             title: 'OpenClaw',
-            tag: '兼容接入',
-            desc: '已有 OpenAI 风格 provider 配置时，直接替换 provider 和默认模型。',
-            bullets: ['看代码示例里的 OpenClaw', '优先走 openai-completions', '上下文窗口按示例填']
+            tag: '兼容',
+            desc: '已有 OpenAI 风格 provider 配置时，直接换 provider 和默认模型。',
+            bullets: ['看代码示例里的 OpenClaw', '优先走 openai-completions', '上下文窗口按示例填写']
         },
         {
             title: '生图 / 图生图',
-            tag: '图片工作流',
-            desc: '图片生成、1-2 图同步编辑、3+ 图异步任务。',
+            tag: '图片',
+            desc: '图片生成、少图编辑和多图异步任务。',
             bullets: ['看 API 参考里的 images', '1-2 张图走 edits', '3-8 张图走 image-jobs']
         }
     ]
 
     return (
         <div className="audience-guide">
-            <h3>按你的接入方式开始</h3>
+            <h3>按接入方式查看</h3>
             <div className="audience-grid">
                 {routes.map((route) => (
                     <div key={route.title} className="audience-card">
@@ -248,7 +248,7 @@ function QuickStart({ primaryTextModel, primaryImageModel }) {
     return (
         <div className="doc-section animate-fade-in">
             <h2>快速开始</h2>
-            <p className="doc-intro">先登录控制台，生成开发者 Key，确认余额，再发出第一条成功请求。</p>
+            <p className="doc-intro">登录控制台，生成开发者 Key，确认余额，然后发出第一条请求。</p>
 
             <div className="quickstart-rail">
                 {quickstartSteps.map((step, index) => (

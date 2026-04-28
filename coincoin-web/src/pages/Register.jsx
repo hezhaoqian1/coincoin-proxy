@@ -44,9 +44,9 @@ export default function Register() {
             </div>
             <div className="auth-card glass-card animate-fade-in-up">
                 <div className="auth-header">
-                    <div className="logo-icon" style={{ width: 48, height: 48, fontSize: '1.1rem', borderRadius: 14 }}>CC</div>
+                    <div className="logo-icon" style={{ width: 48, height: 48, fontSize: '1.1rem', borderRadius: 14 }}>CF</div>
                     <h1>创建控制台账号</h1>
-                    <p>注册完成后先进入控制台。开发者 Key 后面在仪表盘里生成。</p>
+                    <p>注册完成后进入控制台。开发者 Key 在概览页生成。</p>
                 </div>
 
                 <form onSubmit={handleSubmit} className="auth-form">
@@ -86,7 +86,7 @@ export default function Register() {
                         <input
                             type="text"
                             className="input-field"
-                            placeholder="有邀请码？你首充额外得$3，对方拿5%返佣"
+                            placeholder="有邀请码就填，没有可留空"
                             value={referralCode}
                             onChange={(e) => setReferralCode(e.target.value.toUpperCase())}
                             style={{ textTransform: 'uppercase', letterSpacing: '0.1em' }}
@@ -99,7 +99,7 @@ export default function Register() {
                     </button>
 
                     <p className="auth-helper-text">
-                        如果你手上已经有开发者 API Key，不需要注册，直接回登录页走 Key 直登即可。
+                        如果你已经有开发者 Key，可以直接回登录页走 Key 直登。
                     </p>
 
                     <p className="auth-footer-text">

@@ -173,31 +173,31 @@ claude --model claude-opus-4-7`
     const activeSnippetContent = snippets.find((snippet) => snippet.title === activeSnippet) || snippets[0]
     const activePanel = searchParams.get('panel') || 'keys'
     const readinessChecks = [
-        hasDeveloperKey ? '当前已有开发者 Key，可直接接 SDK / CLI。' : '当前只有控制台会话，先回概览页生成开发者 Key。',
-        'Base URL 固定为同一个 /v1 入口。',
-        '平时主要改 model，不要手改内部上游地址。',
-        '请求 403 时先确认是不是把 session key 当成 API Key 在用。',
+        hasDeveloperKey ? '当前账号已有开发者 Key。' : '当前只有控制台会话，需要先生成开发者 Key。',
+        'OpenAI 兼容客户端统一走同一个 /v1 入口。',
+        '平时主要改 model，不用改地址。',
+        '403 通常是把 session key 当成了 API Key。',
     ]
     const troubleshootingItems = [
-        'Codex CLI / Continue 接不上时，先确认填的是开发者 Key，而不是控制台 session。',
-        'Claude Code 记得用 ANTHROPIC_BASE_URL 根地址，不要手动加 /v1。',
-        '模型没切换成功时，先看请求体里有没有真的发出 model。',
-        'Gemini 生图请走 /v1/images/generations 或 /v1/images/edits。',
-        '余额、充值和请求日志都以控制台记录为准。',
+        'Codex CLI / Continue 接不上时，先看是不是用了开发者 Key。',
+        'Claude Code 的地址填根域名，不要手动加 /v1。',
+        '模型没切换成功时，先检查请求体里的 model。',
+        'Gemini 生图走 /v1/images/generations 或 /v1/images/edits。',
+        '余额、充值和日志都以控制台记录为准。',
     ]
 
     return (
         <AppShell
             title="接入配置"
-            description="先确认连接信息，再选模型，最后复制代码片段。"
+            description="连接信息、模型和配置片段都在这一页。"
         >
             <div className="settings-grid">
                 {authMode === 'session_only' && (
                     <div className="glass-card settings-section settings-alert settings-alert-warning animate-fade-in-up">
                         <h3>还差一把开发者 Key</h3>
                         <p className="settings-text">
-                            你已经进了控制台，但这次登录还不能直接给 CLI 或 SDK 调接口。
-                            先回概览页生成开发者 Key，再回来复制配置。
+                            你已经进了控制台，但还不能直接给 CLI 或 SDK 发请求。
+                            先回概览页生成开发者 Key。
                         </p>
                         <div className="settings-inline-meta">
                             <span className="meta-pill">账户：{username || '未命名用户'}</span>
@@ -210,7 +210,7 @@ claude --model claude-opus-4-7`
                         <div className="glass-card settings-section settings-alert settings-alert-success animate-fade-in-up">
                             <h3>接入已经就绪</h3>
                             <p className="settings-text">
-                                当前控制台账号已经有可用的开发者 Key。下面这些片段可以直接复制。
+                                当前控制台账号已有可用的开发者 Key。
                             </p>
                             <div className="settings-inline-meta">
                                 <span className="meta-pill">账户：{username || '未命名用户'}</span>
@@ -223,7 +223,7 @@ claude --model claude-opus-4-7`
                         <div className="glass-card settings-section settings-alert animate-fade-in-up">
                             <h3>当前是开发者 Key 直登</h3>
                             <p className="settings-text">
-                                下面的示例可以直接用。要做充值、重新生成密钥或账户管理，再切回控制台账号登录。
+                                当前就是开发者 Key 登录。充值和账户管理请回控制台账号处理。
                             </p>
                             <div className="settings-inline-meta">
                                 <span className="meta-pill">登录方式：开发者 Key</span>
@@ -242,10 +242,10 @@ claude --model claude-opus-4-7`
                         </div>
                         <p className="settings-hint">
                             {generatedApiKey
-                                ? '这里显示的是控制台里生成的开发者 Key，可以直接放进客户端配置。'
+                                ? '这是控制台生成的开发者 Key。'
                                 : hasDeveloperKey
-                                    ? '当前就是开发者 Key 直登，可以直接拿来调接口。'
-                                    : '这里不会把控制台 session 当成开发者 Key。先去概览页生成正式密钥。'}
+                                    ? '当前就是开发者 Key 登录。'
+                                    : '控制台登录态不能直接拿来调接口。'}
                         </p>
                     </div>
 
@@ -279,14 +279,14 @@ claude --model claude-opus-4-7`
                             <div className="settings-section-head">
                                 <div>
                                     <h3>这页怎么用</h3>
-                                    <p className="settings-subtitle">先复制开发者 Key，再确认统一 Base URL，最后去下面挑客户端片段。</p>
+                                    <p className="settings-subtitle">先看密钥和地址，再选客户端片段。</p>
                                 </div>
-                                <span className="meta-pill">建议顺序</span>
+                                <span className="meta-pill">使用顺序</span>
                             </div>
                             <div className="settings-checklist">
                                 <div className="settings-check-item"><span className="settings-check-dot"></span><span>程序调用只用开发者 Key，不用控制台登录态。</span></div>
                                 <div className="settings-check-item"><span className="settings-check-dot"></span><span>OpenAI 兼容客户端走 <code>{baseUrl}</code>。</span></div>
-                                <div className="settings-check-item"><span className="settings-check-dot"></span><span>Claude Code 例外，根地址直接填站点域名，不带 <code>/v1</code>。</span></div>
+                                <div className="settings-check-item"><span className="settings-check-dot"></span><span>Claude Code 用站点根地址，不带 <code>/v1</code>。</span></div>
                             </div>
                         </div>
                     )}
@@ -296,7 +296,7 @@ claude --model claude-opus-4-7`
                             <div className="settings-section-head">
                                 <div>
                                     <h3>&#127760; 连接信息</h3>
-                                    <p className="settings-subtitle">先确认统一入口和当前会话，再决定怎么复制配置。</p>
+                                    <p className="settings-subtitle">先确认入口、认证方式和当前会话。</p>
                                 </div>
                                 <span className="meta-pill">连接概览</span>
                             </div>
@@ -340,7 +340,7 @@ claude --model claude-opus-4-7`
                             <div className="settings-section-head">
                                 <div>
                                     <h3>&#129302; 模型配置</h3>
-                                    <p className="settings-subtitle">默认先用推荐模型，只有明确需要时再切换。</p>
+                                    <p className="settings-subtitle">默认模型通常够用，需要时再切换。</p>
                                 </div>
                                 <span className="meta-pill">模型选择</span>
                             </div>
@@ -368,13 +368,13 @@ claude --model claude-opus-4-7`
                         <div className="settings-section-head">
                             <div>
                                 <h3>&#9881; 配置片段</h3>
-                                <p className="settings-subtitle">先选客户端，再复制最短可用片段。</p>
+                                <p className="settings-subtitle">选客户端后直接复制。</p>
                             </div>
                             <span className="meta-pill">可直接复制</span>
                         </div>
                         <p className="settings-hint" style={{ marginBottom: 'var(--space-lg)' }}>
-                            选择模型后，一键复制配置代码。Base URL 不变，平时主要只改 <code>model</code>。
-                            {!hasDeveloperKey && ' 当前还没检测到开发者 Key，示例里会保留占位符。'}
+                            选择模型后直接复制。Base URL 一般不需要改。
+                            {!hasDeveloperKey && ' 当前没有开发者 Key，示例会保留占位符。'}
                         </p>
                         <div className="snippet-tabs">
                             {snippets.map((snippet) => (
@@ -402,7 +402,7 @@ claude --model claude-opus-4-7`
                         <div className="settings-section-head">
                             <div>
                                 <h3>&#128269; 常见问题</h3>
-                                <p className="settings-subtitle">接不上时先排这几项，通常不用先怀疑上游。</p>
+                                <p className="settings-subtitle">接不上时，先查这几项。</p>
                             </div>
                             <div className="settings-action-links">
                                 <a href="/dashboard">回概览</a>
