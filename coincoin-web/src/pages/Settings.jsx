@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { describePublicModel } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
 import { usePublicModels } from '../hooks/usePublicModels'
+import AppShell from '../components/AppShell'
 import './Settings.css'
 
 const BASE_URL_DISPLAY = typeof window !== 'undefined' ? `${window.location.origin}/v1` : '/v1'
@@ -101,24 +102,40 @@ console.log(response.choices[0].message.content);`
             title: 'Codex CLI (config.toml)',
             code: `# ~/.codex/config.toml
 model = "${selectedModel}"
-model_provider = "coincoin"
+model_provider = "clawfather"
+disable_response_storage = true
 model_reasoning_effort = "high"
+web_search = "live"
+personality = "pragmatic"
 
-[model_providers.coincoin]
-name = "CoinCoin"
+[model_providers.clawfather]
+name = "ClawFather"
 base_url = "${baseUrl}"
-env_key = "COINCOIN_API_KEY"
+env_key = "CLAWFATHER_OPENAI_API_KEY"
 wire_api = "responses"
 
 # 然后设置环境变量：
-# export COINCOIN_API_KEY="${key}"`
+# export CLAWFATHER_OPENAI_API_KEY="${key}"`
+        },
+        {
+            title: 'Claude Code',
+            code: `# macOS / Linux
+export ANTHROPIC_BASE_URL="${typeof window !== 'undefined' ? window.location.origin : ''}"
+export ANTHROPIC_AUTH_TOKEN="${key}"
+export ANTHROPIC_MODEL="claude-opus-4-7"
+export ANTHROPIC_DEFAULT_OPUS_MODEL="claude-opus-4-7"
+export ANTHROPIC_DEFAULT_SONNET_MODEL="claude-sonnet-4-6"
+export ANTHROPIC_DEFAULT_HAIKU_MODEL="claude-haiku-4-5"
+
+# 启动前如果有旧登录态，先在 Claude Code 里执行 /logout
+claude --model claude-opus-4-7`
         },
         {
             title: 'OpenClaw',
             code: `{
   "models": {
     "providers": {
-      "coincoin": {
+      "clawfather": {
         "baseUrl": "${baseUrl}",
         "apiKey": "${key}",
         "api": "openai-completions",
@@ -126,7 +143,7 @@ wire_api = "responses"
       }
     },
     "defaults": {
-      "provider": "coincoin",
+      "provider": "clawfather",
       "model": "${selectedModel}"
     }
   }
@@ -146,46 +163,44 @@ wire_api = "responses"
     ]
     const activeSnippetContent = snippets.find((snippet) => snippet.title === activeSnippet) || snippets[0]
     const readinessChecks = [
-        hasDeveloperKey ? '当前已有开发者 API Key，可直接接 SDK / CLI。' : '当前只有控制台会话，先回仪表盘生成开发者 API Key。',
+        hasDeveloperKey ? '当前已有开发者 Key，可直接接 SDK / CLI。' : '当前只有控制台会话，先回概览页生成开发者 Key。',
         'Base URL 固定为同一个 /v1 入口。',
         '平时主要改 model，不要手改内部上游地址。',
         '请求 403 时先确认是不是把 session key 当成 API Key 在用。',
     ]
     const troubleshootingItems = [
-        'Codex CLI / Continue 接不上时，先确认填的是开发者 API Key，而不是控制台 session。',
+        'Codex CLI / Continue 接不上时，先确认填的是开发者 Key，而不是控制台 session。',
+        'Claude Code 记得用 ANTHROPIC_BASE_URL 根地址，不要手动加 /v1。',
         '模型没切换成功时，先看请求体里有没有真的发出 model。',
         'Gemini 生图请走 /v1/images/generations 或 /v1/images/edits。',
         '余额、充值和请求日志都以控制台记录为准。',
     ]
 
     return (
-        <div className="page-wrapper">
-            <div className="container">
-                <div className="page-header">
-                    <h1 className="page-title">接入配置</h1>
-                    <p className="page-desc">先确认连接信息，再选模型，最后复制代码片段。</p>
-                </div>
-
-                <div className="settings-grid">
-                    {authMode === 'session_only' && (
-                        <div className="glass-card settings-section settings-alert settings-alert-warning animate-fade-in-up">
-                            <h3>还差一把开发者 API Key</h3>
-                            <p className="settings-text">
-                                你已经进入控制台，但当前这次登录还不能直接给 CLI 或 SDK 调接口。
-                                先回仪表盘生成开发者 API Key，再回来复制配置。
-                            </p>
-                            <div className="settings-inline-meta">
-                                <span className="meta-pill">账户：{username || '未命名用户'}</span>
-                                <span className="meta-pill">开发者 Key：未生成</span>
-                            </div>
+        <AppShell
+            title="接入配置"
+            description="先确认连接信息，再选模型，最后复制代码片段。"
+        >
+            <div className="settings-grid">
+                {authMode === 'session_only' && (
+                    <div className="glass-card settings-section settings-alert settings-alert-warning animate-fade-in-up">
+                        <h3>还差一把开发者 Key</h3>
+                        <p className="settings-text">
+                            你已经进了控制台，但这次登录还不能直接给 CLI 或 SDK 调接口。
+                            先回概览页生成开发者 Key，再回来复制配置。
+                        </p>
+                        <div className="settings-inline-meta">
+                            <span className="meta-pill">账户：{username || '未命名用户'}</span>
+                            <span className="meta-pill">开发者 Key：未生成</span>
                         </div>
-                    )}
+                    </div>
+                )}
 
                     {authMode === 'session_with_api' && (
                         <div className="glass-card settings-section settings-alert settings-alert-success animate-fade-in-up">
-                            <h3>开发者接入已就绪</h3>
+                            <h3>接入已经就绪</h3>
                             <p className="settings-text">
-                                当前控制台账号已经有可用的开发者 API Key。下面这些片段可以直接复制。
+                                当前控制台账号已经有可用的开发者 Key。下面这些片段可以直接复制。
                             </p>
                             <div className="settings-inline-meta">
                                 <span className="meta-pill">账户：{username || '未命名用户'}</span>
@@ -196,9 +211,9 @@ wire_api = "responses"
 
                     {authMode === 'api' && (
                         <div className="glass-card settings-section settings-alert animate-fade-in-up">
-                            <h3>当前使用开发者 API Key 直登</h3>
+                            <h3>当前是开发者 Key 直登</h3>
                             <p className="settings-text">
-                                下面的示例可以直接使用。如果你还要做充值、重新生成密钥或账户管理，再切回控制台账号登录。
+                                下面的示例可以直接用。要做充值、重新生成密钥或账户管理，再切回控制台账号登录。
                             </p>
                             <div className="settings-inline-meta">
                                 <span className="meta-pill">登录方式：开发者 Key</span>
@@ -208,19 +223,19 @@ wire_api = "responses"
                     )}
 
                     <div className="glass-card settings-section animate-fade-in-up">
-                        <h3>&#128273; 开发者 API Key</h3>
+                        <h3>&#128273; 开发者 Key</h3>
                         <div className="key-info-row">
-                            <code className="masked-key">{maskedKey || '尚未生成开发者 API Key'}</code>
+                            <code className="masked-key">{maskedKey || '尚未生成开发者 Key'}</code>
                             <button onClick={handleCopy} className="btn btn-secondary btn-sm" disabled={!effectiveApiKey}>
                                 {copied ? '\u2713 已复制' : '复制开发者 Key'}
                             </button>
                         </div>
                         <p className="settings-hint">
                             {generatedApiKey
-                                ? '当前显示的是控制台里生成的开发者 Key，可直接放进客户端配置。'
+                                ? '这里显示的是控制台里生成的开发者 Key，可以直接放进客户端配置。'
                                 : hasDeveloperKey
-                                    ? '当前正在使用开发者 API Key 直登，可以直接拿来调用接口。'
-                                    : '这里不会把控制台 session 当成开发者 Key。先去仪表盘生成正式密钥。'}
+                                    ? '当前就是开发者 Key 直登，可以直接拿来调接口。'
+                                    : '这里不会把控制台 session 当成开发者 Key。先去概览页生成正式密钥。'}
                         </p>
                     </div>
 
@@ -332,7 +347,7 @@ wire_api = "responses"
                         </div>
                         <p className="settings-hint" style={{ marginBottom: 'var(--space-lg)' }}>
                             选择模型后，一键复制配置代码。Base URL 不变，平时主要只改 <code>model</code>。
-                            {!hasDeveloperKey && ' 当前未检测到开发者 Key，示例里会保留占位符。'}
+                            {!hasDeveloperKey && ' 当前还没检测到开发者 Key，示例里会保留占位符。'}
                         </p>
                         <div className="snippet-tabs">
                             {snippets.map((snippet) => (
@@ -357,7 +372,7 @@ wire_api = "responses"
                                 <p className="settings-subtitle">接不上时先排这几项，通常不用先怀疑上游。</p>
                             </div>
                             <div className="settings-action-links">
-                                <a href="/dashboard">回仪表盘</a>
+                                <a href="/dashboard">回概览</a>
                                 <a href="/usage">请求日志</a>
                                 <a href="/docs">接入文档</a>
                             </div>
@@ -371,8 +386,7 @@ wire_api = "responses"
                             ))}
                         </div>
                     </div>
-                </div>
             </div>
-        </div>
+        </AppShell>
     )
 }

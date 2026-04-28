@@ -6,6 +6,7 @@ import { MOCK_BALANCE, MOCK_USAGE, getBalance, getUsageLogs, getDailyUsage, getA
 import useOrderConfirm from '../hooks/useOrderConfirm'
 import { useAuth } from '../hooks/useAuth'
 import { usePublicModels } from '../hooks/usePublicModels'
+import AppShell from '../components/AppShell'
 import './Dashboard.css'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler)
@@ -14,9 +15,9 @@ function ReadinessCard({ authMode, username, hasDeveloperKey }) {
     const contentMap = {
         session_only: {
             tone: 'warning',
-            eyebrow: '下一步',
-            title: '先生成开发者 API Key',
-            description: `${username || '当前账户'} 已经登录控制台。还差一把开发者 Key，生成后就可以直接复制到 CLI、SDK 和客户端。`,
+            eyebrow: '还差一步',
+            title: '先把开发者 Key 开出来',
+            description: `${username || '当前账户'} 已经登录控制台。再补一把开发者 Key，就能直接接 Claude Code、Codex、SDK 和常见客户端。`,
             statusItems: [
                 { label: '登录方式', value: '控制台账号' },
                 { label: 'API 调用', value: '尚未开通' },
@@ -29,9 +30,9 @@ function ReadinessCard({ authMode, username, hasDeveloperKey }) {
         },
         session_with_api: {
             tone: 'success',
-            eyebrow: '已就绪',
-            title: '账户和开发者 Key 都已准备好',
-            description: `${username || '当前账户'} 已经可以直接接入。常用下一步通常只有两件事：复制配置，或者发一条真实请求测试。`,
+            eyebrow: '可以开跑',
+            title: '账户和开发者 Key 都已就绪',
+            description: `${username || '当前账户'} 现在可以直接接入。先复制配置，或者先发一条真实请求把链路跑通。`,
             statusItems: [
                 { label: '登录方式', value: '控制台账号' },
                 { label: 'API 调用', value: '可直接请求' },
@@ -39,14 +40,14 @@ function ReadinessCard({ authMode, username, hasDeveloperKey }) {
             ],
             actions: [
                 { to: '/settings', label: '复制配置片段', style: 'btn btn-primary btn-sm' },
-                { to: '/playground', label: '发起测试请求', style: 'btn btn-secondary btn-sm' },
+                { to: '/docs', label: '查看接入文档', style: 'btn btn-secondary btn-sm' },
             ],
         },
         api: {
             tone: 'info',
-            eyebrow: '当前状态',
-            title: '你正在用开发者 API Key 直登',
-            description: '这种模式可以直接测试调用和复制配置。需要账户管理、充值或重新生成密钥时，再切回控制台账号登录。',
+            eyebrow: '当前会话',
+            title: '你现在是用开发者 Key 直登',
+            description: '这种模式适合直接测试调用和复制配置。要做充值、账户管理或重新生成密钥，再切回控制台账号登录。',
             statusItems: [
                 { label: '登录方式', value: '开发者 Key 直登' },
                 { label: 'API 调用', value: '可直接请求' },
@@ -54,7 +55,7 @@ function ReadinessCard({ authMode, username, hasDeveloperKey }) {
             ],
             actions: [
                 { to: '/settings', label: '查看接入配置', style: 'btn btn-primary btn-sm' },
-                { to: '/playground', label: '开始测试', style: 'btn btn-secondary btn-sm' },
+                { to: '/docs', label: '查看文档', style: 'btn btn-secondary btn-sm' },
             ],
         },
     }
@@ -132,12 +133,12 @@ function KeyManagement({ copied, copy, username, generatedApiKey, authMode, effe
 
     return (
         <div id="developer-key" className="quick-actions glass-card key-management-card animate-fade-in-up" style={{ animationDelay: '200ms' }}>
-            <h3>开发者 Key 管理</h3>
+            <h3>开发者 Key</h3>
             {!username ? (
                 <div className="key-panel-copy">
                     <p>
-                        当前会话使用的是开发者 API Key。可以继续复制和使用它；
-                        需要重新生成、轮换或做账户管理时，再回到控制台账号登录。
+                        当前会话就是开发者 Key 登录。你可以继续复制和使用它；
+                        要轮换密钥或做账户管理，再回到控制台账号登录。
                     </p>
                     <div className="action-grid" style={{ marginTop: 'var(--space-md)' }}>
                         <div className="action-item" onClick={() => copy(effectiveApiKey, 'key')}>
@@ -156,8 +157,7 @@ function KeyManagement({ copied, copy, username, generatedApiKey, authMode, effe
             ) : generatedKey && !showKey ? (
                 <div>
                     <p className="key-panel-copy">
-                        你已经生成过开发者 API Key。平时直接复制这个 Key 去接入即可，
-                        不需要每次回到这里重新理解一遍登录方式。
+                        这把开发者 Key 已经可以用了。平时直接复制去接入，不需要每次回到这里重新找说明。
                     </p>
                     <div className="action-grid">
                         <div className="action-item" onClick={() => copy(generatedKey, 'apikey')}>
@@ -171,7 +171,7 @@ function KeyManagement({ copied, copy, username, generatedApiKey, authMode, effe
                     </div>
                     <div style={{ marginTop: 'var(--space-md)', display: 'flex', gap: 'var(--space-sm)' }}>
                         <button className="btn btn-secondary btn-sm" onClick={handleGenerate} disabled={generating}>
-                            {generating ? '生成中...' : '重新生成开发者 Key'}
+                            {generating ? '生成中...' : '重新生成 Key'}
                         </button>
                         <Link to="/settings" className="btn btn-ghost btn-sm">查看完整配置</Link>
                     </div>
@@ -180,12 +180,12 @@ function KeyManagement({ copied, copy, username, generatedApiKey, authMode, effe
             ) : showKey ? (
                 <div>
                     <div className="key-warning-box">
-                        <span className="key-warning-eyebrow">请立即保存</span>
-                        <p>这是重新生成后的完整开发者 API Key。完整值只会显示这一次，保存后再继续配置客户端。</p>
+                        <span className="key-warning-eyebrow">这次会显示完整值</span>
+                        <p>这是重新生成后的完整开发者 Key。完整值只会显示这一次，先保存，再继续配客户端。</p>
                     </div>
                     <div className="key-secret-panel">
                         <div className="key-secret-meta">
-                            <span className="meta-pill">开发者 API Key</span>
+                            <span className="meta-pill">开发者 Key</span>
                             <span className="meta-pill">仅本次明文展示</span>
                         </div>
                         <code className="key-secret-value">{generatedKey}</code>
@@ -202,10 +202,10 @@ function KeyManagement({ copied, copy, username, generatedApiKey, authMode, effe
             ) : (
                 <div>
                     <p className="key-panel-copy">
-                        给当前控制台账户生成一把开发者 API Key。生成后就能直接接 SDK、CLI 和第三方客户端。
+                        给当前控制台账户生成一把开发者 Key。生成后就能直接接 SDK、CLI 和第三方客户端。
                     </p>
                     <button className="btn btn-primary btn-sm" onClick={handleGenerate} disabled={generating}>
-                        {generating ? '生成中...' : '生成开发者 API Key'}
+                        {generating ? '生成中...' : '生成开发者 Key'}
                     </button>
                     {genError && <p style={{ color: 'var(--accent-rose)', fontSize: '0.85rem', marginTop: 'var(--space-sm)' }}>{genError}</p>}
                 </div>
@@ -263,7 +263,7 @@ function StationCard({ stationState, onSubmitted }) {
                 <div className="station-card-header">
                     <div>
                         <h3>站长中心</h3>
-                        <p className="station-card-desc">你的站长资格已开通。后续我们会在这里继续接入下游用户、分润和人工结算。</p>
+                        <p className="station-card-desc">站长资格已经开通。这里继续处理下游用户、分润和人工结算。</p>
                     </div>
                     <span className={`badge ${station.status === 'active' ? 'badge-success' : 'badge-warning'}`}>
                         {station.status === 'active' ? '已开通' : station.status}
@@ -297,7 +297,7 @@ function StationCard({ stationState, onSubmitted }) {
                 <div className="station-card-header">
                     <div>
                         <h3>站长申请</h3>
-                        <p className="station-card-desc">申请已经提交。当前先走审核制，避免影响现有用户链路和支付流程。</p>
+                        <p className="station-card-desc">申请已经提交。当前还是审核制，避免影响现有支付和用户链路。</p>
                     </div>
                     <span className={`badge ${app.status === 'pending' ? 'badge-warning' : app.status === 'approved' ? 'badge-success' : 'badge-error'}`}>
                         {app.status === 'pending' ? '审核中' : app.status === 'approved' ? '已通过' : '已驳回'}
@@ -333,7 +333,7 @@ function StationCard({ stationState, onSubmitted }) {
             <div className="station-card-header">
                 <div>
                     <h3>申请成为站长</h3>
-                    <p className="station-card-desc">想做自己的站长，就先提交这份申请。第一期只做审核制开通，不会影响你当前的使用和支付体验。</p>
+                    <p className="station-card-desc">想做自己的站长，就先提交申请。第一期先走审核制，不影响你当前使用。</p>
                 </div>
                 <span className="station-badge">站长内测</span>
             </div>
@@ -353,7 +353,7 @@ function StationCard({ stationState, onSubmitted }) {
                     </label>
                     <label className="station-field station-field-wide">
                         <span>受众说明</span>
-                        <textarea value={form.audience_note} onChange={(e) => handleChange('audience_note', e.target.value)} placeholder="说清楚你准备服务谁、预估规模和你的运营方式" rows={4} required />
+                        <textarea value={form.audience_note} onChange={(e) => handleChange('audience_note', e.target.value)} placeholder="写清楚你服务谁、预估规模，以及你准备怎么运营" rows={4} required />
                     </label>
                     <label className="station-field">
                         <span>支付宝姓名</span>
@@ -373,7 +373,7 @@ function StationCard({ stationState, onSubmitted }) {
                     <button className="btn btn-primary btn-sm" type="submit" disabled={submitting}>
                         {submitting ? '提交中...' : '提交站长申请'}
                     </button>
-                    <span className="station-hint">现阶段为审核制。通过后会开通站长资格和人工结算信息。</span>
+                    <span className="station-hint">当前先走审核制。通过后会开通站长资格和结算资料。</span>
                 </div>
             </form>
         </div>
@@ -444,14 +444,14 @@ export default function Dashboard() {
 
     if (!balance) {
         return (
-            <div className="page-wrapper">
-                <div className="container">
+            <AppShell title="概览" description="先看余额、Key 状态和最近请求。">
+                <div className="dashboard-page">
                     <div className="loading-state">
                         <div className="loading-spinner"></div>
                         <p>加载中...</p>
                     </div>
                 </div>
-            </div>
+            </AppShell>
         )
     }
 
@@ -508,12 +508,12 @@ export default function Dashboard() {
     }
 
     return (
-        <div className="page-wrapper dashboard">
-            <div className="container">
-                <div className="page-header">
-                    <h1 className="page-title">仪表盘</h1>
-                    <p className="page-desc">先看余额和接入状态，再决定是复制配置、充值还是排查请求。</p>
-                </div>
+        <AppShell
+            title="概览"
+            description="先看余额和接入状态，再决定是复制配置、充值还是排查请求。"
+            actions={<Link to="/recharge" className="btn btn-primary btn-sm">充值</Link>}
+        >
+            <div className="dashboard-page dashboard">
 
                 {/* Announcements */}
                 {activeAnns.map(a => (
@@ -529,13 +529,13 @@ export default function Dashboard() {
                 {/* Low balance warning */}
                 {balance.balance_usd < 0.10 && (
                     <div className="low-balance-banner critical animate-fade-in">
-                        <span>&#9888; 余额即将耗尽 (${balance.balance_usd.toFixed(2)})，请立即充值以免服务中断</span>
+                        <span>&#9888; 余额快见底了 (${balance.balance_usd.toFixed(2)})，建议现在就补一点，别等请求被打断。</span>
                         <Link to="/recharge" className="btn btn-sm btn-primary">立即充值</Link>
                     </div>
                 )}
                 {balance.balance_usd >= 0.10 && balance.balance_usd < 1.00 && (
                     <div className="low-balance-banner warning animate-fade-in">
-                        <span>&#9888; 余额不足 $1.00 (${balance.balance_usd.toFixed(2)})，建议及时充值</span>
+                        <span>&#9888; 余额不足 $1.00 (${balance.balance_usd.toFixed(2)})，可以顺手补一点，免得后面断请求。</span>
                         <Link to="/recharge" className="btn btn-sm btn-secondary">去充值</Link>
                     </div>
                 )}
@@ -543,7 +543,7 @@ export default function Dashboard() {
                 {/* Auto-confirmed order banner */}
                 {orderConfirmed && (
                     <div className="low-balance-banner animate-fade-in" style={{ background: 'rgba(16,185,129,0.1)', borderColor: 'rgba(16,185,129,0.3)', color: 'var(--accent-emerald)' }}>
-                        <span>&#10003; 充值到账！+${(orderConfirmed.added_cents / 100).toFixed(2)}，当前余额 ${orderConfirmed.new_balance_usd?.toFixed(2)}</span>
+                        <span>&#10003; 充值已到账。+${(orderConfirmed.added_cents / 100).toFixed(2)}，当前余额 ${orderConfirmed.new_balance_usd?.toFixed(2)}</span>
                         <button className="btn btn-sm btn-secondary" onClick={dismissOrder}>知道了</button>
                     </div>
                 )}
@@ -566,7 +566,7 @@ export default function Dashboard() {
                             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent-indigo)" strokeWidth="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2" /></svg>
                         </div>
                         <div className="stat-info">
-                            <span className="stat-label">已用 Token</span>
+                            <span className="stat-label">累计 Token</span>
                             <span className="stat-value">{(balance.token_used).toLocaleString()}</span>
                             <span className="stat-sub">Input: {balance.input_tokens_used.toLocaleString()} &middot; Output: {balance.output_tokens_used.toLocaleString()}</span>
                         </div>
@@ -579,7 +579,7 @@ export default function Dashboard() {
                         <div className="stat-info">
                             <span className="stat-label">今日消费</span>
                             <span className="stat-value">${todayCost.toFixed(2)}</span>
-                            <span className="stat-sub">{todayRequests} 次请求 &middot; {todayTokens.toLocaleString()} Tokens &middot; {todayImages} Images</span>
+                            <span className="stat-sub">{todayRequests} 次请求 &middot; {todayTokens.toLocaleString()} Tokens &middot; {todayImages} 张图</span>
                         </div>
                     </div>
                 </div>
@@ -601,7 +601,7 @@ export default function Dashboard() {
                 {chartData && (
                     <div className="trend-card glass-card animate-fade-in-up" style={{ animationDelay: '150ms' }}>
                         <div className="section-row">
-                            <h3>近 7 天趋势</h3>
+                            <h3>近 7 天</h3>
                             <div className="chart-tabs">
                                 {[['cost', '花费'], ['tokens', 'Tokens'], ['requests', '请求']].map(([k, label]) => (
                                     <button key={k} className={`chart-tab ${chartMode === k ? 'active' : ''}`} onClick={() => setChartMode(k)}>{label}</button>
@@ -619,7 +619,7 @@ export default function Dashboard() {
                     <div className="quick-actions-header">
                         <div>
                             <h3>快速操作</h3>
-                            <p className="quick-actions-desc">把常用动作收在这里。先复制入口和配置，再按需去充值或查日志。</p>
+                            <p className="quick-actions-desc">高频操作都收在这里。先复制入口和配置，再决定是去充值还是查日志。</p>
                         </div>
                         <Link to="/recharge" className="btn btn-primary btn-sm">进入充值中心</Link>
                     </div>
@@ -631,47 +631,62 @@ export default function Dashboard() {
                         </div>
                         <span className="action-btn">{copied === 'url' ? '&#10003; 已复制' : '复制'}</span>
                     </div>
+                    <div className="base-url-card base-url-card-secondary" onClick={() => copy(window.location.origin, 'anthropic')}>
+                        <div className="base-url-icon">&#129302;</div>
+                        <div className="base-url-copy">
+                            <span className="base-url-label">Claude Code Base URL</span>
+                            <code>{window.location.origin}</code>
+                        </div>
+                        <span className="action-btn">{copied === 'anthropic' ? '&#10003; 已复制' : '复制'}</span>
+                    </div>
                     <div className="shortcut-grid">
+                        <Link to="/settings" className="shortcut-card shortcut-card-highlight">
+                            <span className="shortcut-icon">&#129302;</span>
+                            <div>
+                                <strong>Claude Code</strong>
+                                <p>复制 ANTHROPIC_BASE_URL 和默认模型配置。</p>
+                            </div>
+                        </Link>
                         <Link to="/recharge" className="shortcut-card shortcut-card-primary">
                             <span className="shortcut-icon">&#128176;</span>
                             <div>
                                 <strong>充值</strong>
-                                <p>补余额，继续跑请求。</p>
+                                <p>补余额，继续发请求。</p>
                             </div>
                         </Link>
                         <Link to="/usage" className="shortcut-card">
                             <span className="shortcut-icon">&#128202;</span>
                             <div>
                                 <strong>请求日志</strong>
-                                <p>看模型、耗时、扣费和状态码。</p>
+                                <p>查模型、耗时、扣费和状态码。</p>
                             </div>
                         </Link>
                         <Link to="/settings" className="shortcut-card">
                             <span className="shortcut-icon">&#128736;</span>
                             <div>
                                 <strong>接入配置</strong>
-                                <p>复制 SDK、CLI 和常用客户端片段。</p>
+                                <p>复制 SDK、Codex、Claude Code 和常用客户端配置。</p>
                             </div>
                         </Link>
                         <Link to="/docs" className="shortcut-card">
                             <span className="shortcut-icon">&#128214;</span>
                             <div>
                                 <strong>接入文档</strong>
-                                <p>查协议、模型目录和图片接口规则。</p>
+                                <p>查协议、模型目录和图片接口。</p>
                             </div>
                         </Link>
                         <Link to="/playground" className="shortcut-card">
                             <span className="shortcut-icon">&#9881;</span>
                             <div>
                                 <strong>测试请求</strong>
-                                <p>直接发一条真实请求，验证模型和 Key。</p>
+                                <p>发一条真实请求，验证模型和 Key。</p>
                             </div>
                         </Link>
                         <a href="#developer-key" className="shortcut-card">
                             <span className="shortcut-icon">&#128273;</span>
                             <div>
                                 <strong>开发者 Key</strong>
-                                <p>生成、复制或轮换开发者 API Key。</p>
+                                <p>生成、复制或轮换开发者 Key。</p>
                             </div>
                         </a>
                     </div>
@@ -682,7 +697,7 @@ export default function Dashboard() {
                     <div className="referral-card glass-card animate-fade-in-up" style={{ animationDelay: '275ms' }}>
                         <h3>邀请返佣</h3>
                         <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: 'var(--space-md)' }}>
-                            好友前 {referral.max_rewards_per_user || 3} 次充值你拿 <strong style={{ color: 'var(--accent-emerald)' }}>{Math.round(referral.commission_rate * 100)}%</strong> 佣金，好友首充额外得 <strong style={{ color: 'var(--accent-emerald)' }}>${referral.new_user_bonus_usd || 3}</strong>
+                            好友前 {referral.max_rewards_per_user || 3} 次充值，你拿 <strong style={{ color: 'var(--accent-emerald)' }}>{Math.round(referral.commission_rate * 100)}%</strong> 佣金；好友首充额外得 <strong style={{ color: 'var(--accent-emerald)' }}>${referral.new_user_bonus_usd || 3}</strong>。
                         </p>
                         <div className="referral-stats">
                             <div className="referral-stat">
@@ -718,7 +733,7 @@ export default function Dashboard() {
                 {/* Pricing Info */}
                 <div className="pricing-info glass-card animate-fade-in-up" style={{ animationDelay: '300ms' }}>
                     <h3>当前价格</h3>
-                    <p className="pricing-note-row">价格和默认模型只做简表展示。更细的模型说明和完整接法放到接入配置页。</p>
+                    <p className="pricing-note-row">这里只放简表。更细的模型说明和完整接法，去接入配置页看。</p>
                     <div className="price-row">
                         <div className="price-item">
                             <span className="price-label">Input Token</span>
@@ -735,11 +750,11 @@ export default function Dashboard() {
                     </div>
                     <div className="price-row">
                         <div className="price-item">
-                            <span className="price-label">默认文本</span>
+                            <span className="price-label">默认文本模型</span>
                             <span className="price-val model-tag">{defaultTextModel?.id || 'gpt-5.2-codex'}</span>
                         </div>
                         <div className="price-item">
-                            <span className="price-label">默认图片</span>
+                            <span className="price-label">默认图片模型</span>
                             <span className="price-val model-tag">{defaultImageModel?.id || 'gemini-image'}</span>
                         </div>
                     </div>
@@ -783,6 +798,6 @@ export default function Dashboard() {
                     </div>
                 )}
             </div>
-        </div>
+        </AppShell>
     )
 }

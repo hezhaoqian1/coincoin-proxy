@@ -12,12 +12,12 @@ export default function Footer() {
                 <div className="footer-grid">
                     <div className="footer-brand">
                         <div className="footer-logo">
-                            <div className="logo-icon">CC</div>
-                            <span className="logo-text">CoinCoin</span>
+                            <div className="logo-icon">CF</div>
+                            <span className="logo-text">ClawFather</span>
                         </div>
                         <p className="footer-desc">
-                            开发者中转站控制台<br />
-                            公开模型目录 · 按量计费 · OpenAI 兼容
+                            开发者控制台<br />
+                            公开模型目录 · 统一余额 · OpenAI 与 Claude Code 兼容
                         </p>
                     </div>
 
@@ -32,18 +32,18 @@ export default function Footer() {
                         <h4>支持</h4>
                         <Link to="/docs">快速开始</Link>
                         <Link to="/#faq">常见问题</Link>
-                        <a href="mailto:support@coincoin.ai">联系我们</a>
+                        <Link to="/docs">联系我们</Link>
                     </div>
 
                     <div className="footer-col">
                         <h4>模型</h4>
-                        <span className="footer-model">gpt-5.2-codex / gemini-fast</span>
-                        <span className="footer-model-note">支持 Gemini 文本与生图</span>
+                        <span className="footer-model">gpt-5.5 / claude-opus-4-7 / gemini-fast</span>
+                        <span className="footer-model-note">支持 GPT、Claude Code 兼容与 Gemini 图片</span>
                     </div>
                 </div>
 
                 <div className="footer-bottom">
-                    <span>© 2026 CoinCoin. All rights reserved.</span>
+                    <span>© 2026 ClawFather. All rights reserved.</span>
                     <div className="footer-bottom-links">
                         <a href="#">服务条款</a>
                         <a href="#">隐私政策</a>

@@ -468,6 +468,11 @@
     border-color: rgba(6, 182, 212, 0.28);
 }
 
+.base-url-card-secondary {
+    border-color: rgba(99, 102, 241, 0.18);
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.08), rgba(6, 182, 212, 0.05));
+}
+
 .base-url-icon {
     width: 44px;
     height: 44px;
@@ -529,6 +534,11 @@
 .shortcut-card-primary {
     border-color: rgba(16, 185, 129, 0.24);
     background: linear-gradient(135deg, rgba(16, 185, 129, 0.12), rgba(6, 182, 212, 0.06));
+}
+
+.shortcut-card-highlight {
+    border-color: rgba(99, 102, 241, 0.22);
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(6, 182, 212, 0.06));
 }
 
 .shortcut-icon {
