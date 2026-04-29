@@ -21,7 +21,6 @@ from .proxy import (
 from .router import (
     ModelCapabilityError,
     UnknownModelError,
-    build_model_cloak,
     registry as model_registry,
 )
 from .schemas import BalanceResponse
@@ -612,11 +611,6 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
         "input": converted_messages,
         "stream": bool(payload.get("stream")),
     }
-
-    _has_tools = bool(payload.get("tools"))
-    if settings.model_cloak and display_model and not _has_tools:
-        _cloak = build_model_cloak(display_model, public_model)
-        resp_payload["instructions"] = (resp_payload.get("instructions") or "") + _cloak
 
     if used_cfg.strip_unsupported:
         _sanitize_encrypted_ids(resp_payload)
