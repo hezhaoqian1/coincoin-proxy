@@ -5,6 +5,7 @@ import {
     clearApiKey,
     clearGeneratedKey,
     getBalance,
+    getDeveloperKeyState,
     getGeneratedKey,
     getUsername,
     setUserId,
@@ -20,6 +21,7 @@ export function useAuth() {
     const [isLoggedIn, setIsLoggedIn] = useState(!!initialKey && initialKey !== LEGACY_DEMO_KEY)
     const [username, setUsernameState] = useState(getUsername())
     const [generatedApiKey, setGeneratedApiKeyState] = useState(getGeneratedKey())
+    const [developerKeyState, setDeveloperKeyState] = useState({ hasActiveKey: false, activeKeyCount: 0, latestKey: null })
     const [loading, setLoading] = useState(false)
 
     useEffect(() => {
@@ -33,6 +35,7 @@ export function useAuth() {
                 setIsLoggedIn(false)
                 setUsernameState('')
                 setGeneratedApiKeyState('')
+                setDeveloperKeyState({ hasActiveKey: false, activeKeyCount: 0, latestKey: null })
                 return
             }
             setApiKeyState(k)
@@ -49,6 +52,40 @@ export function useAuth() {
         }
     }, [])
 
+    useEffect(() => {
+        let active = true
+
+        const syncDeveloperKeyState = async () => {
+            const currentKey = getApiKey()
+            const currentUsername = getUsername()
+            if (!currentKey || !currentUsername) {
+                if (!active) return
+                setDeveloperKeyState({ hasActiveKey: false, activeKeyCount: 0, latestKey: null })
+                return
+            }
+
+            try {
+                const state = await getDeveloperKeyState()
+                if (!active) return
+                setDeveloperKeyState({
+                    hasActiveKey: !!state?.has_active_key,
+                    activeKeyCount: state?.active_key_count || 0,
+                    latestKey: state?.latest_key || null,
+                })
+            } catch {
+                if (!active) return
+                setDeveloperKeyState({ hasActiveKey: false, activeKeyCount: 0, latestKey: null })
+            }
+        }
+
+        syncDeveloperKeyState()
+        window.addEventListener('coincoin-auth-changed', syncDeveloperKeyState)
+        return () => {
+            active = false
+            window.removeEventListener('coincoin-auth-changed', syncDeveloperKeyState)
+        }
+    }, [apiKey, username])
+
     const login = useCallback(async (key) => {
         setLoading(true)
         try {
@@ -63,12 +100,14 @@ export function useAuth() {
             setIsLoggedIn(true)
             setUsernameState('')
             setGeneratedApiKeyState('')
+            setDeveloperKeyState({ hasActiveKey: true, activeKeyCount: 1, latestKey: null })
             return { success: true, data: balance }
         } catch (err) {
             clearApiKey()
             setApiKeyState('')
             setIsLoggedIn(false)
             setUsernameState('')
+            setDeveloperKeyState({ hasActiveKey: false, activeKeyCount: 0, latestKey: null })
             return { success: false, error: 'API Key 无效或已过期' }
         } finally {
             setLoading(false)
@@ -83,6 +122,7 @@ export function useAuth() {
         setIsLoggedIn(false)
         setUsernameState('')
         setGeneratedApiKeyState('')
+        setDeveloperKeyState({ hasActiveKey: false, activeKeyCount: 0, latestKey: null })
     }, [])
 
     const loginWithPassword = useCallback(async (username, password) => {
@@ -97,6 +137,7 @@ export function useAuth() {
             setIsLoggedIn(true)
             setUsernameState(data.username)
             setGeneratedApiKeyState('')
+            setDeveloperKeyState({ hasActiveKey: false, activeKeyCount: 0, latestKey: null })
             return { success: true, data }
         } catch (err) {
             return { success: false, error: err.message || '登录失败' }
@@ -106,22 +147,26 @@ export function useAuth() {
     }, [])
 
     const isConsoleSession = !!username
-    const hasDeveloperKey = !!generatedApiKey || (!!apiKey && !isConsoleSession)
-    const effectiveApiKey = generatedApiKey || (hasDeveloperKey ? apiKey : '')
+    const hasLocalDeveloperKey = !!generatedApiKey || (!!apiKey && !isConsoleSession)
+    const hasDeveloperKey = hasLocalDeveloperKey || (isConsoleSession && developerKeyState.hasActiveKey)
+    const effectiveApiKey = generatedApiKey || (!isConsoleSession && apiKey ? apiKey : '')
     const authMode = !apiKey
         ? 'anonymous'
         : isConsoleSession
-            ? (generatedApiKey ? 'session_with_api' : 'session_only')
+            ? (hasDeveloperKey ? 'session_with_api' : 'session_only')
             : 'api'
 
     return {
+        activeDeveloperKeyCount: developerKeyState.activeKeyCount,
         apiKey,
         authMode,
         effectiveApiKey,
         generatedApiKey,
         hasDeveloperKey,
+        hasLocalDeveloperKey,
         isConsoleSession,
         isLoggedIn,
+        latestDeveloperKey: developerKeyState.latestKey,
         loading,
         login,
         loginWithPassword,

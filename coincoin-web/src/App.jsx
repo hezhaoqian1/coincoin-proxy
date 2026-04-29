@@ -12,6 +12,7 @@ import Usage from './pages/Usage'
 import Recharge from './pages/Recharge'
 import Docs from './pages/Docs'
 import Settings from './pages/Settings'
+import ApiKeys from './pages/ApiKeys'
 import Playground from './pages/Playground'
 import PayReturn from './pages/PayReturn'
 import Station from './pages/Station'
@@ -80,6 +81,9 @@ export default function App() {
                     } />
                     <Route path="/settings" element={
                         <ProtectedRoute><Settings /></ProtectedRoute>
+                    } />
+                    <Route path="/api-keys" element={
+                        <ProtectedRoute><ApiKeys /></ProtectedRoute>
                     } />
                     <Route path="/station" element={
                         <ProtectedRoute><Station /></ProtectedRoute>

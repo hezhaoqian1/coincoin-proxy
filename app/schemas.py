@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import List, Optional
 
 from pydantic import BaseModel, Field
@@ -13,6 +14,47 @@ class KeyActivateResponse(BaseModel):
     user_id: str
     api_key: str
     status: str
+
+
+class DeveloperKeySummary(BaseModel):
+    key_id: str
+    masked_key: str
+    created_at: datetime
+    last_used_at: Optional[datetime] = None
+    status: str
+
+
+class DeveloperKeyStateResponse(BaseModel):
+    has_active_key: bool
+    active_key_count: int = 0
+    latest_key: Optional[DeveloperKeySummary] = None
+
+
+class DeveloperKeyListItem(BaseModel):
+    key_id: str
+    masked_key: str
+    status: str
+    created_at: datetime
+    last_used_at: Optional[datetime] = None
+
+
+class DeveloperKeyListResponse(BaseModel):
+    total: int
+    active: int
+    disabled: int
+    data: List[DeveloperKeyListItem]
+
+
+class DeveloperKeyCreateResponse(BaseModel):
+    key_id: str
+    api_key: str
+    masked_key: str
+    status: str
+    created_at: datetime
+
+
+class DeveloperKeyUpdateRequest(BaseModel):
+    status: str = Field(..., pattern=r"^(active|disabled)$")
 
 
 class AdminUserUpdate(BaseModel):

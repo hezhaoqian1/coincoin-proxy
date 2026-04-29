@@ -56,6 +56,45 @@ export function clearGeneratedKey() {
     emitAuthChange()
 }
 
+export async function getDeveloperKeyState() {
+    const res = await fetch(`${PROXY_BASE}/v1/keys/me`, {
+        headers: authHeaders()
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || data.error?.message || 'Failed to fetch developer key state')
+    return data
+}
+
+export async function listDeveloperKeys() {
+    const res = await fetch(`${PROXY_BASE}/v1/keys`, {
+        headers: authHeaders()
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || data.error?.message || 'Failed to list developer keys')
+    return data
+}
+
+export async function createDeveloperKey() {
+    const res = await fetch(`${PROXY_BASE}/v1/keys`, {
+        method: 'POST',
+        headers: authHeaders(),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || data.error?.message || 'Failed to create developer key')
+    return data
+}
+
+export async function updateDeveloperKey(keyId, payload) {
+    const res = await fetch(`${PROXY_BASE}/v1/keys/${keyId}`, {
+        method: 'PATCH',
+        headers: authHeaders(),
+        body: JSON.stringify(payload),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || data.error?.message || 'Failed to update developer key')
+    return data
+}
+
 /** Auth header helper */
 function authHeaders() {
     return {
@@ -468,7 +507,7 @@ export const PRICING_PLANS = [
         priceNote: '',
         money: '499.90',
         balanceLabel: '$2499.99 余额',
-        features: ['$2,499.99 账户余额', '适合多账号、长上下文和图片工作流', 'CoinCoin 长期主力方案', '按量计费 · 用多少扣多少'],
+        features: ['$2,499.99 账户余额', '适合多账号、长上下文和图片工作流', 'ClawFather 长期主力方案', '按量计费 · 用多少扣多少'],
         badge: '最划算',
         highlight: false
     }

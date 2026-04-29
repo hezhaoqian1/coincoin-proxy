@@ -7,7 +7,7 @@ import { usePublicModels } from '../hooks/usePublicModels'
 import './Playground.css'
 
 export default function Playground() {
-    const { authMode, effectiveApiKey, hasDeveloperKey } = useAuth()
+    const { authMode, effectiveApiKey, hasDeveloperKey, hasLocalDeveloperKey } = useAuth()
     const { textModels, defaultTextModel, loading: loadingModels } = usePublicModels()
     const [selectedModel, setSelectedModel] = useState('')
     const [systemPrompt, setSystemPrompt] = useState('')
@@ -131,7 +131,7 @@ export default function Playground() {
             <div className="playground-toolbar glass-card animate-fade-in-up">
                 <div className="playground-toolbar-copy">
                     <span className="playground-kicker">Live Request</span>
-                    <p>{hasDeveloperKey ? '直接试模型、提示词和返回速度。需要复制配置时再去接入配置页。' : '先生成开发者 Key，再发送真实请求。'}</p>
+                    <p>{hasLocalDeveloperKey ? '直接试模型、提示词和返回速度。需要复制配置时再去接入配置页。' : hasDeveloperKey ? '当前账号已有开发者 Key，但本浏览器没有保存明文。先重新生成一把，再发送真实请求。' : '先生成开发者 Key，再发送真实请求。'}</p>
                 </div>
                 <div className="playground-toolbar-links">
                     <Link to="/settings" className="btn btn-secondary btn-sm">去接入配置</Link>
@@ -148,12 +148,14 @@ export default function Playground() {
                             <p>选模型、写提示词、调参数，然后直接发送。</p>
                         </div>
                     </div>
-                    {!hasDeveloperKey && (
+                    {!hasLocalDeveloperKey && (
                         <div className="settings-alert settings-alert-warning" style={{ marginBottom: 'var(--space-lg)' }}>
-                            <h3 style={{ marginBottom: 'var(--space-xs)' }}>当前没有可用的开发者 Key</h3>
+                            <h3 style={{ marginBottom: 'var(--space-xs)' }}>当前没有可用的开发者 Key 明文</h3>
                             <p className="settings-text" style={{ marginBottom: 0 }}>
                                 {authMode === 'session_only'
-                                    ? '你现在用的是控制台 session。请先回概览页生成开发者 Key。'
+                                    ? (hasDeveloperKey
+                                        ? '你现在用的是控制台 session。当前账号已有开发者 Key，但原明文不会跨浏览器恢复；请回概览页重新生成一把。'
+                                        : '你现在用的是控制台 session。请先回概览页生成开发者 Key。')
                                     : '请先使用开发者 Key 登录，或者回概览页生成新的开发者 Key。'}
                             </p>
                         </div>
