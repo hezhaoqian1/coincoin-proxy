@@ -10,6 +10,7 @@ export default function Navbar() {
     const { theme, toggleTheme } = useTheme()
     const location = useLocation()
     const pricingTarget = isLoggedIn ? '/recharge' : '/recharge'
+    const isLanding = location.pathname === '/'
 
     const isActive = (path) => location.pathname === path
     const isPublicPage = ['/', '/docs', '/login', '/register', '/pay/return'].includes(location.pathname)
@@ -17,14 +18,22 @@ export default function Navbar() {
     if (!isPublicPage) return null
 
     return (
-        <nav className="navbar">
+        <nav className={`navbar ${isLanding ? 'navbar-landing' : ''}`}>
             <div className="navbar-inner container">
                 <Link to="/" className="navbar-logo">
                     <div className="logo-icon">CF</div>
-                    <span className="logo-text">ClawFather</span>
+                    <div className="navbar-brand-copy">
+                        <span className="logo-text">ClawFather</span>
+                        <span className="navbar-brand-sub">API gateway for builders</span>
+                    </div>
                 </Link>
 
                 <div className="navbar-links">
+                    {isLanding ? (
+                        <a href="#faq" className="nav-link">
+                            FAQ
+                        </a>
+                    ) : null}
                     <Link to="/docs" className={`nav-link ${isActive('/docs') ? 'active' : ''}`}>
                         文档
                     </Link>
