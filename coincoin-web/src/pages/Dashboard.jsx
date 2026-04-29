@@ -97,7 +97,7 @@ function ReadinessCard({ authMode, username, hasDeveloperKey }) {
     )
 }
 
-function KeyManagement({ copied, copy, username, generatedApiKey, authMode, effectiveApiKey }) {
+function KeyManagement({ copied, copy, username, generatedApiKey, hasLocalDeveloperKey, latestDeveloperKey, activeDeveloperKeyCount, authMode, effectiveApiKey }) {
     const [generatedKey, setGeneratedKey] = useState(generatedApiKey || '')
     const [showKey, setShowKey] = useState(false)
     const [generating, setGenerating] = useState(false)
@@ -174,6 +174,30 @@ function KeyManagement({ copied, copy, username, generatedApiKey, authMode, effe
                             {generating ? '生成中...' : '重新生成 Key'}
                         </button>
                         <Link to="/settings" className="btn btn-ghost btn-sm">查看配置</Link>
+                    </div>
+                    {genError && <p style={{ color: 'var(--accent-rose)', fontSize: '0.85rem', marginTop: 'var(--space-sm)' }}>{genError}</p>}
+                </div>
+            ) : username && !hasLocalDeveloperKey && latestDeveloperKey ? (
+                <div>
+                    <p className="key-panel-copy">
+                        当前账户已经有开发者 Key，但明文不会跨浏览器恢复。
+                        如果你没有保存原值，需要重新生成一把新的开发者 Key。
+                    </p>
+                    <div className="action-grid">
+                        <div className="action-item">
+                            <div className="action-icon">&#128273;</div>
+                            <div>
+                                <strong>最近一把开发者 Key</strong>
+                                <code>{latestDeveloperKey.masked_key}</code>
+                            </div>
+                            <span className="action-btn">{activeDeveloperKeyCount} 把有效 Key</span>
+                        </div>
+                    </div>
+                    <div style={{ marginTop: 'var(--space-md)', display: 'flex', gap: 'var(--space-sm)' }}>
+                        <button className="btn btn-secondary btn-sm" onClick={handleGenerate} disabled={generating}>
+                            {generating ? '生成中...' : '重新生成 Key'}
+                        </button>
+                        <Link to="/settings" className="btn btn-ghost btn-sm">查看配置说明</Link>
                     </div>
                     {genError && <p style={{ color: 'var(--accent-rose)', fontSize: '0.85rem', marginTop: 'var(--space-sm)' }}>{genError}</p>}
                 </div>
@@ -382,7 +406,16 @@ function StationCard({ stationState, onSubmitted }) {
 
 export default function Dashboard() {
     const { defaultTextModel, defaultImageModel } = usePublicModels()
-    const { authMode, effectiveApiKey, generatedApiKey, hasDeveloperKey, username } = useAuth()
+    const {
+        activeDeveloperKeyCount,
+        authMode,
+        effectiveApiKey,
+        generatedApiKey,
+        hasDeveloperKey,
+        hasLocalDeveloperKey,
+        latestDeveloperKey,
+        username,
+    } = useAuth()
     const [balance, setBalance] = useState(null)
     const [usage, setUsage] = useState(null)
     const [dailyData, setDailyData] = useState(null)
@@ -592,6 +625,9 @@ export default function Dashboard() {
                         copy={copy}
                         username={username}
                         generatedApiKey={generatedApiKey}
+                        hasLocalDeveloperKey={hasLocalDeveloperKey}
+                        latestDeveloperKey={latestDeveloperKey}
+                        activeDeveloperKeyCount={activeDeveloperKeyCount}
                         authMode={authMode}
                         effectiveApiKey={effectiveApiKey}
                     />

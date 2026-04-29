@@ -3,7 +3,7 @@ from datetime import datetime
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import settings
@@ -11,7 +11,17 @@ from .db import get_db
 from .finance_summary import ensure_finance_summary_initialized, increment_finance_summary
 from .models import ApiKey, User
 from .rate_limiter import rate_limiter
-from .schemas import KeyActivateRequest, KeyActivateResponse
+from .proxy import authenticate_user
+from .schemas import (
+    DeveloperKeyCreateResponse,
+    DeveloperKeyListItem,
+    DeveloperKeyListResponse,
+    DeveloperKeyStateResponse,
+    DeveloperKeySummary,
+    DeveloperKeyUpdateRequest,
+    KeyActivateRequest,
+    KeyActivateResponse,
+)
 from .security import encrypt_api_key, generate_api_key, generate_id, generate_referral_code, hash_key
 
 
@@ -26,6 +36,190 @@ def _client_ip(request: Request) -> str:
     if forwarded:
         return forwarded.split(",")[0].strip()
     return request.client.host if request.client else "unknown"
+
+
+def _mask_api_key(raw_key: str) -> str:
+    value = (raw_key or "").strip()
+    if len(value) <= 12:
+        return value
+    return f"{value[:8]}...{value[-4:]}"
+
+
+@router.get("/me", response_model=DeveloperKeyStateResponse)
+async def get_my_developer_key_state(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    user = await authenticate_user(request, db)
+
+    active_count = (
+        await db.execute(
+            select(func.count())
+            .select_from(ApiKey)
+            .where(
+                ApiKey.user_id == user.id,
+                ApiKey.kind == "api",
+                ApiKey.status == "active",
+            )
+        )
+    ).scalar() or 0
+
+    latest_key_row = (
+        await db.execute(
+            select(ApiKey)
+            .where(
+                ApiKey.user_id == user.id,
+                ApiKey.kind == "api",
+                ApiKey.status == "active",
+            )
+            .order_by(ApiKey.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    latest_key = None
+    if latest_key_row:
+        masked = ""
+        if latest_key_row.encrypted_key:
+            try:
+                from .security import decrypt_api_key
+
+                masked = _mask_api_key(decrypt_api_key(latest_key_row.encrypted_key) or "")
+            except Exception:
+                logger.warning("failed to decrypt developer key for summary", exc_info=True)
+        latest_key = DeveloperKeySummary(
+            key_id=latest_key_row.id,
+            masked_key=masked or "sk_cc_...unknown",
+            created_at=latest_key_row.created_at,
+            last_used_at=latest_key_row.last_used_at,
+            status=latest_key_row.status,
+        )
+
+    return DeveloperKeyStateResponse(
+        has_active_key=active_count > 0,
+        active_key_count=active_count,
+        latest_key=latest_key,
+    )
+
+
+@router.get("", response_model=DeveloperKeyListResponse)
+async def list_my_developer_keys(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    user = await authenticate_user(request, db)
+    rows = (
+        await db.execute(
+            select(ApiKey)
+            .where(ApiKey.user_id == user.id, ApiKey.kind == "api")
+            .order_by(ApiKey.created_at.desc())
+            .limit(100)
+        )
+    ).scalars().all()
+
+    items = []
+    active = 0
+    disabled = 0
+    for row in rows:
+        masked = "sk_cc_...unknown"
+        if row.encrypted_key:
+            try:
+                from .security import decrypt_api_key
+
+                masked = _mask_api_key(decrypt_api_key(row.encrypted_key) or "")
+            except Exception:
+                logger.warning("failed to decrypt developer key for list item", exc_info=True)
+        if row.status == "active":
+            active += 1
+        elif row.status == "disabled":
+            disabled += 1
+        items.append(
+            DeveloperKeyListItem(
+                key_id=row.id,
+                masked_key=masked,
+                status=row.status,
+                created_at=row.created_at,
+                last_used_at=row.last_used_at,
+            )
+        )
+
+    return DeveloperKeyListResponse(
+        total=len(items),
+        active=active,
+        disabled=disabled,
+        data=items,
+    )
+
+
+@router.post("", response_model=DeveloperKeyCreateResponse)
+async def create_my_developer_key(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    user = await authenticate_user(request, db)
+
+    api_key_value = generate_api_key()
+    key = ApiKey(
+        id=generate_id("k_"),
+        user_id=user.id,
+        key_hash=hash_key(api_key_value),
+        encrypted_key=encrypt_api_key(api_key_value),
+        kind="api",
+        status="active",
+        last_used_at=None,
+        created_at=datetime.utcnow(),
+    )
+    db.add(key)
+    await db.commit()
+
+    return DeveloperKeyCreateResponse(
+        key_id=key.id,
+        api_key=api_key_value,
+        masked_key=_mask_api_key(api_key_value),
+        status=key.status,
+        created_at=key.created_at,
+    )
+
+
+@router.patch("/{key_id}", response_model=DeveloperKeyListItem)
+async def update_my_developer_key(
+    key_id: str,
+    payload: DeveloperKeyUpdateRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    user = await authenticate_user(request, db)
+    key = (
+        await db.execute(
+            select(ApiKey).where(
+                ApiKey.id == key_id,
+                ApiKey.user_id == user.id,
+                ApiKey.kind == "api",
+            )
+        )
+    ).scalar_one_or_none()
+    if not key:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="key not found")
+
+    key.status = payload.status
+    await db.commit()
+
+    masked = "sk_cc_...unknown"
+    if key.encrypted_key:
+        try:
+            from .security import decrypt_api_key
+
+            masked = _mask_api_key(decrypt_api_key(key.encrypted_key) or "")
+        except Exception:
+            logger.warning("failed to decrypt developer key for update response", exc_info=True)
+
+    return DeveloperKeyListItem(
+        key_id=key.id,
+        masked_key=masked,
+        status=key.status,
+        created_at=key.created_at,
+        last_used_at=key.last_used_at,
+    )
 
 
 @router.post("/activate", response_model=KeyActivateResponse)

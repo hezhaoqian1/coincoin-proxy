@@ -36,7 +36,7 @@ function ConfigSnippet({ title, summary, code }) {
 
 export default function Settings() {
     const [searchParams, setSearchParams] = useSearchParams()
-    const { authMode, effectiveApiKey, generatedApiKey, hasDeveloperKey, isConsoleSession, username } = useAuth()
+    const { authMode, effectiveApiKey, generatedApiKey, hasDeveloperKey, hasLocalDeveloperKey, isConsoleSession, latestDeveloperKey, username } = useAuth()
     const { models, textModels, defaultTextModel, defaultImageModel } = usePublicModels()
     const snippetsRef = useRef(null)
     const [copied, setCopied] = useState(false)
@@ -58,8 +58,9 @@ export default function Settings() {
 
     const maskedKey = effectiveApiKey
         ? `${effectiveApiKey.substring(0, 8)}\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022${effectiveApiKey.substring(effectiveApiKey.length - 4)}`
-        : ''
-    const key = hasDeveloperKey ? effectiveApiKey : 'YOUR_DEVELOPER_API_KEY'
+        : latestDeveloperKey?.masked_key || ''
+    const canUseDeveloperKeyNow = !!effectiveApiKey
+    const key = canUseDeveloperKeyNow ? effectiveApiKey : 'YOUR_DEVELOPER_API_KEY'
     const baseUrl = BASE_URL_DISPLAY
     const anthropicBaseUrl = ANTHROPIC_BASE_URL_DISPLAY
     const imageModel = defaultImageModel?.id || 'gemini-image'
@@ -191,7 +192,9 @@ claude --model claude-opus-4-7`
     const activeSnippetContent = snippets.find((snippet) => snippet.title === activeSnippet) || snippets[0]
     const activePanel = searchParams.get('panel') || 'keys'
     const readinessChecks = [
-        hasDeveloperKey ? '当前账号已有开发者 Key。' : '当前只有控制台会话，需要先生成开发者 Key。',
+        hasDeveloperKey
+            ? (canUseDeveloperKeyNow ? '当前浏览器已有可用开发者 Key。' : '当前账号已有开发者 Key，但本浏览器没有保存明文。')
+            : '当前只有控制台会话，需要先生成开发者 Key。',
         'OpenAI 兼容客户端统一走同一个 /v1 入口。',
         '平时主要改 model，不用改地址。',
         '403 通常是把 session key 当成了 API Key。',
@@ -242,11 +245,13 @@ claude --model claude-opus-4-7`
                     <div className="glass-card settings-section settings-alert settings-alert-success animate-fade-in-up">
                         <h3>接入已经就绪</h3>
                         <p className="settings-text">
-                            当前控制台账号已有可用的开发者 Key。
+                            {hasLocalDeveloperKey
+                                ? '当前控制台账号已有可用的开发者 Key。'
+                                : '当前控制台账号已有开发者 Key，但这把 Key 的明文不会在新浏览器里恢复。'}
                         </p>
                         <div className="settings-inline-meta">
                             <span className="meta-pill">账户：{username || '未命名用户'}</span>
-                            <span className="meta-pill">开发者 Key：已生成</span>
+                            <span className="meta-pill">{hasLocalDeveloperKey ? '开发者 Key：可直接使用' : '开发者 Key：仅可见摘要'}</span>
                         </div>
                     </div>
                 )}
@@ -268,15 +273,17 @@ claude --model claude-opus-4-7`
                     <h3>&#128273; 开发者 Key</h3>
                     <div className="key-info-row">
                         <code className="masked-key">{maskedKey || '尚未生成开发者 Key'}</code>
-                        <button onClick={handleCopy} className="btn btn-secondary btn-sm" disabled={!effectiveApiKey}>
+                        <button onClick={handleCopy} className="btn btn-secondary btn-sm" disabled={!canUseDeveloperKeyNow}>
                             {copied ? '\u2713 已复制' : '复制开发者 Key'}
                         </button>
                     </div>
                     <p className="settings-hint">
                         {generatedApiKey
                             ? '这是控制台生成的开发者 Key。'
-                            : hasDeveloperKey
+                            : authMode === 'api'
                                 ? '当前就是开发者 Key 登录。'
+                                : hasDeveloperKey
+                                    ? '当前账户已有开发者 Key，但本浏览器没有保存明文。需要重新生成才会再次显示完整值。'
                                 : '控制台登录态不能直接拿来调接口。'}
                     </p>
                 </div>
@@ -289,7 +296,7 @@ claude --model claude-opus-4-7`
                         </div>
                         <div className="connection-bar-item">
                             <span className="info-label">认证</span>
-                            <code>{hasDeveloperKey ? 'Bearer 开发者 Key' : '先生成开发者 Key'}</code>
+                            <code>{canUseDeveloperKeyNow ? 'Bearer 开发者 Key' : hasDeveloperKey ? '重新生成后再填 Bearer Key' : '先生成开发者 Key'}</code>
                         </div>
                         <div className="connection-bar-item">
                             <span className="info-label">默认文本模型</span>
@@ -351,7 +358,7 @@ claude --model claude-opus-4-7`
                             </div>
                             <div className="info-item">
                                 <span className="info-label">认证提示</span>
-                                <code>{hasDeveloperKey ? 'Bearer 开发者 Key' : '先生成开发者 Key'}</code>
+                                <code>{canUseDeveloperKeyNow ? 'Bearer 开发者 Key' : hasDeveloperKey ? '重新生成后再填 Bearer Key' : '先生成开发者 Key'}</code>
                             </div>
                             <div className="info-item">
                                 <span className="info-label">当前会话</span>
@@ -406,7 +413,7 @@ claude --model claude-opus-4-7`
                     </div>
                     <p className="settings-hint" style={{ marginBottom: 'var(--space-lg)' }}>
                         OpenAI 兼容客户端只需要 Base URL、开发者 Key 和 model。Claude Code 用根域名，不要带 <code>/v1</code>。
-                        {!hasDeveloperKey && ' 当前没有开发者 Key，示例会保留占位符。'}
+                        {!canUseDeveloperKeyNow && ' 当前没有可复制的开发者 Key 明文，示例会保留占位符。'}
                     </p>
                     <div className="snippet-tabs">
                         {snippets.map((snippet) => (

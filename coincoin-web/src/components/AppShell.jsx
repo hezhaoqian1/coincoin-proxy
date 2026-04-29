@@ -145,7 +145,7 @@ function isNavItemActive(item, location) {
     if (item.hash) {
         return location.hash === item.hash
     }
-    return !location.search || location.pathname === '/dashboard' || location.pathname === '/usage' || location.pathname === '/station'
+    return !location.search || location.pathname === '/dashboard' || location.pathname === '/usage' || location.pathname === '/station' || location.pathname === '/api-keys'
 }
 
 function ShellGroup({ title, items, location }) {
@@ -172,7 +172,7 @@ function ShellGroup({ title, items, location }) {
 }
 
 export default function AppShell({ title, description, actions, children }) {
-    const { authMode, hasDeveloperKey, logout, username } = useAuth()
+    const { authMode, hasDeveloperKey, hasLocalDeveloperKey, logout, username } = useAuth()
     const { theme, toggleTheme } = useTheme()
     const navigate = useNavigate()
     const location = useLocation()
@@ -195,14 +195,14 @@ export default function AppShell({ title, description, actions, children }) {
     }, [])
 
     const accountLabel = authMode === 'api' ? '开发者 Key 会话' : (username || '控制台账号')
-    const accountSub = hasDeveloperKey ? '可直接发请求' : '还没有开发者 Key'
+    const accountSub = hasLocalDeveloperKey ? '可直接发请求' : hasDeveloperKey ? '已有 Key，但需重新生成明文' : '还没有开发者 Key'
     const navGroups = useMemo(() => {
         const groups = [
             {
                 title: '工作台',
                 items: [
                     { to: '/dashboard', pathname: '/dashboard', label: '控制台', caption: '余额、密钥、最近请求', icon: 'dashboard' },
-                    { to: '/settings?panel=keys', pathname: '/settings', search: { panel: 'keys' }, label: 'API 密钥', caption: '密钥、入口、认证方式', icon: 'key' },
+                    { to: '/api-keys', pathname: '/api-keys', label: 'API 密钥', caption: '多把 Key 管理与禁用', icon: 'key' },
                     { to: '/usage', pathname: '/usage', label: '使用记录', caption: '状态码、计量、请求明细', icon: 'logs' },
                     { to: '/docs?tab=models', pathname: '/docs', search: { tab: 'models' }, label: '模型价格', caption: '模型目录与计费', icon: 'pricing' },
                 ],
