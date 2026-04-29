@@ -797,6 +797,8 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
         can_fallback = allow_fallback and (
             (used_cfg.upstream_url != fallback_cfg.upstream_url) or (used_cfg.model_id != fallback_cfg.model_id)
         )
+        if resolved_model.lock_model_selection and fallback_cfg.model_id != used_cfg.model_id:
+            can_fallback = False
         stream_client = await get_stream_client()
 
         async def _send_stream(cfg):
@@ -1064,6 +1066,8 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
     can_fallback = allow_fallback and (
         (used_cfg.upstream_url != fallback_cfg.upstream_url) or (used_cfg.model_id != fallback_cfg.model_id)
     )
+    if resolved_model.lock_model_selection and fallback_cfg.model_id != used_cfg.model_id:
+        can_fallback = False
     client = await get_http_client()
 
     async def _post_json(cfg):

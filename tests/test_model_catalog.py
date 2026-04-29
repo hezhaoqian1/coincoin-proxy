@@ -206,10 +206,11 @@ class ModelCatalogTests(unittest.TestCase):
         )
 
         self.assertEqual(resolved.public_model.public_id, "gpt-5.2-codex")
-        self.assertEqual(resolved.backend.model_id, "gpt-4o-mini")
+        self.assertEqual(resolved.backend.model_id, "gpt-5.2-codex")
         self.assertEqual(resolved.execution_profile, "legacy_general")
         self.assertEqual(resolved.execution_pool, "cpa_general_pool")
-        self.assertEqual(resolved.route_reason, "catalog:gpt-5.2-codex:auto_cheap")
+        self.assertEqual(resolved.route_reason, "catalog:gpt-5.2-codex:legacy_explicit")
+        self.assertTrue(resolved.lock_model_selection)
 
     def test_explicit_gpt_5_2_alias_keeps_legacy_lane(self) -> None:
         resolved = registry.resolve_public_model(
@@ -220,10 +221,11 @@ class ModelCatalogTests(unittest.TestCase):
         )
 
         self.assertEqual(resolved.public_model.public_id, "gpt-5.2")
-        self.assertEqual(resolved.backend.model_id, "gpt-4o-mini")
+        self.assertEqual(resolved.backend.model_id, "gpt-5.2")
         self.assertEqual(resolved.execution_profile, "legacy_general")
         self.assertEqual(resolved.execution_pool, "cpa_general_pool")
-        self.assertEqual(resolved.route_reason, "catalog:gpt-5.2:auto_cheap")
+        self.assertEqual(resolved.route_reason, "catalog:gpt-5.2:legacy_explicit")
+        self.assertTrue(resolved.lock_model_selection)
 
     def test_explicit_gpt_5_5_alias_keeps_legacy_lane(self) -> None:
         resolved = registry.resolve_public_model(
@@ -234,10 +236,28 @@ class ModelCatalogTests(unittest.TestCase):
         )
 
         self.assertEqual(resolved.public_model.public_id, "gpt-5.5")
-        self.assertEqual(resolved.backend.model_id, "gpt-4o-mini")
+        self.assertEqual(resolved.backend.model_id, "gpt-5.5")
         self.assertEqual(resolved.execution_profile, "legacy_general")
         self.assertEqual(resolved.execution_pool, "cpa_general_pool")
-        self.assertEqual(resolved.route_reason, "catalog:gpt-5.5:auto_cheap")
+        self.assertEqual(resolved.route_reason, "catalog:gpt-5.5:legacy_explicit")
+        self.assertTrue(resolved.lock_model_selection)
+
+    def test_explicit_gpt_5_4_alias_routes_to_real_gpt_5_4_when_fixed_model_changes(self) -> None:
+        settings.fixed_model = "gpt-5.5"
+        registry._initialized = False
+        registry.init_from_settings()
+
+        resolved = registry.resolve_public_model(
+            "gpt-5.4",
+            "responses",
+            messages=[{"role": "user", "content": "hello"}],
+            tools=None,
+        )
+
+        self.assertEqual(resolved.public_model.public_id, "gpt-5.4")
+        self.assertEqual(resolved.backend.model_id, "gpt-5.4")
+        self.assertEqual(resolved.route_reason, "catalog:gpt-5.4:legacy_explicit")
+        self.assertTrue(resolved.lock_model_selection)
 
     def test_explicit_gpt_5_4_mini_alias_keeps_legacy_lane(self) -> None:
         resolved = registry.resolve_public_model(
@@ -248,10 +268,11 @@ class ModelCatalogTests(unittest.TestCase):
         )
 
         self.assertEqual(resolved.public_model.public_id, "gpt-5.4-mini")
-        self.assertEqual(resolved.backend.model_id, "gpt-4o-mini")
+        self.assertEqual(resolved.backend.model_id, "gpt-5.4-mini")
         self.assertEqual(resolved.execution_profile, "legacy_general")
         self.assertEqual(resolved.execution_pool, "cpa_general_pool")
-        self.assertEqual(resolved.route_reason, "catalog:gpt-5.4-mini:auto_cheap")
+        self.assertEqual(resolved.route_reason, "catalog:gpt-5.4-mini:legacy_explicit")
+        self.assertTrue(resolved.lock_model_selection)
 
     def test_gpt_5_3_codex_uses_coding_profile_and_cpa_coding_pool(self) -> None:
         resolved = registry.resolve_public_model(
@@ -264,8 +285,9 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertEqual(resolved.public_model.public_id, "gpt-5.3-codex")
         self.assertEqual(resolved.execution_profile, "legacy_coding")
         self.assertEqual(resolved.execution_pool, "cpa_coding_pool")
-        self.assertEqual(resolved.backend.model_id, "gpt-5.4")
-        self.assertEqual(resolved.route_reason, "catalog:gpt-5.3-codex:auto_premium")
+        self.assertEqual(resolved.backend.model_id, "gpt-5.3-codex")
+        self.assertEqual(resolved.route_reason, "catalog:gpt-5.3-codex:legacy_explicit")
+        self.assertTrue(resolved.lock_model_selection)
 
     def test_catalog_lists_all_expected_legacy_gpt_aliases(self) -> None:
         text_model_ids = [

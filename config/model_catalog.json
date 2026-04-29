@@ -20,6 +20,16 @@
       }
     },
     {
+      "id": "gpt-5.4",
+      "owned_by": "openai",
+      "provider_name": "OpenAI",
+      "provider_model": "gpt-5.4",
+      "capabilities": ["chat/completions", "responses"],
+      "routing_mode": "legacy_auto",
+      "delivery_lane": "legacy",
+      "billable_sku": "legacy-gpt-5.4-text"
+    },
+    {
       "id": "gpt-5",
       "owned_by": "openai",
       "provider_name": "OpenAI",

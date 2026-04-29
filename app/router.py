@@ -54,6 +54,7 @@ class ResolvedModel:
     execution_profile: str
     execution_pool: str
     route_reason: str
+    lock_model_selection: bool = False
 
 
 @dataclass(frozen=True)
@@ -434,6 +435,9 @@ class ModelRegistry:
                         model.public_id,
                     )
                     continue
+            if model.public_id in self.public_models:
+                logger.warning("skipping duplicate public model id %s", model.public_id)
+                continue
             self.public_models[model.public_id] = model
             self.public_model_order.append(model.public_id)
 
@@ -453,6 +457,22 @@ class ModelRegistry:
 
         requested_default_image = str(document.get("default_image_model") or "").strip()
         self.default_image_model_id = self._pick_default_model(requested_default_image, IMAGE_ENDPOINTS)
+
+    def _build_explicit_legacy_backend(self, public_model: PublicModelConfig) -> Optional[ModelConfig]:
+        target_model = str(public_model.upstream_model or public_model.provider_model or "").strip()
+        if not target_model:
+            return None
+
+        primary = self.get(PREMIUM)
+        return ModelConfig(
+            model_id=target_model,
+            upstream_url=primary.upstream_url,
+            api_key=primary.api_key,
+            price_input_per_million=primary.price_input_per_million,
+            price_output_per_million=primary.price_output_per_million,
+            strip_unsupported=primary.strip_unsupported or public_model.strip_unsupported or _is_codex_like(target_model),
+            auth_style=primary.auth_style,
+        )
 
     def _pick_default_model(self, requested_id: str, allowed_caps: frozenset[str]) -> str:
         if requested_id and requested_id in self.public_models:
@@ -526,6 +546,7 @@ class ModelRegistry:
         tools: Optional[list] = None,
     ) -> ResolvedModel:
         public_model = self._select_public_model(requested_model, endpoint)
+        explicit_requested = bool((requested_model or "").strip())
         execution_profile = self._resolve_execution_profile(public_model, endpoint)
         if endpoint in EMBEDDING_ENDPOINTS:
             return ResolvedModel(
@@ -536,6 +557,17 @@ class ModelRegistry:
                 route_reason=f"catalog:{public_model.public_id}:{public_model.delivery_lane or 'upstream_direct'}",
             )
         if public_model.routing_mode == "legacy_auto":
+            if explicit_requested:
+                explicit_backend = self._build_explicit_legacy_backend(public_model)
+                if explicit_backend is not None:
+                    return ResolvedModel(
+                        public_model=public_model,
+                        backend=explicit_backend,
+                        execution_profile=execution_profile.profile_id,
+                        execution_pool=execution_profile.pool_id,
+                        route_reason=f"catalog:{public_model.public_id}:legacy_explicit",
+                        lock_model_selection=True,
+                    )
             backend, route_reason = resolve(messages or [], tools, execution_profile=execution_profile)
             return ResolvedModel(
                 public_model=public_model,

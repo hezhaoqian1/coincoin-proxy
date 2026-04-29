@@ -86,6 +86,19 @@ class GatewayCatalogSyncTests(unittest.TestCase):
         self.assertIn(default_image_model, public_models)
         self.assertIn("images/generations", public_models[default_image_model].get("capabilities") or [])
 
+    def test_legacy_gpt_5_4_stays_public_when_fixed_model_changes(self) -> None:
+        public_models = {
+            item["id"]: item
+            for item in (self.catalog.get("models") or [])
+            if isinstance(item, dict) and item.get("id")
+        }
+
+        model = public_models["gpt-5.4"]
+        self.assertEqual(model.get("provider_model"), "gpt-5.4")
+        self.assertEqual(model.get("routing_mode"), "legacy_auto")
+        self.assertIn("chat/completions", model.get("capabilities") or [])
+        self.assertIn("responses", model.get("capabilities") or [])
+
     def test_claude_compat_aliases_split_fixed_and_cheap_models(self) -> None:
         public_models = {
             item["id"]: item
