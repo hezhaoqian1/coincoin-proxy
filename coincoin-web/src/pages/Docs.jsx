@@ -742,7 +742,7 @@ export ANTHROPIC_DEFAULT_HAIKU_MODEL="claude-haiku-4-5"
 claude --model claude-opus-4-7`}</pre>
             <ul className="doc-list">
                 <li>这里的 <code>ANTHROPIC_BASE_URL</code> 必须填站点根地址，不能带 <code>/v1</code>。</li>
-                <li>你在 Claude Code 里填的是 Claude 模型名，但网关会把这些 alias 路由到当前配置的 GPT 文本线路。</li>
+                <li><code>claude-opus-4-7</code>、<code>opus</code>、<code>best</code>、<code>default</code>、<code>opus[1m]</code>、<code>opusplan</code> 走当前固定文本模型；Sonnet / Haiku alias 走 cheap 文本模型。</li>
                 <li>如果之前用过 <code>/login</code> 托管登录，先执行一次 <code>/logout</code>，避免本地登录态和环境变量打架。</li>
             </ul>
 
