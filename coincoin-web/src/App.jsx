@@ -49,8 +49,20 @@ function ScrollManager() {
 
     useEffect(() => {
         if (typeof window === 'undefined') return
+        if (location.hash) {
+            const targetId = decodeURIComponent(location.hash.slice(1))
+
+            requestAnimationFrame(() => {
+                const target = document.getElementById(targetId)
+                if (target) {
+                    target.scrollIntoView({ block: 'start', behavior: 'auto' })
+                }
+            })
+            return
+        }
+
         window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
-    }, [location.pathname])
+    }, [location.pathname, location.hash])
 
     return null
 }
