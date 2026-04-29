@@ -7,6 +7,22 @@ import yaml
 IMAGE_CAPABILITIES = {"images/generations", "images/edits"}
 EMBEDDING_CAPABILITIES = {"embeddings"}
 TEXT_CAPABILITIES = {"chat/completions", "responses"}
+CLAUDE_FIXED_ALIASES = {
+    "claude-opus-4-7",
+    "opus",
+    "best",
+    "default",
+    "opus[1m]",
+    "opusplan",
+}
+CLAUDE_CHEAP_ALIASES = {
+    "claude-sonnet-4-6",
+    "claude-haiku-4-5",
+    "claude-haiku-4-5-20251001",
+    "sonnet",
+    "haiku",
+    "sonnet[1m]",
+}
 
 
 class GatewayCatalogSyncTests(unittest.TestCase):
@@ -69,6 +85,26 @@ class GatewayCatalogSyncTests(unittest.TestCase):
         self.assertIn("chat/completions", public_models[default_text_model].get("capabilities") or [])
         self.assertIn(default_image_model, public_models)
         self.assertIn("images/generations", public_models[default_image_model].get("capabilities") or [])
+
+    def test_claude_compat_aliases_split_fixed_and_cheap_models(self) -> None:
+        public_models = {
+            item["id"]: item
+            for item in (self.catalog.get("models") or [])
+            if isinstance(item, dict) and item.get("id")
+        }
+
+        for alias in CLAUDE_FIXED_ALIASES:
+            with self.subTest(alias=alias):
+                model = public_models[alias]
+                self.assertEqual(model.get("provider_model"), "${COINCOIN_FIXED_MODEL}")
+                self.assertEqual(model.get("upstream_model"), "${COINCOIN_FIXED_MODEL}")
+
+        for alias in CLAUDE_CHEAP_ALIASES:
+            with self.subTest(alias=alias):
+                model = public_models[alias]
+                expected = "${COINCOIN_CHEAP_MODEL:-${COINCOIN_FIXED_MODEL}}"
+                self.assertEqual(model.get("provider_model"), expected)
+                self.assertEqual(model.get("upstream_model"), expected)
 
     def test_text_models_match_gemini_gateway_shape(self) -> None:
         for model in self.gateway_models:
