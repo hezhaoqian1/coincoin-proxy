@@ -456,7 +456,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["model"], "gpt-5.2-codex")
-        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-4o-mini")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-5.2-codex")
         self.assertEqual(upstream_client.calls[0]["url"], "https://legacy.example/v1/responses")
 
     async def test_responses_explicit_gpt_5_4_mini_alias_keeps_public_model_name(self) -> None:
@@ -492,29 +492,15 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["model"], "gpt-5.4-mini")
-        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-4o-mini")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-5.4-mini")
         self.assertEqual(upstream_client.calls[0]["url"], "https://legacy.example/v1/responses")
 
-    async def test_responses_explicit_legacy_alias_can_fallback_within_legacy_lane(self) -> None:
+    async def test_responses_explicit_legacy_alias_does_not_fallback_to_a_different_model(self) -> None:
         upstream_client = _RecordingClient(
             [
                 _FakeUpstreamResponse(
                     {"error": {"message": "primary failed", "type": "server_error"}},
                     status_code=500,
-                ),
-                _FakeUpstreamResponse(
-                    {
-                        "id": "resp_fallback",
-                        "status": "completed",
-                        "output": [
-                            {
-                                "type": "message",
-                                "role": "assistant",
-                                "content": [{"type": "output_text", "text": "OK"}],
-                            }
-                        ],
-                        "usage": {"input_tokens": 3, "output_tokens": 1, "total_tokens": 4},
-                    }
                 ),
             ]
         )
@@ -532,34 +518,17 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                     json={"model": "gpt-5.2-codex", "input": "Reply with only: OK"},
                 )
 
-        self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.json()["model"], "gpt-5.2-codex")
-        self.assertEqual(len(upstream_client.calls), 2)
-        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-4o-mini")
-        self.assertEqual(upstream_client.calls[1]["json"]["model"], "gpt-5.4")
+        self.assertEqual(response.status_code, 500, response.text)
+        self.assertEqual(len(upstream_client.calls), 1)
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-5.2-codex")
         self.assertEqual(upstream_client.calls[0]["url"], "https://legacy.example/v1/responses")
-        self.assertEqual(upstream_client.calls[1]["url"], "https://fallback.example/v1/responses")
 
-    async def test_chat_explicit_legacy_alias_can_fallback_within_legacy_lane(self) -> None:
+    async def test_chat_explicit_legacy_alias_does_not_fallback_to_a_different_model(self) -> None:
         upstream_client = _RecordingClient(
             [
                 _FakeUpstreamResponse(
                     {"error": {"message": "primary failed", "type": "server_error"}},
                     status_code=500,
-                ),
-                _FakeUpstreamResponse(
-                    {
-                        "id": "resp_fallback",
-                        "status": "completed",
-                        "output": [
-                            {
-                                "type": "message",
-                                "role": "assistant",
-                                "content": [{"type": "output_text", "text": "OK"}],
-                            }
-                        ],
-                        "usage": {"input_tokens": 3, "output_tokens": 1, "total_tokens": 4},
-                    }
                 ),
             ]
         )
@@ -580,13 +549,10 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                     },
                 )
 
-        self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.json()["model"], "gpt-5.2-codex")
-        self.assertEqual(len(upstream_client.calls), 2)
-        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-4o-mini")
-        self.assertEqual(upstream_client.calls[1]["json"]["model"], "gpt-5.4")
+        self.assertEqual(response.status_code, 500, response.text)
+        self.assertEqual(len(upstream_client.calls), 1)
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-5.2-codex")
         self.assertEqual(upstream_client.calls[0]["url"], "https://legacy.example/v1/responses")
-        self.assertEqual(upstream_client.calls[1]["url"], "https://fallback.example/v1/responses")
 
     async def test_responses_legacy_lane_drops_context_management(self) -> None:
         upstream_client = _RecordingClient(
@@ -789,7 +755,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["model"], "gpt-5.3-codex")
         self.assertEqual(payload["output"][0]["content"][0]["text"], "OK")
         self.assertEqual(payload["reasoning"]["effort"], "high")
-        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-5.4")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-5.3-codex")
         self.assertEqual(upstream_client.calls[0]["json"]["reasoning"]["effort"], "high")
         add_usage.assert_awaited_once()
 
