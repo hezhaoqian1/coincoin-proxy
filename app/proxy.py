@@ -27,7 +27,6 @@ from .security import extract_api_key, hash_key
 from .router import (
     ModelCapabilityError,
     UnknownModelError,
-    build_model_cloak,
     extract_messages_for_routing_from_responses_payload,
     registry as model_registry,
 )
@@ -1182,11 +1181,6 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
     payload.pop("model_provider", None)
     _sanitize_encrypted_ids(payload)
     _ensure_content_text(payload)
-
-    _has_tools = bool(payload.get("tools"))
-    if settings.model_cloak and display_model and not _has_tools:
-        _cloak = build_model_cloak(display_model, public_model)
-        payload["instructions"] = (payload.get("instructions") or "") + _cloak
 
     _text = payload.get("text")
     if isinstance(_text, dict) and "verbosity" in _text:
