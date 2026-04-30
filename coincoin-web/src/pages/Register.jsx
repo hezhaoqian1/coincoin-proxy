@@ -242,13 +242,6 @@ export default function Register() {
                         </div>
                     </div>
 
-                    {emailLocked && (
-                        <div className="auth-callout auth-callout-muted">
-                            <strong>{verifiedEmail}</strong>
-                            <p>邮箱已验证，可以继续创建账号。</p>
-                        </div>
-                    )}
-
                     <div className="input-group">
                         <label>密码</label>
                         <input
