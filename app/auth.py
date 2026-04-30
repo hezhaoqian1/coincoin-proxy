@@ -345,8 +345,11 @@ async def register(
     email = _normalize_email(payload.email)
     username = payload.username.strip()
     verification_id = (payload.verification_id or "").strip()
+    verification_code = (payload.verification_code or "").strip()
     if not verification_id:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "请先完成邮箱验证")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "请先发送验证码")
+    if not verification_code:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "请输入验证码")
 
     verification = (
         await db.execute(
@@ -360,10 +363,22 @@ async def register(
             .limit(1)
         )
     ).scalar_one_or_none()
-    if not verification or not verification.consumed_at:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "请先完成邮箱验证")
-    if _utc_naive(verification.expires_at) and _utc_naive(verification.expires_at) < datetime.utcnow():
+    if not verification:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "验证码已失效，请重新发送")
+
+    now = datetime.utcnow()
+    if _utc_naive(verification.expires_at) and _utc_naive(verification.expires_at) < now:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "验证码已过期，请重新发送")
+    if int(verification.attempts or 0) >= max(1, int(settings.email_max_attempts or 5)):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "验证码错误次数过多，请重新发送")
+
+    submitted_hash = _hash_email_code(verification_code)
+    if not hmac.compare_digest(submitted_hash, verification.code_hash):
+        verification.attempts = int(verification.attempts or 0) + 1
+        await db.commit()
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "验证码不正确")
+
+    verification.consumed_at = now
 
     existing_account = (
         await db.execute(select(Account).where(Account.username == username))
@@ -438,11 +453,11 @@ async def register(
         )
         db.add(account)
 
-    user.email_verified_at = verification.consumed_at
+    user.email_verified_at = now
     account.status = "active"
     account.failed_attempts = 0
     account.locked_until = None
-    account.last_login_at = datetime.utcnow()
+    account.last_login_at = now
 
     raw_key, session_key = _create_session_key(user.id)
     db.add(session_key)

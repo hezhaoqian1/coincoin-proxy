@@ -109,7 +109,17 @@ async function parseApiResponse(res, fallbackMessage) {
     const contentType = res.headers.get('content-type') || ''
     if (contentType.includes('application/json')) {
         const data = await res.json()
-        if (!res.ok) throw new Error(data.detail || data.error?.message || fallbackMessage)
+        if (!res.ok) {
+            const detail = data.detail
+            if (typeof detail === 'string' && detail) throw new Error(detail)
+            if (Array.isArray(detail) && detail.length > 0) {
+                const first = detail[0]
+                if (typeof first === 'string') throw new Error(first)
+                if (first && typeof first === 'object' && first.msg) throw new Error(first.msg)
+            }
+            if (detail && typeof detail === 'object' && detail.msg) throw new Error(detail.msg)
+            throw new Error(data.error?.message || fallbackMessage)
+        }
         return data
     }
 
@@ -118,10 +128,11 @@ async function parseApiResponse(res, fallbackMessage) {
     return text
 }
 
-export async function registerUser(username, email, password, referralCode, verificationId) {
+export async function registerUser(username, email, password, referralCode, verificationId, verificationCode) {
     const body = { username, email, password }
     if (referralCode) body.referral_code = referralCode
     if (verificationId) body.verification_id = verificationId
+    if (verificationCode) body.verification_code = verificationCode
     const res = await fetch(`${PROXY_BASE}/v1/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

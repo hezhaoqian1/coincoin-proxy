@@ -186,6 +186,7 @@ class AuthRegisterRequest(BaseModel):
     password: str = Field(..., min_length=6, max_length=128)
     referral_code: Optional[str] = Field(default=None, description="邀请码（可选）")
     verification_id: Optional[str] = Field(default=None, description="预注册邮箱验证会话 ID")
+    verification_code: Optional[str] = Field(default=None, min_length=4, max_length=12, description="邮箱验证码")
 
 
 class AuthRegisterSendCodeRequest(BaseModel):
