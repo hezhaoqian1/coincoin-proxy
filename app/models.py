@@ -20,6 +20,8 @@ class User(Base):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     username: Mapped[Optional[str]] = mapped_column(String(128), unique=True, nullable=True)
+    email: Mapped[Optional[str]] = mapped_column(String(255), unique=True, index=True, nullable=True)
+    email_verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     external_id: Mapped[Optional[str]] = mapped_column(String(128), unique=True, nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="active")
     
@@ -315,10 +317,27 @@ class Account(Base):
     username: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(512))
     linked_user_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_users.id"))
+    status: Mapped[str] = mapped_column(String(32), default="active", index=True)
     last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     failed_attempts: Mapped[int] = mapped_column(BigInteger, default=0)
     locked_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class EmailVerificationCode(Base):
+    """Short-lived email verification code for web registration."""
+    __tablename__ = "coincoin_email_verification_codes"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_users.id"), index=True)
+    email: Mapped[str] = mapped_column(String(255), index=True)
+    code_hash: Mapped[str] = mapped_column(String(64))
+    purpose: Mapped[str] = mapped_column(String(32), default="register")
+    attempts: Mapped[int] = mapped_column(BigInteger, default=0)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    consumed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    ip_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 
 class ImageJob(Base):

@@ -124,6 +124,7 @@ async def list_users(search: Optional[str] = None, db: AsyncSession = Depends(ge
             pat = f"%{search}%"
             query = query.where(
                 User.username.ilike(pat)
+                | User.email.ilike(pat)
                 | User.external_id.ilike(pat)
                 | User.id.ilike(pat)
             )
@@ -133,6 +134,8 @@ async def list_users(search: Optional[str] = None, db: AsyncSession = Depends(ge
         {
             "id": u.id,
             "username": u.username,
+            "email": getattr(u, "email", None),
+            "email_verified_at": getattr(u, "email_verified_at", None),
             "external_id": u.external_id,
             "status": u.status,
             "balance": u.balance,
@@ -262,6 +265,8 @@ async def get_user_detail(user_id: str, db: AsyncSession = Depends(get_db)):
     return {
         "id": user.id,
         "username": user.username,
+        "email": getattr(user, "email", None),
+        "email_verified_at": getattr(user, "email_verified_at", None),
         "external_id": user.external_id,
         "status": user.status,
         "balance": user.balance,
@@ -424,6 +429,7 @@ async def finance_summary(
         pat = f"%{search}%"
         query = query.where(
             User.username.ilike(pat)
+            | User.email.ilike(pat)
             | User.external_id.ilike(pat)
             | User.id.ilike(pat)
         )
@@ -436,6 +442,8 @@ async def finance_summary(
         {
             "user_id": user.id,
             "username": user.username,
+            "email": getattr(user, "email", None),
+            "email_verified_at": getattr(user, "email_verified_at", None),
             "external_id": user.external_id,
             "created_at": user.created_at,
             "status": user.status,

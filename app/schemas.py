@@ -182,6 +182,7 @@ class AnnouncementUpdate(BaseModel):
 
 class AuthRegisterRequest(BaseModel):
     username: str = Field(..., min_length=2, max_length=64, pattern=r'^[a-zA-Z0-9_-]+$')
+    email: str = Field(..., min_length=5, max_length=255)
     password: str = Field(..., min_length=6, max_length=128)
     referral_code: Optional[str] = Field(default=None, description="邀请码（可选）")
 
@@ -193,6 +194,33 @@ class AuthResponse(BaseModel):
     user_id: str
     username: str
     session_key: str = Field(description="kind=session key for Dashboard access only")
+
+class AuthRegisterResponse(BaseModel):
+    user_id: str
+    username: str
+    email: str
+    status: str = "email_verification_required"
+    session_key: Optional[str] = Field(default=None, description="present only when verification is not required")
+
+class AuthVerifyEmailRequest(BaseModel):
+    user_id: str
+    code: str = Field(..., min_length=4, max_length=12)
+
+class AuthResendEmailRequest(BaseModel):
+    user_id: str
+
+class AuthProfileResponse(BaseModel):
+    user_id: str
+    username: Optional[str] = None
+    email: Optional[str] = None
+    email_verified_at: Optional[datetime] = None
+    email_verification_required: bool = False
+
+class AuthSendEmailCodeRequest(BaseModel):
+    email: str = Field(..., min_length=5, max_length=255)
+
+class AuthVerifyCurrentEmailRequest(BaseModel):
+    code: str = Field(..., min_length=4, max_length=12)
 
 
 # ===== Station Center =====

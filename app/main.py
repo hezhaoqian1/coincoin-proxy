@@ -62,6 +62,9 @@ async def _run_migrations(conn):
         ("coincoin_users", "referral_code", "VARCHAR(16) NULL UNIQUE"),
         ("coincoin_users", "referred_by", "VARCHAR(32) NULL"),
         ("coincoin_users", "register_ip", "VARCHAR(64) NULL"),
+        ("coincoin_users", "email", "VARCHAR(255) NULL UNIQUE"),
+        ("coincoin_users", "email_verified_at", "DATETIME NULL"),
+        ("coincoin_accounts", "status", "VARCHAR(32) DEFAULT 'active'"),
         ("coincoin_request_logs", "cached_tokens", "BIGINT DEFAULT 0"),
         ("coincoin_request_logs", "route_reason", "VARCHAR(64) DEFAULT ''"),
         ("coincoin_usage_daily", "images_total", "BIGINT DEFAULT 0"),
@@ -207,6 +210,24 @@ async def _run_migrations(conn):
             INDEX ix_station_payout_batches_station_id (station_id),
             INDEX ix_station_payout_batches_status (status),
             INDEX ix_station_payout_batches_created_at (created_at)
+        )
+        """,
+        """
+        CREATE TABLE coincoin_email_verification_codes (
+            id VARCHAR(32) PRIMARY KEY,
+            user_id VARCHAR(32) NOT NULL,
+            email VARCHAR(255) NOT NULL,
+            code_hash VARCHAR(64) NOT NULL,
+            purpose VARCHAR(32) DEFAULT 'register',
+            attempts BIGINT DEFAULT 0,
+            expires_at DATETIME NOT NULL,
+            consumed_at DATETIME NULL,
+            ip_hash VARCHAR(64) NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            INDEX ix_email_verification_user_id (user_id),
+            INDEX ix_email_verification_email (email),
+            INDEX ix_email_verification_expires_at (expires_at),
+            INDEX ix_email_verification_created_at (created_at)
         )
         """,
     ]

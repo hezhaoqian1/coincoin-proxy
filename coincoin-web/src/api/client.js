@@ -105,8 +105,8 @@ function authHeaders() {
 
 // ===== Auth APIs =====
 
-export async function registerUser(username, password, referralCode) {
-    const body = { username, password }
+export async function registerUser(username, email, password, referralCode) {
+    const body = { username, email, password }
     if (referralCode) body.referral_code = referralCode
     const res = await fetch(`${PROXY_BASE}/v1/auth/register`, {
         method: 'POST',
@@ -118,6 +118,28 @@ export async function registerUser(username, password, referralCode) {
     return data
 }
 
+export async function verifyEmail(userId, code) {
+    const res = await fetch(`${PROXY_BASE}/v1/auth/verify-email`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, code })
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || 'verification failed')
+    return data
+}
+
+export async function resendVerification(userId) {
+    const res = await fetch(`${PROXY_BASE}/v1/auth/resend-verification`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId })
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || 'resend failed')
+    return data
+}
+
 export async function loginUser(username, password) {
     const res = await fetch(`${PROXY_BASE}/v1/auth/login`, {
         method: 'POST',
@@ -126,6 +148,37 @@ export async function loginUser(username, password) {
     })
     const data = await res.json()
     if (!res.ok) throw new Error(data.detail || 'login failed')
+    return data
+}
+
+export async function getAuthProfile() {
+    const res = await fetch(`${PROXY_BASE}/v1/auth/me`, {
+        headers: authHeaders()
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || 'failed to fetch profile')
+    return data
+}
+
+export async function sendAccountEmailCode(email) {
+    const res = await fetch(`${PROXY_BASE}/v1/auth/me/email/send-code`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ email })
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || 'failed to send code')
+    return data
+}
+
+export async function verifyAccountEmail(code) {
+    const res = await fetch(`${PROXY_BASE}/v1/auth/me/email/verify`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ code })
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || 'failed to verify email')
     return data
 }
 

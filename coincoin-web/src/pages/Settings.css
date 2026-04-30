@@ -110,6 +110,39 @@
     gap: var(--space-sm);
 }
 
+.email-binding-card {
+    border-color: rgba(245, 158, 11, 0.18);
+}
+
+.email-binding-form {
+    margin-top: var(--space-sm);
+}
+
+.email-binding-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--space-sm);
+    align-items: center;
+}
+
+.email-code-field {
+    letter-spacing: 0.18em;
+    font-weight: 700;
+}
+
+.settings-form-message {
+    margin-top: var(--space-sm);
+    font-size: 0.84rem;
+}
+
+.settings-form-message.success {
+    color: #059669;
+}
+
+.settings-form-message.error {
+    color: var(--accent-rose);
+}
+
 .settings-two-column {
     display: grid;
     grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
