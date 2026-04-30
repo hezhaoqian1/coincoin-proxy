@@ -3,6 +3,11 @@ import { MOCK_USAGE, getApiKey, getUsageLogs } from '../api/client'
 import AppShell from '../components/AppShell'
 import './Usage.css'
 
+function formatCacheHitRate(cachedTokens, inputTokens) {
+    if (!inputTokens) return '0%'
+    return `${((cachedTokens / inputTokens) * 100).toFixed(1)}%`
+}
+
 export default function Usage() {
     const [usage, setUsage] = useState(null)
     const [page, setPage] = useState(0)
@@ -31,11 +36,12 @@ export default function Usage() {
 
     const exportCSV = () => {
         if (!usage?.data?.length) return
-        const headers = ['时间', '端点', '公开模型', '上游模型', '计量类型', '计量值', 'Input Token', 'Output Token', '总 Token', '花费($)', '耗时(ms)', '状态码']
+        const headers = ['时间', '端点', '公开模型', '上游模型', '计量类型', '计量值', 'Input Token', '缓存输入 Token', '非缓存输入 Token', 'Output Token', '总 Token', '缓存命中率', '花费($)', '耗时(ms)', '状态码']
         const rows = usage.data.map(d => [
             d.created_at, d.endpoint, d.model, d.provider_model,
             d.usage_unit_type, d.usage_unit_type === 'images' ? (d.image_count || d.usage_unit_count) : d.usage_unit_count,
-            d.input_tokens, d.output_tokens, d.total_tokens,
+            d.input_tokens, d.cached_tokens || 0, Math.max(0, (d.input_tokens || 0) - (d.cached_tokens || 0)), d.output_tokens, d.total_tokens,
+            formatCacheHitRate(d.cached_tokens || 0, d.input_tokens || 0),
             d.cost_usd.toFixed(4), d.duration_ms, d.status_code
         ])
         const csv = [headers, ...rows].map(r => r.join(',')).join('\n')
@@ -64,11 +70,13 @@ export default function Usage() {
     const totalCost = usage.data.reduce((s, d) => s + d.cost_usd, 0)
     const totalTokens = usage.data.reduce((s, d) => s + d.total_tokens, 0)
     const totalImages = usage.data.reduce((s, d) => s + (d.image_count || 0), 0)
+    const totalCachedTokens = usage.data.reduce((s, d) => s + (d.cached_tokens || 0), 0)
+    const totalInputTokens = usage.data.reduce((s, d) => s + (d.input_tokens || 0), 0)
 
     return (
         <AppShell
             title="请求日志"
-            description="看每次请求的公开模型、上游模型、计量和花费。"
+            description="看每次请求的公开模型、上游模型、缓存命中、计量和花费。"
             actions={<button className="btn btn-secondary btn-sm" onClick={exportCSV}>导出 CSV</button>}
         >
             <div className="usage-page">
@@ -110,12 +118,22 @@ export default function Usage() {
                             <span className="stat-value">{totalImages}</span>
                         </div>
                     </div>
+                    <div className="stat-card glass-card animate-fade-in-up">
+                        <div className="stat-icon" style={{ background: 'rgba(244,114,182,0.12)' }}>
+                            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ec4899" strokeWidth="2"><path d="M12 3l7 4v10l-7 4-7-4V7l7-4z" /><path d="M9 12h6" /></svg>
+                        </div>
+                        <div className="stat-info">
+                            <span className="stat-label">当前筛选缓存输入</span>
+                            <span className="stat-value">{totalCachedTokens.toLocaleString()}</span>
+                            <span className="stat-subvalue">{formatCacheHitRate(totalCachedTokens, totalInputTokens)} 命中率</span>
+                        </div>
+                    </div>
                 </div>
 
                 <div className="usage-guide glass-card animate-fade-in-up">
                     <div className="usage-guide-copy">
                         <span className="usage-kicker">Request Logs</span>
-                        <p>排查模型路由、计量和状态码时，先看这里。</p>
+                        <p>排查模型路由、缓存命中、计量和状态码时，先看这里。</p>
                     </div>
                     <div className="usage-guide-pills">
                         <div className="usage-guide-pill">
@@ -123,12 +141,12 @@ export default function Usage() {
                             <span>alias / provider_model</span>
                         </div>
                         <div className="usage-guide-pill">
-                            <strong>计量</strong>
-                            <span>tokens / images / cost</span>
+                            <strong>缓存</strong>
+                            <span>cached / non-cached / hit rate</span>
                         </div>
                         <div className="usage-guide-pill">
-                            <strong>状态</strong>
-                            <span>403 / 402 / 429</span>
+                            <strong>计量</strong>
+                            <span>tokens / images / cost</span>
                         </div>
                     </div>
                 </div>
@@ -175,7 +193,10 @@ export default function Usage() {
                                     <th>上游模型</th>
                                     <th>计量</th>
                                     <th>Input Token</th>
+                                    <th>缓存输入</th>
+                                    <th>非缓存输入</th>
                                     <th>Output Token</th>
+                                    <th>缓存命中率</th>
                                     <th>总 Token</th>
                                     <th>花费</th>
                                     <th>耗时</th>
@@ -197,7 +218,14 @@ export default function Usage() {
                                             </span>
                                         </td>
                                         <td>{log.input_tokens.toLocaleString()}</td>
+                                        <td>{(log.cached_tokens || 0).toLocaleString()}</td>
+                                        <td>{Math.max(0, (log.input_tokens || 0) - (log.cached_tokens || 0)).toLocaleString()}</td>
                                         <td>{log.output_tokens.toLocaleString()}</td>
+                                        <td>
+                                            {log.usage_unit_type === 'images'
+                                                ? '-'
+                                                : formatCacheHitRate(log.cached_tokens || 0, log.input_tokens || 0)}
+                                        </td>
                                         <td><strong>{log.total_tokens.toLocaleString()}</strong></td>
                                         <td className="cost-cell">${log.cost_usd.toFixed(2)}</td>
                                         <td>{(log.duration_ms / 1000).toFixed(1)}s</td>
@@ -205,7 +233,7 @@ export default function Usage() {
                                     </tr>
                                 ))}
                                 {usage.data.length === 0 && (
-                                    <tr><td colSpan="11" style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-tertiary)' }}>暂无数据</td></tr>
+                                    <tr><td colSpan="14" style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-tertiary)' }}>暂无数据</td></tr>
                                 )}
                             </tbody>
                         </table>
