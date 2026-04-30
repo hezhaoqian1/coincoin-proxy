@@ -137,6 +137,25 @@
     gap: var(--space-sm);
 }
 
+.input-inline-group {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--space-sm);
+    align-items: center;
+}
+
+.auth-inline-button {
+    min-width: 112px;
+    white-space: nowrap;
+}
+
+.auth-status-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: calc(-1 * var(--space-xs));
+}
+
 .input-group label {
     font-size: 0.85rem;
     font-weight: 600;

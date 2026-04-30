@@ -105,9 +105,10 @@ function authHeaders() {
 
 // ===== Auth APIs =====
 
-export async function registerUser(username, email, password, referralCode) {
+export async function registerUser(username, email, password, referralCode, verificationId) {
     const body = { username, email, password }
     if (referralCode) body.referral_code = referralCode
+    if (verificationId) body.verification_id = verificationId
     const res = await fetch(`${PROXY_BASE}/v1/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -115,6 +116,28 @@ export async function registerUser(username, email, password, referralCode) {
     })
     const data = await res.json()
     if (!res.ok) throw new Error(data.detail || 'registration failed')
+    return data
+}
+
+export async function sendRegisterEmailCode(email) {
+    const res = await fetch(`${PROXY_BASE}/v1/auth/register/send-code`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email })
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || 'failed to send code')
+    return data
+}
+
+export async function checkRegisterEmailCode(verificationId, code) {
+    const res = await fetch(`${PROXY_BASE}/v1/auth/register/check-code`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ verification_id: verificationId, code })
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || 'verification failed')
     return data
 }
 

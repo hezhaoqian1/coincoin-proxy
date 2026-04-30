@@ -185,6 +185,29 @@ class AuthRegisterRequest(BaseModel):
     email: str = Field(..., min_length=5, max_length=255)
     password: str = Field(..., min_length=6, max_length=128)
     referral_code: Optional[str] = Field(default=None, description="邀请码（可选）")
+    verification_id: Optional[str] = Field(default=None, description="预注册邮箱验证会话 ID")
+
+
+class AuthRegisterSendCodeRequest(BaseModel):
+    email: str = Field(..., min_length=5, max_length=255)
+
+
+class AuthRegisterSendCodeResponse(BaseModel):
+    verification_id: str
+    email: str
+    status: str = "code_sent"
+
+
+class AuthRegisterCheckCodeRequest(BaseModel):
+    verification_id: str
+    code: str = Field(..., min_length=4, max_length=12)
+
+
+class AuthRegisterCheckCodeResponse(BaseModel):
+    verification_id: str
+    email: str
+    verified: bool = True
+    status: str = "verified"
 
 class AuthLoginRequest(BaseModel):
     username: str

@@ -57,9 +57,62 @@ class EmailVerificationAuthTests(unittest.IsolatedAsyncioTestCase):
         auth_module.settings.allowed_email_domains = self._original_allowed_domains
         auth_module.settings.default_balance = self._original_default_balance
 
-    async def test_register_returns_pending_without_session_key(self):
+    async def test_register_send_code_returns_verification_session(self):
         db = _FakeDB(
             execute_results=[
+                _ScalarOneOrNoneResult(None),  # email owner
+                _ScalarOneOrNoneResult(None),  # latest code for cooldown
+            ]
+        )
+        payload = auth_module.AuthRegisterSendCodeRequest(email="Alice@Gmail.com")
+
+        with patch.object(auth_module.rate_limiter, "allow", AsyncMock(return_value=True)), patch.object(
+            auth_module, "send_verification_email", AsyncMock(return_value=SimpleNamespace(sent=True, provider_id="email_1"))
+        ):
+            result = await auth_module.register_send_code(payload, _request(), db)
+
+        self.assertEqual(result.email, "alice@gmail.com")
+        self.assertEqual(result.status, "code_sent")
+        self.assertTrue(result.verification_id.startswith("regv_"))
+        self.assertEqual(db.commits, 1)
+        verification = next(obj for obj in db.added if obj.__class__.__name__ == "EmailVerificationCode")
+        self.assertEqual(verification.user_id, result.verification_id)
+        self.assertEqual(verification.email, "alice@gmail.com")
+
+    async def test_register_check_code_marks_verification_consumed(self):
+        now = datetime.utcnow()
+        verification = SimpleNamespace(
+            user_id="regv_123",
+            email="alice@gmail.com",
+            purpose="register",
+            consumed_at=None,
+            attempts=0,
+            expires_at=now + timedelta(minutes=10),
+            code_hash=auth_module._hash_email_code("123456"),
+        )
+        db = _FakeDB(execute_results=[_ScalarOneOrNoneResult(verification)])
+        payload = auth_module.AuthRegisterCheckCodeRequest(verification_id="regv_123", code="123456")
+
+        with patch.object(auth_module.rate_limiter, "allow", AsyncMock(return_value=True)):
+            result = await auth_module.register_check_code(payload, _request(), db)
+
+        self.assertTrue(result.verified)
+        self.assertEqual(result.email, "alice@gmail.com")
+        self.assertIsNotNone(verification.consumed_at)
+        self.assertEqual(db.commits, 1)
+
+    async def test_register_requires_verified_email_and_returns_session_key(self):
+        now = datetime.utcnow()
+        verification = SimpleNamespace(
+            user_id="regv_123",
+            email="alice@gmail.com",
+            purpose="register",
+            consumed_at=now,
+            expires_at=now + timedelta(minutes=10),
+        )
+        db = _FakeDB(
+            execute_results=[
+                _ScalarOneOrNoneResult(verification),  # verification lookup
                 _ScalarOneOrNoneResult(None),  # existing account
                 _ScalarOneOrNoneResult(None),  # email owner
                 _ScalarOneOrNoneResult(None),  # user by username
@@ -70,23 +123,50 @@ class EmailVerificationAuthTests(unittest.IsolatedAsyncioTestCase):
             email="Alice@Gmail.com",
             password="secret123",
             referral_code=None,
+            verification_id="regv_123",
         )
 
         with patch.object(auth_module.rate_limiter, "allow", AsyncMock(return_value=True)), patch.object(
             auth_module, "ensure_finance_summary_initialized", AsyncMock()
         ), patch.object(
-            auth_module, "send_verification_email", AsyncMock(return_value=SimpleNamespace(sent=True, provider_id="email_1"))
+            auth_module, "generate_api_key", return_value="sk_cc_session_test"
+        ), patch.object(auth_module, "hash_key", return_value="hashed-session"), patch.object(
+            auth_module, "encrypt_api_key", return_value="encrypted-session"
         ):
             result = await auth_module.register(payload, _request(), db)
 
-        self.assertEqual(result.status, "email_verification_required")
+        self.assertEqual(result.status, "active")
         self.assertEqual(result.email, "alice@gmail.com")
-        self.assertIsNone(result.session_key)
+        self.assertEqual(result.session_key, "sk_cc_session_test")
         self.assertEqual(db.flushes, 1)
         self.assertEqual(db.commits, 1)
         account = next(obj for obj in db.added if obj.__class__.__name__ == "Account")
-        self.assertEqual(account.status, "pending_email")
-        self.assertFalse(any(getattr(obj, "kind", "") == "session" for obj in db.added))
+        self.assertEqual(account.status, "active")
+        self.assertTrue(any(getattr(obj, "kind", "") == "session" for obj in db.added))
+
+    async def test_register_without_verified_email_rejected(self):
+        verification = SimpleNamespace(
+            user_id="regv_123",
+            email="alice@gmail.com",
+            purpose="register",
+            consumed_at=None,
+            expires_at=datetime.utcnow() + timedelta(minutes=10),
+        )
+        db = _FakeDB(execute_results=[_ScalarOneOrNoneResult(verification)])
+        payload = auth_module.AuthRegisterRequest(
+            username="alice",
+            email="alice@gmail.com",
+            password="secret123",
+            referral_code=None,
+            verification_id="regv_123",
+        )
+
+        with patch.object(auth_module.rate_limiter, "allow", AsyncMock(return_value=True)):
+            with self.assertRaises(HTTPException) as ctx:
+                await auth_module.register(payload, _request(), db)
+
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertEqual(ctx.exception.detail, "请先完成邮箱验证")
 
     async def test_verify_email_activates_account_and_issues_session(self):
         now = datetime.utcnow()

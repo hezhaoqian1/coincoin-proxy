@@ -23,7 +23,11 @@ from .rate_limiter import rate_limiter
 from .schemas import (
     AuthLoginRequest,
     AuthProfileResponse,
+    AuthRegisterCheckCodeRequest,
+    AuthRegisterCheckCodeResponse,
     AuthRegisterRequest,
+    AuthRegisterSendCodeRequest,
+    AuthRegisterSendCodeResponse,
     AuthRegisterResponse,
     AuthResendEmailRequest,
     AuthResponse,
@@ -106,6 +110,11 @@ def _hash_ip(ip: str) -> str:
     return _hash_secret(ip, "ip")
 
 
+def _register_verification_id(email: str, ip: str) -> str:
+    digest = _hash_secret(f"{email}|{ip}", "register-email-verification")
+    return f"regv_{digest[:24]}"
+
+
 def _new_email_code() -> str:
     return f"{secrets.randbelow(1_000_000):06d}"
 
@@ -124,6 +133,25 @@ async def _latest_open_email_code(db: AsyncSession, user_id: str) -> EmailVerifi
         .where(
             EmailVerificationCode.user_id == user_id,
             EmailVerificationCode.purpose == "register",
+            EmailVerificationCode.consumed_at.is_(None),
+        )
+        .order_by(EmailVerificationCode.created_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def _latest_open_email_code_by_email(
+    db: AsyncSession,
+    email: str,
+    *,
+    purpose: str = "register",
+) -> EmailVerificationCode | None:
+    result = await db.execute(
+        select(EmailVerificationCode)
+        .where(
+            EmailVerificationCode.email == email,
+            EmailVerificationCode.purpose == purpose,
             EmailVerificationCode.consumed_at.is_(None),
         )
         .order_by(EmailVerificationCode.created_at.desc())
@@ -159,6 +187,28 @@ async def _send_or_fail(email: str, code: str) -> None:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="验证码邮件发送失败，请稍后再试",
         )
+
+
+async def _assert_register_email_available(
+    db: AsyncSession,
+    *,
+    email: str,
+    username: str | None = None,
+) -> None:
+    email_owner = (
+        await db.execute(select(User).where(User.email == email))
+    ).scalar_one_or_none()
+    if not email_owner:
+        return
+
+    if username and email_owner.username == username:
+        account = (
+            await db.execute(select(Account).where(Account.linked_user_id == email_owner.id))
+        ).scalar_one_or_none()
+        if account and account.username == username and getattr(account, "status", "active") in {"pending_email", "email_send_failed"}:
+            return
+
+    raise HTTPException(status.HTTP_409_CONFLICT, "email already registered")
 
 
 async def _user_from_session(request: Request, db: AsyncSession) -> tuple[User, ApiKey]:
@@ -200,6 +250,80 @@ def _profile_response(user: User) -> AuthProfileResponse:
     )
 
 
+@router.post("/register/send-code", response_model=AuthRegisterSendCodeResponse)
+async def register_send_code(
+    payload: AuthRegisterSendCodeRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    ip = _client_ip(request)
+    if not await rate_limiter.allow(f"auth_register_send_code:{ip}", AUTH_RATE_LIMIT):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "too many requests, try later")
+
+    email = _normalize_email(payload.email)
+    await _assert_register_email_available(db, email=email)
+
+    latest = await _latest_open_email_code_by_email(db, email)
+    if latest and latest.created_at:
+        cooldown = max(0, int(settings.email_resend_cooldown_seconds or 60))
+        if _utc_naive(latest.created_at) and _utc_naive(latest.created_at) > datetime.utcnow() - timedelta(seconds=cooldown):
+            raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "发送太频繁，请稍后再试")
+
+    verification_id = _register_verification_id(email, ip)
+    code = await _queue_email_code(db, user_id=verification_id, email=email, ip=ip)
+    await db.commit()
+    await _send_or_fail(email, code)
+    return AuthRegisterSendCodeResponse(verification_id=verification_id, email=email)
+
+
+@router.post("/register/check-code", response_model=AuthRegisterCheckCodeResponse)
+async def register_check_code(
+    payload: AuthRegisterCheckCodeRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    ip = _client_ip(request)
+    if not await rate_limiter.allow(f"auth_register_check_code:{ip}:{payload.verification_id}", AUTH_RATE_LIMIT):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "too many requests, try later")
+
+    result = await db.execute(
+        select(EmailVerificationCode)
+        .where(
+            EmailVerificationCode.user_id == payload.verification_id,
+            EmailVerificationCode.purpose == "register",
+        )
+        .order_by(EmailVerificationCode.created_at.desc())
+        .limit(1)
+    )
+    verification = result.scalar_one_or_none()
+    if not verification:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "验证码会话不存在，请重新发送")
+
+    now = datetime.utcnow()
+    if verification.consumed_at:
+        return AuthRegisterCheckCodeResponse(
+            verification_id=payload.verification_id,
+            email=verification.email,
+        )
+    if _utc_naive(verification.expires_at) and _utc_naive(verification.expires_at) < now:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "验证码已过期，请重新发送")
+    if int(verification.attempts or 0) >= max(1, int(settings.email_max_attempts or 5)):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "验证码错误次数过多，请重新发送")
+
+    submitted_hash = _hash_email_code(payload.code.strip())
+    if not hmac.compare_digest(submitted_hash, verification.code_hash):
+        verification.attempts = int(verification.attempts or 0) + 1
+        await db.commit()
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "验证码不正确")
+
+    verification.consumed_at = now
+    await db.commit()
+    return AuthRegisterCheckCodeResponse(
+        verification_id=payload.verification_id,
+        email=verification.email,
+    )
+
+
 @router.post("/register", response_model=AuthRegisterResponse)
 async def register(
     payload: AuthRegisterRequest,
@@ -212,6 +336,26 @@ async def register(
 
     email = _normalize_email(payload.email)
     username = payload.username.strip()
+    verification_id = (payload.verification_id or "").strip()
+    if not verification_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "请先完成邮箱验证")
+
+    verification = (
+        await db.execute(
+            select(EmailVerificationCode)
+            .where(
+                EmailVerificationCode.user_id == verification_id,
+                EmailVerificationCode.email == email,
+                EmailVerificationCode.purpose == "register",
+            )
+            .order_by(EmailVerificationCode.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if not verification or not verification.consumed_at:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "请先完成邮箱验证")
+    if _utc_naive(verification.expires_at) and _utc_naive(verification.expires_at) < datetime.utcnow():
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "验证码已过期，请重新发送")
 
     existing_account = (
         await db.execute(select(Account).where(Account.username == username))
@@ -219,11 +363,7 @@ async def register(
     if existing_account and getattr(existing_account, "status", "active") not in {"pending_email", "email_send_failed"}:
         raise HTTPException(status.HTTP_409_CONFLICT, "username already taken")
 
-    email_owner = (
-        await db.execute(select(User).where(User.email == email))
-    ).scalar_one_or_none()
-    if email_owner and email_owner.username != username:
-        raise HTTPException(status.HTTP_409_CONFLICT, "email already registered")
+    await _assert_register_email_available(db, email=email, username=username)
 
     referrer_id = None
     if payload.referral_code:
@@ -290,18 +430,25 @@ async def register(
         )
         db.add(account)
 
-    code = await _queue_email_code(db, user_id=user.id, email=email, ip=ip)
+    user.email_verified_at = verification.consumed_at
+    account.status = "active"
+    account.failed_attempts = 0
+    account.locked_until = None
+    account.last_login_at = datetime.utcnow()
+
+    raw_key, session_key = _create_session_key(user.id)
+    db.add(session_key)
     await db.commit()
-    try:
-        await _send_or_fail(email, code)
-    except HTTPException:
-        account.status = "email_send_failed"
-        await db.commit()
-        raise
 
-    logger.info("User registered pending email verification: %s -> %s", username, user.id)
+    logger.info("User registered with verified email: %s -> %s", username, user.id)
 
-    return AuthRegisterResponse(user_id=user.id, username=username, email=email)
+    return AuthRegisterResponse(
+        user_id=user.id,
+        username=username,
+        email=email,
+        status="active",
+        session_key=raw_key,
+    )
 
 
 @router.post("/verify-email", response_model=AuthResponse)
