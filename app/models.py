@@ -325,11 +325,16 @@ class Account(Base):
 
 
 class EmailVerificationCode(Base):
-    """Short-lived email verification code for web registration."""
+    """Short-lived email verification code for web registration.
+
+    user_id stores either a real user id or a pre-registration verification id.
+    It cannot be a hard foreign key because pre-registration sessions do not have
+    a user row yet.
+    """
     __tablename__ = "coincoin_email_verification_codes"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
-    user_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_users.id"), index=True)
+    user_id: Mapped[str] = mapped_column(String(32), index=True)
     email: Mapped[str] = mapped_column(String(255), index=True)
     code_hash: Mapped[str] = mapped_column(String(64))
     purpose: Mapped[str] = mapped_column(String(32), default="register")

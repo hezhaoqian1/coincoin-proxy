@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import {
     checkRegisterEmailCode,
@@ -30,6 +30,7 @@ export default function Register() {
     const [loading, setLoading] = useState(false)
     const [sendingCode, setSendingCode] = useState(false)
     const [verifyingCode, setVerifyingCode] = useState(false)
+    const [resendCountdown, setResendCountdown] = useState(0)
     const navigate = useNavigate()
 
     const normalizedEmail = useMemo(() => email.trim().toLowerCase(), [email])
@@ -53,7 +54,16 @@ export default function Register() {
         setEmailSent(false)
         setEmailVerified(false)
         setCode('')
+        setResendCountdown(0)
     }
+
+    useEffect(() => {
+        if (resendCountdown <= 0) return undefined
+        const timer = window.setTimeout(() => {
+            setResendCountdown((value) => Math.max(0, value - 1))
+        }, 1000)
+        return () => window.clearTimeout(timer)
+    }, [resendCountdown])
 
     const validateBeforeCode = () => {
         if (!normalizedEmail) {
@@ -76,6 +86,7 @@ export default function Register() {
             setEmailSent(true)
             setEmailVerified(false)
             setCode('')
+            setResendCountdown(60)
             setMessage('验证码已发送')
         } catch (err) {
             setError(err.message || '发送失败')
@@ -166,28 +177,42 @@ export default function Register() {
                     <div className="input-group">
                         <label>邮箱</label>
                         <div className="input-inline-group">
-                            <input
-                                type="email"
-                                className="input-field"
-                                placeholder="name@example.com"
-                                value={email}
-                                onChange={(e) => {
-                                    setEmail(e.target.value)
-                                    setError('')
-                                    setMessage('')
-                                    resetVerificationState(e.target.value)
-                                }}
-                                disabled={emailLocked}
-                            />
+                            <div className="input-with-badge">
+                                <input
+                                    type="email"
+                                    className="input-field"
+                                    placeholder="name@example.com"
+                                    value={email}
+                                    onChange={(e) => {
+                                        setEmail(e.target.value)
+                                        setError('')
+                                        setMessage('')
+                                        resetVerificationState(e.target.value)
+                                    }}
+                                    disabled={emailLocked}
+                                />
+                                {emailLocked && <span className="verified-badge">已验证</span>}
+                            </div>
                             <button
                                 type="button"
                                 className="btn btn-secondary auth-inline-button"
                                 onClick={handleSendCode}
-                                disabled={sendingCode || emailLocked}
+                                disabled={sendingCode || emailLocked || resendCountdown > 0}
                             >
-                                {emailLocked ? '已验证' : sendingCode ? '发送中...' : (emailSent ? '重新发送' : '发送验证码')}
+                                {emailLocked
+                                    ? '已验证'
+                                    : sendingCode
+                                        ? '发送中...'
+                                        : resendCountdown > 0
+                                            ? `${resendCountdown}s 后重发`
+                                            : (emailSent ? '重新发送' : '发送验证码')}
                             </button>
                         </div>
+                        {emailSent && !emailLocked && (
+                            <span className="input-hint">
+                                {resendCountdown > 0 ? `${resendCountdown} 秒后可重新发送` : '如果没收到，可以重新发送验证码'}
+                            </span>
+                        )}
                     </div>
 
                     <div className="input-group">

@@ -144,6 +144,10 @@
     align-items: center;
 }
 
+.input-with-badge {
+    position: relative;
+}
+
 .auth-inline-button {
     min-width: 112px;
     white-space: nowrap;
@@ -160,6 +164,37 @@
     font-size: 0.85rem;
     font-weight: 600;
     color: var(--text-secondary);
+}
+
+.input-hint {
+    font-size: 0.8rem;
+    color: var(--text-tertiary);
+}
+
+.verified-badge {
+    position: absolute;
+    top: 50%;
+    right: 12px;
+    transform: translateY(-50%);
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    border-radius: 999px;
+    background: rgba(5, 150, 105, 0.12);
+    color: #047857;
+    font-size: 0.74rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    pointer-events: none;
+}
+
+.verified-badge::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: currentColor;
 }
 
 .input-error {

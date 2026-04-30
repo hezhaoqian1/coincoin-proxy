@@ -242,6 +242,23 @@ async def _run_migrations(conn):
             else:
                 logger.warning("table migration failed: %s", exc)
 
+    cleanup_sql = [
+        "DELETE FROM coincoin_email_verification_codes WHERE user_id LIKE 'regv_%'",
+        "ALTER TABLE coincoin_email_verification_codes DROP FOREIGN KEY coincoin_email_verification_codes_ibfk_1",
+    ]
+    for sql in cleanup_sql:
+        try:
+            await conn.execute(text(sql))
+            logger.info("email verification migration OK: %s", sql)
+        except Exception as exc:
+            exc_msg = str(exc).lower()
+            if "check that column/key exists" in exc_msg or "can't drop" in exc_msg or "doesn't exist" in exc_msg:
+                logger.debug("email verification migration skipped: %s", sql)
+            elif "a foreign key constraint fails" in exc_msg:
+                logger.warning("email verification cleanup skipped due to existing dependent rows: %s", sql)
+            else:
+                logger.warning("email verification migration failed for [%s]: %s", sql, exc)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
