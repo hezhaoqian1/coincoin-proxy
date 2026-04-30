@@ -46,6 +46,14 @@ def _session_request(key="sk_cc_session"):
     return SimpleNamespace(headers={"authorization": f"Bearer {key}"}, client=SimpleNamespace(host="127.0.0.1"))
 
 
+class _BackgroundTasks:
+    def __init__(self):
+        self.tasks = []
+
+    def add_task(self, func, *args, **kwargs):
+        self.tasks.append((func, args, kwargs))
+
+
 class EmailVerificationAuthTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self._original_allowed_domains = auth_module.settings.allowed_email_domains
@@ -65,16 +73,16 @@ class EmailVerificationAuthTests(unittest.IsolatedAsyncioTestCase):
             ]
         )
         payload = auth_module.AuthRegisterSendCodeRequest(email="Alice@Gmail.com")
+        background_tasks = _BackgroundTasks()
 
-        with patch.object(auth_module.rate_limiter, "allow", AsyncMock(return_value=True)), patch.object(
-            auth_module, "send_verification_email", AsyncMock(return_value=SimpleNamespace(sent=True, provider_id="email_1"))
-        ):
-            result = await auth_module.register_send_code(payload, _request(), db)
+        with patch.object(auth_module.rate_limiter, "allow", AsyncMock(return_value=True)):
+            result = await auth_module.register_send_code(payload, _request(), background_tasks, db)
 
         self.assertEqual(result.email, "alice@gmail.com")
         self.assertEqual(result.status, "code_sent")
         self.assertTrue(result.verification_id.startswith("regv_"))
         self.assertEqual(db.commits, 1)
+        self.assertEqual(len(background_tasks.tasks), 1)
         verification = next(obj for obj in db.added if obj.__class__.__name__ == "EmailVerificationCode")
         self.assertEqual(verification.user_id, result.verification_id)
         self.assertEqual(verification.email, "alice@gmail.com")
@@ -87,11 +95,10 @@ class EmailVerificationAuthTests(unittest.IsolatedAsyncioTestCase):
             ]
         )
         payload = auth_module.AuthRegisterSendCodeRequest(email="alice@qq.com")
+        background_tasks = _BackgroundTasks()
 
-        with patch.object(auth_module.rate_limiter, "allow", AsyncMock(return_value=True)), patch.object(
-            auth_module, "send_verification_email", AsyncMock(return_value=SimpleNamespace(sent=True, provider_id="email_1"))
-        ):
-            result = await auth_module.register_send_code(payload, _request(ip="8.8.8.8"), db)
+        with patch.object(auth_module.rate_limiter, "allow", AsyncMock(return_value=True)):
+            result = await auth_module.register_send_code(payload, _request(ip="8.8.8.8"), background_tasks, db)
 
         self.assertTrue(result.verification_id.startswith("regv_"))
         verification = next(obj for obj in db.added if obj.__class__.__name__ == "EmailVerificationCode")
@@ -334,19 +341,19 @@ class EmailVerificationAuthTests(unittest.IsolatedAsyncioTestCase):
             ]
         )
         payload = auth_module.AuthSendEmailCodeRequest(email="Alice@Gmail.com")
+        background_tasks = _BackgroundTasks()
 
         with patch.object(auth_module.rate_limiter, "allow", AsyncMock(return_value=True)), patch.object(
             auth_module, "hash_key", return_value="hashed-session"
-        ), patch.object(
-            auth_module, "send_verification_email", AsyncMock(return_value=SimpleNamespace(sent=True, provider_id="email_1"))
         ):
-            result = await auth_module.send_current_user_email_code(payload, _session_request(), db)
+            result = await auth_module.send_current_user_email_code(payload, _session_request(), background_tasks, db)
 
         self.assertEqual(result.email, "alice@gmail.com")
         self.assertTrue(result.email_verification_required)
         self.assertEqual(user.email, "alice@gmail.com")
         self.assertIsNone(user.email_verified_at)
         self.assertEqual(db.commits, 1)
+        self.assertEqual(len(background_tasks.tasks), 1)
 
     async def test_verify_current_user_email_sets_verified_at(self):
         now = datetime.utcnow()
