@@ -1,13 +1,11 @@
 import { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
-import { useTheme } from '../hooks/useTheme'
 import { getStationApplication } from '../api/client'
 import './Navbar.css'
 
 export default function Navbar() {
     const { isLoggedIn } = useAuth()
-    const { theme, toggleTheme } = useTheme()
     const location = useLocation()
     const pricingTarget = isLoggedIn ? '/recharge' : '/recharge'
     const isLanding = location.pathname === '/'
@@ -40,9 +38,6 @@ export default function Navbar() {
                     <Link to={pricingTarget} className={`nav-link ${isActive('/recharge') ? 'active' : ''}`}>
                         定价
                     </Link>
-                    <button onClick={toggleTheme} className="theme-toggle" title={theme === 'dark' ? '切换到浅色' : '切换到深色'}>
-                        {theme === 'dark' ? '☀️' : '🌙'}
-                    </button>
                     {isLoggedIn ? (
                         <Link to="/dashboard" className="btn btn-primary btn-sm">进入控制台</Link>
                     ) : (

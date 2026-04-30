@@ -94,29 +94,6 @@
     box-shadow: 0 8px 18px rgba(15, 23, 42, 0.05);
 }
 
-[data-theme="dark"] .navbar {
-    background: rgba(10, 10, 26, 0.72);
-    border-bottom-color: rgba(255, 255, 255, 0.07);
-}
-
-[data-theme="dark"] .navbar-landing {
-    background: rgba(10, 10, 26, 0.8);
-}
-
-[data-theme="dark"] .logo-icon {
-    background: linear-gradient(135deg, #2563eb, #06b6d4);
-    box-shadow: 0 12px 24px rgba(37, 99, 235, 0.22);
-}
-
-[data-theme="dark"] .logo-text {
-    color: var(--text-primary);
-}
-
-[data-theme="dark"] .nav-link:hover,
-[data-theme="dark"] .nav-link.active {
-    background: rgba(255, 255, 255, 0.06);
-}
-
 @media (max-width: 768px) {
     .navbar {
         height: auto;

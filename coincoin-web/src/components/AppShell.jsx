@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { getStationApplication } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
-import { useTheme } from '../hooks/useTheme'
 import './AppShell.css'
 
 function ShellIcon({ kind }) {
@@ -102,19 +101,6 @@ function ShellIcon({ kind }) {
                     <path d="M10 19v-5h4v5" />
                 </svg>
             )
-        case 'moon':
-            return (
-                <svg {...common}>
-                    <path d="M18 14.5A7.5 7.5 0 1 1 9.5 6 6 6 0 0 0 18 14.5z" />
-                </svg>
-            )
-        case 'sun':
-            return (
-                <svg {...common}>
-                    <circle cx="12" cy="12" r="4" />
-                    <path d="M12 2.5v2.5M12 19v2.5M21.5 12H19M5 12H2.5M18.7 5.3l-1.8 1.8M7.1 16.9l-1.8 1.8M18.7 18.7l-1.8-1.8M7.1 7.1 5.3 5.3" />
-                </svg>
-            )
         case 'logout':
             return (
                 <svg {...common}>
@@ -173,7 +159,6 @@ function ShellGroup({ title, items, location }) {
 
 export default function AppShell({ title, description, actions, children }) {
     const { authMode, hasDeveloperKey, hasLocalDeveloperKey, logout, username } = useAuth()
-    const { theme, toggleTheme } = useTheme()
     const navigate = useNavigate()
     const location = useLocation()
     const [hasStation, setHasStation] = useState(false)
@@ -272,10 +257,6 @@ export default function AppShell({ title, description, actions, children }) {
                 </nav>
 
                 <div className="app-sidebar-footer">
-                    <button onClick={toggleTheme} className="shell-action-btn" title={theme === 'dark' ? '切换到浅色' : '切换到深色'}>
-                        <span className="shell-action-icon"><ShellIcon kind={theme === 'dark' ? 'sun' : 'moon'} /></span>
-                        <span>{theme === 'dark' ? '浅色模式' : '深色模式'}</span>
-                    </button>
                     <button onClick={handleLogout} className="shell-action-btn shell-action-btn-muted">
                         <span className="shell-action-icon"><ShellIcon kind="logout" /></span>
                         <span>退出登录</span>
