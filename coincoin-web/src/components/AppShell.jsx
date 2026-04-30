@@ -203,9 +203,9 @@ export default function AppShell({ title, description, actions, children }) {
             {
                 title: '教程',
                 items: [
-                    { to: '/docs?tab=quickstart', pathname: '/docs', search: { tab: 'quickstart' }, label: '默认 API 教程', caption: '第一条请求怎么发', icon: 'docs' },
-                    { to: '/settings?snippet=Codex%20CLI%20(config.toml)&panel=snippets', pathname: '/settings', search: { snippet: 'Codex CLI (config.toml)', panel: 'snippets' }, label: 'Codex 配置', caption: 'config.toml 与环境变量', icon: 'terminal' },
-                    { to: '/settings?snippet=Claude%20Code&panel=snippets', pathname: '/settings', search: { snippet: 'Claude Code', panel: 'snippets' }, label: 'Claude Code 配置', caption: 'Anthropic 兼容配置', icon: 'access' },
+                    { to: '/guides/api-quickstart', pathname: '/guides/api-quickstart', label: '默认 API 教程', caption: '第一条请求怎么发', icon: 'docs' },
+                    { to: '/guides/codex', pathname: '/guides/codex', label: 'Codex 配置', caption: '一条命令写好 config.toml', icon: 'terminal' },
+                    { to: '/guides/claude-code', pathname: '/guides/claude-code', label: 'Claude Code 配置', caption: 'Anthropic 兼容配置', icon: 'access' },
                 ],
             },
         ]

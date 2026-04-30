@@ -1,0 +1,134 @@
+.guide-page {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-lg);
+}
+
+.guide-hero,
+.guide-command,
+.guide-section,
+.guide-alert {
+    padding: var(--space-xl);
+}
+
+.guide-hero {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-lg);
+    align-items: flex-start;
+}
+
+.guide-kicker {
+    display: inline-flex;
+    margin-bottom: 10px;
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent-cyan);
+}
+
+.guide-hero h1 {
+    margin-bottom: 10px;
+    font-size: 1.65rem;
+}
+
+.guide-hero p {
+    margin: 0;
+    max-width: 720px;
+    color: var(--text-secondary);
+    line-height: 1.7;
+}
+
+.guide-hero-meta {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: var(--space-sm);
+}
+
+.guide-alert {
+    border: 1px solid rgba(245, 158, 11, 0.25);
+    background: rgba(245, 158, 11, 0.08);
+}
+
+.guide-alert strong {
+    display: block;
+    margin-bottom: 8px;
+    color: var(--accent-amber);
+}
+
+.guide-alert p {
+    margin: 0;
+    color: var(--text-secondary);
+    line-height: 1.65;
+}
+
+.guide-command-header {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-lg);
+    align-items: flex-start;
+    margin-bottom: var(--space-lg);
+}
+
+.guide-command-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-lg);
+}
+
+.guide-command-header h2,
+.guide-section h3 {
+    margin-bottom: 8px;
+}
+
+.guide-command-header p {
+    margin: 0;
+    max-width: 720px;
+    color: var(--text-secondary);
+    line-height: 1.65;
+}
+
+.guide-code-block {
+    margin: 0;
+    overflow-x: auto;
+    padding: 18px;
+    border-radius: var(--radius-md);
+    background: rgba(15, 23, 42, 0.92);
+    color: #e2e8f0;
+    font-size: 0.88rem;
+    line-height: 1.65;
+}
+
+.guide-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-lg);
+}
+
+.guide-list {
+    margin: 0;
+    padding-left: 18px;
+    color: var(--text-secondary);
+    line-height: 1.7;
+}
+
+.guide-list li + li {
+    margin-top: 8px;
+}
+
+@media (max-width: 900px) {
+    .guide-hero,
+    .guide-command-header {
+        flex-direction: column;
+    }
+
+    .guide-hero-meta {
+        justify-content: flex-start;
+    }
+
+    .guide-grid {
+        grid-template-columns: 1fr;
+    }
+}
