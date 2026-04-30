@@ -676,7 +676,7 @@ export default function Dashboard() {
                         <span className="action-btn">{copied === 'anthropic' ? '&#10003; 已复制' : '复制'}</span>
                     </div>
                     <div className="shortcut-grid">
-                        <Link to="/settings" className="shortcut-card shortcut-card-highlight">
+                        <Link to="/guides/claude-code" className="shortcut-card shortcut-card-highlight">
                             <span className="shortcut-icon">&#129302;</span>
                             <div>
                                 <strong>Claude Code</strong>

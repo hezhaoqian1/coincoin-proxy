@@ -10,6 +10,7 @@ import Dashboard from './pages/Dashboard'
 import Usage from './pages/Usage'
 import Recharge from './pages/Recharge'
 import Docs from './pages/Docs'
+import GuideDetail from './pages/GuideDetail'
 import Settings from './pages/Settings'
 import ApiKeys from './pages/ApiKeys'
 import Playground from './pages/Playground'
@@ -68,39 +69,42 @@ function ScrollManager() {
 
 export default function App() {
     return (
-            <BrowserRouter>
-                <ScrollManager />
-                <Routes>
-                    <Route path="/" element={<PublicShell><Landing /></PublicShell>} />
-                    <Route path="/login" element={
-                        <GuestOnlyRoute><PublicShell><Login /></PublicShell></GuestOnlyRoute>
-                    } />
-                    <Route path="/register" element={
-                        <GuestOnlyRoute><PublicShell><Register /></PublicShell></GuestOnlyRoute>
-                    } />
-                    <Route path="/dashboard" element={
-                        <ProtectedRoute><Dashboard /></ProtectedRoute>
-                    } />
-                    <Route path="/usage" element={
-                        <ProtectedRoute><Usage /></ProtectedRoute>
-                    } />
-                    <Route path="/recharge" element={<Recharge />} />
-                    <Route path="/docs" element={<Docs />} />
-                    <Route path="/playground" element={
-                        <ProtectedRoute><Playground /></ProtectedRoute>
-                    } />
-                    <Route path="/settings" element={
-                        <ProtectedRoute><Settings /></ProtectedRoute>
-                    } />
-                    <Route path="/api-keys" element={
-                        <ProtectedRoute><ApiKeys /></ProtectedRoute>
-                    } />
-                    <Route path="/station" element={
-                        <ProtectedRoute><Station /></ProtectedRoute>
-                    } />
-                    <Route path="/pay/return" element={<PublicShell><PayReturn /></PublicShell>} />
-                    <Route path="*" element={<Navigate to="/" replace />} />
-                </Routes>
-            </BrowserRouter>
+        <BrowserRouter>
+            <ScrollManager />
+            <Routes>
+                <Route path="/" element={<PublicShell><Landing /></PublicShell>} />
+                <Route path="/login" element={
+                    <GuestOnlyRoute><PublicShell><Login /></PublicShell></GuestOnlyRoute>
+                } />
+                <Route path="/register" element={
+                    <GuestOnlyRoute><PublicShell><Register /></PublicShell></GuestOnlyRoute>
+                } />
+                <Route path="/dashboard" element={
+                    <ProtectedRoute><Dashboard /></ProtectedRoute>
+                } />
+                <Route path="/usage" element={
+                    <ProtectedRoute><Usage /></ProtectedRoute>
+                } />
+                <Route path="/recharge" element={<Recharge />} />
+                <Route path="/docs" element={<Docs />} />
+                <Route path="/guides/:guideId" element={
+                    <ProtectedRoute><GuideDetail /></ProtectedRoute>
+                } />
+                <Route path="/playground" element={
+                    <ProtectedRoute><Playground /></ProtectedRoute>
+                } />
+                <Route path="/settings" element={
+                    <ProtectedRoute><Settings /></ProtectedRoute>
+                } />
+                <Route path="/api-keys" element={
+                    <ProtectedRoute><ApiKeys /></ProtectedRoute>
+                } />
+                <Route path="/station" element={
+                    <ProtectedRoute><Station /></ProtectedRoute>
+                } />
+                <Route path="/pay/return" element={<PublicShell><PayReturn /></PublicShell>} />
+                <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+        </BrowserRouter>
     )
 }

@@ -293,16 +293,16 @@ function QuickStart({ primaryTextModel, primaryImageModel }) {
             <h3>Step 5: 配置客户端</h3>
             <p>以 Codex CLI 为例，编辑 <code>~/.codex/config.toml</code>：</p>
             <pre className="code-block">{`model = "${textModelId}"
-model_provider = "clawfather"
+model_provider = "coincoin"
 disable_response_storage = true
 model_reasoning_effort = "high"
 web_search = "live"
 personality = "pragmatic"
 
-[model_providers.clawfather]
-name = "ClawFather"
+[model_providers.coincoin]
+name = "CoinCoin"
 base_url = "${SITE}/v1"
-env_key = "CLAWFATHER_OPENAI_API_KEY"
+experimental_bearer_token = "sk_cc_xxxxx"
 wire_api = "responses"`}</pre>
 
             <p>如果你接的是官方 Claude Code，走另一条兼容入口：</p>
@@ -311,15 +311,11 @@ export ANTHROPIC_AUTH_TOKEN="sk_cc_xxxxx"
 claude --model claude-opus-4-7`}</pre>
 
             <h3>Step 6: 设置环境变量</h3>
-            <pre className="code-block">{`# macOS / Linux
-export CLAWFATHER_OPENAI_API_KEY="sk_cc_xxxxx"
+            <pre className="code-block">{`# 现在不再要求必须改 ~/.zshrc
+# 你可以直接把 token 写进 Codex config.toml 的 experimental_bearer_token
 
-# 写入 ~/.zshrc
-echo 'export CLAWFATHER_OPENAI_API_KEY="sk_cc_xxxxx"' >> ~/.zshrc
-source ~/.zshrc
-
-# Windows PowerShell
-[System.Environment]::SetEnvironmentVariable("CLAWFATHER_API_KEY", "sk_cc_xxxxx", "User")`}</pre>
+# 如果你更想让 token 不落盘，也可以只在本次启动前带上环境变量：
+CLAWFATHER_OPENAI_API_KEY="sk_cc_xxxxx" codex`}</pre>
 
             <div className="doc-callout">
                 <strong>模型切换规则</strong>

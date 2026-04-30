@@ -240,21 +240,20 @@ console.log(response.choices[0].message.content);`
             title: 'Codex CLI (config.toml)',
             summary: 'Codex CLI 走 OpenAI 兼容入口。',
             code: `# ~/.codex/config.toml
+model_provider = "coincoin"
 model = "${codexModel}"
-model_provider = "clawfather"
 disable_response_storage = true
 model_reasoning_effort = "high"
 web_search = "live"
 personality = "pragmatic"
 
-[model_providers.clawfather]
-name = "ClawFather"
+[model_providers.coincoin]
+name = "CoinCoin"
 base_url = "${baseUrl}"
-env_key = "CLAWFATHER_OPENAI_API_KEY"
+experimental_bearer_token = "${key}"
 wire_api = "responses"
-
-# 启动前设置环境变量：
-# export CLAWFATHER_OPENAI_API_KEY="${key}"`
+# 直接运行：
+codex`
         },
         {
             title: 'Claude Code',
