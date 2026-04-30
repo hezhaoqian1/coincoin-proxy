@@ -132,6 +132,12 @@
     color: var(--accent-amber);
 }
 
+.stat-subvalue {
+    margin-top: 4px;
+    font-size: 0.78rem;
+    color: var(--text-tertiary);
+}
+
 .table-footer {
     display: flex;
     justify-content: space-between;
