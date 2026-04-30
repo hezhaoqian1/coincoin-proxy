@@ -55,25 +55,12 @@ function GuideCommandGroup({ items }) {
     )
 }
 
-function GuideChecklist({ title, items }) {
-    return (
-        <section className="guide-section glass-card">
-            <h3>{title}</h3>
-            <ul className="guide-list">
-                {items.map((item) => (
-                    <li key={item}>{item}</li>
-                ))}
-            </ul>
-        </section>
-    )
-}
-
 export default function GuideDetail() {
     const { guideId } = useParams()
     const { effectiveApiKey, hasDeveloperKey, hasLocalDeveloperKey, latestDeveloperKey } = useAuth()
     const { models, textModels, defaultTextModel } = usePublicModels()
 
-    const key = effectiveApiKey || 'YOUR_DEVELOPER_API_KEY'
+    const key = effectiveApiKey || ''
     const codingModel = textModels.find((model) => model.id === 'gpt-5.4')
         || textModels.find((model) => model.id === 'gpt-5.3-codex')
         || textModels.find((model) => model.id === 'gpt-5.5')
@@ -144,18 +131,6 @@ claude --model "${defaultClaudeModel}"`
                 commandTitle: '直接发第一条请求',
                 commandSummary: '把下面整段粘贴进终端即可。能返回 `OK` 就说明地址、Key 和 model 都通了。',
                 command: apiQuickstartCommand,
-                callouts: [
-                    '统一 OpenAI 兼容入口是根域名后加 /v1。',
-                    '程序调用一律使用开发者 Key，不要把网页登录态拿去发 API。',
-                    '最小成功标准是先跑通一条文本请求，再去切模型和客户端。',
-                ],
-                checklistTitle: '排查顺序',
-                checklist: [
-                    `Base URL 是否是 ${OPENAI_BASE_URL}`,
-                    'Authorization 是否是 sk_cc_ 开头的开发者 Key',
-                    '余额是否大于 0',
-                    `model 是否在 /v1/models 公开目录里可见，例如 ${codingModel?.id || 'gpt-5.4'}`,
-                ],
             },
             codex: {
                 title: 'Codex 配置',
@@ -172,18 +147,6 @@ claude --model "${defaultClaudeModel}"`
                         code: codexWindowsCommand,
                     },
                 ],
-                callouts: [
-                    '这里走的是 Codex 官方支持的 `experimental_bearer_token` 路径，体验上最省一步。',
-                    '不需要把 key 填进 `env_key`；`env_key` 只能写环境变量名，不接受原始 token。',
-                    '如果更看重 secret 不落盘，可以改回 `env_key` + 环境变量方案，但主路径不再要求改 zshrc 或 PowerShell 用户变量。',
-                ],
-                checklistTitle: '你会得到什么',
-                checklist: [
-                    `provider 指向 ${OPENAI_BASE_URL}`,
-                    `默认模型使用 ${codingModel?.id || 'gpt-5.4'}`,
-                    'web search、reasoning 和 pragmatic personality 都会一起配好',
-                    '后续直接运行 codex 即可，不需要再额外 export',
-                ],
             },
             'claude-code': {
                 title: 'Claude Code 配置',
@@ -191,18 +154,6 @@ claude --model "${defaultClaudeModel}"`
                 commandTitle: '直接用环境变量启动 Claude Code',
                 commandSummary: '如果之前登录过官方 Claude，先在 Claude Code 里执行一次 `/logout`，再粘贴下面这段命令。',
                 command: claudeCommand,
-                callouts: [
-                    'Claude Code 的 Base URL 必须是站点根地址，例如 https://coincoin.ai，而不是 /v1。',
-                    '官方 Claude Code 会自己请求 /v1/messages 和 /v1/models。',
-                    '如果新地址没生效，优先排查是不是旧登录态还在接管请求。',
-                ],
-                checklistTitle: '常见坑位',
-                checklist: [
-                    `不要把 ${OPENAI_BASE_URL} 填给 Claude Code`,
-                    `ANTHROPIC_BASE_URL 应该是 ${SITE_ROOT || 'https://your-domain.example'}`,
-                    '如果模型名不对，优先使用 claude-sonnet-4-6、claude-opus-4-7 这类公开 alias',
-                    '修改完后重新启动 claude 进程，不要沿用旧会话',
-                ],
             },
         }
     }, [codingModel?.id, key])
@@ -229,12 +180,12 @@ claude --model "${defaultClaudeModel}"`
 
                 {!effectiveApiKey && (
                     <section className="guide-alert glass-card">
-                        <strong>这页里的命令还没完全可直接用</strong>
-                        <p>当前浏览器没有保存开发者 Key，所以命令里会出现 <code>YOUR_DEVELOPER_API_KEY</code>。先去 <Link to="/api-keys">API 密钥</Link> 页面生成或复制一把开发者 Key。</p>
+                        <strong>当前浏览器还没有可直接复制的开发者 Key</strong>
+                        <p>先去 <Link to="/api-keys">API 密钥</Link> 页面生成或重新复制一把开发者 Key。拿到明文后，这里才会显示可直接复制的一键命令。</p>
                     </section>
                 )}
 
-                {guide.commandGroup ? (
+                {effectiveApiKey && (guide.commandGroup ? (
                     <GuideCommandGroup items={guide.commandGroup} />
                 ) : (
                     <GuideCommand
@@ -242,12 +193,7 @@ claude --model "${defaultClaudeModel}"`
                         summary={guide.commandSummary}
                         code={guide.command}
                     />
-                )}
-
-                <div className="guide-grid">
-                    <GuideChecklist title={guide.checklistTitle} items={guide.checklist} />
-                    <GuideChecklist title="为什么这么配" items={guide.callouts} />
-                </div>
+                ))}
             </div>
         </AppShell>
     )

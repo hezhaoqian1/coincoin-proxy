@@ -6,7 +6,6 @@
 
 .guide-hero,
 .guide-command,
-.guide-section,
 .guide-alert {
     padding: var(--space-xl);
 }
@@ -101,23 +100,6 @@
     line-height: 1.65;
 }
 
-.guide-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: var(--space-lg);
-}
-
-.guide-list {
-    margin: 0;
-    padding-left: 18px;
-    color: var(--text-secondary);
-    line-height: 1.7;
-}
-
-.guide-list li + li {
-    margin-top: 8px;
-}
-
 @media (max-width: 900px) {
     .guide-hero,
     .guide-command-header {
@@ -126,9 +108,5 @@
 
     .guide-hero-meta {
         justify-content: flex-start;
-    }
-
-    .guide-grid {
-        grid-template-columns: 1fr;
     }
 }
