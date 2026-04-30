@@ -79,6 +79,25 @@ class EmailVerificationAuthTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(verification.user_id, result.verification_id)
         self.assertEqual(verification.email, "alice@gmail.com")
 
+    async def test_register_send_code_uses_pre_registration_verification_id(self):
+        db = _FakeDB(
+            execute_results=[
+                _ScalarOneOrNoneResult(None),
+                _ScalarOneOrNoneResult(None),
+            ]
+        )
+        payload = auth_module.AuthRegisterSendCodeRequest(email="alice@qq.com")
+
+        with patch.object(auth_module.rate_limiter, "allow", AsyncMock(return_value=True)), patch.object(
+            auth_module, "send_verification_email", AsyncMock(return_value=SimpleNamespace(sent=True, provider_id="email_1"))
+        ):
+            result = await auth_module.register_send_code(payload, _request(ip="8.8.8.8"), db)
+
+        self.assertTrue(result.verification_id.startswith("regv_"))
+        verification = next(obj for obj in db.added if obj.__class__.__name__ == "EmailVerificationCode")
+        self.assertEqual(verification.user_id, result.verification_id)
+        self.assertNotEqual(verification.user_id, "u_1")
+
     async def test_register_check_code_marks_verification_consumed(self):
         now = datetime.utcnow()
         verification = SimpleNamespace(

@@ -105,6 +105,19 @@ function authHeaders() {
 
 // ===== Auth APIs =====
 
+async function parseApiResponse(res, fallbackMessage) {
+    const contentType = res.headers.get('content-type') || ''
+    if (contentType.includes('application/json')) {
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.detail || data.error?.message || fallbackMessage)
+        return data
+    }
+
+    const text = await res.text()
+    if (!res.ok) throw new Error(text || fallbackMessage)
+    return text
+}
+
 export async function registerUser(username, email, password, referralCode, verificationId) {
     const body = { username, email, password }
     if (referralCode) body.referral_code = referralCode
@@ -114,9 +127,7 @@ export async function registerUser(username, email, password, referralCode, veri
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
     })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.detail || 'registration failed')
-    return data
+    return parseApiResponse(res, 'registration failed')
 }
 
 export async function sendRegisterEmailCode(email) {
@@ -125,9 +136,7 @@ export async function sendRegisterEmailCode(email) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email })
     })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.detail || 'failed to send code')
-    return data
+    return parseApiResponse(res, 'failed to send code')
 }
 
 export async function checkRegisterEmailCode(verificationId, code) {
@@ -136,9 +145,7 @@ export async function checkRegisterEmailCode(verificationId, code) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ verification_id: verificationId, code })
     })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.detail || 'verification failed')
-    return data
+    return parseApiResponse(res, 'verification failed')
 }
 
 export async function verifyEmail(userId, code) {
