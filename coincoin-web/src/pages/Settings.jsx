@@ -238,8 +238,8 @@ console.log(response.choices[0].message.content);`
         },
         {
             title: 'Codex CLI (config.toml)',
-            summary: 'Codex CLI 走 OpenAI 兼容入口。',
-            code: `# ~/.codex/config.toml
+            summary: '直接复制到终端，一次写好配置并启动 Codex。',
+            code: `mkdir -p ~/.codex && cat > ~/.codex/config.toml <<'EOF'
 model_provider = "coincoin"
 model = "${codexModel}"
 disable_response_storage = true
@@ -252,7 +252,8 @@ name = "CoinCoin"
 base_url = "${baseUrl}"
 experimental_bearer_token = "${key}"
 wire_api = "responses"
-# 直接运行：
+EOF
+
 codex`
         },
         {
