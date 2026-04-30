@@ -35,6 +35,7 @@ export default function Register() {
 
     const normalizedEmail = useMemo(() => email.trim().toLowerCase(), [email])
     const emailLocked = emailVerified && verifiedEmail === normalizedEmail
+    const hasCodeReady = Boolean(verificationId && code.trim().length >= 4 && normalizedEmail)
 
     const completeLogin = (data) => {
         clearGeneratedKey()
@@ -68,6 +69,19 @@ export default function Register() {
     const validateBeforeCode = () => {
         if (!normalizedEmail) {
             setError('请输入邮箱')
+            return false
+        }
+        return true
+    }
+
+    const validateUsername = () => {
+        const trimmed = username.trim()
+        if (!trimmed) {
+            setError('请输入用户名')
+            return false
+        }
+        if (!/^[a-zA-Z0-9_-]+$/.test(trimmed)) {
+            setError('用户名只支持字母、数字、下划线、连字符')
             return false
         }
         return true
@@ -124,9 +138,10 @@ export default function Register() {
 
     const handleSubmit = async (e) => {
         e.preventDefault()
-        if (!username.trim()) { setError('请输入用户名'); return }
+        if (!validateUsername()) return
         if (!normalizedEmail) { setError('请输入邮箱'); return }
-        if (!emailLocked) { setError('请先完成邮箱验证'); return }
+        if (!verificationId) { setError('请先发送验证码'); return }
+        if (!code.trim()) { setError('请输入验证码'); return }
         if (password.length < 6) { setError('密码至少 6 位'); return }
         if (password !== confirmPw) { setError('两次密码不一致'); return }
 
@@ -140,7 +155,10 @@ export default function Register() {
                 password,
                 referralCode.trim() || undefined,
                 verificationId,
+                code.trim(),
             )
+            setVerifiedEmail(normalizedEmail)
+            setEmailVerified(true)
             completeLogin(data)
         } catch (err) {
             setError(err.message || '注册失败，请重试')
@@ -240,6 +258,9 @@ export default function Register() {
                                 {emailLocked ? '已通过' : verifyingCode ? '验证中...' : '验证'}
                             </button>
                         </div>
+                        {emailSent && !emailLocked && (
+                            <span className="input-hint">填好验证码后，直接创建账号即可。</span>
+                        )}
                     </div>
 
                     <div className="input-group">
@@ -283,7 +304,7 @@ export default function Register() {
                         </div>
                     )}
 
-                    <button type="submit" className="btn btn-primary" style={{ width: '100%' }} disabled={loading || !emailLocked}>
+                    <button type="submit" className="btn btn-primary" style={{ width: '100%' }} disabled={loading || !hasCodeReady}>
                         {loading ? '创建中...' : '创建账号'}
                     </button>
 
