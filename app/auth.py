@@ -10,7 +10,7 @@ import re
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -247,13 +247,21 @@ def _profile_response(user: User) -> AuthProfileResponse:
         email=email,
         email_verified_at=verified_at,
         email_verification_required=bool(email and not verified_at),
-    )
+        )
+
+
+async def _send_email_code_background(email: str, code: str) -> None:
+    ttl_minutes = max(1, int(settings.email_verification_ttl_minutes or 10))
+    result = await send_verification_email(email=email, code=code, ttl_minutes=ttl_minutes)
+    if not result.sent:
+        logger.warning("background verification email send failed for %s: %s", email, result.error)
 
 
 @router.post("/register/send-code", response_model=AuthRegisterSendCodeResponse)
 async def register_send_code(
     payload: AuthRegisterSendCodeRequest,
     request: Request,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ):
     ip = _client_ip(request)
@@ -272,7 +280,7 @@ async def register_send_code(
     verification_id = _register_verification_id(email, ip)
     code = await _queue_email_code(db, user_id=verification_id, email=email, ip=ip)
     await db.commit()
-    await _send_or_fail(email, code)
+    background_tasks.add_task(_send_email_code_background, email, code)
     return AuthRegisterSendCodeResponse(verification_id=verification_id, email=email)
 
 
@@ -509,6 +517,7 @@ async def verify_email(
 async def resend_verification(
     payload: AuthResendEmailRequest,
     request: Request,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ):
     ip = _client_ip(request)
@@ -531,8 +540,8 @@ async def resend_verification(
             raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "发送太频繁，请稍后再试")
 
     code = await _queue_email_code(db, user_id=user.id, email=user.email, ip=ip)
-    await _send_or_fail(user.email, code)
     await db.commit()
+    background_tasks.add_task(_send_email_code_background, user.email, code)
     return {"status": "email_verification_required", "user_id": user.id, "email": user.email}
 
 
@@ -549,6 +558,7 @@ async def get_auth_profile(
 async def send_current_user_email_code(
     payload: AuthSendEmailCodeRequest,
     request: Request,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ):
     user, _ = await _user_from_session(request, db)
@@ -573,7 +583,7 @@ async def send_current_user_email_code(
     user.email_verified_at = None
     code = await _queue_email_code(db, user_id=user.id, email=email, ip=ip)
     await db.commit()
-    await _send_or_fail(email, code)
+    background_tasks.add_task(_send_email_code_background, email, code)
     return _profile_response(user)
 
 
