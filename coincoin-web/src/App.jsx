@@ -1,7 +1,6 @@
 import { useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from './hooks/useAuth'
-import { ThemeProvider } from './hooks/useTheme'
 import Navbar from './components/Navbar'
 import Footer from './components/Footer'
 import Landing from './pages/Landing'
@@ -69,7 +68,6 @@ function ScrollManager() {
 
 export default function App() {
     return (
-        <ThemeProvider>
             <BrowserRouter>
                 <ScrollManager />
                 <Routes>
@@ -104,6 +102,5 @@ export default function App() {
                     <Route path="*" element={<Navigate to="/" replace />} />
                 </Routes>
             </BrowserRouter>
-        </ThemeProvider>
     )
 }

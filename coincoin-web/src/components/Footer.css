@@ -130,24 +130,6 @@
     color: var(--text-secondary);
 }
 
-[data-theme="dark"] .footer {
-    background:
-        radial-gradient(circle at top left, rgba(37, 99, 235, 0.12), transparent 24%),
-        linear-gradient(180deg, rgba(15, 23, 42, 0.72), rgba(10, 10, 26, 0.96));
-    border-top-color: rgba(255, 255, 255, 0.06);
-}
-
-[data-theme="dark"] .footer-chip {
-    border-color: rgba(255, 255, 255, 0.08);
-    background: rgba(255, 255, 255, 0.04);
-    color: var(--text-secondary);
-    box-shadow: none;
-}
-
-[data-theme="dark"] .footer-bottom {
-    border-top-color: rgba(255, 255, 255, 0.06);
-}
-
 @media (max-width: 768px) {
     .footer-grid {
         grid-template-columns: 1fr;

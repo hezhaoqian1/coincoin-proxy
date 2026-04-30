@@ -49,8 +49,7 @@
   --accent-rose: #f43f5e;
 }
 
-/* --- ☀️ Light Theme (default) --- */
-[data-theme="light"],
+/* --- Base Theme --- */
 :root {
   --bg-primary: #f6f7fb;
   --bg-secondary: #eef1f6;
@@ -78,36 +77,6 @@
   --code-bg: #f1f3f8;
   --navbar-bg: rgba(246, 247, 251, 0.88);
   --table-row-border: rgba(0, 0, 0, 0.04);
-}
-
-/* --- 🌙 Dark Theme --- */
-[data-theme="dark"] {
-  --bg-primary: #0a0a1a;
-  --bg-secondary: #0f0f2a;
-  --bg-tertiary: #141432;
-  --bg-card: rgba(20, 20, 50, 0.6);
-  --bg-card-hover: rgba(30, 30, 70, 0.7);
-  --bg-glass: rgba(255, 255, 255, 0.03);
-  --bg-glass-strong: rgba(255, 255, 255, 0.06);
-
-  --border-color: rgba(255, 255, 255, 0.06);
-  --border-color-hover: rgba(255, 255, 255, 0.12);
-  --border-accent: rgba(99, 102, 241, 0.3);
-
-  --text-primary: #f0f0ff;
-  --text-secondary: #9ca3af;
-  --text-tertiary: #6b7280;
-  --text-accent: #818cf8;
-
-  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
-  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.5);
-  --shadow-glow: 0 0 40px rgba(99, 102, 241, 0.15);
-  --shadow-glow-cyan: 0 0 40px rgba(6, 182, 212, 0.15);
-
-  --code-bg: rgba(0, 0, 0, 0.4);
-  --navbar-bg: rgba(10, 10, 26, 0.8);
-  --table-row-border: rgba(255, 255, 255, 0.03);
 }
 
 /* --- Reset & Base --- */
@@ -471,29 +440,6 @@ pre {
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--text-tertiary);
-}
-
-/* --- Theme Toggle Button --- */
-.theme-toggle {
-  width: 38px;
-  height: 38px;
-  border-radius: var(--radius-sm);
-  background: var(--bg-card);
-  border: 1px solid var(--border-color);
-  color: var(--text-secondary);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: all var(--transition-fast);
-  font-size: 1.1rem;
-  flex-shrink: 0;
-}
-
-.theme-toggle:hover {
-  background: var(--bg-glass-strong);
-  color: var(--text-primary);
-  border-color: var(--border-color-hover);
 }
 
 /* --- Page Layout --- */
