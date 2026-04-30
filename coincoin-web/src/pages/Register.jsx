@@ -80,8 +80,12 @@ export default function Register() {
             setError('请输入用户名')
             return false
         }
-        if (!/^[a-zA-Z0-9_-]+$/.test(trimmed)) {
-            setError('用户名只支持字母、数字、下划线、连字符')
+        if (trimmed.length < 2 || trimmed.length > 64) {
+            setError('用户名长度需为 2-64 位')
+            return false
+        }
+        if (!/^[a-zA-Z0-9_.-]+$/.test(trimmed)) {
+            setError('用户名只支持字母、数字、点、下划线、连字符')
             return false
         }
         return true
@@ -185,7 +189,7 @@ export default function Register() {
                         <input
                             type="text"
                             className="input-field"
-                            placeholder="字母、数字、下划线、连字符"
+                            placeholder="字母、数字、点、下划线、连字符"
                             value={username}
                             onChange={(e) => { setUsername(e.target.value); setError('') }}
                             autoFocus

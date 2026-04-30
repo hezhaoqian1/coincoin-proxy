@@ -181,7 +181,7 @@ class AnnouncementUpdate(BaseModel):
 # ===== Auth =====
 
 class AuthRegisterRequest(BaseModel):
-    username: str = Field(..., min_length=2, max_length=64, pattern=r'^[a-zA-Z0-9_-]+$')
+    username: str = Field(..., min_length=2, max_length=64, pattern=r'^[a-zA-Z0-9_.-]+$')
     email: str = Field(..., min_length=5, max_length=255)
     password: str = Field(..., min_length=6, max_length=128)
     referral_code: Optional[str] = Field(default=None, description="邀请码（可选）")
@@ -277,7 +277,7 @@ class StationPayoutBatchMarkPaidRequest(BaseModel):
 
 
 class StationCustomerCreateRequest(BaseModel):
-    username: str = Field(..., min_length=2, max_length=64, pattern=r'^[a-zA-Z0-9_-]+$')
+    username: str = Field(..., min_length=2, max_length=64, pattern=r'^[a-zA-Z0-9_.-]+$')
     create_api_key: bool = Field(default=True)
 
 
