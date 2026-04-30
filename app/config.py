@@ -90,10 +90,6 @@ class Settings(BaseSettings):
     email_verification_ttl_minutes: int = 10
     email_resend_cooldown_seconds: int = 60
     email_max_attempts: int = 5
-    allowed_email_domains: str = (
-        "gmail.com,googlemail.com,outlook.com,hotmail.com,live.com,icloud.com,"
-        "qq.com,foxmail.com,163.com,126.com,yeah.net,aliyun.com"
-    )
 
     # Referral system
     referral_commission_rate: float = 0.05  # 5%

@@ -77,23 +77,10 @@ def _create_session_key(user_id: str) -> tuple[str, ApiKey]:
     return raw_key, api_key
 
 
-def _allowed_email_domains() -> set[str]:
-    return {
-        item.strip().lower().lstrip("@")
-        for item in (settings.allowed_email_domains or "").split(",")
-        if item.strip()
-    }
-
-
 def _normalize_email(raw: str) -> str:
     email = (raw or "").strip().lower()
     if not EMAIL_RE.match(email):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "请输入有效邮箱")
-
-    domain = email.rsplit("@", 1)[-1]
-    allowed = _allowed_email_domains()
-    if allowed and domain not in allowed:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "请使用 Gmail、Outlook、iCloud、QQ、163 等主流邮箱")
     return email
 
 
