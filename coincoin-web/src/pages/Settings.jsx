@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { describePublicModel } from '../api/client'
+import { describePublicModel, getAuthProfile, sendAccountEmailCode, verifyAccountEmail } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
 import { usePublicModels } from '../hooks/usePublicModels'
 import AppShell from '../components/AppShell'
@@ -30,6 +30,121 @@ function ConfigSnippet({ title, summary, code }) {
                 </button>
             </div>
             <pre className="snippet-code">{code}</pre>
+        </div>
+    )
+}
+
+function EmailBindingCard({ isConsoleSession }) {
+    const [profile, setProfile] = useState(null)
+    const [email, setEmail] = useState('')
+    const [code, setCode] = useState('')
+    const [loading, setLoading] = useState(false)
+    const [message, setMessage] = useState('')
+    const [error, setError] = useState('')
+
+    useEffect(() => {
+        if (!isConsoleSession) return
+        let active = true
+        getAuthProfile()
+            .then((data) => {
+                if (!active) return
+                setProfile(data)
+                setEmail(data.email || '')
+            })
+            .catch(() => {
+                if (!active) return
+                setError('邮箱状态读取失败')
+            })
+        return () => { active = false }
+    }, [isConsoleSession])
+
+    if (!isConsoleSession) return null
+
+    const verified = !!profile?.email_verified_at
+    const hasEmail = !!profile?.email
+
+    const handleSend = async (event) => {
+        event.preventDefault()
+        if (!email.trim()) { setError('请输入邮箱'); return }
+        setLoading(true)
+        setError('')
+        setMessage('')
+        try {
+            const data = await sendAccountEmailCode(email.trim())
+            setProfile(data)
+            setEmail(data.email || email.trim())
+            setMessage('验证码已发送')
+        } catch (err) {
+            setError(err.message || '发送失败')
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    const handleVerify = async (event) => {
+        event.preventDefault()
+        if (!code.trim()) { setError('请输入验证码'); return }
+        setLoading(true)
+        setError('')
+        setMessage('')
+        try {
+            const data = await verifyAccountEmail(code.trim())
+            setProfile(data)
+            setCode('')
+            setMessage('邮箱已验证')
+        } catch (err) {
+            setError(err.message || '验证失败')
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    return (
+        <div className={`glass-card settings-section email-binding-card animate-fade-in-up ${verified ? 'settings-alert-success' : 'settings-alert-warning'}`}>
+            <div className="settings-section-head">
+                <div>
+                    <h3>邮箱验证</h3>
+                    <p className="settings-subtitle">
+                        {verified ? '当前账号已绑定邮箱。' : hasEmail ? '邮箱还没验证，输入验证码完成绑定。' : '老账号可以继续使用，建议补一个邮箱。'}
+                    </p>
+                </div>
+                <span className="meta-pill">{verified ? '已验证' : hasEmail ? '待验证' : '未绑定'}</span>
+            </div>
+            <form className="email-binding-form" onSubmit={handleSend}>
+                <div className="email-binding-row">
+                    <input
+                        type="email"
+                        className="input-field"
+                        placeholder="name@example.com"
+                        value={email}
+                        onChange={(event) => { setEmail(event.target.value); setError(''); setMessage('') }}
+                        disabled={loading}
+                    />
+                    <button className="btn btn-secondary btn-sm" type="submit" disabled={loading}>
+                        {hasEmail && !verified ? '重新发送' : verified ? '更换邮箱' : '发送验证码'}
+                    </button>
+                </div>
+            </form>
+            {!verified && hasEmail && (
+                <form className="email-binding-form" onSubmit={handleVerify}>
+                    <div className="email-binding-row">
+                        <input
+                            type="text"
+                            inputMode="numeric"
+                            className="input-field email-code-field"
+                            placeholder="6 位验证码"
+                            value={code}
+                            onChange={(event) => { setCode(event.target.value.replace(/\D/g, '').slice(0, 6)); setError(''); setMessage('') }}
+                            disabled={loading}
+                        />
+                        <button className="btn btn-primary btn-sm" type="submit" disabled={loading}>
+                            {loading ? '处理中...' : '验证邮箱'}
+                        </button>
+                    </div>
+                </form>
+            )}
+            {message && <p className="settings-form-message success">{message}</p>}
+            {error && <p className="settings-form-message error">{error}</p>}
         </div>
     )
 }
@@ -268,6 +383,8 @@ claude --model claude-opus-4-7`
                         </div>
                     </div>
                 )}
+
+                <EmailBindingCard isConsoleSession={isConsoleSession} />
 
                 <div className="glass-card settings-section animate-fade-in-up" id="api-keys">
                     <h3>&#128273; 开发者 Key</h3>

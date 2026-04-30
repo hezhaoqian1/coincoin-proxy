@@ -148,6 +148,32 @@
     color: var(--accent-rose);
 }
 
+.input-success {
+    font-size: 0.8rem;
+    color: #059669;
+}
+
+.verification-code-input {
+    text-align: center;
+    letter-spacing: 0.24em;
+    font-size: 1.2rem;
+    font-weight: 700;
+}
+
+.auth-link-button {
+    border: none;
+    background: transparent;
+    color: var(--accent-indigo);
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 0;
+}
+
+.auth-link-button:hover {
+    text-decoration: underline;
+}
+
 .auth-divider {
     display: flex;
     align-items: center;

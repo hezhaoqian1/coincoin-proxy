@@ -84,6 +84,17 @@ class Settings(BaseSettings):
     # 新用户默认余额（分），0 = 需要充值才能使用
     default_balance: int = 0
 
+    # Email verification
+    resend_api_key: str = ""
+    email_from: str = "CoinCoin <onboarding@resend.dev>"
+    email_verification_ttl_minutes: int = 10
+    email_resend_cooldown_seconds: int = 60
+    email_max_attempts: int = 5
+    allowed_email_domains: str = (
+        "gmail.com,googlemail.com,outlook.com,hotmail.com,live.com,icloud.com,"
+        "qq.com,foxmail.com,163.com,126.com,yeah.net,aliyun.com"
+    )
+
     # Referral system
     referral_commission_rate: float = 0.05  # 5%
     referral_max_rewards_per_user: int = 3  # only first 3 orders from each referred user
