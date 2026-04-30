@@ -247,7 +247,7 @@ export default function Station() {
                         <form className="station-form" onSubmit={handleCustomerSubmit}>
                             <label className="station-field">
                                 <span>用户名</span>
-                                <input value={customerForm.username} onChange={(e) => setCustomerForm((prev) => ({ ...prev, username: e.target.value }))} placeholder="仅支持字母数字、下划线和短横线" required />
+                                <input value={customerForm.username} onChange={(e) => setCustomerForm((prev) => ({ ...prev, username: e.target.value }))} placeholder="支持字母数字、点、下划线和短横线" required />
                             </label>
                             <label className="station-checkbox">
                                 <input type="checkbox" checked={customerForm.create_api_key} onChange={(e) => setCustomerForm((prev) => ({ ...prev, create_api_key: e.target.checked }))} />
