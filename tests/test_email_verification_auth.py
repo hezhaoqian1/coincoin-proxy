@@ -56,13 +56,10 @@ class _BackgroundTasks:
 
 class EmailVerificationAuthTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self._original_allowed_domains = auth_module.settings.allowed_email_domains
         self._original_default_balance = auth_module.settings.default_balance
-        auth_module.settings.allowed_email_domains = "gmail.com,outlook.com,icloud.com,qq.com,163.com"
         auth_module.settings.default_balance = 0
 
     async def asyncTearDown(self):
-        auth_module.settings.allowed_email_domains = self._original_allowed_domains
         auth_module.settings.default_balance = self._original_default_balance
 
     async def test_register_send_code_returns_verification_session(self):
@@ -104,6 +101,22 @@ class EmailVerificationAuthTests(unittest.IsolatedAsyncioTestCase):
         verification = next(obj for obj in db.added if obj.__class__.__name__ == "EmailVerificationCode")
         self.assertEqual(verification.user_id, result.verification_id)
         self.assertNotEqual(verification.user_id, "u_1")
+
+    async def test_register_send_code_accepts_enterprise_email_domain(self):
+        db = _FakeDB(
+            execute_results=[
+                _ScalarOneOrNoneResult(None),
+                _ScalarOneOrNoneResult(None),
+            ]
+        )
+        payload = auth_module.AuthRegisterSendCodeRequest(email="jiangtao.sheng@corp.example.ai")
+        background_tasks = _BackgroundTasks()
+
+        with patch.object(auth_module.rate_limiter, "allow", AsyncMock(return_value=True)):
+            result = await auth_module.register_send_code(payload, _request(), background_tasks, db)
+
+        self.assertEqual(result.email, "jiangtao.sheng@corp.example.ai")
+        self.assertTrue(result.verification_id.startswith("regv_"))
 
     async def test_register_check_code_marks_verification_consumed(self):
         now = datetime.utcnow()
