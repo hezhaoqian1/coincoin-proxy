@@ -11,6 +11,11 @@ import './Dashboard.css'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler)
 
+function getLocalIsoDate(date = new Date()) {
+    const tzOffsetMs = date.getTimezoneOffset() * 60 * 1000
+    return new Date(date.getTime() - tzOffsetMs).toISOString().slice(0, 10)
+}
+
 function ReadinessCard({ authMode, username, hasDeveloperKey }) {
     const contentMap = {
         session_only: {
@@ -490,12 +495,21 @@ export default function Dashboard() {
 
     const activeAnns = announcements.filter(a => !dismissedAnns.includes(a.id))
 
-    const todayStr = new Date().toISOString().slice(0, 10)
-    const todayUsage = usage?.data?.filter(d => d.created_at?.startsWith(todayStr)) || []
-    const todayCost = todayUsage.reduce((sum, d) => sum + d.cost_cents, 0) / 100
-    const todayTokens = todayUsage.reduce((sum, d) => sum + (d.total_tokens || d.input_tokens + d.output_tokens), 0)
-    const todayImages = todayUsage.reduce((sum, d) => sum + (d.image_count || 0), 0)
-    const todayRequests = todayUsage.length
+    const todayStr = getLocalIsoDate()
+    const todaySummary = dailyData?.find(d => d.day === todayStr) || dailyData?.[dailyData.length - 1] || null
+    const todayUsageFallback = usage?.data?.filter(d => d.created_at?.startsWith(todayStr)) || []
+    const todayCost = todaySummary
+        ? todaySummary.cost_usd
+        : todayUsageFallback.reduce((sum, d) => sum + d.cost_cents, 0) / 100
+    const todayTokens = todaySummary
+        ? (todaySummary.tokens_total || 0)
+        : todayUsageFallback.reduce((sum, d) => sum + (d.total_tokens || d.input_tokens + d.output_tokens), 0)
+    const todayImages = todaySummary
+        ? (todaySummary.images_total || 0)
+        : todayUsageFallback.reduce((sum, d) => sum + (d.image_count || 0), 0)
+    const todayRequests = todaySummary
+        ? (todaySummary.requests_total || 0)
+        : todayUsageFallback.length
 
     const chartData = dailyData && dailyData.length > 0 ? {
         labels: dailyData.map(d => d.day.slice(5)),
