@@ -11,6 +11,13 @@ class Settings(BaseSettings):
     key_prefix: str = "sk_cc_"
     key_pepper: str = "coincoin-pepper"
     key_encryption_secret: str = ""
+    monitoring_token: str = ""
+    monitoring_api_key: str = ""
+    monitoring_public_base_url: str = ""
+    monitoring_gateway_health_url: str = ""
+    monitoring_chat_model: str = ""
+    monitoring_responses_model: str = ""
+    monitoring_timeout_seconds: int = 45
 
     # Upstream (Azure OpenAI compatible)
     upstream_base_url: str = "https://hc-instance-eastus2.cognitiveservices.azure.com/openai/v1"

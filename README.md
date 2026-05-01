@@ -46,6 +46,14 @@ cp env.example .env
 # Admin Token (用于管理后台)
 COINCOIN_ADMIN_TOKEN=your-admin-token
 
+# Monitoring / Checkly（管理员 / 运维专用，不做终端用户状态页）
+COINCOIN_MONITORING_TOKEN=your-monitoring-token
+COINCOIN_MONITORING_API_KEY=your-low-cost-monitoring-key
+COINCOIN_MONITORING_PUBLIC_BASE_URL=https://your-public-coincoin-domain
+COINCOIN_MONITORING_GATEWAY_HEALTH_URL=https://your-private-gateway-health-url
+COINCOIN_MONITORING_CHAT_MODEL=gpt-4o-mini
+COINCOIN_MONITORING_RESPONSES_MODEL=gpt-4o-mini
+
 # 旧 GPT 链路（默认公共模型）
 COINCOIN_UPSTREAM_BASE_URL=https://your-instance.cognitiveservices.azure.com/openai/v1
 COINCOIN_UPSTREAM_API_KEY=your-azure-api-key
@@ -138,6 +146,25 @@ uvicorn app.main:app --reload --port 8000
 - 如果你要改线上用户实际看到的文档、示例和 API 说明，优先改 `coincoin-proxy` 这个嵌套仓库
 
 注意：
+
+## 监控设计
+
+- 长期监控推荐使用 Checkly
+- `coincoin-proxy` 不提供终端用户状态页
+- 监控视角只面向管理员 / 运维
+- Checkly 不应直接复用管理员 token 或真实用户 key
+- 仓库内置了独立的受保护 probe 路由：
+  - `GET /ops/monitoring/summary`
+  - `GET /ops/monitoring/probes/public-health`
+  - `GET /ops/monitoring/probes/catalog`
+  - `POST /ops/monitoring/probes/chat-completions`
+  - `POST /ops/monitoring/probes/chat-stream`
+  - `POST /ops/monitoring/probes/responses`
+  - `GET /ops/monitoring/probes/gateway-readiness`
+
+完整方案见：
+
+- [Checkly Monitoring Blueprint](/Users/hezhaoqian/Desktop/codex_transfer_station/docs/operations/checkly-monitoring-blueprint.md)
 
 - 当前这个嵌套仓库的 GitHub remote 名仍然是 `hezhaoqian1/clawfather`
 - 但部署服务、代码目录和日常沟通都统一按 `coincoin-proxy` 理解，不要把 remote 名和 Railway 服务名混为一谈

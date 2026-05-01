@@ -17,6 +17,7 @@ from .image_jobs import (
     router as image_jobs_router,
 )
 from .keys import router as keys_router
+from .monitoring import admin_router as admin_monitoring_router, ops_router as monitoring_ops_router
 from .proxy import router as proxy_router, close_http_client
 from .openai_compat import (
     chat_completions as openai_chat_completions,
@@ -312,11 +313,13 @@ app.include_router(image_jobs_router)
 app.include_router(image_jobs_openai_router)
 app.include_router(keys_router)
 app.include_router(admin_router)
+app.include_router(admin_monitoring_router)
 app.include_router(webhook_router)
 app.include_router(payment_router)
 app.include_router(auth_router)
 app.include_router(stations_router)
 app.include_router(admin_stations_router)
+app.include_router(monitoring_ops_router)
 
 # Some OpenAI-compatible clients use `/openai/v1` as their base URL and still
 # expect discovery/chat/embedding routes under that prefix.
