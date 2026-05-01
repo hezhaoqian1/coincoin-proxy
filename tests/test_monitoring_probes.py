@@ -269,6 +269,45 @@ class MonitoringProbeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["probe"], "cpa-chat-completions")
         self.assertEqual(payload["details"]["model"], "gpt-5.2-codex")
 
+    async def test_cpa_chat_probe_surfaces_upstream_error_details(self) -> None:
+        monitoring_module.settings.monitoring_token = "mon-secret"
+        monitoring_module.settings.monitoring_cpa_api_key = "sk-cpa"
+        monitoring_module.settings.monitoring_cpa_base_url = "https://cpa.example.com"
+        monitoring_module.settings.monitoring_cpa_chat_model = "gpt-5.2-codex"
+
+        async def fake_request_json(method, url, headers=None, json_body=None):
+            return {
+                "status_code": 502,
+                "body": {
+                    "error": {
+                        "message": "upstream rejected max_tokens",
+                        "code": "bad_gateway",
+                        "type": "upstream_error",
+                    }
+                },
+                "latency_ms": 51,
+                "headers": {},
+            }
+
+        with patch.object(
+            monitoring_module, "_request_json", AsyncMock(side_effect=fake_request_json)
+        ):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://testserver"
+            ) as client:
+                response = await client.post(
+                    "/ops/monitoring/probes/cpa-chat-completions",
+                    headers={"x-monitoring-token": "mon-secret"},
+                )
+
+        self.assertEqual(response.status_code, 502, response.text)
+        payload = response.json()
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["details"]["error"], "upstream rejected max_tokens")
+        self.assertEqual(payload["details"]["error_code"], "bad_gateway")
+        self.assertEqual(payload["details"]["error_type"], "upstream_error")
+
     async def test_cpa_responses_probe_reports_missing_configuration(self) -> None:
         monitoring_module.settings.monitoring_token = "mon-secret"
 

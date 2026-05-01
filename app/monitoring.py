@@ -160,6 +160,56 @@ def _extract_responses_content(payload: Dict[str, Any]) -> str:
     return "".join(parts)
 
 
+def _safe_json_excerpt(value: Any, limit: int = 500) -> str:
+    try:
+        text = json.dumps(value, ensure_ascii=False, default=str)
+    except Exception:
+        text = str(value)
+    return text[:limit]
+
+
+def _extract_failure_details(body: Any) -> Dict[str, Any]:
+    if not isinstance(body, dict):
+        return {}
+
+    details: Dict[str, Any] = {}
+    error = body.get("error")
+    if isinstance(error, dict):
+        message = error.get("message")
+        code = error.get("code")
+        error_type = error.get("type")
+        if message:
+            details["error"] = str(message)[:500]
+        if code:
+            details["error_code"] = str(code)[:120]
+        if error_type:
+            details["error_type"] = str(error_type)[:120]
+    elif isinstance(error, str) and error.strip():
+        details["error"] = error.strip()[:500]
+
+    detail = body.get("detail")
+    if "error" not in details and isinstance(detail, str) and detail.strip():
+        details["error"] = detail.strip()[:500]
+    elif "error" not in details and isinstance(detail, dict):
+        nested = _extract_failure_details(detail)
+        details.update(nested)
+
+    raw_text = body.get("raw_text")
+    if isinstance(raw_text, str) and raw_text.strip():
+        details["body_excerpt"] = raw_text.strip()[:500]
+    elif body and "body_excerpt" not in details:
+        details["body_excerpt"] = _safe_json_excerpt(body)
+
+    return details
+
+
+def _response_failure_details(result: Dict[str, Any]) -> Dict[str, Any]:
+    status_code = result.get("status_code")
+    if isinstance(status_code, int) and status_code < 400:
+        return {}
+    return _extract_failure_details(result.get("body"))
+
+
 def _probe_result(
     *,
     probe: str,
@@ -637,6 +687,11 @@ async def run_chat_completions_probe(stream: bool = False) -> Dict[str, Any]:
                 "http_status": result["status_code"],
                 "model": model,
                 "first_chunk": first_chunk,
+                **(
+                    {"error": "stream did not return an SSE data chunk"}
+                    if result["status_code"] != 200 and not first_chunk
+                    else {}
+                ),
             },
         )
 
@@ -654,6 +709,7 @@ async def run_chat_completions_probe(stream: bool = False) -> Dict[str, Any]:
             "http_status": result["status_code"],
             "model": model,
             "response_excerpt": content[:200],
+            **_response_failure_details(result),
         },
     )
 
@@ -685,6 +741,7 @@ async def run_responses_probe() -> Dict[str, Any]:
             "http_status": result["status_code"],
             "model": model,
             "response_excerpt": content[:200],
+            **_response_failure_details(result),
         },
     )
 
@@ -805,6 +862,7 @@ async def run_cpa_chat_completions_probe() -> Dict[str, Any]:
             "http_status": result["status_code"],
             "model": model,
             "response_excerpt": content[:200],
+            **_response_failure_details(result),
         },
     )
 
@@ -839,6 +897,7 @@ async def run_cpa_responses_probe() -> Dict[str, Any]:
             "http_status": result["status_code"],
             "model": model,
             "response_excerpt": content[:200],
+            **_response_failure_details(result),
         },
     )
 
