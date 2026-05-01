@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     monitoring_gateway_health_url: str = ""
     monitoring_chat_model: str = ""
     monitoring_responses_model: str = ""
+    monitoring_cpa_base_url: str = ""
+    monitoring_cpa_api_key: str = ""
+    monitoring_cpa_chat_model: str = ""
+    monitoring_cpa_responses_model: str = ""
     monitoring_timeout_seconds: int = 45
 
     # Upstream (Azure OpenAI compatible)

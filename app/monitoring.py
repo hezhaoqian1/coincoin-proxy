@@ -66,6 +66,18 @@ def _require_public_probe_config() -> Dict[str, str]:
     return {"public_base_url": public_base_url.rstrip("/"), "api_key": api_key}
 
 
+def _require_cpa_probe_config() -> Dict[str, str]:
+    base_url = (getattr(settings, "monitoring_cpa_base_url", "") or "").strip()
+    api_key = (getattr(settings, "monitoring_cpa_api_key", "") or "").strip()
+
+    if not base_url:
+        raise MonitoringConfigError("missing monitoring_cpa_base_url")
+    if not api_key:
+        raise MonitoringConfigError("missing monitoring_cpa_api_key")
+
+    return {"base_url": base_url.rstrip("/"), "api_key": api_key}
+
+
 def _get_timeout_seconds() -> float:
     raw = getattr(settings, "monitoring_timeout_seconds", 45) or 45
     try:
@@ -223,6 +235,15 @@ def build_monitoring_summary() -> Dict[str, Any]:
     ).strip()
     chat_model = _resolve_probe_model("monitoring_chat_model", "chat/completions")
     responses_model = _resolve_probe_model("monitoring_responses_model", "responses")
+    cpa_base_url = (getattr(settings, "monitoring_cpa_base_url", "") or "").strip()
+    cpa_chat_model = (
+        str(getattr(settings, "monitoring_cpa_chat_model", "") or "").strip()
+        or chat_model
+    )
+    cpa_responses_model = (
+        str(getattr(settings, "monitoring_cpa_responses_model", "") or "").strip()
+        or responses_model
+    )
 
     return {
         "ui_scope": "admin_only",
@@ -234,16 +255,23 @@ def build_monitoring_summary() -> Dict[str, Any]:
                 (getattr(settings, "monitoring_api_key", "") or "").strip()
             ),
             "gateway_health_url": bool(gateway_health_url),
+            "monitoring_cpa_base_url": bool(cpa_base_url),
+            "monitoring_cpa_api_key": bool(
+                (getattr(settings, "monitoring_cpa_api_key", "") or "").strip()
+            ),
         },
         "public_base_url": public_base_url or None,
         "gateway_health_url": gateway_health_url or None,
+        "cpa_base_url": cpa_base_url or None,
         "probe_models": {
             "chat_completions": chat_model or None,
             "responses": responses_model or None,
+            "cpa_chat_completions": cpa_chat_model or None,
+            "cpa_responses": cpa_responses_model or None,
         },
         "recommended_architecture": {
-            "frontend": "管理员后台展示监控说明、配置状态、探针结果，不做终端用户状态页。",
-            "backend": "由受保护的 ops probes 承担真实探测，Checkly 只调用 probes，不直接耦合内部实现。",
+            "frontend": "管理员后台展示双层监控说明、配置状态、探针结果，不做终端用户状态页。",
+            "backend": "由受保护的 ops probes 承担真实探测。clawfather probes 监控公网控制面，CPA probes 直连旧 GPT/Codex lane，用于分层定位故障。",
         },
         "checkly": {
             "headers": ["x-monitoring-token: <COINCOIN_MONITORING_TOKEN>"],
@@ -254,8 +282,24 @@ def build_monitoring_summary() -> Dict[str, Any]:
                 {"name": "chat-stream", "method": "POST", "path": "/ops/monitoring/probes/chat-stream"},
                 {"name": "responses", "method": "POST", "path": "/ops/monitoring/probes/responses"},
                 {"name": "gateway-readiness", "method": "GET", "path": "/ops/monitoring/probes/gateway-readiness", "optional": True},
+                {"name": "cpa-public-health", "method": "GET", "path": "/ops/monitoring/probes/cpa-public-health", "optional": True},
+                {"name": "cpa-catalog", "method": "GET", "path": "/ops/monitoring/probes/cpa-catalog", "optional": True},
+                {"name": "cpa-chat-completions", "method": "POST", "path": "/ops/monitoring/probes/cpa-chat-completions", "optional": True},
+                {"name": "cpa-responses", "method": "POST", "path": "/ops/monitoring/probes/cpa-responses", "optional": True},
             ],
         },
+        "monitoring_layers": [
+            {
+                "name": "clawfather",
+                "scope": "公网控制面与经 coincoin-proxy 分发后的真实用户路径",
+                "base_url": public_base_url or None,
+            },
+            {
+                "name": "cpa_direct",
+                "scope": "绕过 clawfather，直连 CPA / legacy GPT-Codex lane",
+                "base_url": cpa_base_url or None,
+            },
+        ],
         "catalog": {
             "default_text_model": model_registry.default_text_model_id or None,
             "default_embedding_model": model_registry.default_embedding_model_id or None,
@@ -435,6 +479,140 @@ async def run_gateway_readiness_probe() -> Dict[str, Any]:
     )
 
 
+async def run_cpa_public_health_probe() -> Dict[str, Any]:
+    cfg = _require_cpa_probe_config()
+    url = _join_url(cfg["base_url"], "/healthz")
+    result = await _request_json("GET", url)
+    body = result["body"]
+    ok = result["status_code"] == 200 and isinstance(body, dict) and body.get("status") == "ok"
+    return _probe_result(
+        probe="cpa-public-health",
+        ok=ok,
+        latency_ms=result["latency_ms"],
+        target=url,
+        details={
+            "http_status": result["status_code"],
+            "body": body if isinstance(body, dict) else None,
+        },
+    )
+
+
+async def run_cpa_catalog_probe() -> Dict[str, Any]:
+    cfg = _require_cpa_probe_config()
+    url = _join_url(cfg["base_url"], "/v1/models")
+    headers = _monitoring_headers(cfg["api_key"])
+    result = await _request_json("GET", url, headers=headers)
+    body = result["body"]
+    data = body.get("data") if isinstance(body, dict) else None
+    chat_model = (
+        str(getattr(settings, "monitoring_cpa_chat_model", "") or "").strip()
+        or _resolve_probe_model("monitoring_chat_model", "chat/completions")
+    )
+    responses_model = (
+        str(getattr(settings, "monitoring_cpa_responses_model", "") or "").strip()
+        or _resolve_probe_model("monitoring_responses_model", "responses")
+    )
+    returned_ids = []
+    if isinstance(data, list):
+        for item in data:
+            if isinstance(item, dict) and item.get("id"):
+                returned_ids.append(str(item["id"]))
+
+    ok = (
+        result["status_code"] == 200
+        and isinstance(data, list)
+        and (not chat_model or chat_model in returned_ids)
+        and (not responses_model or responses_model in returned_ids)
+    )
+    return _probe_result(
+        probe="cpa-catalog",
+        ok=ok,
+        latency_ms=result["latency_ms"],
+        target=url,
+        details={
+            "http_status": result["status_code"],
+            "model_count": len(returned_ids),
+            "monitoring_cpa_chat_model": chat_model or None,
+            "monitoring_cpa_responses_model": responses_model or None,
+            "returned_model_ids": returned_ids[:25],
+        },
+    )
+
+
+async def run_cpa_chat_completions_probe() -> Dict[str, Any]:
+    cfg = _require_cpa_probe_config()
+    model = (
+        str(getattr(settings, "monitoring_cpa_chat_model", "") or "").strip()
+        or _resolve_probe_model("monitoring_chat_model", "chat/completions")
+    )
+    if not model:
+        raise MonitoringConfigError("missing monitoring_cpa_chat_model")
+
+    url = _join_url(cfg["base_url"], "/v1/chat/completions")
+    headers = _monitoring_headers(cfg["api_key"])
+    payload = {
+        "model": model,
+        "temperature": 0,
+        "max_tokens": 16,
+        "messages": [
+            {
+                "role": "user",
+                "content": f"Reply with exactly {_MARKER}. No punctuation.",
+            }
+        ],
+    }
+    result = await _request_json("POST", url, headers=headers, json_body=payload)
+    body = result["body"]
+    content = _extract_chat_content(body) if isinstance(body, dict) else ""
+    normalized = content.strip().upper()
+    ok = result["status_code"] == 200 and _MARKER in normalized
+    return _probe_result(
+        probe="cpa-chat-completions",
+        ok=ok,
+        latency_ms=result["latency_ms"],
+        target=url,
+        details={
+            "http_status": result["status_code"],
+            "model": model,
+            "response_excerpt": content[:200],
+        },
+    )
+
+
+async def run_cpa_responses_probe() -> Dict[str, Any]:
+    cfg = _require_cpa_probe_config()
+    model = (
+        str(getattr(settings, "monitoring_cpa_responses_model", "") or "").strip()
+        or _resolve_probe_model("monitoring_responses_model", "responses")
+    )
+    if not model:
+        raise MonitoringConfigError("missing monitoring_cpa_responses_model")
+
+    url = _join_url(cfg["base_url"], "/v1/responses")
+    headers = _monitoring_headers(cfg["api_key"])
+    payload = {
+        "model": model,
+        "input": f"Reply with exactly {_MARKER}. No punctuation.",
+        "max_output_tokens": 16,
+    }
+    result = await _request_json("POST", url, headers=headers, json_body=payload)
+    body = result["body"]
+    content = _extract_responses_content(body) if isinstance(body, dict) else ""
+    normalized = content.strip().upper()
+    ok = result["status_code"] == 200 and _MARKER in normalized
+    return _probe_result(
+        probe="cpa-responses",
+        ok=ok,
+        latency_ms=result["latency_ms"],
+        target=url,
+        details={
+            "http_status": result["status_code"],
+            "model": model,
+            "response_excerpt": content[:200],
+        },
+    )
+
+
 async def _execute_probe(probe_name: str) -> Dict[str, Any]:
     if probe_name == "public-health":
         return await run_public_health_probe()
@@ -448,6 +626,14 @@ async def _execute_probe(probe_name: str) -> Dict[str, Any]:
         return await run_responses_probe()
     if probe_name == "gateway-readiness":
         return await run_gateway_readiness_probe()
+    if probe_name == "cpa-public-health":
+        return await run_cpa_public_health_probe()
+    if probe_name == "cpa-catalog":
+        return await run_cpa_catalog_probe()
+    if probe_name == "cpa-chat-completions":
+        return await run_cpa_chat_completions_probe()
+    if probe_name == "cpa-responses":
+        return await run_cpa_responses_probe()
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="unknown probe")
 
 

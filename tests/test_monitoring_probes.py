@@ -21,6 +21,10 @@ class MonitoringProbeTests(unittest.IsolatedAsyncioTestCase):
         monitoring_module.settings.monitoring_gateway_health_url = ""
         monitoring_module.settings.monitoring_chat_model = ""
         monitoring_module.settings.monitoring_responses_model = ""
+        monitoring_module.settings.monitoring_cpa_base_url = ""
+        monitoring_module.settings.monitoring_cpa_api_key = ""
+        monitoring_module.settings.monitoring_cpa_chat_model = ""
+        monitoring_module.settings.monitoring_cpa_responses_model = ""
         monitoring_module.settings.self_base_url = ""
 
     async def test_ops_summary_requires_monitoring_token(self) -> None:
@@ -51,6 +55,7 @@ class MonitoringProbeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["ui_scope"], "admin_only")
         self.assertFalse(payload["user_status_page"])
         self.assertIn("recommended_checks", payload["checkly"])
+        self.assertIn("monitoring_layers", payload)
 
     async def test_admin_summary_requires_admin_token(self) -> None:
         monitoring_module.settings.admin_token = "admin-secret"
@@ -162,6 +167,96 @@ class MonitoringProbeTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["probe"], "gateway-readiness")
         self.assertIn("missing monitoring_gateway_health_url", payload["details"]["error"])
+
+    async def test_cpa_public_health_probe_returns_upstream_status(self) -> None:
+        monitoring_module.settings.monitoring_token = "mon-secret"
+        monitoring_module.settings.monitoring_cpa_api_key = "sk-cpa"
+        monitoring_module.settings.monitoring_cpa_base_url = "https://cpa.example.com"
+
+        async def fake_request_json(method, url, headers=None, json_body=None):
+            self.assertEqual(method, "GET")
+            self.assertEqual(url, "https://cpa.example.com/healthz")
+            return {
+                "status_code": 200,
+                "body": {"status": "ok"},
+                "latency_ms": 88,
+                "headers": {},
+            }
+
+        with patch.object(
+            monitoring_module, "_request_json", AsyncMock(side_effect=fake_request_json)
+        ):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://testserver"
+            ) as client:
+                response = await client.get(
+                    "/ops/monitoring/probes/cpa-public-health",
+                    headers={"x-monitoring-token": "mon-secret"},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["probe"], "cpa-public-health")
+        self.assertEqual(payload["details"]["http_status"], 200)
+
+    async def test_cpa_chat_probe_validates_marker(self) -> None:
+        monitoring_module.settings.monitoring_token = "mon-secret"
+        monitoring_module.settings.monitoring_cpa_api_key = "sk-cpa"
+        monitoring_module.settings.monitoring_cpa_base_url = "https://cpa.example.com"
+        monitoring_module.settings.monitoring_cpa_chat_model = "gpt-5.2-codex"
+
+        async def fake_request_json(method, url, headers=None, json_body=None):
+            self.assertEqual(method, "POST")
+            self.assertEqual(url, "https://cpa.example.com/v1/chat/completions")
+            self.assertEqual(json_body["model"], "gpt-5.2-codex")
+            return {
+                "status_code": 200,
+                "body": {
+                    "choices": [
+                        {"message": {"content": "COINCOIN_MONITOR_OK"}}
+                    ]
+                },
+                "latency_ms": 321,
+                "headers": {},
+            }
+
+        with patch.object(
+            monitoring_module, "_request_json", AsyncMock(side_effect=fake_request_json)
+        ):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://testserver"
+            ) as client:
+                response = await client.post(
+                    "/ops/monitoring/probes/cpa-chat-completions",
+                    headers={"x-monitoring-token": "mon-secret"},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["probe"], "cpa-chat-completions")
+        self.assertEqual(payload["details"]["model"], "gpt-5.2-codex")
+
+    async def test_cpa_responses_probe_reports_missing_configuration(self) -> None:
+        monitoring_module.settings.monitoring_token = "mon-secret"
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as client:
+            response = await client.post(
+                "/ops/monitoring/probes/cpa-responses",
+                headers={"x-monitoring-token": "mon-secret"},
+            )
+
+        self.assertEqual(response.status_code, 503, response.text)
+        payload = response.json()
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["probe"], "cpa-responses")
+        self.assertIn("missing monitoring_cpa_base_url", payload["details"]["error"])
 
 
 if __name__ == "__main__":
