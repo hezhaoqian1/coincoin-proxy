@@ -1,5 +1,6 @@
 import json
 import time
+import asyncio
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
@@ -315,6 +316,167 @@ def build_monitoring_summary() -> Dict[str, Any]:
                 for model in model_registry.list_public_models()
             ],
         },
+    }
+
+
+def _recommended_probe_definitions() -> list[Dict[str, Any]]:
+    return list(build_monitoring_summary()["checkly"]["recommended_checks"])
+
+
+def _probe_group_for(probe_name: str) -> str:
+    if probe_name.startswith("cpa-"):
+        return "cpa_direct"
+    if probe_name == "gateway-readiness":
+        return "gateway"
+    return "clawfather"
+
+
+def _probe_capability_for(probe_name: str) -> str:
+    if probe_name in {"chat-completions", "cpa-chat-completions"}:
+        return "chat"
+    if probe_name in {"chat-stream"}:
+        return "stream"
+    if probe_name in {"responses", "cpa-responses"}:
+        return "responses"
+    if probe_name in {"catalog", "cpa-catalog"}:
+        return "catalog"
+    return "health"
+
+
+async def build_monitoring_snapshot() -> Dict[str, Any]:
+    summary = build_monitoring_summary()
+    checks = _recommended_probe_definitions()
+
+    async def _run_check(check: Dict[str, Any]) -> Dict[str, Any]:
+        probe_name = str(check.get("name") or "")
+        try:
+            result = await _execute_probe(probe_name)
+        except MonitoringConfigError as exc:
+            result = _probe_result(
+                probe=probe_name,
+                ok=False,
+                latency_ms=None,
+                target="configuration",
+                details={"error": str(exc)},
+            )
+        result["group"] = _probe_group_for(probe_name)
+        result["capability"] = _probe_capability_for(probe_name)
+        result["optional"] = bool(check.get("optional"))
+        result["method"] = check.get("method") or "GET"
+        result["path"] = check.get("path") or ""
+        return result
+
+    probe_results = await asyncio.gather(*[_run_check(check) for check in checks])
+    probe_map = {item["probe"]: item for item in probe_results}
+
+    group_order = ["clawfather", "cpa_direct", "gateway"]
+    layer_specs = {
+        "clawfather": {
+            "title": "Clawfather",
+            "subtitle": "公网入口与分发层",
+            "base_url": summary.get("public_base_url"),
+            "probe_names": [
+                "public-health",
+                "catalog",
+                "chat-completions",
+                "chat-stream",
+                "responses",
+            ],
+        },
+        "cpa_direct": {
+            "title": "CPA Direct",
+            "subtitle": "绕过 clawfather 的 legacy GPT/Codex lane",
+            "base_url": summary.get("cpa_base_url"),
+            "probe_names": [
+                "cpa-public-health",
+                "cpa-catalog",
+                "cpa-chat-completions",
+                "cpa-responses",
+            ],
+        },
+        "gateway": {
+            "title": "Gateway",
+            "subtitle": "内部 Gemini / LiteLLM 数据面",
+            "base_url": summary.get("gateway_health_url"),
+            "probe_names": ["gateway-readiness"],
+        },
+    }
+
+    layers = []
+    total_required = 0
+    total_ok = 0
+
+    for group_name in group_order:
+        spec = layer_specs[group_name]
+        group_probes = [
+            probe_map[name]
+            for name in spec["probe_names"]
+            if name in probe_map
+        ]
+        required_probes = [probe for probe in group_probes if not probe.get("optional")]
+        ok_required = [probe for probe in required_probes if probe.get("ok")]
+        total_required += len(required_probes)
+        total_ok += len(ok_required)
+
+        if required_probes:
+            availability = round((len(ok_required) / len(required_probes)) * 100, 2)
+        else:
+            availability = None
+
+        failing = [probe for probe in group_probes if not probe.get("ok")]
+        layer_ok = all(probe.get("ok") for probe in required_probes) if required_probes else None
+        latency_values = [
+            int(probe["latency_ms"])
+            for probe in group_probes
+            if isinstance(probe.get("latency_ms"), int)
+        ]
+        max_latency = max(latency_values) if latency_values else None
+        avg_latency = round(sum(latency_values) / len(latency_values)) if latency_values else None
+        issue_summary = None
+        if failing:
+            first = failing[0]
+            detail_error = str((first.get("details") or {}).get("error") or "").strip()
+            http_status = (first.get("details") or {}).get("http_status")
+            issue_summary = detail_error or (f"HTTP {http_status}" if http_status else "probe failed")
+
+        layers.append(
+            {
+                "name": group_name,
+                "title": spec["title"],
+                "subtitle": spec["subtitle"],
+                "base_url": spec["base_url"],
+                "ok": layer_ok,
+                "availability_percent": availability,
+                "required_probe_count": len(required_probes),
+                "ok_probe_count": len(ok_required),
+                "max_latency_ms": max_latency,
+                "avg_latency_ms": avg_latency,
+                "issue_summary": issue_summary,
+                "probes": group_probes,
+            }
+        )
+
+    overall_ok = total_ok == total_required if total_required else None
+    overall_availability = round((total_ok / total_required) * 100, 2) if total_required else None
+    all_latencies = [
+        int(probe["latency_ms"])
+        for probe in probe_results
+        if isinstance(probe.get("latency_ms"), int) and not probe.get("optional")
+    ]
+
+    return {
+        "checked_at": _utc_now(),
+        "overall": {
+            "ok": overall_ok,
+            "availability_percent": overall_availability,
+            "required_probe_count": total_required,
+            "ok_probe_count": total_ok,
+            "max_latency_ms": max(all_latencies) if all_latencies else None,
+            "avg_latency_ms": round(sum(all_latencies) / len(all_latencies)) if all_latencies else None,
+        },
+        "summary": summary,
+        "layers": layers,
+        "probes": probe_results,
     }
 
 
@@ -673,6 +835,11 @@ async def ops_monitoring_summary() -> Dict[str, Any]:
     return build_monitoring_summary()
 
 
+@ops_router.get("/snapshot", dependencies=[Depends(require_monitoring)])
+async def ops_monitoring_snapshot() -> Dict[str, Any]:
+    return await build_monitoring_snapshot()
+
+
 @ops_router.get("/probes/{probe_name}", dependencies=[Depends(require_monitoring)])
 async def ops_run_probe(probe_name: str) -> JSONResponse:
     return await _run_probe_response(probe_name)
@@ -686,6 +853,11 @@ async def ops_run_probe_post(probe_name: str) -> JSONResponse:
 @admin_router.get("/summary", dependencies=[Depends(_admin_guard)])
 async def admin_monitoring_summary() -> Dict[str, Any]:
     return build_monitoring_summary()
+
+
+@admin_router.get("/snapshot", dependencies=[Depends(_admin_guard)])
+async def admin_monitoring_snapshot() -> Dict[str, Any]:
+    return await build_monitoring_snapshot()
 
 
 @admin_router.get("/probes/{probe_name}", dependencies=[Depends(_admin_guard)])
