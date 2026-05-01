@@ -944,6 +944,10 @@
             <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
             用量统计
           </div>
+          <div class="nav-item" data-page="monitoring">
+            <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3l7 4v5c0 5-3.5 8.5-7 9-3.5-.5-7-4-7-9V7l7-4z"/></svg>
+            监控设计
+          </div>
         </div>
 
         <div class="nav-group">
@@ -1430,6 +1434,32 @@
           </div>
         </div>
       </div>
+
+      <div id="page-monitoring" class="page">
+        <div class="page-header">
+          <h1 class="page-title">监控设计</h1>
+          <p class="page-desc">长期方案固定为 Checkly。这里只提供管理员 / 运维视角的配置状态和推荐 checks，不做终端用户状态页。</p>
+        </div>
+        <div class="grid grid-2">
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">配置状态</span>
+              <button class="btn btn-secondary" onclick="loadMonitoringSummary()">刷新</button>
+            </div>
+            <div class="card-body" id="monitoringSummaryCard">
+              <div class="text-sm text-muted">加载中...</div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">推荐 Checks</span>
+            </div>
+            <div class="card-body" id="monitoringChecksCard">
+              <div class="text-sm text-muted">加载中...</div>
+            </div>
+          </div>
+        </div>
+      </div>
     </main>
   </div>
 
@@ -1710,6 +1740,7 @@
           'station-payouts': loadStationPayoutBatches,
           recharge: loadRecharges,
           usage: loadFullUsage,
+          monitoring: loadMonitoringSummary,
           orders: loadPaymentOrders,
           codes: loadRedemptionCodes,
           announcements: loadAnnouncements,
@@ -2570,6 +2601,61 @@
       }
     }
 
+    async function loadMonitoringSummary() {
+      try {
+        const r = await fetch('/admin/monitoring/summary', { headers: adminHeaders() });
+        if (!r.ok) {
+          document.getElementById('monitoringSummaryCard').innerHTML = '<div class="text-sm text-muted">加载失败</div>';
+          document.getElementById('monitoringChecksCard').innerHTML = '<div class="text-sm text-muted">加载失败</div>';
+          return;
+        }
+        const d = await r.json();
+        const configured = d.configured || {};
+        const models = d.probe_models || {};
+        const checks = (d.checkly && d.checkly.recommended_checks) || [];
+
+        const configRows = [
+          ['Monitoring Token', configured.monitoring_token],
+          ['Public Base URL', configured.public_base_url],
+          ['Monitoring API Key', configured.monitoring_api_key],
+          ['Gateway Health URL', configured.gateway_health_url],
+        ];
+        document.getElementById('monitoringSummaryCard').innerHTML = `
+          <div style="display:grid;gap:12px">
+            <div><strong>界面范围：</strong>${d.ui_scope === 'admin_only' ? '仅管理员 / 运维' : escapeHtml(d.ui_scope || '-')}</div>
+            <div><strong>终端用户状态页：</strong>${d.user_status_page ? '启用' : '不启用'}</div>
+            <div><strong>Chat Probe Model：</strong>${escapeHtml(models.chat_completions || '-')}</div>
+            <div><strong>Responses Probe Model：</strong>${escapeHtml(models.responses || '-')}</div>
+            <div>
+              <strong>配置就绪：</strong>
+              <div style="margin-top:8px;display:grid;gap:8px">
+                ${configRows.map(([label, ok]) => `<div style="display:flex;justify-content:space-between;gap:12px;border:1px solid var(--border);border-radius:10px;padding:10px 12px;background:var(--bg-primary)"><span>${escapeHtml(label)}</span><span class="badge ${ok ? 'badge-success' : 'badge-warning'}">${ok ? '已配置' : '缺失'}</span></div>`).join('')}
+              </div>
+            </div>
+            <div class="text-sm text-muted">真实告警与多地域 / 私有探测由 Checkly 承担；这里仅展示接入设计和配置状态。</div>
+          </div>
+        `;
+
+        document.getElementById('monitoringChecksCard').innerHTML = checks.length ? `
+          <div style="display:grid;gap:10px">
+            ${checks.map(item => `
+              <div style="border:1px solid var(--border);border-radius:10px;padding:12px;background:var(--bg-primary)">
+                <div style="display:flex;justify-content:space-between;gap:12px;align-items:center">
+                  <strong>${escapeHtml(item.name || '-')}</strong>
+                  <span class="badge ${item.optional ? 'badge-warning' : 'badge-success'}">${item.optional ? '可选' : '必接'}</span>
+                </div>
+                <div class="text-sm text-muted" style="margin-top:6px">${escapeHtml((item.method || 'GET') + ' ' + (item.path || ''))}</div>
+              </div>
+            `).join('')}
+          </div>
+        ` : '<div class="text-sm text-muted">暂无推荐 checks</div>';
+      } catch (e) {
+        console.error(e);
+        document.getElementById('monitoringSummaryCard').innerHTML = '<div class="text-sm text-muted">加载失败</div>';
+        document.getElementById('monitoringChecksCard').innerHTML = '<div class="text-sm text-muted">加载失败</div>';
+      }
+    }
+
     async function createStationPayoutBatch() {
       const station_id = document.getElementById('stationPayoutStationId').value.trim();
       const notes = document.getElementById('stationPayoutNotes').value.trim();
@@ -2668,6 +2754,7 @@
       loadUsers();
       loadUsage();
       loadFinanceSummary();
+      loadMonitoringSummary();
     }
 
     loadAll();
