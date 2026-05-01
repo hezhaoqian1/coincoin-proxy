@@ -76,7 +76,11 @@ def _require_cpa_probe_config() -> Dict[str, str]:
     if not api_key:
         raise MonitoringConfigError("missing monitoring_cpa_api_key")
 
-    return {"base_url": base_url.rstrip("/"), "api_key": api_key}
+    normalized = base_url.rstrip("/")
+    if normalized.endswith("/v1"):
+        normalized = normalized[:-3].rstrip("/")
+
+    return {"base_url": normalized, "api_key": api_key}
 
 
 def _get_timeout_seconds() -> float:
@@ -439,6 +443,42 @@ async def build_monitoring_snapshot() -> Dict[str, Any]:
             http_status = (first.get("details") or {}).get("http_status")
             issue_summary = detail_error or (f"HTTP {http_status}" if http_status else "probe failed")
 
+        status_label = "未启用"
+        summary_label = "未接入"
+        if layer_ok is True:
+            status_label = "正常"
+            summary_label = "运行稳定"
+        elif layer_ok is False:
+            status_label = "异常"
+            summary_label = "存在异常"
+        elif group_probes:
+            status_label = "监控中"
+            summary_label = "仅可选探针"
+
+        primary_signal = "未接入"
+        if group_name == "clawfather":
+            if any(probe.get("probe") == "public-health" and probe.get("ok") for probe in group_probes):
+                if any(
+                    probe.get("probe") in {"chat-completions", "responses", "chat-stream"}
+                    and not probe.get("ok")
+                    for probe in group_probes
+                ):
+                    primary_signal = "入口活着，但真实对话链路异常"
+                else:
+                    primary_signal = "公网入口与真实对话链路正常"
+            else:
+                primary_signal = issue_summary or "公网入口不可用"
+        elif group_name == "cpa_direct":
+            if required_probes:
+                primary_signal = "CPA 直连正常" if layer_ok else (issue_summary or "CPA 直连异常")
+            else:
+                primary_signal = issue_summary or "CPA 直连未启用"
+        elif group_name == "gateway":
+            if required_probes:
+                primary_signal = "Gateway 正常" if layer_ok else (issue_summary or "Gateway 异常")
+            else:
+                primary_signal = issue_summary or "Gateway 健康检查未配置"
+
         layers.append(
             {
                 "name": group_name,
@@ -446,6 +486,9 @@ async def build_monitoring_snapshot() -> Dict[str, Any]:
                 "subtitle": spec["subtitle"],
                 "base_url": spec["base_url"],
                 "ok": layer_ok,
+                "status_label": status_label,
+                "summary_label": summary_label,
+                "primary_signal": primary_signal,
                 "availability_percent": availability,
                 "required_probe_count": len(required_probes),
                 "ok_probe_count": len(ok_required),
@@ -464,16 +507,41 @@ async def build_monitoring_snapshot() -> Dict[str, Any]:
         if isinstance(probe.get("latency_ms"), int) and not probe.get("optional")
     ]
 
+    incident_message = "监控未启用"
+    if overall_ok is True:
+        incident_message = "当前主要链路运行稳定"
+    elif overall_ok is False:
+        claw_layer = next((layer for layer in layers if layer["name"] == "clawfather"), None)
+        cpa_layer = next((layer for layer in layers if layer["name"] == "cpa_direct"), None)
+        if claw_layer and claw_layer.get("ok") is False:
+            incident_message = claw_layer.get("primary_signal") or "Clawfather 层存在异常"
+        elif cpa_layer and cpa_layer.get("ok") is False:
+            incident_message = cpa_layer.get("primary_signal") or "CPA 直连存在异常"
+        else:
+            incident_message = "存在需要处理的异常"
+
+    action_items = []
+    for layer in layers:
+        if layer["name"] == "gateway" and not layer.get("base_url"):
+            action_items.append("补充 Gateway Health URL，单独监控 Gemini 数据面")
+        elif layer.get("ok") is False and layer.get("primary_signal"):
+            action_items.append(layer["primary_signal"])
+        elif layer["name"] == "cpa_direct" and layer.get("issue_summary") and "404" in str(layer.get("issue_summary")):
+            action_items.append("检查 CPA Base URL，建议填写根域名而不是带 /v1 的路径")
+
     return {
         "checked_at": _utc_now(),
         "overall": {
             "ok": overall_ok,
+            "status_label": "正常" if overall_ok is True else "异常" if overall_ok is False else "未启用",
+            "incident_message": incident_message,
             "availability_percent": overall_availability,
             "required_probe_count": total_required,
             "ok_probe_count": total_ok,
             "max_latency_ms": max(all_latencies) if all_latencies else None,
             "avg_latency_ms": round(sum(all_latencies) / len(all_latencies)) if all_latencies else None,
         },
+        "action_items": action_items[:4],
         "summary": summary,
         "layers": layers,
         "probes": probe_results,

@@ -757,6 +757,53 @@
       line-height: 1.6;
     }
 
+    .monitoring-action-list {
+      display: grid;
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    .monitoring-action-item {
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--border);
+      color: var(--text-secondary);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .monitoring-mini-bars {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+    .monitoring-mini-bar {
+      height: 8px;
+      border-radius: 999px;
+      background: var(--bg-tertiary);
+      overflow: hidden;
+    }
+
+    .monitoring-mini-bar > span {
+      display: block;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, #10b981, #34d399);
+    }
+
+    .monitoring-section-toggle {
+      margin-top: 24px;
+      border-top: 1px solid var(--border);
+      padding-top: 24px;
+    }
+
+    .monitoring-details-card[hidden] {
+      display: none !important;
+    }
+
     /* User Cell */
     .user-cell { display: flex; align-items: center; gap: 12px; }
 
@@ -1641,7 +1688,16 @@
         <div class="monitoring-layer-grid" id="monitoringLayerGrid">
           <div class="text-sm text-muted">加载中...</div>
         </div>
-        <div class="grid grid-2">
+        <div class="monitoring-section-toggle">
+          <div class="flex items-center gap-3" style="justify-content:space-between;margin-bottom:16px">
+            <div>
+              <div class="card-title">技术详情</div>
+              <div class="text-sm text-muted">Probe 明细和 Checkly 接入项默认折叠，避免首页过长。</div>
+            </div>
+            <button class="btn btn-secondary" onclick="toggleMonitoringDetails()" id="monitoringDetailsToggleBtn">展开详情</button>
+          </div>
+        </div>
+        <div class="grid grid-2 monitoring-details-card" id="monitoringDetailsSection" hidden>
           <div class="card">
             <div class="card-header">
               <span class="card-title">实时 Probe 结果</span>
@@ -2815,6 +2871,19 @@
       return `${ms}`;
     }
 
+    function toggleMonitoringDetails(forceOpen) {
+      const section = document.getElementById('monitoringDetailsSection');
+      const btn = document.getElementById('monitoringDetailsToggleBtn');
+      const shouldOpen = typeof forceOpen === 'boolean' ? forceOpen : section.hasAttribute('hidden');
+      if (shouldOpen) {
+        section.removeAttribute('hidden');
+        btn.textContent = '收起详情';
+      } else {
+        section.setAttribute('hidden', 'hidden');
+        btn.textContent = '展开详情';
+      }
+    }
+
     async function loadMonitoringSummary() {
       const summaryNode = document.getElementById('monitoringSummaryCard');
       const checksNode = document.getElementById('monitoringChecksCard');
@@ -2853,50 +2922,64 @@
           <div style="position:relative;z-index:1">
             <div style="display:flex;justify-content:space-between;gap:16px;align-items:flex-start">
               <div>
-                <div class="text-sm text-muted">当前全局状态</div>
-                <div style="font-size:34px;font-weight:800;letter-spacing:-0.8px;margin-top:6px">${overall.ok ? '运行稳定' : '需要处理'}</div>
+                <div class="text-sm text-muted">当前运行结论</div>
+                <div style="font-size:34px;font-weight:800;letter-spacing:-0.8px;margin-top:6px">${escapeHtml(overall.status_label || '-')}</div>
+                <div style="font-size:16px;color:var(--text-secondary);margin-top:8px;max-width:560px">${escapeHtml(overall.incident_message || '-')}</div>
                 <div class="monitoring-inline-note" style="margin-top:8px">上次检查：${escapeHtml(snap.checked_at || '-')}</div>
               </div>
               ${monitoringBadge(overall.ok)}
             </div>
             <div class="monitoring-kpis">
               <div class="monitoring-kpi">
-                <div class="monitoring-kpi-label">可用探针</div>
+                <div class="monitoring-kpi-label">主链路健康</div>
                 <div class="monitoring-kpi-value">${escapeHtml(String(overall.ok_probe_count ?? '-'))}<span style="font-size:18px;color:var(--text-secondary)"> / ${escapeHtml(String(overall.required_probe_count ?? '-'))}</span></div>
-                <div class="monitoring-kpi-sub">必需 probes 当前成功数</div>
+                <div class="monitoring-kpi-sub">当前必需探针成功数</div>
               </div>
               <div class="monitoring-kpi">
                 <div class="monitoring-kpi-label">整体可用率</div>
                 <div class="monitoring-kpi-value">${overall.availability_percent != null ? `${escapeHtml(overall.availability_percent.toFixed(2))}%` : '-'}</div>
-                <div class="monitoring-kpi-sub">按当前必需探针即时计算</div>
+                <div class="monitoring-kpi-sub">当前即时快照，不是历史趋势</div>
               </div>
               <div class="monitoring-kpi">
                 <div class="monitoring-kpi-label">最慢延迟</div>
                 <div class="monitoring-kpi-value">${formatLatency(overall.max_latency_ms)}<span>ms</span></div>
-                <div class="monitoring-kpi-sub">当前所有必需 probes 中最大值</div>
+                <div class="monitoring-kpi-sub">当前必需探针里的最慢值</div>
               </div>
             </div>
+            ${(snap.action_items || []).length ? `
+              <div class="monitoring-action-list">
+                ${(snap.action_items || []).map(item => `<div class="monitoring-action-item">${escapeHtml(item)}</div>`).join('')}
+              </div>
+            ` : ''}
           </div>
         `;
 
         configNode.innerHTML = `
           <div style="position:relative;z-index:1;display:grid;gap:14px">
             <div>
-              <div class="text-sm text-muted">监控模型</div>
+              <div class="text-sm text-muted">当前监控覆盖</div>
               <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:8px">
-                <span class="badge badge-info">Chat ${escapeHtml(models.chat_completions || '-')}</span>
-                <span class="badge badge-info">Responses ${escapeHtml(models.responses || '-')}</span>
-                <span class="badge badge-info">CPA Chat ${escapeHtml(models.cpa_chat_completions || '-')}</span>
+                <span class="badge badge-info">公网文本 ${escapeHtml(models.chat_completions || '-')}</span>
+                <span class="badge badge-info">公网 Responses ${escapeHtml(models.responses || '-')}</span>
+                <span class="badge badge-info">CPA 文本 ${escapeHtml(models.cpa_chat_completions || '-')}</span>
                 <span class="badge badge-info">CPA Responses ${escapeHtml(models.cpa_responses || '-')}</span>
               </div>
             </div>
             <div>
-              <div class="text-sm text-muted">配置状态</div>
-              <div style="margin-top:8px;display:grid;gap:8px">
-                ${configRows.map(([label, ok]) => `<div style="display:flex;justify-content:space-between;gap:12px;border:1px solid var(--border);border-radius:12px;padding:10px 12px;background:rgba(255,255,255,0.02)"><span>${escapeHtml(label)}</span><span class="badge ${ok ? 'badge-success' : 'badge-warning'}">${ok ? '已配置' : '缺失'}</span></div>`).join('')}
+              <div class="text-sm text-muted">层级概览</div>
+              <div style="margin-top:8px;display:grid;gap:10px">
+                ${layers.map(layer => `
+                  <div style="display:flex;justify-content:space-between;gap:12px;border:1px solid var(--border);border-radius:12px;padding:10px 12px;background:rgba(255,255,255,0.02)">
+                    <div>
+                      <div style="font-weight:600">${escapeHtml(layer.title || '-')}</div>
+                      <div class="text-sm text-muted">${escapeHtml(layer.primary_signal || '-')}</div>
+                    </div>
+                    ${monitoringBadge(layer.ok, layer.name === 'gateway')}
+                  </div>
+                `).join('')}
               </div>
             </div>
-            <div class="monitoring-inline-note">这页展示“现在”的状态。长期告警、多地域和历史趋势仍由 Checkly 负责。</div>
+            <div class="monitoring-inline-note">首页只保留运行结论。配置状态、Probe 明细和 Checkly 接入项在下方折叠区。</div>
           </div>
         `;
 
@@ -2906,30 +2989,38 @@
               <div>
                 <div class="monitoring-layer-title">${escapeHtml(layer.title || layer.name || '-')}</div>
                 <div class="monitoring-layer-subtitle">${escapeHtml(layer.subtitle || '-')}</div>
+                <div style="margin-top:8px;font-size:14px;color:var(--text-primary);font-weight:600">${escapeHtml(layer.primary_signal || '-')}</div>
               </div>
               ${monitoringBadge(layer.ok, layer.name === 'gateway')}
             </div>
             <div class="monitoring-layer-metrics">
               <div class="monitoring-layer-metric">
-                <div class="monitoring-layer-metric-label">当前可用率</div>
+                <div class="monitoring-layer-metric-label">即时可用率</div>
                 <div class="monitoring-layer-metric-value">${layer.availability_percent != null ? `${escapeHtml(layer.availability_percent.toFixed(2))}%` : '-'}</div>
               </div>
               <div class="monitoring-layer-metric">
-                <div class="monitoring-layer-metric-label">最慢延迟</div>
+                <div class="monitoring-layer-metric-label">对话延迟</div>
                 <div class="monitoring-layer-metric-value">${formatLatency(layer.max_latency_ms)}<span style="font-size:12px;color:var(--text-secondary);margin-left:4px">ms</span></div>
               </div>
               <div class="monitoring-layer-metric">
-                <div class="monitoring-layer-metric-label">成功探针</div>
+                <div class="monitoring-layer-metric-label">健康点数</div>
                 <div class="monitoring-layer-metric-value">${escapeHtml(String(layer.ok_probe_count ?? '-'))}<span style="font-size:14px;color:var(--text-secondary)"> / ${escapeHtml(String(layer.required_probe_count ?? '-'))}</span></div>
               </div>
               <div class="monitoring-layer-metric">
-                <div class="monitoring-layer-metric-label">平均延迟</div>
+                <div class="monitoring-layer-metric-label">端点 PING</div>
                 <div class="monitoring-layer-metric-value">${formatLatency(layer.avg_latency_ms)}<span style="font-size:12px;color:var(--text-secondary);margin-left:4px">ms</span></div>
               </div>
             </div>
+            <div class="monitoring-mini-bars">
+              ${(layer.probes || []).slice(0, 5).map(probe => `
+                <div class="monitoring-mini-bar">
+                  <span style="width:${probe.ok ? '100%' : '35%'};background:${probe.ok ? 'linear-gradient(90deg, #10b981, #34d399)' : probe.optional ? 'linear-gradient(90deg, #f59e0b, #fbbf24)' : 'linear-gradient(90deg, #ef4444, #f87171)'}"></span>
+                </div>
+              `).join('')}
+            </div>
             <div class="monitoring-layer-foot">
-              <div>${escapeHtml(layer.base_url || '未配置 base URL')}</div>
-              <div style="margin-top:6px">${escapeHtml(layer.issue_summary || '当前未发现异常')}</div>
+              <div>${escapeHtml(layer.status_label || '-')}</div>
+              <div style="margin-top:6px">${escapeHtml(layer.issue_summary || layer.base_url || '当前未发现异常')}</div>
             </div>
           </div>
         `).join('');
@@ -2955,7 +3046,10 @@
 
         checksNode.innerHTML = checks.length ? `
           <div style="display:grid;gap:12px">
-            <div class="monitoring-inline-note">Checkly 仍然是正式告警面。这里保留推荐 checks 和配置 readiness，方便你对照接入。</div>
+            <div class="monitoring-inline-note">Checkly 仍然是正式告警面。这里只保留接入参考和配置 readiness，避免跟首页实时状态混在一起。</div>
+            <div style="display:grid;gap:8px;margin-bottom:4px">
+              ${configRows.map(([label, ok]) => `<div style="display:flex;justify-content:space-between;gap:12px;border:1px solid var(--border);border-radius:12px;padding:10px 12px;background:rgba(255,255,255,0.02)"><span>${escapeHtml(label)}</span><span class="badge ${ok ? 'badge-success' : 'badge-warning'}">${ok ? '已配置' : '缺失'}</span></div>`).join('')}
+            </div>
             ${checks.map(item => `
               <div style="border:1px solid var(--border);border-radius:14px;padding:14px;background:rgba(255,255,255,0.02)">
                 <div style="display:flex;justify-content:space-between;gap:12px;align-items:center">

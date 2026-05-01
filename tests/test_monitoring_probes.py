@@ -200,7 +200,7 @@ class MonitoringProbeTests(unittest.IsolatedAsyncioTestCase):
     async def test_cpa_public_health_probe_returns_upstream_status(self) -> None:
         monitoring_module.settings.monitoring_token = "mon-secret"
         monitoring_module.settings.monitoring_cpa_api_key = "sk-cpa"
-        monitoring_module.settings.monitoring_cpa_base_url = "https://cpa.example.com"
+        monitoring_module.settings.monitoring_cpa_base_url = "https://cpa.example.com/v1"
 
         async def fake_request_json(method, url, headers=None, json_body=None):
             self.assertEqual(method, "GET")
