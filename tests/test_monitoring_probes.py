@@ -68,6 +68,35 @@ class MonitoringProbeTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 401, response.text)
 
+    async def test_admin_snapshot_returns_probe_rollup(self) -> None:
+        monitoring_module.settings.admin_token = "admin-secret"
+
+        async def fake_snapshot():
+            return {
+                "checked_at": "2026-05-01T00:00:00Z",
+                "overall": {"ok": True, "availability_percent": 100.0, "required_probe_count": 2, "ok_probe_count": 2},
+                "summary": {"configured": {}, "probe_models": {}, "checkly": {"recommended_checks": []}},
+                "layers": [{"name": "clawfather", "title": "Clawfather", "ok": True, "probes": []}],
+                "probes": [{"probe": "public-health", "ok": True, "latency_ms": 123, "details": {"http_status": 200}}],
+            }
+
+        with patch.object(
+            monitoring_module, "build_monitoring_snapshot", AsyncMock(side_effect=fake_snapshot)
+        ):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://testserver"
+            ) as client:
+                response = await client.get(
+                    "/admin/monitoring/snapshot",
+                    headers={"authorization": "Bearer admin-secret"},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertTrue(payload["overall"]["ok"])
+        self.assertEqual(payload["probes"][0]["probe"], "public-health")
+
     async def test_public_health_probe_returns_upstream_status(self) -> None:
         monitoring_module.settings.monitoring_token = "mon-secret"
         monitoring_module.settings.monitoring_api_key = "sk-monitor"

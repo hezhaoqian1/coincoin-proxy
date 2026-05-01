@@ -572,6 +572,191 @@
     .progress-bar.yellow { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
     .progress-bar.red { background: linear-gradient(90deg, #ef4444, #f87171); }
 
+    .monitoring-hero {
+      display: grid;
+      grid-template-columns: 1.2fr 0.8fr;
+      gap: 20px;
+      margin-bottom: 24px;
+    }
+
+    .monitoring-hero-card {
+      background:
+        radial-gradient(circle at top left, rgba(99, 102, 241, 0.22), transparent 35%),
+        radial-gradient(circle at bottom right, rgba(16, 185, 129, 0.16), transparent 30%),
+        var(--bg-card);
+      backdrop-filter: blur(20px);
+      border: 1px solid var(--border);
+      border-radius: 22px;
+      padding: 24px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .monitoring-hero-card::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, rgba(255,255,255,0.04), transparent 60%);
+      pointer-events: none;
+    }
+
+    .monitoring-kpis {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 18px;
+    }
+
+    .monitoring-kpi {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 16px;
+    }
+
+    .monitoring-kpi-label {
+      color: var(--text-secondary);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      margin-bottom: 8px;
+    }
+
+    .monitoring-kpi-value {
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: -0.6px;
+    }
+
+    .monitoring-kpi-sub {
+      color: var(--text-tertiary);
+      font-size: 12px;
+      margin-top: 6px;
+    }
+
+    .monitoring-layer-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 20px;
+      margin-bottom: 24px;
+    }
+
+    .monitoring-layer-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      min-height: 260px;
+    }
+
+    .monitoring-layer-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+    }
+
+    .monitoring-layer-title {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: -0.4px;
+    }
+
+    .monitoring-layer-subtitle {
+      color: var(--text-secondary);
+      font-size: 13px;
+      margin-top: 4px;
+    }
+
+    .monitoring-layer-metrics {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .monitoring-layer-metric {
+      border-radius: 14px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--border);
+      padding: 14px;
+    }
+
+    .monitoring-layer-metric-label {
+      color: var(--text-secondary);
+      font-size: 12px;
+      margin-bottom: 8px;
+    }
+
+    .monitoring-layer-metric-value {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+    }
+
+    .monitoring-layer-foot {
+      margin-top: auto;
+      color: var(--text-tertiary);
+      font-size: 12px;
+      line-height: 1.5;
+      word-break: break-word;
+    }
+
+    .monitoring-probe-list {
+      display: grid;
+      gap: 12px;
+    }
+
+    .monitoring-probe-item {
+      display: grid;
+      grid-template-columns: 1.1fr 0.7fr 0.7fr;
+      gap: 12px;
+      align-items: center;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px 16px;
+      background: rgba(255,255,255,0.02);
+    }
+
+    .monitoring-probe-name {
+      font-weight: 600;
+      font-size: 14px;
+    }
+
+    .monitoring-probe-meta {
+      color: var(--text-tertiary);
+      font-size: 12px;
+      margin-top: 5px;
+      line-height: 1.45;
+    }
+
+    .monitoring-probe-latency {
+      text-align: right;
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+    }
+
+    .monitoring-probe-latency span {
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin-left: 4px;
+      font-weight: 600;
+    }
+
+    .monitoring-probe-status {
+      display: flex;
+      justify-content: flex-end;
+    }
+
+    .monitoring-inline-note {
+      font-size: 12px;
+      color: var(--text-tertiary);
+      line-height: 1.6;
+    }
+
     /* User Cell */
     .user-cell { display: flex; align-items: center; gap: 12px; }
 
@@ -821,6 +1006,8 @@
     @media (max-width: 1200px) {
       .stats-grid { grid-template-columns: repeat(2, 1fr); }
       .grid-2 { grid-template-columns: 1fr; }
+      .monitoring-hero { grid-template-columns: 1fr; }
+      .monitoring-layer-grid { grid-template-columns: 1fr; }
     }
 
     @media (max-width: 768px) {
@@ -839,6 +1026,9 @@
       .stats-grid { grid-template-columns: 1fr 1fr; }
       .page-title { font-size: 22px; }
       .page-header { margin-bottom: 20px; }
+      .monitoring-kpis { grid-template-columns: 1fr; }
+      .monitoring-probe-item { grid-template-columns: 1fr; }
+      .monitoring-probe-latency, .monitoring-probe-status { text-align: left; justify-content: flex-start; }
       .modal-overlay {
         align-items: flex-start;
         padding: 16px;
@@ -1437,14 +1627,27 @@
 
       <div id="page-monitoring" class="page">
         <div class="page-header">
-          <h1 class="page-title">监控设计</h1>
-          <p class="page-desc">长期方案固定为 Checkly。这里只提供管理员 / 运维视角的配置状态和推荐 checks，不做终端用户状态页。</p>
+          <h1 class="page-title">实时监控总览</h1>
+          <p class="page-desc">管理员 / 运维视角的双层监控面板。这里直接展示当前 clawfather、CPA 和 gateway 各层状态，不做终端用户状态页。</p>
+        </div>
+        <div class="monitoring-hero">
+          <div class="monitoring-hero-card" id="monitoringHeroCard">
+            <div class="text-sm text-muted">加载中...</div>
+          </div>
+          <div class="monitoring-hero-card" id="monitoringConfigCard">
+            <div class="text-sm text-muted">加载中...</div>
+          </div>
+        </div>
+        <div class="monitoring-layer-grid" id="monitoringLayerGrid">
+          <div class="text-sm text-muted">加载中...</div>
         </div>
         <div class="grid grid-2">
           <div class="card">
             <div class="card-header">
-              <span class="card-title">配置状态</span>
-              <button class="btn btn-secondary" onclick="loadMonitoringSummary()">刷新</button>
+              <span class="card-title">实时 Probe 结果</span>
+              <div class="actions">
+                <button class="btn btn-secondary" onclick="loadMonitoringSummary()">刷新</button>
+              </div>
             </div>
             <div class="card-body" id="monitoringSummaryCard">
               <div class="text-sm text-muted">加载中...</div>
@@ -1452,7 +1655,7 @@
           </div>
           <div class="card">
             <div class="card-header">
-              <span class="card-title">推荐 Checks</span>
+              <span class="card-title">Checkly 接入与配置状态</span>
             </div>
             <div class="card-body" id="monitoringChecksCard">
               <div class="text-sm text-muted">加载中...</div>
@@ -2601,19 +2804,41 @@
       }
     }
 
+    function monitoringBadge(ok, optional = false) {
+      if (ok === true) return '<span class="badge badge-success">正常</span>';
+      if (ok === false) return `<span class="badge ${optional ? 'badge-warning' : 'badge-error'}">${optional ? '可选异常' : '异常'}</span>`;
+      return '<span class="badge badge-info">未启用</span>';
+    }
+
+    function formatLatency(ms) {
+      if (typeof ms !== 'number') return '-';
+      return `${ms}`;
+    }
+
     async function loadMonitoringSummary() {
+      const summaryNode = document.getElementById('monitoringSummaryCard');
+      const checksNode = document.getElementById('monitoringChecksCard');
+      const heroNode = document.getElementById('monitoringHeroCard');
+      const configNode = document.getElementById('monitoringConfigCard');
+      const layerNode = document.getElementById('monitoringLayerGrid');
       try {
-        const r = await fetch('/admin/monitoring/summary', { headers: adminHeaders() });
+        const r = await fetch('/admin/monitoring/snapshot', { headers: adminHeaders() });
         if (!r.ok) {
-          document.getElementById('monitoringSummaryCard').innerHTML = '<div class="text-sm text-muted">加载失败</div>';
-          document.getElementById('monitoringChecksCard').innerHTML = '<div class="text-sm text-muted">加载失败</div>';
+          heroNode.innerHTML = '<div class="text-sm text-muted">加载失败</div>';
+          configNode.innerHTML = '<div class="text-sm text-muted">加载失败</div>';
+          summaryNode.innerHTML = '<div class="text-sm text-muted">加载失败</div>';
+          checksNode.innerHTML = '<div class="text-sm text-muted">加载失败</div>';
+          layerNode.innerHTML = '<div class="text-sm text-muted">加载失败</div>';
           return;
         }
-        const d = await r.json();
+        const snap = await r.json();
+        const d = snap.summary || {};
+        const overall = snap.overall || {};
         const configured = d.configured || {};
         const models = d.probe_models || {};
         const checks = (d.checkly && d.checkly.recommended_checks) || [];
-        const layers = d.monitoring_layers || [];
+        const layers = snap.layers || [];
+        const probes = snap.probes || [];
 
         const configRows = [
           ['Monitoring Token', configured.monitoring_token],
@@ -2623,47 +2848,132 @@
           ['CPA Base URL', configured.monitoring_cpa_base_url],
           ['CPA API Key', configured.monitoring_cpa_api_key],
         ];
-        document.getElementById('monitoringSummaryCard').innerHTML = `
-          <div style="display:grid;gap:12px">
-            <div><strong>界面范围：</strong>${d.ui_scope === 'admin_only' ? '仅管理员 / 运维' : escapeHtml(d.ui_scope || '-')}</div>
-            <div><strong>终端用户状态页：</strong>${d.user_status_page ? '启用' : '不启用'}</div>
-            <div><strong>Chat Probe Model：</strong>${escapeHtml(models.chat_completions || '-')}</div>
-            <div><strong>Responses Probe Model：</strong>${escapeHtml(models.responses || '-')}</div>
-            <div><strong>CPA Chat Probe Model：</strong>${escapeHtml(models.cpa_chat_completions || '-')}</div>
-            <div><strong>CPA Responses Probe Model：</strong>${escapeHtml(models.cpa_responses || '-')}</div>
-            <div>
-              <strong>监控分层：</strong>
-              <div style="margin-top:8px;display:grid;gap:8px">
-                ${layers.map(layer => `<div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;background:var(--bg-primary)"><div><strong>${escapeHtml(layer.name || '-')}</strong></div><div class="text-sm text-muted" style="margin-top:4px">${escapeHtml(layer.scope || '-')}</div><div class="text-sm text-muted" style="margin-top:4px">${escapeHtml(layer.base_url || '-')}</div></div>`).join('')}
+
+        heroNode.innerHTML = `
+          <div style="position:relative;z-index:1">
+            <div style="display:flex;justify-content:space-between;gap:16px;align-items:flex-start">
+              <div>
+                <div class="text-sm text-muted">当前全局状态</div>
+                <div style="font-size:34px;font-weight:800;letter-spacing:-0.8px;margin-top:6px">${overall.ok ? '运行稳定' : '需要处理'}</div>
+                <div class="monitoring-inline-note" style="margin-top:8px">上次检查：${escapeHtml(snap.checked_at || '-')}</div>
+              </div>
+              ${monitoringBadge(overall.ok)}
+            </div>
+            <div class="monitoring-kpis">
+              <div class="monitoring-kpi">
+                <div class="monitoring-kpi-label">可用探针</div>
+                <div class="monitoring-kpi-value">${escapeHtml(String(overall.ok_probe_count ?? '-'))}<span style="font-size:18px;color:var(--text-secondary)"> / ${escapeHtml(String(overall.required_probe_count ?? '-'))}</span></div>
+                <div class="monitoring-kpi-sub">必需 probes 当前成功数</div>
+              </div>
+              <div class="monitoring-kpi">
+                <div class="monitoring-kpi-label">整体可用率</div>
+                <div class="monitoring-kpi-value">${overall.availability_percent != null ? `${escapeHtml(overall.availability_percent.toFixed(2))}%` : '-'}</div>
+                <div class="monitoring-kpi-sub">按当前必需探针即时计算</div>
+              </div>
+              <div class="monitoring-kpi">
+                <div class="monitoring-kpi-label">最慢延迟</div>
+                <div class="monitoring-kpi-value">${formatLatency(overall.max_latency_ms)}<span>ms</span></div>
+                <div class="monitoring-kpi-sub">当前所有必需 probes 中最大值</div>
               </div>
             </div>
-            <div>
-              <strong>配置就绪：</strong>
-              <div style="margin-top:8px;display:grid;gap:8px">
-                ${configRows.map(([label, ok]) => `<div style="display:flex;justify-content:space-between;gap:12px;border:1px solid var(--border);border-radius:10px;padding:10px 12px;background:var(--bg-primary)"><span>${escapeHtml(label)}</span><span class="badge ${ok ? 'badge-success' : 'badge-warning'}">${ok ? '已配置' : '缺失'}</span></div>`).join('')}
-              </div>
-            </div>
-            <div class="text-sm text-muted">真实告警与多地域 / 私有探测由 Checkly 承担；这里仅展示双层接入设计和配置状态。CPA 直连全绿不代表 clawfather 一定没问题，反过来也一样。</div>
           </div>
         `;
 
-        document.getElementById('monitoringChecksCard').innerHTML = checks.length ? `
-          <div style="display:grid;gap:10px">
+        configNode.innerHTML = `
+          <div style="position:relative;z-index:1;display:grid;gap:14px">
+            <div>
+              <div class="text-sm text-muted">监控模型</div>
+              <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:8px">
+                <span class="badge badge-info">Chat ${escapeHtml(models.chat_completions || '-')}</span>
+                <span class="badge badge-info">Responses ${escapeHtml(models.responses || '-')}</span>
+                <span class="badge badge-info">CPA Chat ${escapeHtml(models.cpa_chat_completions || '-')}</span>
+                <span class="badge badge-info">CPA Responses ${escapeHtml(models.cpa_responses || '-')}</span>
+              </div>
+            </div>
+            <div>
+              <div class="text-sm text-muted">配置状态</div>
+              <div style="margin-top:8px;display:grid;gap:8px">
+                ${configRows.map(([label, ok]) => `<div style="display:flex;justify-content:space-between;gap:12px;border:1px solid var(--border);border-radius:12px;padding:10px 12px;background:rgba(255,255,255,0.02)"><span>${escapeHtml(label)}</span><span class="badge ${ok ? 'badge-success' : 'badge-warning'}">${ok ? '已配置' : '缺失'}</span></div>`).join('')}
+              </div>
+            </div>
+            <div class="monitoring-inline-note">这页展示“现在”的状态。长期告警、多地域和历史趋势仍由 Checkly 负责。</div>
+          </div>
+        `;
+
+        layerNode.innerHTML = layers.map(layer => `
+          <div class="monitoring-layer-card">
+            <div class="monitoring-layer-header">
+              <div>
+                <div class="monitoring-layer-title">${escapeHtml(layer.title || layer.name || '-')}</div>
+                <div class="monitoring-layer-subtitle">${escapeHtml(layer.subtitle || '-')}</div>
+              </div>
+              ${monitoringBadge(layer.ok, layer.name === 'gateway')}
+            </div>
+            <div class="monitoring-layer-metrics">
+              <div class="monitoring-layer-metric">
+                <div class="monitoring-layer-metric-label">当前可用率</div>
+                <div class="monitoring-layer-metric-value">${layer.availability_percent != null ? `${escapeHtml(layer.availability_percent.toFixed(2))}%` : '-'}</div>
+              </div>
+              <div class="monitoring-layer-metric">
+                <div class="monitoring-layer-metric-label">最慢延迟</div>
+                <div class="monitoring-layer-metric-value">${formatLatency(layer.max_latency_ms)}<span style="font-size:12px;color:var(--text-secondary);margin-left:4px">ms</span></div>
+              </div>
+              <div class="monitoring-layer-metric">
+                <div class="monitoring-layer-metric-label">成功探针</div>
+                <div class="monitoring-layer-metric-value">${escapeHtml(String(layer.ok_probe_count ?? '-'))}<span style="font-size:14px;color:var(--text-secondary)"> / ${escapeHtml(String(layer.required_probe_count ?? '-'))}</span></div>
+              </div>
+              <div class="monitoring-layer-metric">
+                <div class="monitoring-layer-metric-label">平均延迟</div>
+                <div class="monitoring-layer-metric-value">${formatLatency(layer.avg_latency_ms)}<span style="font-size:12px;color:var(--text-secondary);margin-left:4px">ms</span></div>
+              </div>
+            </div>
+            <div class="monitoring-layer-foot">
+              <div>${escapeHtml(layer.base_url || '未配置 base URL')}</div>
+              <div style="margin-top:6px">${escapeHtml(layer.issue_summary || '当前未发现异常')}</div>
+            </div>
+          </div>
+        `).join('');
+
+        summaryNode.innerHTML = probes.length ? `
+          <div class="monitoring-probe-list">
+            ${probes.map(item => `
+              <div class="monitoring-probe-item">
+                <div>
+                  <div class="monitoring-probe-name">${escapeHtml(item.probe || '-')}</div>
+                  <div class="monitoring-probe-meta">
+                    ${escapeHtml((item.method || 'GET') + ' ' + (item.path || ''))}<br/>
+                    ${escapeHtml(item.target || '-')}<br/>
+                    ${escapeHtml((((item.details || {}).error) || ((item.details || {}).http_status ? 'HTTP ' + (item.details || {}).http_status : 'OK')) + '')}
+                  </div>
+                </div>
+                <div class="monitoring-probe-latency">${formatLatency(item.latency_ms)}<span>ms</span></div>
+                <div class="monitoring-probe-status">${monitoringBadge(item.ok, item.optional)}</div>
+              </div>
+            `).join('')}
+          </div>
+        ` : '<div class="text-sm text-muted">暂无 probe 结果</div>';
+
+        checksNode.innerHTML = checks.length ? `
+          <div style="display:grid;gap:12px">
+            <div class="monitoring-inline-note">Checkly 仍然是正式告警面。这里保留推荐 checks 和配置 readiness，方便你对照接入。</div>
             ${checks.map(item => `
-              <div style="border:1px solid var(--border);border-radius:10px;padding:12px;background:var(--bg-primary)">
+              <div style="border:1px solid var(--border);border-radius:14px;padding:14px;background:rgba(255,255,255,0.02)">
                 <div style="display:flex;justify-content:space-between;gap:12px;align-items:center">
                   <strong>${escapeHtml(item.name || '-')}</strong>
                   <span class="badge ${item.optional ? 'badge-warning' : 'badge-success'}">${item.optional ? '可选' : '必接'}</span>
                 </div>
-                <div class="text-sm text-muted" style="margin-top:6px">${escapeHtml((item.method || 'GET') + ' ' + (item.path || ''))}</div>
+                <div class="text-sm text-muted" style="margin-top:8px">${escapeHtml((item.method || 'GET') + ' ' + (item.path || ''))}</div>
               </div>
             `).join('')}
           </div>
         ` : '<div class="text-sm text-muted">暂无推荐 checks</div>';
       } catch (e) {
         console.error(e);
-        document.getElementById('monitoringSummaryCard').innerHTML = '<div class="text-sm text-muted">加载失败</div>';
-        document.getElementById('monitoringChecksCard').innerHTML = '<div class="text-sm text-muted">加载失败</div>';
+        heroNode.innerHTML = '<div class="text-sm text-muted">加载失败</div>';
+        configNode.innerHTML = '<div class="text-sm text-muted">加载失败</div>';
+        summaryNode.innerHTML = '<div class="text-sm text-muted">加载失败</div>';
+        checksNode.innerHTML = '<div class="text-sm text-muted">加载失败</div>';
+        layerNode.innerHTML = '<div class="text-sm text-muted">加载失败</div>';
       }
     }
 
