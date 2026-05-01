@@ -309,6 +309,21 @@ def build_monitoring_summary() -> Dict[str, Any]:
         "monitoring_responses_model",
         "responses",
     )
+    recommended_checks = [
+        {"name": "public-health", "method": "GET", "path": "/ops/monitoring/probes/public-health"},
+        {"name": "catalog", "method": "GET", "path": "/ops/monitoring/probes/catalog"},
+        {"name": "chat-completions", "method": "POST", "path": "/ops/monitoring/probes/chat-completions"},
+        {"name": "chat-stream", "method": "POST", "path": "/ops/monitoring/probes/chat-stream"},
+        {"name": "responses", "method": "POST", "path": "/ops/monitoring/probes/responses"},
+        {"name": "cpa-public-health", "method": "GET", "path": "/ops/monitoring/probes/cpa-public-health", "optional": True},
+        {"name": "cpa-catalog", "method": "GET", "path": "/ops/monitoring/probes/cpa-catalog", "optional": True},
+        {"name": "cpa-chat-completions", "method": "POST", "path": "/ops/monitoring/probes/cpa-chat-completions", "optional": True},
+        {"name": "cpa-responses", "method": "POST", "path": "/ops/monitoring/probes/cpa-responses", "optional": True},
+    ]
+    if gateway_health_url:
+        recommended_checks.append(
+            {"name": "gateway-readiness", "method": "GET", "path": "/ops/monitoring/probes/gateway-readiness", "optional": True}
+        )
 
     return {
         "ui_scope": "admin_only",
@@ -340,18 +355,7 @@ def build_monitoring_summary() -> Dict[str, Any]:
         },
         "checkly": {
             "headers": ["x-monitoring-token: <COINCOIN_MONITORING_TOKEN>"],
-            "recommended_checks": [
-                {"name": "public-health", "method": "GET", "path": "/ops/monitoring/probes/public-health"},
-                {"name": "catalog", "method": "GET", "path": "/ops/monitoring/probes/catalog"},
-                {"name": "chat-completions", "method": "POST", "path": "/ops/monitoring/probes/chat-completions"},
-                {"name": "chat-stream", "method": "POST", "path": "/ops/monitoring/probes/chat-stream"},
-                {"name": "responses", "method": "POST", "path": "/ops/monitoring/probes/responses"},
-                {"name": "gateway-readiness", "method": "GET", "path": "/ops/monitoring/probes/gateway-readiness", "optional": True},
-                {"name": "cpa-public-health", "method": "GET", "path": "/ops/monitoring/probes/cpa-public-health", "optional": True},
-                {"name": "cpa-catalog", "method": "GET", "path": "/ops/monitoring/probes/cpa-catalog", "optional": True},
-                {"name": "cpa-chat-completions", "method": "POST", "path": "/ops/monitoring/probes/cpa-chat-completions", "optional": True},
-                {"name": "cpa-responses", "method": "POST", "path": "/ops/monitoring/probes/cpa-responses", "optional": True},
-            ],
+            "recommended_checks": recommended_checks,
         },
         "monitoring_layers": [
             {
@@ -433,7 +437,9 @@ async def build_monitoring_snapshot() -> Dict[str, Any]:
     probe_results = await asyncio.gather(*[_run_check(check) for check in checks])
     probe_map = {item["probe"]: item for item in probe_results}
 
-    group_order = ["clawfather", "cpa_direct", "gateway"]
+    group_order = ["clawfather", "cpa_direct"]
+    if summary.get("gateway_health_url"):
+        group_order.append("gateway")
     layer_specs = {
         "clawfather": {
             "title": "Clawfather",
