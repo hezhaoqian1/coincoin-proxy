@@ -2613,12 +2613,15 @@
         const configured = d.configured || {};
         const models = d.probe_models || {};
         const checks = (d.checkly && d.checkly.recommended_checks) || [];
+        const layers = d.monitoring_layers || [];
 
         const configRows = [
           ['Monitoring Token', configured.monitoring_token],
           ['Public Base URL', configured.public_base_url],
           ['Monitoring API Key', configured.monitoring_api_key],
           ['Gateway Health URL', configured.gateway_health_url],
+          ['CPA Base URL', configured.monitoring_cpa_base_url],
+          ['CPA API Key', configured.monitoring_cpa_api_key],
         ];
         document.getElementById('monitoringSummaryCard').innerHTML = `
           <div style="display:grid;gap:12px">
@@ -2626,13 +2629,21 @@
             <div><strong>终端用户状态页：</strong>${d.user_status_page ? '启用' : '不启用'}</div>
             <div><strong>Chat Probe Model：</strong>${escapeHtml(models.chat_completions || '-')}</div>
             <div><strong>Responses Probe Model：</strong>${escapeHtml(models.responses || '-')}</div>
+            <div><strong>CPA Chat Probe Model：</strong>${escapeHtml(models.cpa_chat_completions || '-')}</div>
+            <div><strong>CPA Responses Probe Model：</strong>${escapeHtml(models.cpa_responses || '-')}</div>
+            <div>
+              <strong>监控分层：</strong>
+              <div style="margin-top:8px;display:grid;gap:8px">
+                ${layers.map(layer => `<div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;background:var(--bg-primary)"><div><strong>${escapeHtml(layer.name || '-')}</strong></div><div class="text-sm text-muted" style="margin-top:4px">${escapeHtml(layer.scope || '-')}</div><div class="text-sm text-muted" style="margin-top:4px">${escapeHtml(layer.base_url || '-')}</div></div>`).join('')}
+              </div>
+            </div>
             <div>
               <strong>配置就绪：</strong>
               <div style="margin-top:8px;display:grid;gap:8px">
                 ${configRows.map(([label, ok]) => `<div style="display:flex;justify-content:space-between;gap:12px;border:1px solid var(--border);border-radius:10px;padding:10px 12px;background:var(--bg-primary)"><span>${escapeHtml(label)}</span><span class="badge ${ok ? 'badge-success' : 'badge-warning'}">${ok ? '已配置' : '缺失'}</span></div>`).join('')}
               </div>
             </div>
-            <div class="text-sm text-muted">真实告警与多地域 / 私有探测由 Checkly 承担；这里仅展示接入设计和配置状态。</div>
+            <div class="text-sm text-muted">真实告警与多地域 / 私有探测由 Checkly 承担；这里仅展示双层接入设计和配置状态。CPA 直连全绿不代表 clawfather 一定没问题，反过来也一样。</div>
           </div>
         `;
 

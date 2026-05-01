@@ -51,8 +51,14 @@ COINCOIN_MONITORING_TOKEN=your-monitoring-token
 COINCOIN_MONITORING_API_KEY=your-low-cost-monitoring-key
 COINCOIN_MONITORING_PUBLIC_BASE_URL=https://your-public-coincoin-domain
 COINCOIN_MONITORING_GATEWAY_HEALTH_URL=https://your-private-gateway-health-url
-COINCOIN_MONITORING_CHAT_MODEL=gpt-4o-mini
-COINCOIN_MONITORING_RESPONSES_MODEL=gpt-4o-mini
+COINCOIN_MONITORING_CHAT_MODEL=gpt-5.2-codex
+COINCOIN_MONITORING_RESPONSES_MODEL=gpt-5.2-codex
+
+# 可选：CPA / legacy GPT-Codex lane 直连监控（绕过 clawfather）
+COINCOIN_MONITORING_CPA_BASE_URL=https://your-cpa-domain
+COINCOIN_MONITORING_CPA_API_KEY=your-cpa-monitoring-key
+COINCOIN_MONITORING_CPA_CHAT_MODEL=gpt-5.2-codex
+COINCOIN_MONITORING_CPA_RESPONSES_MODEL=gpt-5.2-codex
 
 # 旧 GPT 链路（默认公共模型）
 COINCOIN_UPSTREAM_BASE_URL=https://your-instance.cognitiveservices.azure.com/openai/v1
@@ -153,7 +159,10 @@ uvicorn app.main:app --reload --port 8000
 - `coincoin-proxy` 不提供终端用户状态页
 - 监控视角只面向管理员 / 运维
 - Checkly 不应直接复用管理员 token 或真实用户 key
-- 仓库内置了独立的受保护 probe 路由：
+- 仓库内置了独立的受保护 probe 路由，分为两层：
+  - `clawfather` 层：监控公网控制面和经 `coincoin-proxy` 分发后的真实用户路径
+  - `CPA` 层：绕过 `coincoin-proxy`，直连旧 GPT / Codex lane，帮助判断是上游挂了还是分发层挂了
+- 现有 probes：
   - `GET /ops/monitoring/summary`
   - `GET /ops/monitoring/probes/public-health`
   - `GET /ops/monitoring/probes/catalog`
@@ -161,6 +170,10 @@ uvicorn app.main:app --reload --port 8000
   - `POST /ops/monitoring/probes/chat-stream`
   - `POST /ops/monitoring/probes/responses`
   - `GET /ops/monitoring/probes/gateway-readiness`
+  - `GET /ops/monitoring/probes/cpa-public-health`
+  - `GET /ops/monitoring/probes/cpa-catalog`
+  - `POST /ops/monitoring/probes/cpa-chat-completions`
+  - `POST /ops/monitoring/probes/cpa-responses`
 
 完整方案见：
 
