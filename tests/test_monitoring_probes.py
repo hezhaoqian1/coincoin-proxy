@@ -234,12 +234,12 @@ class MonitoringProbeTests(unittest.IsolatedAsyncioTestCase):
         monitoring_module.settings.monitoring_token = "mon-secret"
         monitoring_module.settings.monitoring_cpa_api_key = "sk-cpa"
         monitoring_module.settings.monitoring_cpa_base_url = "https://cpa.example.com"
-        monitoring_module.settings.monitoring_cpa_chat_model = "gpt-5.2-codex"
+        monitoring_module.settings.monitoring_chat_model = "gpt-5.2-codex"
 
         async def fake_request_json(method, url, headers=None, json_body=None):
             self.assertEqual(method, "POST")
             self.assertEqual(url, "https://cpa.example.com/v1/chat/completions")
-            self.assertEqual(json_body["model"], "gpt-5.2-codex")
+            self.assertEqual(json_body["model"], "gpt-5.3-codex")
             return {
                 "status_code": 200,
                 "body": {
@@ -267,13 +267,43 @@ class MonitoringProbeTests(unittest.IsolatedAsyncioTestCase):
         payload = response.json()
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["probe"], "cpa-chat-completions")
-        self.assertEqual(payload["details"]["model"], "gpt-5.2-codex")
+        self.assertEqual(payload["details"]["model"], "gpt-5.3-codex")
+
+    async def test_cpa_chat_probe_maps_explicit_historical_alias(self) -> None:
+        monitoring_module.settings.monitoring_token = "mon-secret"
+        monitoring_module.settings.monitoring_cpa_api_key = "sk-cpa"
+        monitoring_module.settings.monitoring_cpa_base_url = "https://cpa.example.com"
+        monitoring_module.settings.monitoring_cpa_chat_model = "gpt-5.2-codex"
+
+        async def fake_request_json(method, url, headers=None, json_body=None):
+            self.assertEqual(json_body["model"], "gpt-5.3-codex")
+            return {
+                "status_code": 200,
+                "body": {"choices": [{"message": {"content": "COINCOIN_MONITOR_OK"}}]},
+                "latency_ms": 41,
+                "headers": {},
+            }
+
+        with patch.object(
+            monitoring_module, "_request_json", AsyncMock(side_effect=fake_request_json)
+        ):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://testserver"
+            ) as client:
+                response = await client.post(
+                    "/ops/monitoring/probes/cpa-chat-completions",
+                    headers={"x-monitoring-token": "mon-secret"},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["details"]["model"], "gpt-5.3-codex")
 
     async def test_cpa_chat_probe_surfaces_upstream_error_details(self) -> None:
         monitoring_module.settings.monitoring_token = "mon-secret"
         monitoring_module.settings.monitoring_cpa_api_key = "sk-cpa"
         monitoring_module.settings.monitoring_cpa_base_url = "https://cpa.example.com"
-        monitoring_module.settings.monitoring_cpa_chat_model = "gpt-5.2-codex"
+        monitoring_module.settings.monitoring_cpa_chat_model = "not-a-real-model"
 
         async def fake_request_json(method, url, headers=None, json_body=None):
             return {

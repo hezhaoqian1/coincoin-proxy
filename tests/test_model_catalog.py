@@ -25,11 +25,12 @@ LEGACY_PUBLIC_TEXT_MODELS = [
 
 
 def _legacy_text_model(model_id: str) -> dict:
+    provider_model = "gpt-5.3-codex" if model_id == "gpt-5.2-codex" else model_id
     model = {
         "id": model_id,
         "owned_by": "openai",
         "provider_name": "OpenAI",
-        "provider_model": model_id,
+        "provider_model": provider_model,
         "capabilities": ["chat/completions", "responses"],
         "routing_mode": "legacy_auto",
         "delivery_lane": "legacy",
@@ -41,7 +42,7 @@ def _legacy_text_model(model_id: str) -> dict:
             "legacy_default_slot": "cheap",
             "honor_tool_routing": True,
         }
-    elif model_id == "gpt-5.3-codex":
+    elif model_id in {"gpt-5.2-codex", "gpt-5.3-codex"}:
         model["metadata"] = {
             "execution_profile": "legacy_coding",
             "execution_pool": "cpa_coding_pool",
@@ -206,11 +207,30 @@ class ModelCatalogTests(unittest.TestCase):
         )
 
         self.assertEqual(resolved.public_model.public_id, "gpt-5.2-codex")
-        self.assertEqual(resolved.backend.model_id, "gpt-5.2-codex")
-        self.assertEqual(resolved.execution_profile, "legacy_general")
-        self.assertEqual(resolved.execution_pool, "cpa_general_pool")
+        self.assertEqual(resolved.public_model.provider_model, "gpt-5.3-codex")
+        self.assertEqual(resolved.backend.model_id, "gpt-5.3-codex")
+        self.assertEqual(resolved.execution_profile, "legacy_coding")
+        self.assertEqual(resolved.execution_pool, "cpa_coding_pool")
         self.assertEqual(resolved.route_reason, "catalog:gpt-5.2-codex:legacy_explicit")
         self.assertTrue(resolved.lock_model_selection)
+
+    def test_fixed_model_gpt_5_2_codex_maps_to_cpa_supported_codex_model(self) -> None:
+        settings.fixed_model = "gpt-5.2-codex"
+        registry._initialized = False
+        registry.init_from_settings()
+
+        resolved = registry.resolve_public_model(
+            "gpt-5.2-codex",
+            "chat/completions",
+            messages=[{"role": "user", "content": "hello"}],
+            tools=None,
+        )
+
+        self.assertEqual(resolved.public_model.public_id, "gpt-5.2-codex")
+        self.assertEqual(resolved.public_model.provider_model, "gpt-5.3-codex")
+        self.assertEqual(resolved.backend.model_id, "gpt-5.3-codex")
+        self.assertEqual(resolved.execution_profile, "legacy_coding")
+        self.assertEqual(resolved.execution_pool, "cpa_coding_pool")
 
     def test_explicit_gpt_5_2_alias_keeps_legacy_lane(self) -> None:
         resolved = registry.resolve_public_model(

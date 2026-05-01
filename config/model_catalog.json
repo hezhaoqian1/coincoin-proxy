@@ -93,11 +93,17 @@
       "id": "gpt-5.2-codex",
       "owned_by": "openai",
       "provider_name": "OpenAI",
-      "provider_model": "gpt-5.2-codex",
+      "provider_model": "gpt-5.3-codex",
       "capabilities": ["chat/completions", "responses"],
       "routing_mode": "legacy_auto",
       "delivery_lane": "legacy",
-      "billable_sku": "legacy-gpt-5.2-codex-text"
+      "billable_sku": "legacy-gpt-5.2-codex-text",
+      "metadata": {
+        "execution_profile": "legacy_coding",
+        "execution_pool": "cpa_coding_pool",
+        "legacy_default_slot": "premium",
+        "honor_tool_routing": false
+      }
     },
     {
       "id": "gpt-5.3-codex",

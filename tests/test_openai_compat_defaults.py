@@ -31,11 +31,12 @@ LEGACY_PUBLIC_TEXT_MODELS = [
 
 
 def _legacy_text_model(model_id: str) -> dict:
+    provider_model = "gpt-5.3-codex" if model_id == "gpt-5.2-codex" else model_id
     model = {
         "id": model_id,
         "owned_by": "openai",
         "provider_name": "OpenAI",
-        "provider_model": model_id,
+        "provider_model": provider_model,
         "capabilities": ["chat/completions", "responses"],
         "routing_mode": "legacy_auto",
         "delivery_lane": "legacy",
@@ -47,7 +48,7 @@ def _legacy_text_model(model_id: str) -> dict:
             "legacy_default_slot": "cheap",
             "honor_tool_routing": True,
         }
-    elif model_id == "gpt-5.3-codex":
+    elif model_id in {"gpt-5.2-codex", "gpt-5.3-codex"}:
         model["metadata"] = {
             "execution_profile": "legacy_coding",
             "execution_pool": "cpa_coding_pool",
@@ -456,7 +457,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["model"], "gpt-5.2-codex")
-        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-5.2-codex")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-5.3-codex")
         self.assertEqual(upstream_client.calls[0]["url"], "https://legacy.example/v1/responses")
 
     async def test_responses_explicit_gpt_5_4_mini_alias_keeps_public_model_name(self) -> None:
@@ -520,7 +521,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 500, response.text)
         self.assertEqual(len(upstream_client.calls), 1)
-        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-5.2-codex")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-5.3-codex")
         self.assertEqual(upstream_client.calls[0]["url"], "https://legacy.example/v1/responses")
 
     async def test_chat_explicit_legacy_alias_does_not_fallback_to_a_different_model(self) -> None:
@@ -551,7 +552,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 500, response.text)
         self.assertEqual(len(upstream_client.calls), 1)
-        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-5.2-codex")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-5.3-codex")
         self.assertEqual(upstream_client.calls[0]["url"], "https://legacy.example/v1/responses")
 
     async def test_responses_legacy_lane_drops_context_management(self) -> None:
@@ -1766,6 +1767,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["data"][0]["coincoin_default_for"], ["text"])
         self.assertEqual(payload["data"][0]["coincoin_price_cached_input_per_million"], 9.9)
         self.assertEqual(payload["data"][8]["coincoin_provider"], "OpenAI")
+        self.assertEqual(payload["data"][8]["coincoin_provider_model"], "gpt-5.3-codex")
         self.assertEqual(payload["data"][8]["coincoin_billable_sku"], "gpt-5.2-codex")
         self.assertEqual(payload["data"][13]["coincoin_provider"], "OpenAI")
         self.assertEqual(payload["data"][13]["coincoin_provider_model"], "text-embedding-3-small")

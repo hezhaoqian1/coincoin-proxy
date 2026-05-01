@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
 from .config import settings
-from .router import registry as model_registry
+from .router import _provider_model_for_legacy_alias, registry as model_registry
 from .security import require_admin
 
 
@@ -118,6 +118,14 @@ def _resolve_probe_model(setting_name: str, capability: str) -> str:
     if configured:
         return configured
     return _default_text_model_for(capability)
+
+
+def _resolve_cpa_probe_model(setting_name: str, fallback_setting_name: str, capability: str) -> str:
+    configured = str(getattr(settings, setting_name, "") or "").strip()
+    if configured:
+        return _provider_model_for_legacy_alias(configured)
+    fallback_model = _resolve_probe_model(fallback_setting_name, capability)
+    return _provider_model_for_legacy_alias(fallback_model)
 
 
 def _extract_chat_content(payload: Dict[str, Any]) -> str:
@@ -291,13 +299,15 @@ def build_monitoring_summary() -> Dict[str, Any]:
     chat_model = _resolve_probe_model("monitoring_chat_model", "chat/completions")
     responses_model = _resolve_probe_model("monitoring_responses_model", "responses")
     cpa_base_url = (getattr(settings, "monitoring_cpa_base_url", "") or "").strip()
-    cpa_chat_model = (
-        str(getattr(settings, "monitoring_cpa_chat_model", "") or "").strip()
-        or chat_model
+    cpa_chat_model = _resolve_cpa_probe_model(
+        "monitoring_cpa_chat_model",
+        "monitoring_chat_model",
+        "chat/completions",
     )
-    cpa_responses_model = (
-        str(getattr(settings, "monitoring_cpa_responses_model", "") or "").strip()
-        or responses_model
+    cpa_responses_model = _resolve_cpa_probe_model(
+        "monitoring_cpa_responses_model",
+        "monitoring_responses_model",
+        "responses",
     )
 
     return {
@@ -791,13 +801,15 @@ async def run_cpa_catalog_probe() -> Dict[str, Any]:
     result = await _request_json("GET", url, headers=headers)
     body = result["body"]
     data = body.get("data") if isinstance(body, dict) else None
-    chat_model = (
-        str(getattr(settings, "monitoring_cpa_chat_model", "") or "").strip()
-        or _resolve_probe_model("monitoring_chat_model", "chat/completions")
+    chat_model = _resolve_cpa_probe_model(
+        "monitoring_cpa_chat_model",
+        "monitoring_chat_model",
+        "chat/completions",
     )
-    responses_model = (
-        str(getattr(settings, "monitoring_cpa_responses_model", "") or "").strip()
-        or _resolve_probe_model("monitoring_responses_model", "responses")
+    responses_model = _resolve_cpa_probe_model(
+        "monitoring_cpa_responses_model",
+        "monitoring_responses_model",
+        "responses",
     )
     returned_ids = []
     if isinstance(data, list):
@@ -828,9 +840,10 @@ async def run_cpa_catalog_probe() -> Dict[str, Any]:
 
 async def run_cpa_chat_completions_probe() -> Dict[str, Any]:
     cfg = _require_cpa_probe_config()
-    model = (
-        str(getattr(settings, "monitoring_cpa_chat_model", "") or "").strip()
-        or _resolve_probe_model("monitoring_chat_model", "chat/completions")
+    model = _resolve_cpa_probe_model(
+        "monitoring_cpa_chat_model",
+        "monitoring_chat_model",
+        "chat/completions",
     )
     if not model:
         raise MonitoringConfigError("missing monitoring_cpa_chat_model")
@@ -869,9 +882,10 @@ async def run_cpa_chat_completions_probe() -> Dict[str, Any]:
 
 async def run_cpa_responses_probe() -> Dict[str, Any]:
     cfg = _require_cpa_probe_config()
-    model = (
-        str(getattr(settings, "monitoring_cpa_responses_model", "") or "").strip()
-        or _resolve_probe_model("monitoring_responses_model", "responses")
+    model = _resolve_cpa_probe_model(
+        "monitoring_cpa_responses_model",
+        "monitoring_responses_model",
+        "responses",
     )
     if not model:
         raise MonitoringConfigError("missing monitoring_cpa_responses_model")
