@@ -89,10 +89,32 @@ IMAGE_ENDPOINTS = frozenset({"images/generations", "images/edits"})
 DELIVERY_LANES = frozenset({"legacy", "gateway", "vertex_direct", "upstream_direct"})
 _ENV_PATTERN = re.compile(r"\$\{([A-Z0-9_]+)(:-([^}]*))?\}")
 _ROOT_DIR = Path(__file__).resolve().parent.parent
+LEGACY_PROVIDER_MODEL_ALIASES = {
+    # CPA no longer publishes this historical public alias directly.
+    # Keep the user-facing model id stable, but send a provider model CPA knows.
+    "gpt-5.2-codex": "gpt-5.3-codex",
+}
+LEGACY_CODING_PUBLIC_ALIASES = frozenset({"gpt-5.2-codex", "gpt-5.3-codex"})
 
 
 def _is_codex_like(model_id: str) -> bool:
     return "codex" in (model_id or "").lower()
+
+
+def _provider_model_for_legacy_alias(model_id: str) -> str:
+    normalized = (model_id or "").strip()
+    return LEGACY_PROVIDER_MODEL_ALIASES.get(normalized, normalized)
+
+
+def _default_legacy_metadata(public_id: str) -> Dict[str, Any]:
+    if public_id in LEGACY_CODING_PUBLIC_ALIASES:
+        return {
+            "execution_profile": "legacy_coding",
+            "execution_pool": "cpa_coding_pool",
+            "legacy_default_slot": PREMIUM,
+            "honor_tool_routing": False,
+        }
+    return {}
 
 
 def _as_bool(value: Any, default: bool = False) -> bool:
@@ -240,7 +262,7 @@ class ModelRegistry:
         )
 
         premium = ModelConfig(
-            model_id=settings.fixed_model,
+            model_id=_provider_model_for_legacy_alias(settings.fixed_model),
             upstream_url=settings.upstream_base_url,
             api_key=settings.upstream_api_key,
             price_input_per_million=settings.price_input_per_million,
@@ -263,7 +285,7 @@ class ModelRegistry:
         cheap_model = (getattr(settings, "cheap_model", "") or "").strip()
         if self.router_enabled and cheap_model:
             self.models[CHEAP] = ModelConfig(
-                model_id=cheap_model,
+                model_id=_provider_model_for_legacy_alias(cheap_model),
                 upstream_url=(getattr(settings, "cheap_upstream_url", "") or settings.upstream_base_url),
                 api_key=(getattr(settings, "cheap_api_key", "") or settings.upstream_api_key),
                 price_input_per_million=int(getattr(settings, "cheap_price_input", 0) or 0),
@@ -276,7 +298,7 @@ class ModelRegistry:
         if fallback_model:
             fb_auth = (getattr(settings, "fallback_auth_style", "") or "").strip()
             self.models[FALLBACK] = ModelConfig(
-                model_id=fallback_model,
+                model_id=_provider_model_for_legacy_alias(fallback_model),
                 upstream_url=(getattr(settings, "fallback_upstream_url", "") or settings.upstream_base_url),
                 api_key=(getattr(settings, "fallback_api_key", "") or settings.upstream_api_key),
                 price_input_per_million=int(getattr(settings, "fallback_price_input", 0) or 0),
@@ -383,6 +405,13 @@ class ModelRegistry:
         provider_name = str(raw.get("provider_name") or "").strip()
         provider_model = str(raw.get("provider_model") or "").strip()
         upstream_model = str(raw.get("upstream_model") or "").strip()
+        if routing_mode == "legacy_auto":
+            provider_model = _provider_model_for_legacy_alias(provider_model or public_id)
+            if upstream_model:
+                upstream_model = _provider_model_for_legacy_alias(upstream_model)
+        metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+        if routing_mode == "legacy_auto":
+            metadata = {**_default_legacy_metadata(public_id), **metadata}
         upstream_url = str(raw.get("upstream_url") or "").strip()
         api_key = str(raw.get("api_key") or "").strip()
         auth_style = str(raw.get("auth_style") or settings.gateway_auth_style or "bearer").strip() or "bearer"
@@ -407,7 +436,7 @@ class ModelRegistry:
             billable_sku=str(raw.get("billable_sku") or public_id).strip() or public_id,
             created=_as_int(raw.get("created"), 1700000000),
             strip_unsupported=_as_bool(raw.get("strip_unsupported"), False),
-            metadata=raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {},
+            metadata=metadata,
         )
 
     def _init_public_catalog(self) -> None:
