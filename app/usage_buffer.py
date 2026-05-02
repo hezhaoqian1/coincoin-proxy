@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from collections import defaultdict
-from datetime import date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy import update
@@ -15,6 +15,14 @@ from .security import generate_id
 
 
 logger = logging.getLogger("coincoin.usage")
+CHINA_TZ_OFFSET = timedelta(hours=8)
+
+
+def china_today(now: datetime | None = None) -> date:
+    current = now or datetime.now(UTC)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=UTC)
+    return (current.astimezone(UTC) + CHINA_TZ_OFFSET).date()
 
 
 def extract_cached_tokens(usage: dict) -> int:
@@ -195,7 +203,7 @@ class UsageBuffer:
             usage_unit_count
             or (image_count if resolved_usage_unit_type == "images" else (input_tokens + output_tokens))
         )
-        day = date.today()
+        day = china_today()
         
         # 使用分片锁，减少竞争
         lock = self._get_shard_lock(user_id)
@@ -259,7 +267,7 @@ class UsageBuffer:
         
         注：无锁读取，Python dict.get() 是原子操作
         """
-        today = date.today()
+        today = china_today()
         bucket = self._daily.get((user_id, today))
         if not bucket:
             return 0

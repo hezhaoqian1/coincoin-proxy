@@ -1,12 +1,16 @@
 import asyncio
 import unittest
-from datetime import date
+from datetime import UTC, date, datetime
 
 from app.config import settings
-from app.usage_buffer import UsageBuffer
+from app.usage_buffer import UsageBuffer, china_today
 
 
 class UsageBufferUnitsTests(unittest.TestCase):
+    def test_china_today_rolls_over_at_beijing_midnight(self) -> None:
+        self.assertEqual(china_today(datetime(2026, 5, 2, 15, 59, 59, tzinfo=UTC)), date(2026, 5, 2))
+        self.assertEqual(china_today(datetime(2026, 5, 2, 16, 0, 0, tzinfo=UTC)), date(2026, 5, 3))
+
     def test_cached_tokens_follow_configured_discount_rate(self) -> None:
         original_rate = settings.cache_discount_rate
         settings.cache_discount_rate = 0.1
@@ -71,7 +75,7 @@ class UsageBufferUnitsTests(unittest.TestCase):
             asyncio.set_event_loop(None)
             loop.close()
 
-        self.assertEqual(daily[("u_image", date.today())]["images_total"], 2)
+        self.assertEqual(daily[("u_image", china_today())]["images_total"], 2)
         self.assertEqual(round(usage_by_user["u_image"]["cost_cents_f"]), 14)
         self.assertEqual(request_logs[0]["usage_unit_type"], "images")
         self.assertEqual(request_logs[0]["usage_unit_count"], 2)
@@ -135,8 +139,8 @@ class UsageBufferUnitsTests(unittest.TestCase):
             asyncio.set_event_loop(None)
             loop.close()
 
-        self.assertEqual(daily[("u_text", date.today())]["input_tokens"], 1_000_000)
-        self.assertEqual(daily[("u_text", date.today())]["output_tokens"], 500_000)
+        self.assertEqual(daily[("u_text", china_today())]["input_tokens"], 1_000_000)
+        self.assertEqual(daily[("u_text", china_today())]["output_tokens"], 500_000)
         self.assertEqual(round(usage_by_user["u_text"]["cost_cents_f"]), 200)
         self.assertEqual(request_logs[0]["customer_model_alias"], "gemini-fast")
         self.assertEqual(request_logs[0]["provider_model"], "gemini-2.5-flash")

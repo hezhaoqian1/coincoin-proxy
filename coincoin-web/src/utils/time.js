@@ -1,4 +1,10 @@
 const ISO_WITHOUT_TIMEZONE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/
+const CHINA_DATE_FORMATTER = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+})
 
 export function parseBackendTimestamp(value) {
     if (!value) return null
@@ -22,4 +28,10 @@ export function formatChinaTime(value, options = {}) {
         hour12: false,
         ...dateTimeOptions,
     })
+}
+
+export function getChinaIsoDate(value = new Date()) {
+    const date = parseBackendTimestamp(value)
+    if (!date) return ''
+    return CHINA_DATE_FORMATTER.format(date)
 }

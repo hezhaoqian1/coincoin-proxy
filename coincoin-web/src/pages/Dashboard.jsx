@@ -7,15 +7,10 @@ import useOrderConfirm from '../hooks/useOrderConfirm'
 import { useAuth } from '../hooks/useAuth'
 import { usePublicModels } from '../hooks/usePublicModels'
 import AppShell from '../components/AppShell'
-import { formatChinaTime } from '../utils/time'
+import { formatChinaTime, getChinaIsoDate } from '../utils/time'
 import './Dashboard.css'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler)
-
-function getLocalIsoDate(date = new Date()) {
-    const tzOffsetMs = date.getTimezoneOffset() * 60 * 1000
-    return new Date(date.getTime() - tzOffsetMs).toISOString().slice(0, 10)
-}
 
 function ReadinessCard({ authMode, username, hasDeveloperKey }) {
     const contentMap = {
@@ -496,9 +491,9 @@ export default function Dashboard() {
 
     const activeAnns = announcements.filter(a => !dismissedAnns.includes(a.id))
 
-    const todayStr = getLocalIsoDate()
+    const todayStr = getChinaIsoDate()
     const todaySummary = dailyData?.find(d => d.day === todayStr) || dailyData?.[dailyData.length - 1] || null
-    const todayUsageFallback = usage?.data?.filter(d => d.created_at?.startsWith(todayStr)) || []
+    const todayUsageFallback = usage?.data?.filter(d => getChinaIsoDate(d.created_at) === todayStr) || []
     const todayCost = todaySummary
         ? todaySummary.cost_usd
         : todayUsageFallback.reduce((sum, d) => sum + d.cost_cents, 0) / 100

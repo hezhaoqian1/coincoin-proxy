@@ -7,7 +7,7 @@ import time
 from urllib.parse import urlsplit, urlunsplit
 from collections import OrderedDict
 from copy import deepcopy
-from datetime import date, datetime
+from datetime import datetime
 from types import SimpleNamespace
 from typing import Awaitable, Callable, Dict, List, Optional, Tuple
 
@@ -30,7 +30,7 @@ from .router import (
     extract_messages_for_routing_from_responses_payload,
     registry as model_registry,
 )
-from .usage_buffer import extract_cached_tokens, usage_buffer
+from .usage_buffer import china_today, extract_cached_tokens, usage_buffer
 
 _KEY_KIND_ATTR = "_key_kind"
 _KEY_ID_ATTR = "_api_key_id"
@@ -1154,7 +1154,7 @@ async def authorize_request(request: Request, db: AsyncSession):
             raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail="insufficient balance")
 
     if user.request_limit_per_day is not None:
-        today = date.today()
+        today = china_today()
         try:
             result = await db.execute(
                 select(UsageDaily.requests_total).where(
