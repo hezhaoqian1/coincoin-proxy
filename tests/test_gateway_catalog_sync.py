@@ -24,6 +24,18 @@ CLAUDE_CHEAP_ALIASES = {
     "sonnet[1m]",
 }
 OFFICIAL_DEFAULT_TEXT_PRICES = {
+    "${COINCOIN_FIXED_MODEL}": (500, 3000),
+    "gpt-5.4": (250, 1500),
+    "gpt-5": (125, 1000),
+    "gpt-5.1": (125, 1000),
+    "gpt-5.1-codex": (125, 1000),
+    "gpt-5.1-codex-mini": (75, 450),
+    "gpt-5.1-codex-max": (500, 3000),
+    "gpt-5.2": (175, 1400),
+    "gpt-5.2-codex": (175, 1400),
+    "gpt-5.3-codex": (175, 1400),
+    "gpt-5.4-mini": (75, 450),
+    "gpt-5.5": (500, 3000),
     "claude-opus-4-7": (500, 3000),
     "claude-sonnet-4-6": (500, 3000),
     "claude-haiku-4-5": (500, 3000),
@@ -276,7 +288,14 @@ class GatewayCatalogSyncTests(unittest.TestCase):
 
         zero_default_fields = []
         for model in public_models.values():
+            capabilities = set(model.get("capabilities") or [])
             for field in ("price_input_per_million", "price_output_per_million", "price_per_image_cents"):
+                if field == "price_output_per_million" and capabilities == EMBEDDING_CAPABILITIES:
+                    continue
+                if field == "price_per_image_cents" and not capabilities.intersection(IMAGE_CAPABILITIES):
+                    continue
+                if field in {"price_input_per_million", "price_output_per_million"} and capabilities.intersection(IMAGE_CAPABILITIES):
+                    continue
                 if _placeholder_default(model.get(field)) == "0":
                     zero_default_fields.append(f"{model['id']}:{field}")
         self.assertEqual(zero_default_fields, [])

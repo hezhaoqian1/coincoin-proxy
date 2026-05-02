@@ -22,6 +22,21 @@ LEGACY_PUBLIC_TEXT_MODELS = [
     "gpt-5-codex",
     "gpt-5-codex-mini",
 ]
+LEGACY_PUBLIC_TEXT_PRICES = {
+    "gpt-5.4": (250, 1500),
+    "gpt-5": (125, 1000),
+    "gpt-5.5": (500, 3000),
+    "gpt-5.1": (125, 1000),
+    "gpt-5.1-codex": (125, 1000),
+    "gpt-5.1-codex-mini": (75, 450),
+    "gpt-5.1-codex-max": (500, 3000),
+    "gpt-5.2": (175, 1400),
+    "gpt-5.2-codex": (175, 1400),
+    "gpt-5.3-codex": (175, 1400),
+    "gpt-5.4-mini": (75, 450),
+    "gpt-5-codex": (175, 1400),
+    "gpt-5-codex-mini": (75, 450),
+}
 
 
 def _legacy_text_model(model_id: str) -> dict:
@@ -35,6 +50,10 @@ def _legacy_text_model(model_id: str) -> dict:
         "routing_mode": "legacy_auto",
         "delivery_lane": "legacy",
     }
+    prices = LEGACY_PUBLIC_TEXT_PRICES.get(model_id)
+    if prices:
+        model["price_input_per_million"] = prices[0]
+        model["price_output_per_million"] = prices[1]
     if model_id == "gpt-5.4":
         model["metadata"] = {
             "execution_profile": "legacy_general",
@@ -88,24 +107,24 @@ class ModelCatalogTests(unittest.TestCase):
         settings.embedding_upstream_url = ""
         settings.embedding_api_key = ""
         settings.embedding_auth_style = ""
-        settings.embedding_price_input = 99
+        settings.embedding_price_input = 2
         settings.router_enabled = True
         settings.upstream_base_url = "https://legacy.example/v1"
         settings.upstream_api_key = "legacy-key"
-        settings.price_input_per_million = 99
-        settings.price_output_per_million = 699
+        settings.price_input_per_million = 500
+        settings.price_output_per_million = 3000
         settings.primary_auth_style = "azure"
         settings.primary_strip_unsupported = False
         settings.cheap_model = "gpt-4o-mini"
         settings.cheap_upstream_url = "https://legacy.example/v1"
         settings.cheap_api_key = "legacy-key"
-        settings.cheap_price_input = 15
-        settings.cheap_price_output = 60
+        settings.cheap_price_input = 75
+        settings.cheap_price_output = 450
         settings.fallback_model = "gpt-5.4"
         settings.fallback_upstream_url = "https://fallback.example/v1"
         settings.fallback_api_key = "fallback-key"
-        settings.fallback_price_input = 99
-        settings.fallback_price_output = 699
+        settings.fallback_price_input = 500
+        settings.fallback_price_output = 3000
         settings.fallback_auth_style = "azure"
         settings.gateway_auth_style = "bearer"
         settings.model_catalog_json = json.dumps(
@@ -127,7 +146,7 @@ class ModelCatalogTests(unittest.TestCase):
                         "upstream_url": "https://fallback.example/v1",
                         "api_key": "fallback-key",
                         "auth_style": "azure",
-                        "price_input_per_million": 99,
+                        "price_input_per_million": 2,
                         "price_output_per_million": 0,
                         "billable_sku": "azure-text-embedding-3-small",
                     },
@@ -322,8 +341,8 @@ class ModelCatalogTests(unittest.TestCase):
         model = registry.get_public_model("gpt-5.4")
 
         self.assertIsNotNone(model)
-        self.assertEqual(model.price_input_per_million, 99)
-        self.assertEqual(model.price_output_per_million, 699)
+        self.assertEqual(model.price_input_per_million, 250)
+        self.assertEqual(model.price_output_per_million, 1500)
 
     def test_default_image_model_is_used_when_model_is_omitted(self) -> None:
         resolved = registry.resolve_public_model(None, "images/generations")
