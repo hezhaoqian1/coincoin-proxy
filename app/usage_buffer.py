@@ -142,6 +142,7 @@ class UsageBuffer:
         requests: int = 0,
         endpoint: str = "",
         model: str = "",
+        api_key_id: str = "",
         customer_model_alias: str = "",
         provider_model: str = "",
         route_reason: str = "",
@@ -217,6 +218,7 @@ class UsageBuffer:
             # 请求日志（append 到 list，纳秒级）
             self._request_logs.append({
                 "user_id": user_id,
+                "api_key_id": (api_key_id or "")[:32],
                 "endpoint": endpoint,
                 "model": customer_model_alias or model,
                 "input_tokens": int(input_tokens),
@@ -387,6 +389,7 @@ async def flush_once() -> None:
                     RequestLog(
                         id=generate_id("rl_"),
                         user_id=log["user_id"],
+                        api_key_id=log.get("api_key_id") or None,
                         endpoint=log["endpoint"],
                         model=log["model"],
                         input_tokens=log["input_tokens"],

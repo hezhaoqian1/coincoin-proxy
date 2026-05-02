@@ -30,6 +30,7 @@ from .proxy import (
     authorize_request,
     extract_upstream_request_id,
     get_image_stream_client,
+    _KEY_ID_ATTR,
 )
 
 
@@ -269,6 +270,7 @@ async def _process_image_edit_job(job_id: str) -> None:
 
     await usage_buffer.add(
         job.user_id,
+        api_key_id=getattr(job, "api_key_id", "") or "",
         requests=1,
         endpoint="image-jobs/edits",
         model=job.public_model,
@@ -419,6 +421,7 @@ async def _create_image_edit_job(request: Request, db: AsyncSession) -> JSONResp
     job = ImageJob(
         id=job_id,
         user_id=user.id,
+        api_key_id=getattr(user, _KEY_ID_ATTR, "") or None,
         status=JOB_STATUS_QUEUED,
         endpoint="images/edits",
         public_model=public_model.public_id,

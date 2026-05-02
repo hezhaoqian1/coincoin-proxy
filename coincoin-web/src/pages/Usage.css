@@ -90,6 +90,10 @@
     min-width: 120px;
 }
 
+.filter-select-key {
+    min-width: 240px;
+}
+
 .filter-select:focus, .filter-input:focus {
     border-color: var(--accent-indigo);
     outline: none;

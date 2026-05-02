@@ -67,6 +67,7 @@ async def _run_migrations(conn):
         ("coincoin_users", "email_verified_at", "DATETIME NULL"),
         ("coincoin_accounts", "status", "VARCHAR(32) DEFAULT 'active'"),
         ("coincoin_request_logs", "cached_tokens", "BIGINT DEFAULT 0"),
+        ("coincoin_request_logs", "api_key_id", "VARCHAR(32) NULL"),
         ("coincoin_request_logs", "route_reason", "VARCHAR(64) DEFAULT ''"),
         ("coincoin_usage_daily", "images_total", "BIGINT DEFAULT 0"),
         ("coincoin_request_logs", "image_count", "BIGINT DEFAULT 0"),
@@ -86,6 +87,7 @@ async def _run_migrations(conn):
         ("coincoin_user_finance_summary", "legacy_unclassified_cents", "BIGINT DEFAULT 0"),
         ("coincoin_user_finance_summary", "total_paid_orders", "BIGINT DEFAULT 0"),
         ("coincoin_user_finance_summary", "last_payment_at", "DATETIME NULL"),
+        ("coincoin_image_jobs", "api_key_id", "VARCHAR(32) NULL"),
         ("coincoin_stations", "commission_rate", "DOUBLE DEFAULT 0.15"),
         ("coincoin_station_payout_batches", "payment_reference", "VARCHAR(128) DEFAULT ''"),
         ("coincoin_station_payout_batches", "payment_screenshot_url", "VARCHAR(512) DEFAULT ''"),
@@ -242,6 +244,20 @@ async def _run_migrations(conn):
                 logger.debug("table already exists, skipping")
             else:
                 logger.warning("table migration failed: %s", exc)
+
+    index_migrations = [
+        "CREATE INDEX ix_request_logs_user_key_created ON coincoin_request_logs (user_id, api_key_id, created_at)",
+    ]
+    for sql in index_migrations:
+        try:
+            await conn.execute(text(sql))
+            logger.info("index migration OK: %s", sql)
+        except Exception as exc:
+            exc_msg = str(exc).lower()
+            if "duplicate" in exc_msg or "already exists" in exc_msg:
+                logger.debug("index already exists, skipping: %s", sql)
+            else:
+                logger.warning("index migration failed for [%s]: %s", sql, exc)
 
     cleanup_sql = [
         "DELETE FROM coincoin_email_verification_codes WHERE user_id LIKE 'regv_%'",

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import { MOCK_USAGE, getApiKey, getUsageLogs } from '../api/client'
+import { useSearchParams } from 'react-router-dom'
+import { MOCK_USAGE, getApiKey, listDeveloperKeys } from '../api/client'
 import AppShell from '../components/AppShell'
 import './Usage.css'
 
@@ -9,9 +10,17 @@ function formatCacheHitRate(cachedTokens, inputTokens) {
 }
 
 export default function Usage() {
+    const [searchParams, setSearchParams] = useSearchParams()
     const [usage, setUsage] = useState(null)
+    const [keysState, setKeysState] = useState({ data: [] })
     const [page, setPage] = useState(0)
-    const [filters, setFilters] = useState({ endpoint: '', status_code: '', start_date: '', end_date: '' })
+    const [filters, setFilters] = useState({
+        endpoint: '',
+        status_code: '',
+        api_key_id: searchParams.get('api_key_id') || '',
+        start_date: '',
+        end_date: '',
+    })
     const limit = 15
 
     const load = useCallback(async () => {
@@ -19,6 +28,7 @@ export default function Usage() {
             const params = new URLSearchParams({ limit, offset: page * limit })
             if (filters.endpoint) params.set('endpoint', filters.endpoint)
             if (filters.status_code) params.set('status_code', filters.status_code)
+            if (filters.api_key_id) params.set('api_key_id', filters.api_key_id)
             if (filters.start_date) params.set('start_date', filters.start_date)
             if (filters.end_date) params.set('end_date', filters.end_date)
 
@@ -33,6 +43,18 @@ export default function Usage() {
     }, [page, filters])
 
     useEffect(() => { load() }, [load])
+
+    useEffect(() => {
+        let cancelled = false
+        listDeveloperKeys()
+            .then((data) => {
+                if (!cancelled) setKeysState(data)
+            })
+            .catch(() => {
+                if (!cancelled) setKeysState({ data: [] })
+            })
+        return () => { cancelled = true }
+    }, [])
 
     const exportCSV = () => {
         if (!usage?.data?.length) return
@@ -56,8 +78,16 @@ export default function Usage() {
 
     const applyFilter = (key, value) => {
         setFilters(f => ({ ...f, [key]: value }))
+        if (key === 'api_key_id') {
+            const next = new URLSearchParams(searchParams)
+            if (value) next.set('api_key_id', value)
+            else next.delete('api_key_id')
+            setSearchParams(next, { replace: true })
+        }
         setPage(0)
     }
+
+    const selectedKey = (keysState.data || []).find(key => key.key_id === filters.api_key_id)
 
     if (!usage) {
         return (
@@ -175,6 +205,17 @@ export default function Usage() {
                             <option value="400">400 错误</option>
                             <option value="429">429 限流</option>
                             <option value="500">500 服务器错误</option>
+                        </select>
+                        <select className="filter-select filter-select-key" value={filters.api_key_id} onChange={e => applyFilter('api_key_id', e.target.value)}>
+                            <option value="">全部 API Key</option>
+                            {(keysState.data || []).map(key => (
+                                <option key={key.key_id} value={key.key_id}>
+                                    {key.masked_key} · {key.status === 'active' ? '可用' : '已禁用'}
+                                </option>
+                            ))}
+                            {filters.api_key_id && !selectedKey && (
+                                <option value={filters.api_key_id}>当前选定 Key</option>
+                            )}
                         </select>
                         <input type="date" className="filter-input" value={filters.start_date} onChange={e => applyFilter('start_date', e.target.value)} placeholder="开始日期" />
                         <input type="date" className="filter-input" value={filters.end_date} onChange={e => applyFilter('end_date', e.target.value)} placeholder="结束日期" />

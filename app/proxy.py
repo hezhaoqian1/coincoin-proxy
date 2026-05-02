@@ -15,7 +15,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.datastructures import UploadFile
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -33,6 +33,7 @@ from .router import (
 from .usage_buffer import extract_cached_tokens, usage_buffer
 
 _KEY_KIND_ATTR = "_key_kind"
+_KEY_ID_ATTR = "_api_key_id"
 _ENCRYPTED_PREFIXES = ("gAAA", "gBAA")
 _ID_STRIP_PREFIXES = ("resp_", "msg_", "fc_", "fco_", "rs_")
 _CONTENT_KEYS = frozenset({
@@ -1065,6 +1066,7 @@ async def _resolve_user(request: Request, db: AsyncSession):
         if not user:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid api key")
         key_kind = str(cached.get(_KEY_KIND_ATTR) or "api")
+        key_id = str(cached.get(_KEY_ID_ATTR) or "")
     else:
         try:
             result = await db.execute(
@@ -1083,18 +1085,37 @@ async def _resolve_user(request: Request, db: AsyncSession):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="session expired, please login again")
 
         user = api_key.user
+        key_id = api_key.id
         key_kind = getattr(api_key, "kind", None) or "api"
         await key_cache.set(
             key_hash,
             {
                 "id": user.id,
+                _KEY_ID_ATTR: key_id,
                 _KEY_KIND_ATTR: key_kind,
             },
         )
     setattr(user, _KEY_KIND_ATTR, key_kind)
+    setattr(user, _KEY_ID_ATTR, key_id)
     if user.status != "active":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="user blocked")
     return user
+
+
+async def _mark_api_key_used(db: AsyncSession, user: User) -> None:
+    key_id = getattr(user, _KEY_ID_ATTR, "")
+    if not key_id or getattr(user, _KEY_KIND_ATTR, "api") != "api":
+        return
+    try:
+        await db.execute(
+            update(ApiKey)
+            .where(ApiKey.id == key_id, ApiKey.user_id == user.id, ApiKey.kind == "api")
+            .values(last_used_at=datetime.utcnow())
+        )
+        await db.commit()
+    except Exception:
+        logger.exception("failed to update api key last_used_at")
+        await db.rollback()
 
 
 async def authenticate_user(request: Request, db: AsyncSession):
@@ -1150,6 +1171,8 @@ async def authorize_request(request: Request, db: AsyncSession):
         except Exception:
             logger.exception("daily limit lookup failed")
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="internal error")
+
+    await _mark_api_key_used(db, user)
 
     return user
 
@@ -1385,6 +1408,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                     dur = int((time.monotonic() - stream_t0) * 1000)
                     asyncio.create_task(usage_buffer.add(
                         user.id,
+                        api_key_id=getattr(user, _KEY_ID_ATTR, ""),
                         input_tokens=_stream_usage["input"],
                         output_tokens=_stream_usage["output"],
                         cached_tokens=_stream_usage["cached"],
@@ -1559,6 +1583,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
     if upstream.status_code < 400:
         await usage_buffer.add(
             user.id,
+            api_key_id=getattr(user, _KEY_ID_ATTR, ""),
             input_tokens=input_tokens_delta,
             output_tokens=output_tokens_delta,
             cached_tokens=cached_tokens_delta,
@@ -1691,6 +1716,7 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
             image_count = _requested_image_count_from_json(payload)
             await usage_buffer.add(
                 user.id,
+                api_key_id=getattr(user, _KEY_ID_ATTR, ""),
                 requests=1,
                 endpoint="images/generations",
                 model=display_model,
@@ -1755,6 +1781,7 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
 
         await usage_buffer.add(
             user.id,
+            api_key_id=getattr(user, _KEY_ID_ATTR, ""),
             requests=1,
             endpoint="images/generations",
             model=display_model,
@@ -1903,6 +1930,7 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
             image_count = _requested_image_count_from_pairs(form_fields)
             await usage_buffer.add(
                 user.id,
+                api_key_id=getattr(user, _KEY_ID_ATTR, ""),
                 requests=1,
                 endpoint="images/edits",
                 model=display_model,
@@ -2040,6 +2068,7 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
 
         await usage_buffer.add(
             user.id,
+            api_key_id=getattr(user, _KEY_ID_ATTR, ""),
             requests=1,
             endpoint="images/edits",
             model=display_model,
