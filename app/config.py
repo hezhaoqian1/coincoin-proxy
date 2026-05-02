@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     embedding_upstream_url: str = ""
     embedding_api_key: str = ""
     embedding_auth_style: str = ""
-    embedding_price_input: int = 99
+    embedding_price_input: int = 2
     model_catalog_path: str = "config/model_catalog.json"
     model_catalog_json: str = ""
 
@@ -85,9 +85,9 @@ class Settings(BaseSettings):
     response_cache_max_turns: int = 8
     
     # Pricing (cents per million tokens)
-    # Input $0.99/M = 99 cents/M, Output $6.99/M = 699 cents/M
-    price_input_per_million: int = 99  # 单位：分/百万 tokens
-    price_output_per_million: int = 699  # 单位：分/百万 tokens
+    # Default follows official GPT-5.5 API pricing: input $5/M, output $30/M.
+    price_input_per_million: int = 500  # 单位：分/百万 tokens
+    price_output_per_million: int = 3000  # 单位：分/百万 tokens
     
     # Billing mode: "balance" (扣余额) or "token_limit" (扣 token 额度) or "none" (不限制)
     billing_mode: str = "balance"
@@ -144,15 +144,15 @@ class Settings(BaseSettings):
     cheap_model: str = ""
     cheap_upstream_url: str = ""  # empty = use main upstream
     cheap_api_key: str = ""  # empty = use main api key
-    cheap_price_input: int = 15  # cents per million tokens
-    cheap_price_output: int = 60  # cents per million tokens
+    cheap_price_input: int = 75  # cents per million tokens
+    cheap_price_output: int = 450  # cents per million tokens
 
     # Fallback model (reliable backend used when primary or cheap upstream fails)
     fallback_model: str = ""
     fallback_upstream_url: str = ""  # empty = use main upstream
     fallback_api_key: str = ""  # empty = use main api key
-    fallback_price_input: int = 99  # cents per million tokens
-    fallback_price_output: int = 699  # cents per million tokens
+    fallback_price_input: int = 500  # cents per million tokens
+    fallback_price_output: int = 3000  # cents per million tokens
     fallback_auth_style: str = ""  # empty = inherit primary_auth_style
 
     class Config:
