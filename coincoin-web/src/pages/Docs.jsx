@@ -119,7 +119,7 @@ export default function Docs() {
     if (isLoggedIn) {
         if (activeTab === 1) {
             return (
-                <AppShell title="模型与价格" description="查看可调用的公开模型 alias、能力和计费。">
+                <AppShell title="模型与价格" description="查看可调用的模型、能力和计费。">
                     <div className="docs-shell-page">
                         <div className="docs-content glass-card">
                             <ModelsAndPricing textModels={textModels} imageModels={imageModels} />
@@ -380,7 +380,7 @@ CLAWFATHER_OPENAI_API_KEY="sk_cc_xxxxx" codex`}</pre>
                         <td>Codex CLI</td>
                         <td><span className="badge badge-success">一等支持</span></td>
                         <td><code>/v1 + responses</code></td>
-                        <td>推荐的命令行接法，直接通过 <code>model</code> 选择公开 alias。</td>
+                        <td>推荐的命令行接法，直接通过 <code>model</code> 选择模型。</td>
                     </tr>
                     <tr>
                         <td>OpenCode</td>
@@ -411,9 +411,9 @@ CLAWFATHER_OPENAI_API_KEY="sk_cc_xxxxx" codex`}</pre>
 
             <h3>切换模型时你要改什么？</h3>
             <ul className="doc-list">
-                <li>只需要把请求或客户端配置中的 <code>model</code> 改成公开 alias，例如 <code>opus</code>、<code>sonnet</code>、<code>haiku</code>、<code>gemini-image</code>。</li>
+                <li>只需要把请求或客户端配置中的 <code>model</code> 改成目标模型，例如 <code>opus</code>、<code>sonnet</code>、<code>haiku</code>、<code>gemini-image</code>。</li>
                 <li>Base URL 和 API Key 不需要改，仍然走同一个 ClawFather 入口。</li>
-                <li>文本请求推荐走 <code>/v1/chat/completions</code> 或 <code>/v1/responses</code>，图片请求走 <code>/v1/images/generations</code> 或 <code>/v1/images/edits</code>，并使用 <code>{imageModelId}</code> 这类图片 alias。</li>
+                <li>文本请求推荐走 <code>/v1/chat/completions</code> 或 <code>/v1/responses</code>，图片请求走 <code>/v1/images/generations</code> 或 <code>/v1/images/edits</code>，并使用 <code>{imageModelId}</code> 这类图片模型。</li>
                 <li>图片请求统一走 ClawFather 公开入口，不需要终端用户配置额外服务。</li>
             </ul>
         </div>
@@ -424,12 +424,12 @@ function ModelsAndPricing({ textModels, imageModels }) {
     return (
         <div className="doc-section animate-fade-in">
             <h2>模型与价格</h2>
-            <p className="doc-intro">公开模型目录来自 ClawFather 的真实运行配置。用户端只展示你请求里填写的模型 alias；你也可以通过 <code>GET /v1/models</code> 拉取。</p>
+            <p className="doc-intro">公开模型目录来自 ClawFather 的真实运行配置。你也可以通过 <code>GET /v1/models</code> 拉取。</p>
 
             <h3>文本模型</h3>
             <table className="data-table">
                 <thead>
-                    <tr><th>Alias</th><th>能力</th><th>价格</th><th>状态</th></tr>
+                    <tr><th>模型</th><th>能力</th><th>价格</th><th>状态</th></tr>
                 </thead>
                 <tbody>
                     {textModels.map((model) => (
@@ -452,7 +452,7 @@ function ModelsAndPricing({ textModels, imageModels }) {
             <h3>图片模型</h3>
             <table className="data-table">
                 <thead>
-                    <tr><th>Alias</th><th>能力</th><th>价格</th><th>状态</th></tr>
+                    <tr><th>模型</th><th>能力</th><th>价格</th><th>状态</th></tr>
                 </thead>
                 <tbody>
                     {imageModels.map((model) => (
@@ -477,7 +477,7 @@ function ModelsAndPricing({ textModels, imageModels }) {
                 <li>文本模型按 Input / Cached Input / Output Token 计费；图片模型按图片张数计费。</li>
                 <li>Cached input 使用模型目录返回的单独缓存输入价格计费，不要按普通 Input 价格估算。</li>
                 <li>同一个账户余额同时覆盖文本模型和图片模型，不需要分开充值。</li>
-                <li>老客户端不传 <code>model</code> 时，仍然走默认文本 alias，以保证兼容。</li>
+                <li>老客户端不传 <code>model</code> 时，仍然走默认文本模型，以保证兼容。</li>
             </ul>
             <div className="doc-callout">
                 <strong>缓存输入价格怎么读</strong>
@@ -494,7 +494,7 @@ function ApiReference({ primaryTextModel, primaryImageModel }) {
     return (
         <div className="doc-section animate-fade-in">
             <h2>API 参考</h2>
-            <p className="doc-intro">所有接口均兼容 OpenAI API 风格。当前推荐先从 <code>/v1/models</code> 拉取公开目录，再决定请求用哪个 alias。</p>
+            <p className="doc-intro">所有接口均兼容 OpenAI API 风格。当前推荐先从 <code>/v1/models</code> 拉取公开目录，再决定请求用哪个模型。</p>
 
             <h3>认证方式</h3>
             <pre className="code-block">{`Authorization: Bearer sk_cc_xxxxx`}</pre>
@@ -629,8 +629,8 @@ function ApiReference({ primaryTextModel, primaryImageModel }) {
             <h3>默认兼容规则</h3>
             <ul className="doc-list">
                 <li>如果文本请求里省略 <code>model</code>，ClawFather 会保持默认文本模型的兼容行为。</li>
-                <li>如果图片请求里省略 <code>model</code>，ClawFather 会自动选择默认图片 alias。</li>
-                <li>显式指定某个模型 alias 后，如果该模型请求失败，不会偷偷回退到另一个模型。</li>
+                <li>如果图片请求里省略 <code>model</code>，ClawFather 会自动选择默认图片模型。</li>
+                <li>显式指定某个模型后，如果该模型请求失败，不会偷偷回退到另一个模型。</li>
             </ul>
 
             <h3>错误码</h3>
@@ -742,7 +742,7 @@ export ANTHROPIC_DEFAULT_HAIKU_MODEL="claude-haiku-4-5"
 claude --model claude-opus-4-7`}</pre>
             <ul className="doc-list">
                 <li>这里的 <code>ANTHROPIC_BASE_URL</code> 必须填站点根地址，不能带 <code>/v1</code>。</li>
-                <li><code>claude-opus-4-7</code>、<code>opus</code>、<code>best</code>、<code>default</code>、<code>opus[1m]</code>、<code>opusplan</code> 走当前固定文本模型；Sonnet / Haiku alias 走 cheap 文本模型。</li>
+                <li>常用文本模型可直接填写 <code>opus</code>、<code>sonnet</code> 或 <code>haiku</code>；需要兼容 Claude Code 默认模型名时，也可以填写 <code>claude-opus-4-7</code>、<code>claude-sonnet-4-6</code>、<code>claude-haiku-4-5</code>。</li>
                 <li>如果之前用过 <code>/login</code> 托管登录，先执行一次 <code>/logout</code>，避免本地登录态和环境变量打架。</li>
             </ul>
 

@@ -131,9 +131,9 @@ export default function Landing() {
                         <div className="landing-copy">
                             <div className="landing-announcement">
                                 <span className="landing-announcement-dot" />
-                                <span>统一网关，统一计费，统一控制台</span>
+                                <span>统一入口，统一计费，统一控制台</span>
                             </div>
-                            <span className="landing-kicker">ClawFather API Gateway</span>
+                            <span className="landing-kicker">ClawFather API</span>
                             <h1>把文本、图片和 Claude Code 收进同一个开发者入口</h1>
                             <p className="landing-summary">
                                 不用在多个平台之间来回切换。登录控制台、生成开发者 Key，再把一套配置复制到
