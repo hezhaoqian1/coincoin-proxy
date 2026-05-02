@@ -16,7 +16,7 @@ const TABS = [
     {
         label: '模型与价格',
         kicker: 'Catalog',
-        intro: '模型目录、上游映射和计费。'
+        intro: '公开模型目录和计费。'
     },
     {
         label: 'API 参考',
@@ -66,7 +66,7 @@ export default function Docs() {
     }, [requestedTab])
 
     const docsIntro = useMemo(() => {
-        if (requestedTab === 'models') return '模型目录、上游映射和计费。'
+        if (requestedTab === 'models') return '公开模型目录和计费。'
         if (requestedTab === 'api') return '端点、认证方式和兼容边界。'
         if (requestedTab === 'snippets') return '常见客户端、CLI 和 SDK 配置。'
         return '从开发者 Key 到第一条请求。'
@@ -117,6 +117,18 @@ export default function Docs() {
     )
 
     if (isLoggedIn) {
+        if (activeTab === 1) {
+            return (
+                <AppShell title="模型与价格" description="查看可调用的公开模型 alias、能力和计费。">
+                    <div className="docs-shell-page">
+                        <div className="docs-content glass-card">
+                            <ModelsAndPricing textModels={textModels} imageModels={imageModels} />
+                        </div>
+                    </div>
+                </AppShell>
+            )
+        }
+
         return (
             <AppShell title="接入文档" description="模型目录、接口说明和客户端配置。">
                 <div className="docs-shell-page">
@@ -412,12 +424,12 @@ function ModelsAndPricing({ textModels, imageModels }) {
     return (
         <div className="doc-section animate-fade-in">
             <h2>模型与价格</h2>
-            <p className="doc-intro">公开模型目录来自 ClawFather 的真实运行配置。你可以直接通过 <code>GET /v1/models</code> 拉取。</p>
+            <p className="doc-intro">公开模型目录来自 ClawFather 的真实运行配置。用户端只展示你请求里填写的模型 alias；你也可以通过 <code>GET /v1/models</code> 拉取。</p>
 
             <h3>文本模型</h3>
             <table className="data-table">
                 <thead>
-                    <tr><th>Alias</th><th>上游</th><th>能力</th><th>价格</th><th>状态</th></tr>
+                    <tr><th>Alias</th><th>能力</th><th>价格</th><th>状态</th></tr>
                 </thead>
                 <tbody>
                     {textModels.map((model) => (
@@ -425,10 +437,6 @@ function ModelsAndPricing({ textModels, imageModels }) {
                             <td>
                                 <code className="model-tag-sm">{model.id}</code>
                                 {(model.coincoin_default_for || []).includes('text') && <span className="inline-badge">默认文本</span>}
-                            </td>
-                            <td>
-                                <div>{model.coincoin_provider}</div>
-                                <div className="table-subtle">{model.coincoin_provider_model}</div>
                             </td>
                             <td>
                                 <div>{formatCaps(model)}</div>
@@ -444,7 +452,7 @@ function ModelsAndPricing({ textModels, imageModels }) {
             <h3>图片模型</h3>
             <table className="data-table">
                 <thead>
-                    <tr><th>Alias</th><th>上游</th><th>能力</th><th>价格</th><th>状态</th></tr>
+                    <tr><th>Alias</th><th>能力</th><th>价格</th><th>状态</th></tr>
                 </thead>
                 <tbody>
                     {imageModels.map((model) => (
@@ -452,10 +460,6 @@ function ModelsAndPricing({ textModels, imageModels }) {
                             <td>
                                 <code className="model-tag-sm">{model.id}</code>
                                 {(model.coincoin_default_for || []).includes('image') && <span className="inline-badge">默认图片</span>}
-                            </td>
-                            <td>
-                                <div>{model.coincoin_provider}</div>
-                                <div className="table-subtle">{model.coincoin_provider_model}</div>
                             </td>
                             <td>
                                 <div>{formatCaps(model)}</div>
@@ -471,13 +475,13 @@ function ModelsAndPricing({ textModels, imageModels }) {
             <h3>计费说明</h3>
             <ul className="doc-list">
                 <li>文本模型按 Input / Cached Input / Output Token 计费；图片模型按图片张数计费。</li>
-                <li>当前 cached input 默认按 input 的 1/10 计费，模型目录里会直接返回单独的缓存输入价格。</li>
+                <li>Cached input 使用模型目录返回的单独缓存输入价格计费，不要按普通 Input 价格估算。</li>
                 <li>同一个账户余额同时覆盖 GPT 文本、Gemini 文本和 Gemini 生图，不需要分开充值。</li>
                 <li>老客户端不传 <code>model</code> 时，仍然走默认文本 alias，以保证兼容。</li>
             </ul>
             <div className="doc-callout">
                 <strong>缓存输入价格怎么读</strong>
-                <p>例如 <code>Input $0.99 / M · Cached $0.099 / M · Output $6.99 / M</code>，表示命中上游 cache 的输入 token 按正常输入价的 1/10 计费。</p>
+                <p>例如 <code>Input $0.99 / M · Cached $0.495 / M · Output $6.99 / M</code>，表示命中缓存的输入 token 会按目录里的 Cached 价格单独计费。</p>
             </div>
         </div>
     )
@@ -626,7 +630,7 @@ function ApiReference({ primaryTextModel, primaryImageModel }) {
             <ul className="doc-list">
                 <li>如果文本请求里省略 <code>model</code>，ClawFather 会保持默认 GPT 文本模型的兼容行为。</li>
                 <li>如果图片请求里省略 <code>model</code>，ClawFather 会自动选择默认图片 alias。</li>
-                <li>显式指定 Gemini alias 后，如果 Gemini 上游失败，不会偷偷回退到 GPT。</li>
+                <li>显式指定 Gemini alias 后，如果该模型请求失败，不会偷偷回退到 GPT。</li>
             </ul>
 
             <h3>错误码</h3>
@@ -782,9 +786,9 @@ claude --model claude-opus-4-7`}</pre>
 
             <h3>什么时候还要看 Vertex 官方文档？</h3>
             <ul className="doc-list">
-                <li>LiteLLM 负责代理和协议适配，但上游 Gemini 的真实能力边界仍以 Vertex 官方文档为准。</li>
-                <li>当你遇到 function calling、参数支持或模型生命周期问题时，先查 Vertex 官方文档，再看 ClawFather / LiteLLM 配置。</li>
-                <li>简化理解：客户端接 ClawFather，网关看 LiteLLM，模型能力边界看 Vertex。</li>
+                <li>Gemini 系列模型的能力边界仍以 Vertex 官方文档为准。</li>
+                <li>当你遇到 function calling、参数支持或模型生命周期问题时，先查 Vertex 官方文档，再看 ClawFather 文档。</li>
+                <li>简化理解：客户端只接 ClawFather，模型能力边界看对应官方文档。</li>
             </ul>
         </div>
     )

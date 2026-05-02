@@ -58,9 +58,9 @@ export default function Usage() {
 
     const exportCSV = () => {
         if (!usage?.data?.length) return
-        const headers = ['时间', '端点', '公开模型', '上游模型', '计量类型', '计量值', 'Input Token', '缓存输入 Token', '非缓存输入 Token', 'Output Token', '总 Token', '缓存命中率', '花费($)', '耗时(ms)', '状态码']
+        const headers = ['时间', '端点', '模型', '计量类型', '计量值', 'Input Token', '缓存输入 Token', '非缓存输入 Token', 'Output Token', '总 Token', '缓存命中率', '花费($)', '耗时(ms)', '状态码']
         const rows = usage.data.map(d => [
-            d.created_at, d.endpoint, d.model, d.provider_model,
+            d.created_at, d.endpoint, d.model,
             d.usage_unit_type, d.usage_unit_type === 'images' ? (d.image_count || d.usage_unit_count) : d.usage_unit_count,
             d.input_tokens, d.cached_tokens || 0, Math.max(0, (d.input_tokens || 0) - (d.cached_tokens || 0)), d.output_tokens, d.total_tokens,
             formatCacheHitRate(d.cached_tokens || 0, d.input_tokens || 0),
@@ -106,7 +106,7 @@ export default function Usage() {
     return (
         <AppShell
             title="请求日志"
-            description="看每次请求的公开模型、上游模型、缓存命中、计量和花费。"
+            description="看每次请求的模型、缓存命中、计量和花费。"
             actions={<button className="btn btn-secondary btn-sm" onClick={exportCSV}>导出 CSV</button>}
         >
             <div className="usage-page">
@@ -168,7 +168,7 @@ export default function Usage() {
                     <div className="usage-guide-pills">
                         <div className="usage-guide-pill">
                             <strong>路由</strong>
-                            <span>alias / provider_model</span>
+                            <span>endpoint / model alias</span>
                         </div>
                         <div className="usage-guide-pill">
                             <strong>缓存</strong>
@@ -230,8 +230,7 @@ export default function Usage() {
                                 <tr>
                                     <th>请求时间</th>
                                     <th>端点</th>
-                                    <th>公开模型</th>
-                                    <th>上游模型</th>
+                                    <th>模型</th>
                                     <th>计量</th>
                                     <th>Input Token</th>
                                     <th>缓存输入</th>
@@ -250,7 +249,6 @@ export default function Usage() {
                                         <td>{new Date(log.created_at).toLocaleString('zh-CN')}</td>
                                         <td><code className="endpoint-tag">{log.endpoint}</code></td>
                                         <td><span className="model-tag-sm">{log.model}</span></td>
-                                        <td><span className="provider-tag-sm">{log.provider_model || '-'}</span></td>
                                         <td>
                                             <span className={`usage-pill ${log.usage_unit_type === 'images' ? 'images' : 'tokens'}`}>
                                                 {log.usage_unit_type === 'images'
@@ -274,7 +272,7 @@ export default function Usage() {
                                     </tr>
                                 ))}
                                 {usage.data.length === 0 && (
-                                    <tr><td colSpan="14" style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-tertiary)' }}>暂无数据</td></tr>
+                                    <tr><td colSpan="13" style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-tertiary)' }}>暂无数据</td></tr>
                                 )}
                             </tbody>
                         </table>
