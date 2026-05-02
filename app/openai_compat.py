@@ -245,10 +245,11 @@ async def get_daily_usage(request: Request, db: AsyncSession = Depends(get_db), 
 
     from .models import UsageDaily
     from sqlalchemy import select
-    from datetime import date, timedelta
+    from datetime import timedelta
+    from .usage_buffer import china_today
 
     days = max(1, min(days, 90))
-    start = date.today() - timedelta(days=days - 1)
+    start = china_today() - timedelta(days=days - 1)
 
     result = await db.execute(
         select(UsageDaily)
