@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { MOCK_USAGE, getApiKey, listDeveloperKeys } from '../api/client'
 import AppShell from '../components/AppShell'
+import { formatChinaTime } from '../utils/time'
 import './Usage.css'
 
 function formatCacheHitRate(cachedTokens, inputTokens) {
@@ -246,7 +247,7 @@ export default function Usage() {
                             <tbody>
                                 {usage.data.map((log, i) => (
                                     <tr key={i}>
-                                        <td>{new Date(log.created_at).toLocaleString('zh-CN')}</td>
+                                        <td>{formatChinaTime(log.created_at)}</td>
                                         <td><code className="endpoint-tag">{log.endpoint}</code></td>
                                         <td><span className="model-tag-sm">{log.model}</span></td>
                                         <td>

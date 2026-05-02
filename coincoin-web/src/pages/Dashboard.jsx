@@ -7,6 +7,7 @@ import useOrderConfirm from '../hooks/useOrderConfirm'
 import { useAuth } from '../hooks/useAuth'
 import { usePublicModels } from '../hooks/usePublicModels'
 import AppShell from '../components/AppShell'
+import { formatChinaTime } from '../utils/time'
 import './Dashboard.css'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler)
@@ -833,7 +834,7 @@ export default function Dashboard() {
                                 <tbody>
                                     {usage.data.slice(0, 5).map((log, i) => (
                                         <tr key={i}>
-                                            <td>{new Date(log.created_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
+                                            <td>{formatChinaTime(log.created_at, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
                                             <td><code className="endpoint-tag">{log.endpoint}</code></td>
                                             <td><span className="model-tag-sm">{log.model}</span></td>
                                             <td>{log.usage_unit_type === 'images' ? `${log.image_count || log.usage_unit_count || 0} images` : `${(log.total_tokens || 0).toLocaleString()} tokens`}</td>
