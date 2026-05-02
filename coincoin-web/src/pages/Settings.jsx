@@ -513,7 +513,7 @@ claude --model claude-opus-4-7`
                             {models.map((model) => (
                                 <div key={model.id} className={`model-chip ${model.id === selectedModel ? 'active' : ''}`}>
                                     <strong>{model.id}</strong>
-                                    <span>{model.coincoin_provider}</span>
+                                    <span>{describePublicModel(model)}</span>
                                 </div>
                             ))}
                         </div>

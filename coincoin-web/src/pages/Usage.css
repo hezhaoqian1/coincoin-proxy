@@ -112,12 +112,6 @@
     border-radius: 4px;
 }
 
-.provider-tag-sm {
-    font-family: var(--font-mono);
-    font-size: 0.72rem;
-    color: var(--text-secondary);
-}
-
 .usage-pill {
     display: inline-flex;
     padding: 2px 8px;
