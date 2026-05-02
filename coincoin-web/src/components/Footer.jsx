@@ -11,7 +11,7 @@ export default function Footer() {
             <div className="container footer-inner">
                 <div className="footer-grid">
                     <div className="footer-brand">
-                        <span className="footer-kicker">ClawFather Gateway</span>
+                        <span className="footer-kicker">ClawFather API</span>
                         <div className="footer-logo">
                             <div className="logo-icon">CF</div>
                             <div className="footer-brand-copy">
@@ -20,7 +20,7 @@ export default function Footer() {
                             </div>
                         </div>
                         <p className="footer-desc">
-                            为开发者提供统一网关、统一余额和统一控制台。
+                            为开发者提供统一入口、统一余额和统一控制台。
                             公开页负责说明，控制台负责接入、日志和密钥管理。
                         </p>
                         <div className="footer-chip-row">
@@ -52,7 +52,7 @@ export default function Footer() {
                 </div>
 
                 <div className="footer-bottom">
-                    <span>© 2026 ClawFather. API gateway for builders.</span>
+                    <span>© 2026 ClawFather. API platform for builders.</span>
                     <div className="footer-bottom-links">
                         <a href="#">服务条款</a>
                         <a href="#">隐私政策</a>

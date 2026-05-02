@@ -168,7 +168,7 @@ export default function Usage() {
                     <div className="usage-guide-pills">
                         <div className="usage-guide-pill">
                             <strong>路由</strong>
-                            <span>endpoint / model alias</span>
+                            <span>endpoint / model</span>
                         </div>
                         <div className="usage-guide-pill">
                             <strong>缓存</strong>

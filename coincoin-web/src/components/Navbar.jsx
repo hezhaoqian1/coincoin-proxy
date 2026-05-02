@@ -22,7 +22,7 @@ export default function Navbar() {
                     <div className="logo-icon">CF</div>
                     <div className="navbar-brand-copy">
                         <span className="logo-text">ClawFather</span>
-                        <span className="navbar-brand-sub">API gateway for builders</span>
+                        <span className="navbar-brand-sub">API platform for builders</span>
                     </div>
                 </Link>
 
