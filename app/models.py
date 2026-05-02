@@ -87,6 +87,7 @@ class RequestLog(Base):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_users.id"), index=True)
+    api_key_id: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("coincoin_api_keys.id"), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
     endpoint: Mapped[str] = mapped_column(String(64), default="")  # chat/completions, responses, embeddings
     model: Mapped[str] = mapped_column(String(64), default="")
@@ -107,6 +108,7 @@ class RequestLog(Base):
 
 
 Index("ix_request_logs_user_created", RequestLog.user_id, RequestLog.created_at.desc())
+Index("ix_request_logs_user_key_created", RequestLog.user_id, RequestLog.api_key_id, RequestLog.created_at.desc())
 
 
 class RechargeLog(Base):
@@ -350,6 +352,7 @@ class ImageJob(Base):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_users.id"), index=True)
+    api_key_id: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("coincoin_api_keys.id"), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
     endpoint: Mapped[str] = mapped_column(String(32), default="images/edits")
     public_model: Mapped[str] = mapped_column(String(128), default="")

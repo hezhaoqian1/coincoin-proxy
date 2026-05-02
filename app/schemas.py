@@ -33,6 +33,7 @@ class DeveloperKeyStateResponse(BaseModel):
 class DeveloperKeyListItem(BaseModel):
     key_id: str
     masked_key: str
+    api_key: Optional[str] = None
     status: str
     created_at: datetime
     last_used_at: Optional[datetime] = None

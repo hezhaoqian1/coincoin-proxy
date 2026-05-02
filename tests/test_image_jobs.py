@@ -180,7 +180,7 @@ class ImageJobsTests(unittest.IsolatedAsyncioTestCase):
         registry.init_from_settings()
 
         self.store = _JobStore()
-        self.fake_user = SimpleNamespace(id="u_test")
+        self.fake_user = SimpleNamespace(id="u_test", _api_key_id="k_image_user")
 
         async def fake_db():
             yield _FakeDBSession(self.store)
@@ -217,6 +217,7 @@ class ImageJobsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.store.jobs), 1)
 
         job = next(iter(self.store.jobs.values()))
+        self.assertEqual(job.api_key_id, "k_image_user")
         manifest = json.loads(job.request_payload_json)
         self.assertEqual(len(manifest["files"]), 3)
         self.assertTrue(Path(job.storage_dir).is_dir())
@@ -289,6 +290,7 @@ class ImageJobsTests(unittest.IsolatedAsyncioTestCase):
         job = ImageJob(
             id=job_id,
             user_id=self.fake_user.id,
+            api_key_id="k_image_job",
             status=image_jobs_module.JOB_STATUS_RUNNING,
             endpoint="images/edits",
             public_model="gemini-image",
@@ -333,6 +335,7 @@ class ImageJobsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('name="model"', posted_body)
         self.assertIn("vertex-gemini-3.1-flash-image-preview", posted_body)
         add_usage.assert_awaited_once()
+        self.assertEqual(add_usage.await_args.kwargs["api_key_id"], "k_image_job")
         self.assertEqual(add_usage.await_args.kwargs["endpoint"], "image-jobs/edits")
         self.assertEqual(add_usage.await_args.kwargs["usage_unit_count"], 1)
 

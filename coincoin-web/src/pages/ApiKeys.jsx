@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import AppShell from '../components/AppShell'
 import {
     clearGeneratedKey,
@@ -137,7 +138,7 @@ export default function ApiKeys() {
                         <div>
                             <span className="meta-pill">仅本次明文展示</span>
                             <h3>新开发者 Key 已创建</h3>
-                            <p>完整值只会在这里展示一次。请现在复制并保存。</p>
+                            <p>完整值也可以从下方列表重新复制。请妥善保存，不要贴到公开文档或聊天记录里。</p>
                         </div>
                         <code className="api-keys-secret">{revealedKey}</code>
                         <div className="api-keys-reveal-actions">
@@ -178,7 +179,7 @@ export default function ApiKeys() {
                     <div>
                         <span className="api-keys-kicker">开发者 Key 管理</span>
                         <h3>{username || '当前账户'} 的开发者 Key</h3>
-                        <p>旧 Key 不会回显明文；要拿到新明文，必须新建一把。</p>
+                        <p>可以直接复制完整 Key；禁用前建议先到使用记录确认它是否仍在发请求。</p>
                     </div>
                     <div className="api-keys-toolbar-actions">
                         <input
@@ -233,9 +234,15 @@ export default function ApiKeys() {
                                     <td>{formatDate(item.created_at)}</td>
                                     <td>
                                         <div className="api-keys-row-actions">
-                                            <button className="btn btn-ghost btn-sm" onClick={() => handleCopy(item.masked_key, item.key_id)}>
-                                                {copied === item.key_id ? '已复制摘要' : '复制摘要'}
+                                            <button
+                                                className="btn btn-ghost btn-sm"
+                                                onClick={() => handleCopy(item.api_key || item.masked_key, item.key_id)}
+                                            >
+                                                {copied === item.key_id ? '已复制密钥' : '复制密钥'}
                                             </button>
+                                            <Link className="btn btn-ghost btn-sm" to={`/usage?api_key_id=${encodeURIComponent(item.key_id)}`}>
+                                                查看记录
+                                            </Link>
                                             {item.status === 'active' ? (
                                                 <button
                                                     className="btn btn-secondary btn-sm"

@@ -1,7 +1,7 @@
 import unittest
 from datetime import date, datetime
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 
@@ -11,6 +11,7 @@ import app.epay as epay_module
 import app.payment as payment_module
 import app.proxy as proxy_module
 import app.webhook as webhook_module
+import app.openai_compat as openai_module
 
 
 class _FakeAllResult:
@@ -145,6 +146,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
     async def test_request_logs_expose_provider_alias_and_usage_units(self) -> None:
         log = SimpleNamespace(
             created_at=datetime(2026, 3, 25, 12, 34, 56),
+            api_key_id="k_img",
             endpoint="images/generations",
             model="vertex-gemini-3.1-flash-image-preview",
             input_tokens=0,
@@ -190,6 +192,44 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(item["image_count"], 2)
         self.assertEqual(item["billable_sku"], "gemini-image")
         self.assertEqual(item["upstream_request_id"], "req_img_123")
+
+    async def test_user_usage_can_filter_by_api_key(self) -> None:
+        user = SimpleNamespace(id="u_1")
+        log = SimpleNamespace(
+            created_at=datetime(2026, 5, 1, 18, 23, 19),
+            api_key_id="k_selected",
+            endpoint="responses",
+            model="gpt-5.4",
+            input_tokens=10,
+            output_tokens=5,
+            cached_tokens=0,
+            image_count=0,
+            provider_model="gpt-5.4",
+            customer_model_alias="gpt-5.4",
+            usage_unit_type="tokens",
+            usage_unit_count=15,
+            billable_sku="gpt-5.4",
+            cost_cents=1,
+            duration_ms=1200,
+            status_code=200,
+            route_reason="catalog:gpt-5.4",
+        )
+        fake_db = _FakeDB(
+            execute_results=[
+                _FakeScalarResult(1),
+                _FakeScalarsResult([log]),
+            ]
+        )
+
+        with patch.object(openai_module, "authenticate_user", AsyncMock(return_value=user)):
+            payload = await openai_module.get_usage(
+                SimpleNamespace(),
+                fake_db,
+                api_key_id="k_selected",
+            )
+
+        self.assertEqual(payload["total"], 1)
+        self.assertEqual(payload["data"][0]["api_key_id"], "k_selected")
 
     async def test_summary_metrics_expose_images_today(self) -> None:
         fake_db = _FakeDB(scalar_results=[12, 10, 987654, 45, 6, 999, 321])

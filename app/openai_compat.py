@@ -16,7 +16,7 @@ from .proxy import (
     _collect_responses_event_stream_payload, _responses_payload_is_empty_success,
     authenticate_user, authorize_request, extract_upstream_request_id,
     filter_headers, get_http_client, get_stream_client, proxy_images_edits, proxy_images_generations,
-    proxy_responses, responses_health,
+    proxy_responses, responses_health, _KEY_ID_ATTR,
 )
 from .router import (
     ModelCapabilityError,
@@ -151,6 +151,7 @@ async def get_usage(
     offset: int = 0,
     endpoint: Optional[str] = None,
     status_code: Optional[int] = None,
+    api_key_id: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
 ):
@@ -175,6 +176,8 @@ async def get_usage(
         conditions.append(RequestLog.endpoint == endpoint)
     if status_code is not None:
         conditions.append(RequestLog.status_code == status_code)
+    if api_key_id:
+        conditions.append(RequestLog.api_key_id == api_key_id)
     if start_date:
         try:
             conditions.append(RequestLog.created_at >= dt.fromisoformat(start_date))
@@ -210,6 +213,7 @@ async def get_usage(
         "data": [
             {
                 "created_at": (log.created_at.isoformat() + "Z") if log.created_at else None,
+                "api_key_id": getattr(log, "api_key_id", None),
                 "endpoint": log.endpoint,
                 "model": getattr(log, "customer_model_alias", "") or log.model,
                 "provider_model": getattr(log, "provider_model", "") or log.model,
@@ -1029,6 +1033,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                     dur = int((time.monotonic() - compat_stream_t0) * 1000)
                     asyncio.create_task(usage_buffer.add(
                         user.id,
+                        api_key_id=getattr(user, _KEY_ID_ATTR, ""),
                         input_tokens=_compat_stream_usage["input"],
                         output_tokens=_compat_stream_usage["output"],
                         cached_tokens=_compat_stream_usage["cached"],
@@ -1164,6 +1169,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
     if upstream.status_code < 400:
         await usage_buffer.add(
             user.id,
+            api_key_id=getattr(user, _KEY_ID_ATTR, ""),
             input_tokens=input_tokens_delta,
             output_tokens=output_tokens_delta,
             cached_tokens=cached_tokens_delta,
@@ -1265,6 +1271,7 @@ async def embeddings(request: Request, db: AsyncSession = Depends(get_db)):
     if upstream.status_code < 400:
         await usage_buffer.add(
             user.id,
+            api_key_id=getattr(user, _KEY_ID_ATTR, ""),
             input_tokens=input_tokens_delta,
             output_tokens=0,
             cached_tokens=cached_tokens_delta,

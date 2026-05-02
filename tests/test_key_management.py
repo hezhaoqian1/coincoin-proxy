@@ -123,6 +123,7 @@ class DeveloperKeyManagementTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.active, 1)
         self.assertEqual(result.disabled, 1)
         self.assertEqual(result.data[0].key_id, "k_new")
+        self.assertEqual(result.data[0].api_key, "sk_cc_newabcdefghijklmnopqrstuvwxyz1234")
         self.assertEqual(result.data[1].status, "disabled")
 
     async def test_creates_new_developer_key(self):

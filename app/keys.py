@@ -122,11 +122,13 @@ async def list_my_developer_keys(
     disabled = 0
     for row in rows:
         masked = "sk_cc_...unknown"
+        raw_key = None
         if row.encrypted_key:
             try:
                 from .security import decrypt_api_key
 
-                masked = _mask_api_key(decrypt_api_key(row.encrypted_key) or "")
+                raw_key = decrypt_api_key(row.encrypted_key) or ""
+                masked = _mask_api_key(raw_key)
             except Exception:
                 logger.warning("failed to decrypt developer key for list item", exc_info=True)
         if row.status == "active":
@@ -137,6 +139,7 @@ async def list_my_developer_keys(
             DeveloperKeyListItem(
                 key_id=row.id,
                 masked_key=masked,
+                api_key=raw_key,
                 status=row.status,
                 created_at=row.created_at,
                 last_used_at=row.last_used_at,
@@ -205,17 +208,20 @@ async def update_my_developer_key(
     await db.commit()
 
     masked = "sk_cc_...unknown"
+    raw_key = None
     if key.encrypted_key:
         try:
             from .security import decrypt_api_key
 
-            masked = _mask_api_key(decrypt_api_key(key.encrypted_key) or "")
+            raw_key = decrypt_api_key(key.encrypted_key) or ""
+            masked = _mask_api_key(raw_key)
         except Exception:
             logger.warning("failed to decrypt developer key for update response", exc_info=True)
 
     return DeveloperKeyListItem(
         key_id=key.id,
         masked_key=masked,
+        api_key=raw_key,
         status=key.status,
         created_at=key.created_at,
         last_used_at=key.last_used_at,

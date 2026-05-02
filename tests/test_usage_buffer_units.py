@@ -21,6 +21,7 @@ class UsageBufferUnitsTests(unittest.TestCase):
                 output_tokens=0,
                 cached_tokens=500_000,
                 requests=1,
+                api_key_id="k_cached",
                 endpoint="responses",
                 model="gpt-5.4",
                 customer_model_alias="gpt-5.4",
@@ -40,6 +41,7 @@ class UsageBufferUnitsTests(unittest.TestCase):
             loop.close()
 
         self.assertEqual(round(usage_by_user["u_cached"]["cost_cents_f"]), 55)
+        self.assertEqual(request_logs[0]["api_key_id"], "k_cached")
         self.assertEqual(request_logs[0]["cached_tokens"], 500_000)
 
     def test_tracks_image_generation_units_and_cost(self) -> None:
