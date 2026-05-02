@@ -37,6 +37,19 @@ export function usePublicModels() {
         'claude-opus-4-7': 3,
         'claude-sonnet-4-6': 4,
         'claude-haiku-4-5': 5,
+        'gpt-5.5': 10,
+        'gpt-5.4': 11,
+        'gpt-5.4-mini': 12,
+        'gpt-5.3-codex': 13,
+        'gpt-5.2-codex': 14,
+        'gpt-5.2': 15,
+        'gpt-5.1-codex-max': 16,
+        'gpt-5.1-codex': 17,
+        'gpt-5.1-codex-mini': 18,
+        'gpt-5.1': 19,
+        'gpt-5': 20,
+        'gpt-5-codex': 21,
+        'gpt-5-codex-mini': 22,
     }
     const publicModelCompare = (a, b) => {
         const aRank = publicModelPriority[a.id]
@@ -44,12 +57,12 @@ export function usePublicModels() {
         if (aRank !== undefined || bRank !== undefined) {
             return (aRank ?? 1000) - (bRank ?? 1000)
         }
-        const aIsProviderNamedModel = /^(gpt-|gemini-|vertex-)/.test(a.id || '')
-        const bIsProviderNamedModel = /^(gpt-|gemini-|vertex-)/.test(b.id || '')
+        const aIsProviderNamedModel = /^(gemini-|vertex-)/.test(a.id || '')
+        const bIsProviderNamedModel = /^(gemini-|vertex-)/.test(b.id || '')
         if (aIsProviderNamedModel !== bIsProviderNamedModel) return aIsProviderNamedModel ? 1 : -1
         return 0
     }
-    const isUserFacingModel = (model) => !/^(gpt-|vertex-)/.test(model?.id || '')
+    const isUserFacingModel = (model) => !/^(vertex-)/.test(model?.id || '')
 
     const textModels = [...models.filter(isTextCapableModel).filter(isUserFacingModel)].sort(publicModelCompare)
     const imageModels = [...models.filter(isImageCapableModel).filter(isUserFacingModel)].sort(publicModelCompare)
