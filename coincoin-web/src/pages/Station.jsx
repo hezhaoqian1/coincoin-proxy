@@ -9,6 +9,7 @@ import {
     updateStationSettlement,
 } from '../api/client'
 import AppShell from '../components/AppShell'
+import { formatChinaTime } from '../utils/time'
 import './Station.css'
 
 function formatMoney(cents) {
@@ -17,7 +18,7 @@ function formatMoney(cents) {
 
 function formatTime(value) {
     if (!value) return '未发生'
-    return new Date(value).toLocaleString('zh-CN')
+    return formatChinaTime(value)
 }
 
 export default function Station() {

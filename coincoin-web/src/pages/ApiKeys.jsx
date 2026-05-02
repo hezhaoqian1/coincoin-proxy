@@ -9,13 +9,12 @@ import {
     updateDeveloperKey,
 } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
+import { formatChinaTime } from '../utils/time'
 import './ApiKeys.css'
 
 function formatDate(value) {
     if (!value) return '未使用'
-    const date = new Date(value)
-    if (Number.isNaN(date.getTime())) return '未知'
-    return date.toLocaleString('zh-CN', { hour12: false })
+    return formatChinaTime(value)
 }
 
 function KeyStatusPill({ status }) {
