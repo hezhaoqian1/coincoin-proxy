@@ -40,7 +40,7 @@ class PublicModelConfig:
     auth_style: str = "bearer"
     price_input_per_million: int = 0
     price_output_per_million: int = 0
-    price_per_image_cents: int = 0
+    price_per_image_cents: float = 0.0
     billable_sku: str = ""
     created: int = 1700000000
     strip_unsupported: bool = False
@@ -130,6 +130,15 @@ def _as_int(value: Any, default: int = 0) -> int:
         return default
     try:
         return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _as_float(value: Any, default: float = 0.0) -> float:
+    if value in (None, ""):
+        return default
+    try:
+        return float(value)
     except (TypeError, ValueError):
         return default
 
@@ -432,7 +441,7 @@ class ModelRegistry:
             auth_style=auth_style,
             price_input_per_million=_as_int(raw.get("price_input_per_million"), default_price_input),
             price_output_per_million=_as_int(raw.get("price_output_per_million"), default_price_output),
-            price_per_image_cents=_as_int(raw.get("price_per_image_cents"), 0),
+            price_per_image_cents=_as_float(raw.get("price_per_image_cents"), 0.0),
             billable_sku=str(raw.get("billable_sku") or public_id).strip() or public_id,
             created=_as_int(raw.get("created"), 1700000000),
             strip_unsupported=_as_bool(raw.get("strip_unsupported"), False),

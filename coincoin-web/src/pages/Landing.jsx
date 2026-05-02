@@ -43,15 +43,15 @@ const ENTRY_POINTS = [
 ]
 
 const PROVIDERS = [
-    { name: 'GPT', vendor: 'OpenAI' },
+    { name: 'Text', vendor: 'compatible' },
     { name: 'Claude', vendor: 'Anthropic' },
-    { name: 'Gemini', vendor: 'Google' },
+    { name: 'Image', vendor: 'generation' },
 ]
 
 const COMMAND_SNIPPET = `# OpenAI-compatible
 base_url = "https://your-domain/v1"
 api_key = "sk_cc_xxxxx"
-model = "gpt-5.5"
+model = "opus"
 
 # Claude Code
 ANTHROPIC_BASE_URL = "https://your-domain"
@@ -134,7 +134,7 @@ export default function Landing() {
                                 <span>统一网关，统一计费，统一控制台</span>
                             </div>
                             <span className="landing-kicker">ClawFather API Gateway</span>
-                            <h1>把 GPT、Claude 和 Gemini 收进同一个开发者入口</h1>
+                            <h1>把文本、图片和 Claude Code 收进同一个开发者入口</h1>
                             <p className="landing-summary">
                                 不用在多个平台之间来回切换。登录控制台、生成开发者 Key，再把一套配置复制到
                                 CLI、SDK 和常用客户端里，就能开始调用。

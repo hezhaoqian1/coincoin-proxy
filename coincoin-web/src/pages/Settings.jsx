@@ -180,10 +180,10 @@ export default function Settings() {
     const anthropicBaseUrl = ANTHROPIC_BASE_URL_DISPLAY
     const imageModel = defaultImageModel?.id || 'gemini-image'
     const selectedModelInfo = textModels.find((model) => model.id === selectedModel) || defaultTextModel
-    const defaultCodingModel = textModels.find((model) => model.id === 'gpt-5.3-codex')
-        || textModels.find((model) => model.id === 'gpt-5.5')
+    const defaultCodingModel = textModels.find((model) => model.id === 'opus')
+        || textModels.find((model) => model.id === 'claude-opus-4-7')
         || defaultTextModel
-    const codexModel = defaultCodingModel?.id || selectedModel || 'gpt-5.3-codex'
+    const codexModel = defaultCodingModel?.id || selectedModel || 'opus'
 
     const handleCopy = () => {
         if (!effectiveApiKey) return
@@ -318,7 +318,7 @@ claude --model claude-opus-4-7`
         'Codex CLI / Continue 接不上时，先看是不是用了开发者 Key。',
         'Claude Code 的地址填根域名，不要手动加 /v1。',
         '模型没切换成功时，先检查请求体里的 model。',
-        'Gemini 生图走 /v1/images/generations 或 /v1/images/edits。',
+        '图片模型走 /v1/images/generations 或 /v1/images/edits。',
         '余额、充值和日志都以控制台记录为准。',
     ]
 
@@ -417,7 +417,7 @@ claude --model claude-opus-4-7`
                         </div>
                         <div className="connection-bar-item">
                             <span className="info-label">默认文本模型</span>
-                            <code>{defaultTextModel?.id || 'gpt-5.5'}</code>
+                            <code>{defaultTextModel?.id || 'opus'}</code>
                         </div>
                         <div className="connection-bar-item">
                             <span className="info-label">默认图片模型</span>
@@ -463,7 +463,7 @@ claude --model claude-opus-4-7`
                             </div>
                             <div className="info-item">
                                 <span className="info-label">默认文本模型</span>
-                                <code>{defaultTextModel?.id || 'gpt-5.5'}</code>
+                                <code>{defaultTextModel?.id || 'opus'}</code>
                             </div>
                             <div className="info-item">
                                 <span className="info-label">默认图片模型</span>

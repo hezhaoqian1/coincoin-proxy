@@ -801,7 +801,7 @@ export default function Dashboard() {
                     <div className="price-row">
                         <div className="price-item">
                             <span className="price-label">默认文本模型</span>
-                            <span className="price-val model-tag">{defaultTextModel?.id || 'gpt-5.2-codex'}</span>
+                            <span className="price-val model-tag">{defaultTextModel?.id || 'opus'}</span>
                         </div>
                         <div className="price-item">
                             <span className="price-label">默认图片模型</span>

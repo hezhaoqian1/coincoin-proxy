@@ -80,8 +80,8 @@ def calculate_cost_cents(
     return input_cost + output_cost
 
 
-def calculate_image_cost_cents(image_count: int, price_per_image_cents: int = 0) -> float:
-    return int(image_count or 0) * int(price_per_image_cents or 0)
+def calculate_image_cost_cents(image_count: int, price_per_image_cents: float = 0.0) -> float:
+    return int(image_count or 0) * float(price_per_image_cents or 0.0)
 
 
 class UsageBuffer:
@@ -156,7 +156,7 @@ class UsageBuffer:
         upstream_request_id: str = "",
         image_count: int = 0,
         cost_cents_override: Optional[float] = None,
-        price_per_image_cents: int = 0,
+        price_per_image_cents: float = 0.0,
     ) -> None:
         """添加使用量（高性能，不阻塞请求）
         

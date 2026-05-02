@@ -77,6 +77,36 @@ class UsageBufferUnitsTests(unittest.TestCase):
         self.assertEqual(request_logs[0]["usage_unit_count"], 2)
         self.assertEqual(request_logs[0]["provider_model"], "gemini-3.1-flash-image-preview")
 
+    def test_image_cost_keeps_sub_cent_official_prices_until_flush_rounding(self) -> None:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        buffer = UsageBuffer()
+
+        async def scenario():
+            await buffer.add(
+                "u_image_fractional",
+                requests=1,
+                endpoint="images/generations",
+                model="gemini-image",
+                customer_model_alias="gemini-image",
+                provider_model="gemini-3.1-flash-image-preview",
+                usage_unit_type="images",
+                usage_unit_count=3,
+                image_count=3,
+                price_per_image_cents=3.9,
+                billable_sku="gemini-image",
+            )
+            return await buffer.snapshot_and_reset()
+
+        try:
+            _, usage_by_user, request_logs = loop.run_until_complete(scenario())
+        finally:
+            asyncio.set_event_loop(None)
+            loop.close()
+
+        self.assertAlmostEqual(usage_by_user["u_image_fractional"]["cost_cents_f"], 11.7)
+        self.assertEqual(request_logs[0]["cost_cents"], 12)
+
     def test_tracks_text_alias_and_provider_model_separately(self) -> None:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
