@@ -23,6 +23,45 @@ CLAUDE_CHEAP_ALIASES = {
     "haiku",
     "sonnet[1m]",
 }
+OFFICIAL_DEFAULT_TEXT_PRICES = {
+    "claude-opus-4-7": (500, 3000),
+    "claude-sonnet-4-6": (500, 3000),
+    "claude-haiku-4-5": (500, 3000),
+    "claude-haiku-4-5-20251001": (500, 3000),
+    "opus": (500, 3000),
+    "sonnet": (500, 3000),
+    "haiku": (500, 3000),
+    "best": (500, 3000),
+    "default": (500, 3000),
+    "opus[1m]": (500, 3000),
+    "sonnet[1m]": (500, 3000),
+    "opusplan": (500, 3000),
+    "${COINCOIN_EMBEDDING_MODEL:-text-embedding-3-small}": (2, 0),
+    "gemini-balanced": (10, 40),
+    "gemini-fast": (30, 250),
+    "gemini-reasoning": (125, 1000),
+    "vertex-gemini-2.5-flash-lite": (10, 40),
+    "vertex-gemini-2.5-flash": (30, 250),
+    "vertex-gemini-2.5-pro": (125, 1000),
+    "vertex-gemini-3.1-flash-lite-preview": (10, 40),
+    "vertex-gemini-3-flash-preview": (50, 300),
+    "vertex-gemini-3.1-pro-preview": (125, 1000),
+}
+OFFICIAL_DEFAULT_IMAGE_PRICES = {
+    "${COINCOIN_IMAGE_MODEL:-gpt-image-1}": 4.0,
+    "gemini-image": 3.9,
+    "vertex-gemini-2.5-flash-image": 3.9,
+    "vertex-gemini-3.1-flash-image-preview": 3.9,
+}
+
+
+def _placeholder_default(value):
+    if not isinstance(value, str):
+        return value
+    marker = ":-"
+    if marker not in value or not value.endswith("}"):
+        return value
+    return value.rsplit(marker, 1)[1][:-1]
 
 
 class GatewayCatalogSyncTests(unittest.TestCase):
@@ -212,6 +251,35 @@ class GatewayCatalogSyncTests(unittest.TestCase):
                     continue
 
                 self.fail(f"unexpected upstream_direct capability set for {model['id']}: {sorted(capabilities)}")
+
+    def test_billable_public_models_have_official_default_prices(self) -> None:
+        public_models = {
+            item["id"]: item
+            for item in (self.catalog.get("models") or [])
+            if isinstance(item, dict) and item.get("id")
+        }
+
+        for model_id, expected_prices in OFFICIAL_DEFAULT_TEXT_PRICES.items():
+            with self.subTest(model=model_id):
+                model = public_models[model_id]
+                actual = (
+                    int(_placeholder_default(model.get("price_input_per_million"))),
+                    int(_placeholder_default(model.get("price_output_per_million"))),
+                )
+                self.assertEqual(actual, expected_prices)
+
+        for model_id, expected_price in OFFICIAL_DEFAULT_IMAGE_PRICES.items():
+            with self.subTest(model=model_id):
+                model = public_models[model_id]
+                actual = float(_placeholder_default(model.get("price_per_image_cents")))
+                self.assertEqual(actual, expected_price)
+
+        zero_default_fields = []
+        for model in public_models.values():
+            for field in ("price_input_per_million", "price_output_per_million", "price_per_image_cents"):
+                if _placeholder_default(model.get(field)) == "0":
+                    zero_default_fields.append(f"{model['id']}:{field}")
+        self.assertEqual(zero_default_fields, [])
 
 
 if __name__ == "__main__":

@@ -61,9 +61,8 @@ export default function GuideDetail() {
     const { models, textModels, defaultTextModel } = usePublicModels()
 
     const key = effectiveApiKey || ''
-    const codingModel = textModels.find((model) => model.id === 'gpt-5.4')
-        || textModels.find((model) => model.id === 'gpt-5.3-codex')
-        || textModels.find((model) => model.id === 'gpt-5.5')
+    const codingModel = textModels.find((model) => model.id === 'opus')
+        || textModels.find((model) => model.id === 'claude-opus-4-7')
         || defaultTextModel
         || models[0]
     const defaultClaudeModel = 'claude-sonnet-4-6'
@@ -76,14 +75,14 @@ export default function GuideDetail() {
   -H "Authorization: Bearer ${key}" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "${codingModel?.id || 'gpt-5.4'}",
+    "model": "${codingModel?.id || 'opus'}",
     "messages": [{"role": "user", "content": "Reply with only: OK"}],
     "stream": false
   }'`
 
         const codexCommand = `mkdir -p ~/.codex && cat > ~/.codex/config.toml <<'EOF'
 model_provider = "coincoin"
-model = "${codingModel?.id || 'gpt-5.4'}"
+model = "${codingModel?.id || 'opus'}"
 disable_response_storage = true
 model_reasoning_effort = "high"
 web_search = "live"
@@ -101,7 +100,7 @@ codex`
         const codexWindowsCommand = `New-Item -ItemType Directory -Force "$HOME\\.codex" | Out-Null
 @"
 model_provider = "coincoin"
-model = "${codingModel?.id || 'gpt-5.4'}"
+model = "${codingModel?.id || 'opus'}"
 disable_response_storage = true
 model_reasoning_effort = "high"
 web_search = "live"

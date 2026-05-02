@@ -153,8 +153,8 @@
       "upstream_url": "${COINCOIN_UPSTREAM_BASE_URL}",
       "api_key": "${COINCOIN_UPSTREAM_API_KEY}",
       "auth_style": "bearer",
-      "price_input_per_million": "${COINCOIN_PRICE_INPUT_PER_MILLION:-99}",
-      "price_output_per_million": "${COINCOIN_PRICE_OUTPUT_PER_MILLION:-699}",
+      "price_input_per_million": "${COINCOIN_PRICE_INPUT_PER_MILLION:-500}",
+      "price_output_per_million": "${COINCOIN_PRICE_OUTPUT_PER_MILLION:-3000}",
       "billable_sku": "claude-code-compat-text",
       "metadata": {
         "compat_family": "claude-code"
@@ -172,8 +172,8 @@
       "upstream_url": "${COINCOIN_UPSTREAM_BASE_URL}",
       "api_key": "${COINCOIN_UPSTREAM_API_KEY}",
       "auth_style": "bearer",
-      "price_input_per_million": "${COINCOIN_PRICE_INPUT_PER_MILLION:-99}",
-      "price_output_per_million": "${COINCOIN_PRICE_OUTPUT_PER_MILLION:-699}",
+      "price_input_per_million": "${COINCOIN_PRICE_INPUT_PER_MILLION:-500}",
+      "price_output_per_million": "${COINCOIN_PRICE_OUTPUT_PER_MILLION:-3000}",
       "billable_sku": "claude-code-compat-text",
       "metadata": {
         "compat_family": "claude-code"
@@ -191,8 +191,8 @@
       "upstream_url": "${COINCOIN_UPSTREAM_BASE_URL}",
       "api_key": "${COINCOIN_UPSTREAM_API_KEY}",
       "auth_style": "bearer",
-      "price_input_per_million": "${COINCOIN_PRICE_INPUT_PER_MILLION:-99}",
-      "price_output_per_million": "${COINCOIN_PRICE_OUTPUT_PER_MILLION:-699}",
+      "price_input_per_million": "${COINCOIN_PRICE_INPUT_PER_MILLION:-500}",
+      "price_output_per_million": "${COINCOIN_PRICE_OUTPUT_PER_MILLION:-3000}",
       "billable_sku": "claude-code-compat-text",
       "metadata": {
         "compat_family": "claude-code"
@@ -210,8 +210,8 @@
       "upstream_url": "${COINCOIN_UPSTREAM_BASE_URL}",
       "api_key": "${COINCOIN_UPSTREAM_API_KEY}",
       "auth_style": "bearer",
-      "price_input_per_million": "${COINCOIN_PRICE_INPUT_PER_MILLION:-99}",
-      "price_output_per_million": "${COINCOIN_PRICE_OUTPUT_PER_MILLION:-699}",
+      "price_input_per_million": "${COINCOIN_PRICE_INPUT_PER_MILLION:-500}",
+      "price_output_per_million": "${COINCOIN_PRICE_OUTPUT_PER_MILLION:-3000}",
       "billable_sku": "claude-code-compat-text",
       "metadata": {
         "compat_family": "claude-code"
@@ -229,8 +229,8 @@
       "upstream_url": "${COINCOIN_UPSTREAM_BASE_URL}",
       "api_key": "${COINCOIN_UPSTREAM_API_KEY}",
       "auth_style": "bearer",
-      "price_input_per_million": "${COINCOIN_PRICE_INPUT_PER_MILLION:-99}",
-      "price_output_per_million": "${COINCOIN_PRICE_OUTPUT_PER_MILLION:-699}",
+      "price_input_per_million": "${COINCOIN_PRICE_INPUT_PER_MILLION:-500}",
+      "price_output_per_million": "${COINCOIN_PRICE_OUTPUT_PER_MILLION:-3000}",
       "billable_sku": "claude-code-compat-text",
       "metadata": {
         "compat_family": "claude-code"
@@ -248,8 +248,8 @@
       "upstream_url": "${COINCOIN_UPSTREAM_BASE_URL}",
       "api_key": "${COINCOIN_UPSTREAM_API_KEY}",
       "auth_style": "bearer",
-      "price_input_per_million": "${COINCOIN_PRICE_INPUT_PER_MILLION:-99}",
-      "price_output_per_million": "${COINCOIN_PRICE_OUTPUT_PER_MILLION:-699}",
+      "price_input_per_million": "${COINCOIN_PRICE_INPUT_PER_MILLION:-500}",
+      "price_output_per_million": "${COINCOIN_PRICE_OUTPUT_PER_MILLION:-3000}",
       "billable_sku": "claude-code-compat-text",
       "metadata": {
         "compat_family": "claude-code"
@@ -267,8 +267,8 @@
       "upstream_url": "${COINCOIN_UPSTREAM_BASE_URL}",
       "api_key": "${COINCOIN_UPSTREAM_API_KEY}",
       "auth_style": "bearer",
-      "price_input_per_million": "${COINCOIN_PRICE_INPUT_PER_MILLION:-99}",
-      "price_output_per_million": "${COINCOIN_PRICE_OUTPUT_PER_MILLION:-699}",
+      "price_input_per_million": "${COINCOIN_PRICE_INPUT_PER_MILLION:-500}",
+      "price_output_per_million": "${COINCOIN_PRICE_OUTPUT_PER_MILLION:-3000}",
       "billable_sku": "claude-code-compat-text",
       "metadata": {
         "compat_family": "claude-code"
@@ -286,8 +286,8 @@
       "upstream_url": "${COINCOIN_UPSTREAM_BASE_URL}",
       "api_key": "${COINCOIN_UPSTREAM_API_KEY}",
       "auth_style": "bearer",
-      "price_input_per_million": "${COINCOIN_PRICE_INPUT_PER_MILLION:-99}",
-      "price_output_per_million": "${COINCOIN_PRICE_OUTPUT_PER_MILLION:-699}",
+      "price_input_per_million": "${COINCOIN_PRICE_INPUT_PER_MILLION:-500}",
+      "price_output_per_million": "${COINCOIN_PRICE_OUTPUT_PER_MILLION:-3000}",
       "billable_sku": "claude-code-compat-text",
       "metadata": {
         "compat_family": "claude-code"
@@ -305,8 +305,8 @@
       "upstream_url": "${COINCOIN_UPSTREAM_BASE_URL}",
       "api_key": "${COINCOIN_UPSTREAM_API_KEY}",
       "auth_style": "bearer",
-      "price_input_per_million": "${COINCOIN_PRICE_INPUT_PER_MILLION:-99}",
-      "price_output_per_million": "${COINCOIN_PRICE_OUTPUT_PER_MILLION:-699}",
+      "price_input_per_million": "${COINCOIN_PRICE_INPUT_PER_MILLION:-500}",
+      "price_output_per_million": "${COINCOIN_PRICE_OUTPUT_PER_MILLION:-3000}",
       "billable_sku": "claude-code-compat-text",
       "metadata": {
         "compat_family": "claude-code"
@@ -324,8 +324,8 @@
       "upstream_url": "${COINCOIN_UPSTREAM_BASE_URL}",
       "api_key": "${COINCOIN_UPSTREAM_API_KEY}",
       "auth_style": "bearer",
-      "price_input_per_million": "${COINCOIN_PRICE_INPUT_PER_MILLION:-99}",
-      "price_output_per_million": "${COINCOIN_PRICE_OUTPUT_PER_MILLION:-699}",
+      "price_input_per_million": "${COINCOIN_PRICE_INPUT_PER_MILLION:-500}",
+      "price_output_per_million": "${COINCOIN_PRICE_OUTPUT_PER_MILLION:-3000}",
       "billable_sku": "claude-code-compat-text",
       "metadata": {
         "compat_family": "claude-code"
@@ -343,8 +343,8 @@
       "upstream_url": "${COINCOIN_UPSTREAM_BASE_URL}",
       "api_key": "${COINCOIN_UPSTREAM_API_KEY}",
       "auth_style": "bearer",
-      "price_input_per_million": "${COINCOIN_PRICE_INPUT_PER_MILLION:-99}",
-      "price_output_per_million": "${COINCOIN_PRICE_OUTPUT_PER_MILLION:-699}",
+      "price_input_per_million": "${COINCOIN_PRICE_INPUT_PER_MILLION:-500}",
+      "price_output_per_million": "${COINCOIN_PRICE_OUTPUT_PER_MILLION:-3000}",
       "billable_sku": "claude-code-compat-text",
       "metadata": {
         "compat_family": "claude-code"
@@ -362,8 +362,8 @@
       "upstream_url": "${COINCOIN_UPSTREAM_BASE_URL}",
       "api_key": "${COINCOIN_UPSTREAM_API_KEY}",
       "auth_style": "bearer",
-      "price_input_per_million": "${COINCOIN_PRICE_INPUT_PER_MILLION:-99}",
-      "price_output_per_million": "${COINCOIN_PRICE_OUTPUT_PER_MILLION:-699}",
+      "price_input_per_million": "${COINCOIN_PRICE_INPUT_PER_MILLION:-500}",
+      "price_output_per_million": "${COINCOIN_PRICE_OUTPUT_PER_MILLION:-3000}",
       "billable_sku": "claude-code-compat-text",
       "metadata": {
         "compat_family": "claude-code"
@@ -401,7 +401,7 @@
       "upstream_url": "${COINCOIN_EMBEDDING_UPSTREAM_URL:-${COINCOIN_FALLBACK_UPSTREAM_URL:-${COINCOIN_UPSTREAM_BASE_URL}}}",
       "api_key": "${COINCOIN_EMBEDDING_API_KEY:-${COINCOIN_FALLBACK_API_KEY:-${COINCOIN_UPSTREAM_API_KEY}}}",
       "auth_style": "${COINCOIN_EMBEDDING_AUTH_STYLE:-${COINCOIN_FALLBACK_AUTH_STYLE:-${COINCOIN_PRIMARY_AUTH_STYLE:-azure}}}",
-      "price_input_per_million": "${COINCOIN_EMBEDDING_PRICE_INPUT:-${COINCOIN_FALLBACK_PRICE_INPUT:-${COINCOIN_PRICE_INPUT_PER_MILLION:-99}}}",
+      "price_input_per_million": "${COINCOIN_EMBEDDING_PRICE_INPUT:-2}",
       "price_output_per_million": 0,
       "billable_sku": "azure-text-embedding-3-small",
       "metadata": {
@@ -421,7 +421,7 @@
       "upstream_url": "${COINCOIN_IMAGE_UPSTREAM_URL:-${COINCOIN_FALLBACK_UPSTREAM_URL:-${COINCOIN_UPSTREAM_BASE_URL}}}",
       "api_key": "${COINCOIN_IMAGE_API_KEY:-${COINCOIN_FALLBACK_API_KEY:-${COINCOIN_UPSTREAM_API_KEY}}}",
       "auth_style": "${COINCOIN_IMAGE_AUTH_STYLE:-${COINCOIN_FALLBACK_AUTH_STYLE:-${COINCOIN_PRIMARY_AUTH_STYLE:-azure}}}",
-      "price_per_image_cents": "${COINCOIN_IMAGE_PRICE_PER_IMAGE_CENTS:-0}",
+      "price_per_image_cents": "${COINCOIN_IMAGE_PRICE_PER_IMAGE_CENTS:-4}",
       "billable_sku": "openai-image",
       "metadata": {
         "tier": "stable"
@@ -440,8 +440,8 @@
       "upstream_url": "${COINCOIN_GATEWAY_BASE_URL}/v1",
       "api_key": "${COINCOIN_GATEWAY_API_KEY}",
       "auth_style": "${COINCOIN_GATEWAY_AUTH_STYLE:-bearer}",
-      "price_input_per_million": "${COINCOIN_GEMINI_BALANCED_INPUT_PRICE:-0}",
-      "price_output_per_million": "${COINCOIN_GEMINI_BALANCED_OUTPUT_PRICE:-0}",
+      "price_input_per_million": "${COINCOIN_GEMINI_BALANCED_INPUT_PRICE:-10}",
+      "price_output_per_million": "${COINCOIN_GEMINI_BALANCED_OUTPUT_PRICE:-40}",
       "billable_sku": "gemini-balanced-text",
       "metadata": {
         "tier": "stable"
@@ -460,8 +460,8 @@
       "upstream_url": "${COINCOIN_GATEWAY_BASE_URL}/v1",
       "api_key": "${COINCOIN_GATEWAY_API_KEY}",
       "auth_style": "${COINCOIN_GATEWAY_AUTH_STYLE:-bearer}",
-      "price_input_per_million": "${COINCOIN_GEMINI_FAST_INPUT_PRICE:-0}",
-      "price_output_per_million": "${COINCOIN_GEMINI_FAST_OUTPUT_PRICE:-0}",
+      "price_input_per_million": "${COINCOIN_GEMINI_FAST_INPUT_PRICE:-30}",
+      "price_output_per_million": "${COINCOIN_GEMINI_FAST_OUTPUT_PRICE:-250}",
       "billable_sku": "gemini-fast-text",
       "metadata": {
         "tier": "stable"
@@ -480,8 +480,8 @@
       "upstream_url": "${COINCOIN_GATEWAY_BASE_URL}/v1",
       "api_key": "${COINCOIN_GATEWAY_API_KEY}",
       "auth_style": "${COINCOIN_GATEWAY_AUTH_STYLE:-bearer}",
-      "price_input_per_million": "${COINCOIN_GEMINI_REASONING_INPUT_PRICE:-0}",
-      "price_output_per_million": "${COINCOIN_GEMINI_REASONING_OUTPUT_PRICE:-0}",
+      "price_input_per_million": "${COINCOIN_GEMINI_REASONING_INPUT_PRICE:-125}",
+      "price_output_per_million": "${COINCOIN_GEMINI_REASONING_OUTPUT_PRICE:-1000}",
       "billable_sku": "gemini-reasoning-text",
       "metadata": {
         "tier": "stable"
@@ -500,8 +500,8 @@
       "upstream_url": "${COINCOIN_GATEWAY_BASE_URL}/v1",
       "api_key": "${COINCOIN_GATEWAY_API_KEY}",
       "auth_style": "${COINCOIN_GATEWAY_AUTH_STYLE:-bearer}",
-      "price_input_per_million": "${COINCOIN_VERTEX_FLASH_LITE_INPUT_PRICE:-0}",
-      "price_output_per_million": "${COINCOIN_VERTEX_FLASH_LITE_OUTPUT_PRICE:-0}",
+      "price_input_per_million": "${COINCOIN_VERTEX_FLASH_LITE_INPUT_PRICE:-10}",
+      "price_output_per_million": "${COINCOIN_VERTEX_FLASH_LITE_OUTPUT_PRICE:-40}",
       "billable_sku": "vertex-gemini-2.5-flash-lite-text",
       "metadata": {
         "tier": "explicit"
@@ -520,8 +520,8 @@
       "upstream_url": "${COINCOIN_GATEWAY_BASE_URL}/v1",
       "api_key": "${COINCOIN_GATEWAY_API_KEY}",
       "auth_style": "${COINCOIN_GATEWAY_AUTH_STYLE:-bearer}",
-      "price_input_per_million": "${COINCOIN_VERTEX_FLASH_INPUT_PRICE:-0}",
-      "price_output_per_million": "${COINCOIN_VERTEX_FLASH_OUTPUT_PRICE:-0}",
+      "price_input_per_million": "${COINCOIN_VERTEX_FLASH_INPUT_PRICE:-30}",
+      "price_output_per_million": "${COINCOIN_VERTEX_FLASH_OUTPUT_PRICE:-250}",
       "billable_sku": "vertex-gemini-2.5-flash-text",
       "metadata": {
         "tier": "explicit"
@@ -540,8 +540,8 @@
       "upstream_url": "${COINCOIN_GATEWAY_BASE_URL}/v1",
       "api_key": "${COINCOIN_GATEWAY_API_KEY}",
       "auth_style": "${COINCOIN_GATEWAY_AUTH_STYLE:-bearer}",
-      "price_input_per_million": "${COINCOIN_VERTEX_PRO_INPUT_PRICE:-0}",
-      "price_output_per_million": "${COINCOIN_VERTEX_PRO_OUTPUT_PRICE:-0}",
+      "price_input_per_million": "${COINCOIN_VERTEX_PRO_INPUT_PRICE:-125}",
+      "price_output_per_million": "${COINCOIN_VERTEX_PRO_OUTPUT_PRICE:-1000}",
       "billable_sku": "vertex-gemini-2.5-pro-text",
       "metadata": {
         "tier": "explicit"
@@ -560,8 +560,8 @@
       "upstream_url": "${COINCOIN_GATEWAY_BASE_URL}/v1",
       "api_key": "${COINCOIN_GATEWAY_API_KEY}",
       "auth_style": "${COINCOIN_GATEWAY_AUTH_STYLE:-bearer}",
-      "price_input_per_million": "${COINCOIN_VERTEX_31_FLASH_LITE_INPUT_PRICE:-0}",
-      "price_output_per_million": "${COINCOIN_VERTEX_31_FLASH_LITE_OUTPUT_PRICE:-0}",
+      "price_input_per_million": "${COINCOIN_VERTEX_31_FLASH_LITE_INPUT_PRICE:-10}",
+      "price_output_per_million": "${COINCOIN_VERTEX_31_FLASH_LITE_OUTPUT_PRICE:-40}",
       "billable_sku": "vertex-gemini-3.1-flash-lite-preview-text",
       "metadata": {
         "tier": "preview"
@@ -580,8 +580,8 @@
       "upstream_url": "${COINCOIN_GATEWAY_BASE_URL}/v1",
       "api_key": "${COINCOIN_GATEWAY_API_KEY}",
       "auth_style": "${COINCOIN_GATEWAY_AUTH_STYLE:-bearer}",
-      "price_input_per_million": "${COINCOIN_VERTEX_3_FLASH_INPUT_PRICE:-0}",
-      "price_output_per_million": "${COINCOIN_VERTEX_3_FLASH_OUTPUT_PRICE:-0}",
+      "price_input_per_million": "${COINCOIN_VERTEX_3_FLASH_INPUT_PRICE:-50}",
+      "price_output_per_million": "${COINCOIN_VERTEX_3_FLASH_OUTPUT_PRICE:-300}",
       "billable_sku": "vertex-gemini-3-flash-preview-text",
       "metadata": {
         "tier": "preview"
@@ -600,8 +600,8 @@
       "upstream_url": "${COINCOIN_GATEWAY_BASE_URL}/v1",
       "api_key": "${COINCOIN_GATEWAY_API_KEY}",
       "auth_style": "${COINCOIN_GATEWAY_AUTH_STYLE:-bearer}",
-      "price_input_per_million": "${COINCOIN_VERTEX_31_PRO_INPUT_PRICE:-0}",
-      "price_output_per_million": "${COINCOIN_VERTEX_31_PRO_OUTPUT_PRICE:-0}",
+      "price_input_per_million": "${COINCOIN_VERTEX_31_PRO_INPUT_PRICE:-125}",
+      "price_output_per_million": "${COINCOIN_VERTEX_31_PRO_OUTPUT_PRICE:-1000}",
       "billable_sku": "vertex-gemini-3.1-pro-preview-text",
       "metadata": {
         "tier": "preview"
@@ -620,7 +620,7 @@
       "upstream_url": "${COINCOIN_GATEWAY_BASE_URL}/v1",
       "api_key": "${COINCOIN_GATEWAY_API_KEY}",
       "auth_style": "${COINCOIN_GATEWAY_AUTH_STYLE:-bearer}",
-      "price_per_image_cents": "${COINCOIN_GEMINI_IMAGE_PRICE:-0}",
+      "price_per_image_cents": "${COINCOIN_GEMINI_IMAGE_PRICE:-3.9}",
       "billable_sku": "gemini-image"
     },
     {
@@ -636,7 +636,7 @@
       "upstream_url": "${COINCOIN_GATEWAY_BASE_URL}/v1",
       "api_key": "${COINCOIN_GATEWAY_API_KEY}",
       "auth_style": "${COINCOIN_GATEWAY_AUTH_STYLE:-bearer}",
-      "price_per_image_cents": "${COINCOIN_VERTEX_FLASH_IMAGE_PRICE:-0}",
+      "price_per_image_cents": "${COINCOIN_VERTEX_FLASH_IMAGE_PRICE:-3.9}",
       "billable_sku": "vertex-gemini-2.5-flash-image"
     },
     {
@@ -652,7 +652,7 @@
       "upstream_url": "${COINCOIN_GATEWAY_BASE_URL}/v1",
       "api_key": "${COINCOIN_GATEWAY_API_KEY}",
       "auth_style": "${COINCOIN_GATEWAY_AUTH_STYLE:-bearer}",
-      "price_per_image_cents": "${COINCOIN_VERTEX_31_FLASH_IMAGE_PRICE:-0}",
+      "price_per_image_cents": "${COINCOIN_VERTEX_31_FLASH_IMAGE_PRICE:-3.9}",
       "billable_sku": "vertex-gemini-3.1-flash-image-preview"
     }
   ]

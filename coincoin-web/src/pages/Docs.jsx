@@ -190,13 +190,13 @@ function AudienceGuide() {
             title: 'OpenCode',
             tag: '已实测',
             desc: '本地 coding agent 工作流，已验证基础可用。',
-            bullets: ['先看 OpenCode quickstart', '默认用 gpt-5.3-codex', '需要更快时再试 gemini-fast']
+            bullets: ['先看 OpenCode quickstart', '默认用 opus', '需要更快时再试 sonnet']
         },
         {
             title: 'Continue / Aider',
             tag: '常见客户端',
             desc: '只要支持 OpenAI-compatible 配置，基本都能按这套接。',
-            bullets: ['填 Base URL + API Key + model', '默认用 gpt-5.3-codex 或 gemini-fast', '接不上时先排查 key 类型']
+            bullets: ['填 Base URL + API Key + model', '默认用 opus 或 sonnet', '接不上时先排查 key 类型']
         },
         {
             title: 'Claude Code',
@@ -240,7 +240,7 @@ function AudienceGuide() {
 }
 
 function QuickStart({ primaryTextModel, primaryImageModel }) {
-    const textModelId = primaryTextModel?.id || 'gpt-5.2-codex'
+    const textModelId = primaryTextModel?.id || 'opus'
     const imageModelId = primaryImageModel?.id || 'gemini-image'
     const quickstartSteps = [
         {
@@ -331,7 +331,7 @@ CLAWFATHER_OPENAI_API_KEY="sk_cc_xxxxx" codex`}</pre>
 
             <div className="doc-callout">
                 <strong>模型切换规则</strong>
-                <p>平时只改请求里的 <code>model</code>。老客户端如果不传 <code>model</code>，仍然会默认走兼容 GPT 文本模型。</p>
+                <p>平时只改请求里的 <code>model</code>。老客户端如果不传 <code>model</code>，仍然会默认走兼容文本模型。</p>
             </div>
 
             <h3>第一次接入最短排查顺序</h3>
@@ -386,7 +386,7 @@ CLAWFATHER_OPENAI_API_KEY="sk_cc_xxxxx" codex`}</pre>
                         <td>OpenCode</td>
                         <td><span className="badge badge-success">已实测支持</span></td>
                         <td><code>/v1 + 自定义 provider</code></td>
-                        <td>已实测通过 <code>opencode run</code>、模型发现和基础文件读取。默认推荐 <code>clawfather/gpt-5.3-codex</code>。</td>
+                        <td>已实测通过 <code>opencode run</code>、模型发现和基础文件读取。默认推荐 <code>clawfather/opus</code>。</td>
                     </tr>
                     <tr>
                         <td>OpenClaw</td>
@@ -401,7 +401,7 @@ CLAWFATHER_OPENAI_API_KEY="sk_cc_xxxxx" codex`}</pre>
                         <td>只要能自定义 <code>base_url</code>、<code>api_key</code> 和 <code>model</code>，就按通用接法接。</td>
                     </tr>
                     <tr>
-                        <td>Gemini CLI</td>
+                        <td>Google Gemini CLI</td>
                         <td><span className="badge badge-warning">暂缓</span></td>
                         <td><code>不建议直连 ClawFather</code></td>
                         <td>它仍偏 Google 原生协议面，当前不建议直接接到公共入口。</td>
@@ -411,10 +411,10 @@ CLAWFATHER_OPENAI_API_KEY="sk_cc_xxxxx" codex`}</pre>
 
             <h3>切换模型时你要改什么？</h3>
             <ul className="doc-list">
-                <li>只需要把请求或客户端配置中的 <code>model</code> 改成公开 alias，例如 <code>gemini-fast</code>、<code>gemini-reasoning</code>、<code>gemini-image</code>。</li>
+                <li>只需要把请求或客户端配置中的 <code>model</code> 改成公开 alias，例如 <code>opus</code>、<code>sonnet</code>、<code>haiku</code>、<code>gemini-image</code>。</li>
                 <li>Base URL 和 API Key 不需要改，仍然走同一个 ClawFather 入口。</li>
                 <li>文本请求推荐走 <code>/v1/chat/completions</code> 或 <code>/v1/responses</code>，图片请求走 <code>/v1/images/generations</code> 或 <code>/v1/images/edits</code>，并使用 <code>{imageModelId}</code> 这类图片 alias。</li>
-                <li>Gemini 图片请求当前统一由 ClawFather 控制面直连 Vertex 处理，而不是让终端用户直连内部 gateway。</li>
+                <li>图片请求统一走 ClawFather 公开入口，不需要终端用户配置额外服务。</li>
             </ul>
         </div>
     )
@@ -476,7 +476,7 @@ function ModelsAndPricing({ textModels, imageModels }) {
             <ul className="doc-list">
                 <li>文本模型按 Input / Cached Input / Output Token 计费；图片模型按图片张数计费。</li>
                 <li>Cached input 使用模型目录返回的单独缓存输入价格计费，不要按普通 Input 价格估算。</li>
-                <li>同一个账户余额同时覆盖 GPT 文本、Gemini 文本和 Gemini 生图，不需要分开充值。</li>
+                <li>同一个账户余额同时覆盖文本模型和图片模型，不需要分开充值。</li>
                 <li>老客户端不传 <code>model</code> 时，仍然走默认文本 alias，以保证兼容。</li>
             </ul>
             <div className="doc-callout">
@@ -488,7 +488,7 @@ function ModelsAndPricing({ textModels, imageModels }) {
 }
 
 function ApiReference({ primaryTextModel, primaryImageModel }) {
-    const textModelId = primaryTextModel?.id || 'gpt-5.2-codex'
+    const textModelId = primaryTextModel?.id || 'opus'
     const imageModelId = primaryImageModel?.id || 'gemini-image'
 
     return (
@@ -619,18 +619,18 @@ function ApiReference({ primaryTextModel, primaryImageModel }) {
   -H "Authorization: Bearer sk_cc_xxxxx"`}</pre>
 
             <ul className="doc-list">
-                <li>当前 Gemini 图生图分为两条公开契约：<code>1-2</code> 张输入图继续走同步 <code>/v1/images/edits</code>，<code>3-8</code> 张输入图改走异步 <code>/v1/image-jobs/edits</code>。</li>
+                <li>当前图片编辑分为两条公开契约：<code>1-2</code> 张输入图继续走同步 <code>/v1/images/edits</code>，<code>3-8</code> 张输入图改走异步 <code>/v1/image-jobs/edits</code>。</li>
                 <li>如果你把 <code>3+</code> 张输入图直接发到 <code>/v1/images/edits</code>，接口会明确返回 <code>image_job_required</code>，而不是随机超时。</li>
-                <li>Gemini 图片当前输出候选数只支持 <code>n=1</code>。</li>
-                <li>当前 Gemini 图生图不支持 <code>mask</code> 上传；如果传了掩码，会返回 <code>mask_not_supported</code>。</li>
-                <li>如果平台运营侧没有配置好 Vertex 图片变量，Gemini 图片请求会返回配置错误，而不是偷偷回退到别的模型。</li>
+                <li>图片模型当前输出候选数只支持 <code>n=1</code>。</li>
+                <li>当前图片编辑不支持 <code>mask</code> 上传；如果传了掩码，会返回 <code>mask_not_supported</code>。</li>
+                <li>如果平台侧图片运行时暂不可用，图片请求会返回配置错误，而不是偷偷回退到别的模型。</li>
             </ul>
 
             <h3>默认兼容规则</h3>
             <ul className="doc-list">
-                <li>如果文本请求里省略 <code>model</code>，ClawFather 会保持默认 GPT 文本模型的兼容行为。</li>
+                <li>如果文本请求里省略 <code>model</code>，ClawFather 会保持默认文本模型的兼容行为。</li>
                 <li>如果图片请求里省略 <code>model</code>，ClawFather 会自动选择默认图片 alias。</li>
-                <li>显式指定 Gemini alias 后，如果该模型请求失败，不会偷偷回退到 GPT。</li>
+                <li>显式指定某个模型 alias 后，如果该模型请求失败，不会偷偷回退到另一个模型。</li>
             </ul>
 
             <h3>错误码</h3>
@@ -640,14 +640,14 @@ function ApiReference({ primaryTextModel, primaryImageModel }) {
                 </thead>
                 <tbody>
                     <tr><td>400</td><td>模型或参数错误</td><td>例如模型不存在、模型不支持该端点</td></tr>
-                    <tr><td>400</td><td><code>image_candidate_count_not_supported</code></td><td>Gemini 图片当前只支持 <code>n=1</code></td></tr>
+                    <tr><td>400</td><td><code>image_candidate_count_not_supported</code></td><td>图片模型当前只支持 <code>n=1</code></td></tr>
                     <tr><td>400</td><td><code>image_job_required</code></td><td>同步图生图请求里传了 <code>3+</code> 张输入图，请改用 <code>/v1/image-jobs/edits</code></td></tr>
-                    <tr><td>400</td><td><code>mask_not_supported</code></td><td>当前 Gemini 图片编辑不支持 <code>mask</code> 上传</td></tr>
+                    <tr><td>400</td><td><code>mask_not_supported</code></td><td>当前图片编辑不支持 <code>mask</code> 上传</td></tr>
                     <tr><td>401</td><td>认证失败</td><td>API Key 缺失或无效</td></tr>
                     <tr><td>402</td><td>余额不足</td><td>请充值后重试</td></tr>
                     <tr><td>403</td><td>禁止访问</td><td>Key 被禁用、用户被封禁，或使用了 session key 访问 API</td></tr>
                     <tr><td>429</td><td>请求过多</td><td>超出速率或额度限制</td></tr>
-                    <tr><td>503</td><td>平台未配置 Gemini 图片运行时</td><td>例如 <code>vertex_image_generation_not_configured</code>、<code>vertex_image_edit_not_configured</code></td></tr>
+                    <tr><td>503</td><td>平台图片运行时暂不可用</td><td>请稍后重试或联系支持。</td></tr>
                 </tbody>
             </table>
 
@@ -660,7 +660,7 @@ function ApiReference({ primaryTextModel, primaryImageModel }) {
 }
 
 function CodeExamples({ primaryTextModel, primaryImageModel }) {
-    const textModelId = primaryTextModel?.id || 'gpt-5.2-codex'
+    const textModelId = primaryTextModel?.id || 'opus'
     const imageModelId = primaryImageModel?.id || 'gemini-image'
 
     return (
@@ -784,10 +784,10 @@ claude --model claude-opus-4-7`}</pre>
                 <li>第一次接入建议先用文本模型跑通，再去试图片模型、工具调用或流式输出。</li>
             </ul>
 
-            <h3>什么时候还要看 Vertex 官方文档？</h3>
+            <h3>什么时候还要看模型官方文档？</h3>
             <ul className="doc-list">
-                <li>Gemini 系列模型的能力边界仍以 Vertex 官方文档为准。</li>
-                <li>当你遇到 function calling、参数支持或模型生命周期问题时，先查 Vertex 官方文档，再看 ClawFather 文档。</li>
+                <li>模型能力、参数支持和生命周期仍以对应模型官方文档为准。</li>
+                <li>当你遇到 function calling、图片参数或模型生命周期问题时，先查模型官方文档，再看 ClawFather 文档。</li>
                 <li>简化理解：客户端只接 ClawFather，模型能力边界看对应官方文档。</li>
             </ul>
         </div>
