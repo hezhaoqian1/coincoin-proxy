@@ -477,6 +477,9 @@ export default function Dashboard() {
     const [chartMode, setChartMode] = useState('cost')
     const [referral, setReferral] = useState(null)
     const [refCopied, setRefCopied] = useState(false)
+    const [signupBonusMessage, setSignupBonusMessage] = useState(() => {
+        try { return localStorage.getItem('coincoin_signup_bonus_message') || '' } catch { return '' }
+    })
     const [stationState, setStationState] = useState(null)
     const { confirmResult: orderConfirmed, dismiss: dismissOrder } = useOrderConfirm()
 
@@ -534,6 +537,11 @@ export default function Dashboard() {
         const next = [...dismissedAnns, id]
         setDismissedAnns(next)
         localStorage.setItem('coincoin_dismissed_anns', JSON.stringify(next))
+    }
+
+    const dismissSignupBonus = () => {
+        setSignupBonusMessage('')
+        try { localStorage.removeItem('coincoin_signup_bonus_message') } catch { /* ignore */ }
     }
 
     if (!balance) {
@@ -657,6 +665,13 @@ export default function Dashboard() {
                     <div className="low-balance-banner animate-fade-in" style={{ background: 'rgba(16,185,129,0.1)', borderColor: 'rgba(16,185,129,0.3)', color: 'var(--accent-emerald)' }}>
                         <span>&#10003; 充值已到账。+${(orderConfirmed.added_cents / 100).toFixed(2)}，当前余额 ${orderConfirmed.new_balance_usd?.toFixed(2)}</span>
                         <button className="btn btn-sm btn-secondary" onClick={dismissOrder}>知道了</button>
+                    </div>
+                )}
+
+                {signupBonusMessage && (
+                    <div className="low-balance-banner animate-fade-in" style={{ background: 'rgba(16,185,129,0.1)', borderColor: 'rgba(16,185,129,0.3)', color: 'var(--accent-emerald)' }}>
+                        <span>&#10003; {signupBonusMessage}</span>
+                        <button className="btn btn-sm btn-secondary" onClick={dismissSignupBonus}>知道了</button>
                     </div>
                 )}
 
@@ -807,9 +822,9 @@ export default function Dashboard() {
                 {/* Referral */}
                 {referral && (
                     <div className="referral-card glass-card animate-fade-in-up" style={{ animationDelay: '275ms' }}>
-                        <h3>邀请返佣</h3>
+                        <h3>邀请朋友一起用 CoinCoin</h3>
                         <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: 'var(--space-md)' }}>
-                            好友前 {referral.max_rewards_per_user || 3} 次充值，你拿 <strong style={{ color: 'var(--accent-emerald)' }}>{Math.round(referral.commission_rate * 100)}%</strong> 佣金；好友首充额外得 <strong style={{ color: 'var(--accent-emerald)' }}>${referral.new_user_bonus_usd || 3}</strong>。
+                            朋友用你的链接注册，立刻得 $10 API 额度，你得 $5。朋友开始调用 API 后，你再得 $5。
                         </p>
                         <div className="referral-stats">
                             <div className="referral-stat">
@@ -818,7 +833,11 @@ export default function Dashboard() {
                             </div>
                             <div className="referral-stat">
                                 <span className="stat-num" style={{ color: 'var(--accent-emerald)' }}>${referral.total_reward_usd.toFixed(2)}</span>
-                                <span className="stat-label">累计佣金</span>
+                                <span className="stat-label">你已获得</span>
+                            </div>
+                            <div className="referral-stat">
+                                <span className="stat-num" style={{ color: 'var(--accent-emerald)' }}>${(referral.friend_reward_usd || 0).toFixed(2)}</span>
+                                <span className="stat-label">朋友已获得</span>
                             </div>
                         </div>
                         <div className="referral-code-row">
@@ -836,6 +855,11 @@ export default function Dashboard() {
                             >
                                 {refCopied ? '已复制' : '复制邀请链接'}
                             </button>
+                            <Link to="/referrals" className="btn btn-secondary btn-sm">查看邀请记录</Link>
+                        </div>
+                        <div className="referral-community-note">
+                            <span>微信群额外福利：进群后联系管理员领取 $30 API 额度。</span>
+                            <Link to="/referrals">去扫码</Link>
                         </div>
                     </div>
                 )}

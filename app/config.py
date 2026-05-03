@@ -103,10 +103,13 @@ class Settings(BaseSettings):
     email_max_attempts: int = 5
 
     # Referral system
-    referral_commission_rate: float = 0.05  # 5%
-    referral_max_rewards_per_user: int = 3  # only first 3 orders from each referred user
-    referral_reward_cap_cents: int = 5000  # max $50 cumulative per referred user
-    referral_new_user_bonus_cents: int = 300  # $3 bonus for referred user on first purchase
+    referral_commission_rate: float = 0.20  # 20% of credited API balance
+    referral_max_rewards_per_user: int = 0  # 0 = no per-referred-user order count cap
+    referral_reward_cap_cents: int = 0  # 0 = no cumulative cap per referred user
+    referral_signup_bonus_cents: int = 1000  # $10 for the invited user after verified registration
+    referral_signup_referrer_bonus_cents: int = 500  # $5 for the referrer after verified registration
+    referral_first_usage_referrer_bonus_cents: int = 500  # $5 after the invited user first calls the API
+    referral_new_user_bonus_cents: int = 2000  # $20 for the invited user after first purchase
 
     # Station center
     station_default_commission_rate: float = 0.15

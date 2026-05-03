@@ -816,6 +816,8 @@ async def list_referral_rewards(
             "referrer_id": r.referrer_id,
             "referrer_username": u.username,
             "referred_id": r.referred_id,
+            "recipient_id": getattr(r, "recipient_id", None) or r.referrer_id,
+            "reward_type": getattr(r, "reward_type", None) or "purchase_commission",
             "order_no": r.order_no,
             "order_amount_cents": r.order_amount_cents,
             "reward_cents": r.reward_cents,

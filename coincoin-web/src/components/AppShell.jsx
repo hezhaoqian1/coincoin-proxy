@@ -101,6 +101,15 @@ function ShellIcon({ kind }) {
                     <path d="M10 19v-5h4v5" />
                 </svg>
             )
+        case 'invite':
+            return (
+                <svg {...common}>
+                    <path d="M16 5.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                    <path d="M8 19a5 5 0 0 1 10 0" />
+                    <path d="M5.5 9.5v5" />
+                    <path d="M3 12h5" />
+                </svg>
+            )
         case 'logout':
             return (
                 <svg {...common}>
@@ -198,6 +207,7 @@ export default function AppShell({ title, description, actions, children }) {
                     { to: '/recharge?section=recharge', pathname: '/recharge', search: { section: 'recharge' }, label: '充值', caption: '套餐与支付', icon: 'billing' },
                     { to: '/recharge?section=orders', pathname: '/recharge', search: { section: 'orders' }, label: '我的订单', caption: '最近订单与到账状态', icon: 'order' },
                     { to: '/recharge?section=redeem', pathname: '/recharge', search: { section: 'redeem' }, label: '兑换', caption: '兑换码入账', icon: 'redeem' },
+                    { to: '/referrals', pathname: '/referrals', label: '邀请朋友', caption: '邀请记录与额度奖励', icon: 'invite' },
                 ],
             },
             {
