@@ -174,6 +174,7 @@ async def get_usage(
     api_key_id: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    end_exclusive: bool = False,
 ):
     try:
         cached_user = await authenticate_user(request, db)
@@ -202,9 +203,9 @@ async def get_usage(
         if start_bound is not None:
             conditions.append(RequestLog.created_at >= start_bound)
     if end_date:
-        end_bound, end_exclusive = _parse_usage_datetime_filter(end_date, is_end=True)
+        end_bound, parsed_end_exclusive = _parse_usage_datetime_filter(end_date, is_end=True)
         if end_bound is not None:
-            if end_exclusive:
+            if end_exclusive or parsed_end_exclusive:
                 conditions.append(RequestLog.created_at < end_bound)
             else:
                 conditions.append(RequestLog.created_at <= end_bound)

@@ -314,6 +314,31 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(datetime(2026, 5, 2, 16, 0), params)
         self.assertIn(datetime(2026, 5, 3, 16, 0), params)
 
+    async def test_usage_iso_end_filter_can_be_exclusive(self) -> None:
+        user = SimpleNamespace(id="u_1")
+        fake_db = _FakeDB(
+            execute_results=[
+                _FakeScalarResult(0),
+                _FakeSummaryResult((0, 0, 0, 0, 0, 0)),
+                _FakeScalarsResult([]),
+            ]
+        )
+
+        with patch.object(openai_module, "authenticate_user", AsyncMock(return_value=user)):
+            await openai_module.get_usage(
+                SimpleNamespace(),
+                fake_db,
+                start_date="2026-05-02T16:00:00.000Z",
+                end_date="2026-05-03T16:00:00.000Z",
+                end_exclusive=True,
+            )
+
+        compiled = fake_db.queries[0].compile()
+        self.assertIn("created_at < ", str(compiled))
+        params = list(compiled.params.values())
+        self.assertIn(datetime(2026, 5, 2, 16, 0), params)
+        self.assertIn(datetime(2026, 5, 3, 16, 0), params)
+
     async def test_summary_metrics_expose_images_today(self) -> None:
         fake_db = _FakeDB(scalar_results=[12, 10, 987654, 45, 6, 999, 321])
 

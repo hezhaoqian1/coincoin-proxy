@@ -2,12 +2,29 @@ import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { MOCK_USAGE, getApiKey, listDeveloperKeys } from '../api/client'
 import AppShell from '../components/AppShell'
-import { formatChinaTime } from '../utils/time'
+import { formatLocalTime, getLocalDateRangeIso } from '../utils/time'
 import './Usage.css'
 
 function formatCacheHitRate(cachedTokens, inputTokens) {
     if (!inputTokens) return '0%'
     return `${((cachedTokens / inputTokens) * 100).toFixed(1)}%`
+}
+
+function buildUsageFilterParams(filters) {
+    const params = new URLSearchParams()
+    if (filters.endpoint) params.set('endpoint', filters.endpoint)
+    if (filters.status_code) params.set('status_code', filters.status_code)
+    if (filters.api_key_id) params.set('api_key_id', filters.api_key_id)
+
+    const startRange = filters.start_date ? getLocalDateRangeIso(filters.start_date) : null
+    const endRange = filters.end_date ? getLocalDateRangeIso(filters.end_date) : null
+    if (startRange) params.set('start_date', startRange.start)
+    if (endRange) {
+        params.set('end_date', endRange.end)
+        params.set('end_exclusive', 'true')
+    }
+
+    return params
 }
 
 export default function Usage() {
@@ -27,11 +44,7 @@ export default function Usage() {
     const load = useCallback(async () => {
         try {
             const params = new URLSearchParams({ limit, offset: page * limit })
-            if (filters.endpoint) params.set('endpoint', filters.endpoint)
-            if (filters.status_code) params.set('status_code', filters.status_code)
-            if (filters.api_key_id) params.set('api_key_id', filters.api_key_id)
-            if (filters.start_date) params.set('start_date', filters.start_date)
-            if (filters.end_date) params.set('end_date', filters.end_date)
+            buildUsageFilterParams(filters).forEach((value, key) => params.set(key, value))
 
             const res = await fetch(`/v1/usage?${params}`, {
                 headers: { 'Authorization': `Bearer ${getApiKey()}` }
@@ -227,7 +240,7 @@ export default function Usage() {
                             <tbody>
                                 {usage.data.map((log, i) => (
                                     <tr key={i}>
-                                        <td>{formatChinaTime(log.created_at)}</td>
+                                        <td>{formatLocalTime(log.created_at)}</td>
                                         <td><code className="endpoint-tag">{log.endpoint}</code></td>
                                         <td><span className="model-tag-sm">{log.model}</span></td>
                                         <td>

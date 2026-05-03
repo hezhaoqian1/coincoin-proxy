@@ -9,12 +9,12 @@ import {
     updateDeveloperKey,
 } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
-import { formatChinaTime } from '../utils/time'
+import { formatLocalTime } from '../utils/time'
 import './ApiKeys.css'
 
 function formatDate(value) {
     if (!value) return '未使用'
-    return formatChinaTime(value)
+    return formatLocalTime(value)
 }
 
 function KeyStatusPill({ status }) {
