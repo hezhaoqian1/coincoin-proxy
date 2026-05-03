@@ -63,7 +63,7 @@ function ReadinessCard({ authMode, username, hasDeveloperKey }) {
     const content = contentMap[authMode] || contentMap.api
 
     return (
-        <div className={`readiness-card glass-card readiness-${content.tone} animate-fade-in-up`}>
+        <div className={`readiness-card readiness-${content.tone}`}>
             <div className="readiness-copy">
                 <span className="readiness-eyebrow">{content.eyebrow}</span>
                 <h2>{content.title}</h2>
@@ -133,7 +133,7 @@ function KeyManagement({ copied, copy, username, generatedApiKey, hasLocalDevelo
         : ''
 
     return (
-        <div id="developer-key" className="quick-actions glass-card key-management-card animate-fade-in-up" style={{ animationDelay: '200ms' }}>
+        <div id="developer-key" className="key-management-card">
             <h3>开发者 Key</h3>
             {!username ? (
                 <div className="key-panel-copy">
@@ -235,6 +235,19 @@ function KeyManagement({ copied, copy, username, generatedApiKey, hasLocalDevelo
                     {genError && <p style={{ color: 'var(--accent-rose)', fontSize: '0.85rem', marginTop: 'var(--space-sm)' }}>{genError}</p>}
                 </div>
             )}
+        </div>
+    )
+}
+
+function DeveloperAccessPanel(props) {
+    return (
+        <div className="developer-access-panel glass-card animate-fade-in-up">
+            <ReadinessCard
+                authMode={props.authMode}
+                username={props.username}
+                hasDeveloperKey={props.hasDeveloperKey}
+            />
+            <KeyManagement {...props} />
         </div>
     )
 }
@@ -627,21 +640,18 @@ export default function Dashboard() {
                     </div>
                 </div>
 
-                <div className="developer-setup-grid">
-                    <ReadinessCard authMode={authMode} username={username} hasDeveloperKey={hasDeveloperKey} />
-
-                    <KeyManagement
-                        copied={copied}
-                        copy={copy}
-                        username={username}
-                        generatedApiKey={generatedApiKey}
-                        hasLocalDeveloperKey={hasLocalDeveloperKey}
-                        latestDeveloperKey={latestDeveloperKey}
-                        activeDeveloperKeyCount={activeDeveloperKeyCount}
-                        authMode={authMode}
-                        effectiveApiKey={effectiveApiKey}
-                    />
-                </div>
+                <DeveloperAccessPanel
+                    copied={copied}
+                    copy={copy}
+                    username={username}
+                    generatedApiKey={generatedApiKey}
+                    hasLocalDeveloperKey={hasLocalDeveloperKey}
+                    latestDeveloperKey={latestDeveloperKey}
+                    activeDeveloperKeyCount={activeDeveloperKeyCount}
+                    authMode={authMode}
+                    effectiveApiKey={effectiveApiKey}
+                    hasDeveloperKey={hasDeveloperKey}
+                />
 
                 {/* Trend Chart */}
                 {chartData && (
