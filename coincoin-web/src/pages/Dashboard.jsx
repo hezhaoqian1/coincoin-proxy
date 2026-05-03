@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { Line } from 'react-chartjs-2'
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler } from 'chart.js'
-import { MOCK_BALANCE, MOCK_USAGE, getBalance, getUsageLogs, getAnnouncements, activateKey, getReferralInfo, getStationApplication, applyForStation, setGeneratedKey as storeGeneratedKey } from '../api/client'
+import { MOCK_BALANCE, MOCK_USAGE, getBalance, getUsageLogs, getAnnouncements, activateKey, getStationApplication, applyForStation, setGeneratedKey as storeGeneratedKey } from '../api/client'
 import useOrderConfirm from '../hooks/useOrderConfirm'
 import { useAuth } from '../hooks/useAuth'
 import { usePublicModels } from '../hooks/usePublicModels'
@@ -475,8 +475,6 @@ export default function Dashboard() {
     })
     const [copied, setCopied] = useState('')
     const [chartMode, setChartMode] = useState('cost')
-    const [referral, setReferral] = useState(null)
-    const [refCopied, setRefCopied] = useState(false)
     const [signupBonusMessage, setSignupBonusMessage] = useState(() => {
         try { return localStorage.getItem('coincoin_signup_bonus_message') || '' } catch { return '' }
     })
@@ -513,7 +511,6 @@ export default function Dashboard() {
             }
             try { setDailyData(await getLocalDailyUsage(7)) } catch { /* ignore */ }
             try { setAnnouncements(await getAnnouncements()) } catch { /* ignore */ }
-            try { setReferral(await getReferralInfo()) } catch { /* ignore */ }
             try { setStationState(await getStationApplication()) } catch { /* ignore */ }
         }
         load()
@@ -818,51 +815,6 @@ export default function Dashboard() {
                         </a>
                     </div>
                 </div>
-
-                {/* Referral */}
-                {referral && (
-                    <div className="referral-card glass-card animate-fade-in-up" style={{ animationDelay: '275ms' }}>
-                        <h3>邀请朋友一起用 CoinCoin</h3>
-                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: 'var(--space-md)' }}>
-                            朋友用你的链接注册，立刻得 $10 API 额度，你得 $5。朋友开始调用 API 后，你再得 $5。
-                        </p>
-                        <div className="referral-stats">
-                            <div className="referral-stat">
-                                <span className="stat-num">{referral.invited_count}</span>
-                                <span className="stat-label">邀请人数</span>
-                            </div>
-                            <div className="referral-stat">
-                                <span className="stat-num" style={{ color: 'var(--accent-emerald)' }}>${referral.total_reward_usd.toFixed(2)}</span>
-                                <span className="stat-label">你已获得</span>
-                            </div>
-                            <div className="referral-stat">
-                                <span className="stat-num" style={{ color: 'var(--accent-emerald)' }}>${(referral.friend_reward_usd || 0).toFixed(2)}</span>
-                                <span className="stat-label">朋友已获得</span>
-                            </div>
-                        </div>
-                        <div className="referral-code-row">
-                            <div className="referral-code-display">
-                                <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>你的邀请码</span>
-                                <code style={{ fontSize: '1.2rem', letterSpacing: '0.15em', fontWeight: 700 }}>{referral.referral_code}</code>
-                            </div>
-                            <button
-                                className="btn btn-primary btn-sm"
-                                onClick={() => {
-                                    navigator.clipboard.writeText(`${window.location.origin}/register?ref=${referral.referral_code}`)
-                                    setRefCopied(true)
-                                    setTimeout(() => setRefCopied(false), 2000)
-                                }}
-                            >
-                                {refCopied ? '已复制' : '复制邀请链接'}
-                            </button>
-                            <Link to="/referrals" className="btn btn-secondary btn-sm">查看邀请记录</Link>
-                        </div>
-                        <div className="referral-community-note">
-                            <span>微信群额外福利：进群后联系管理员领取 $30 API 额度。</span>
-                            <Link to="/referrals">去扫码</Link>
-                        </div>
-                    </div>
-                )}
 
                 <StationCard stationState={stationState} onSubmitted={reloadStationState} />
 

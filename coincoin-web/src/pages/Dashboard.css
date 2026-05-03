@@ -751,67 +751,6 @@
     height: 220px;
 }
 
-/* Referral Card */
-.referral-card h3 { margin-bottom: var(--space-xs); }
-
-.referral-stats {
-    display: flex;
-    gap: var(--space-xl);
-    margin-bottom: var(--space-lg);
-}
-
-.referral-stat {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-}
-
-.referral-stat .stat-num {
-    font-size: 1.5rem;
-    font-weight: 700;
-}
-
-.referral-stat .stat-label {
-    font-size: 0.75rem;
-    color: var(--text-tertiary);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-}
-
-.referral-code-row {
-    display: flex;
-    align-items: center;
-    gap: var(--space-md);
-    padding: var(--space-md);
-    background: var(--bg-glass);
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--border);
-}
-
-.referral-code-display {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    flex: 1;
-}
-
-.referral-community-note {
-    display: flex;
-    justify-content: space-between;
-    gap: var(--space-sm);
-    margin-top: var(--space-md);
-    padding: var(--space-sm) var(--space-md);
-    border-radius: var(--radius-sm);
-    background: rgba(16, 185, 129, 0.08);
-    color: var(--text-secondary);
-    font-size: 0.86rem;
-}
-
-.referral-community-note a {
-    color: var(--accent-emerald);
-    font-weight: 700;
-    white-space: nowrap;
-}
 
 @media (max-width: 768px) {
     .developer-access-panel {
@@ -867,17 +806,4 @@
         height: 180px;
     }
 
-    .referral-stats {
-        flex-direction: column;
-        gap: var(--space-md);
-    }
-
-    .referral-code-row {
-        flex-direction: column;
-        text-align: center;
-    }
-
-    .referral-community-note {
-        flex-direction: column;
-    }
 }
