@@ -4,9 +4,6 @@ import AppShell from '../components/AppShell'
 import { formatLocalTime } from '../utils/time'
 import './Referrals.css'
 
-const WECHAT_GROUP_QR = '/wechat-group-coincoin.jpg'
-const WECHAT_ID = 'birdsync'
-
 function money(value) {
     return `$${Number(value || 0).toFixed(2)}`
 }
@@ -187,19 +184,6 @@ export default function Referrals() {
                         <strong>{referral.pending_count || 0}</strong>
                         <small>还没走到持续奖励</small>
                     </div>
-                </section>
-
-                <section className="referrals-community glass-card">
-                    <div className="referrals-community-copy">
-                        <span className="referrals-kicker">微信群</span>
-                        <h2>进群再领 $30</h2>
-                        <p>扫码进 CoinCoin 微信群，进群后联系管理员领取额外 $30 API 额度。二维码过期时，加微信 {WECHAT_ID}。</p>
-                        <div className="referrals-wechat-id">
-                            <span>微信号</span>
-                            <button onClick={() => copyText(WECHAT_ID, 'wechat')}>{copied === 'wechat' ? '已复制' : WECHAT_ID}</button>
-                        </div>
-                    </div>
-                    <img className="referrals-qr" src={WECHAT_GROUP_QR} alt="CoinCoin 微信群二维码" />
                 </section>
 
                 <section className="referrals-records glass-card">

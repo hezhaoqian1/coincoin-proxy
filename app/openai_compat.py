@@ -528,6 +528,11 @@ async def list_announcements(db: AsyncSession = Depends(get_db)):
             "title": a.title,
             "content": a.content,
             "priority": a.priority,
+            "display_type": getattr(a, "display_type", "banner") or "banner",
+            "audience": getattr(a, "audience", "all") or "all",
+            "cta_label": getattr(a, "cta_label", "") or "",
+            "cta_value": getattr(a, "cta_value", "") or "",
+            "image_url": getattr(a, "image_url", "") or "",
             "created_at": a.created_at.isoformat() + "Z" if a.created_at else None,
         }
         for a in anns

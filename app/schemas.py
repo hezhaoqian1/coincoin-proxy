@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -175,11 +175,21 @@ class AnnouncementCreate(BaseModel):
     title: str
     content: str
     priority: str = Field(default="info", description="info / warning / critical")
+    display_type: Literal["banner", "modal"] = Field(default="banner", description="banner / modal")
+    audience: Literal["all", "signup"] = Field(default="all", description="all / signup")
+    cta_label: Optional[str] = None
+    cta_value: Optional[str] = None
+    image_url: Optional[str] = None
 
 class AnnouncementUpdate(BaseModel):
     title: Optional[str] = None
     content: Optional[str] = None
     priority: Optional[str] = None
+    display_type: Optional[Literal["banner", "modal"]] = None
+    audience: Optional[Literal["all", "signup"]] = None
+    cta_label: Optional[str] = None
+    cta_value: Optional[str] = None
+    image_url: Optional[str] = None
     status: Optional[str] = Field(default=None, description="active / archived")
 
 

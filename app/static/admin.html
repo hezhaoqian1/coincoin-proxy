@@ -1605,7 +1605,7 @@
         <div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start;">
           <div>
             <h1 class="page-title">公告管理</h1>
-            <p class="page-desc">管理面向用户展示的公告</p>
+            <p class="page-desc">管理面向用户展示的公告和弹窗</p>
           </div>
           <button class="btn btn-primary" onclick="openAnnouncementModal()">+ 新建公告</button>
         </div>
@@ -1620,6 +1620,7 @@
                 <thead>
                   <tr>
                     <th>标题</th>
+                    <th>类型</th>
                     <th>优先级</th>
                     <th>状态</th>
                     <th>创建时间</th>
@@ -1838,6 +1839,20 @@
           <label class="form-label">内容</label>
           <textarea id="annContent" class="form-input" rows="4" placeholder="请输入公告内容..." style="resize:vertical;min-height:100px"></textarea>
         </div>
+        <div class="form-group">
+          <label class="form-label">展示方式</label>
+          <select id="annDisplayType" class="form-select">
+            <option value="banner">顶部横幅</option>
+            <option value="modal">弹窗</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">展示人群</label>
+          <select id="annAudience" class="form-select">
+            <option value="all">所有用户</option>
+            <option value="signup">注册后显示</option>
+          </select>
+        </div>
         <div class="form-row">
           <div class="form-group">
             <label class="form-label">优先级</label>
@@ -1854,6 +1869,20 @@
               <option value="archived">已归档</option>
             </select>
           </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">按钮文案</label>
+            <input type="text" id="annCtaLabel" class="form-input" placeholder="例如：复制微信号" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">按钮复制内容</label>
+            <input type="text" id="annCtaValue" class="form-input" placeholder="例如：birdsync" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">图片地址</label>
+          <input type="text" id="annImageUrl" class="form-input" placeholder="例如 /wechat-group-coincoin.jpg" />
         </div>
       </div>
       <div class="modal-footer">
@@ -2625,14 +2654,17 @@
         const data = await r.json();
         const body = document.getElementById('announcementsBody');
         if (!data.length) {
-          body.innerHTML = '<tr><td colspan="5"><div class="empty-state"><div class="empty-state-icon">📢</div><h3>暂无公告</h3><p>创建一条公告通知用户吧</p></div></td></tr>';
+          body.innerHTML = '<tr><td colspan="6"><div class="empty-state"><div class="empty-state-icon">📢</div><h3>暂无公告</h3><p>创建一条公告通知用户吧</p></div></td></tr>';
           return;
         }
         body.innerHTML = data.map(a => {
           const priBadge = a.priority === 'critical' ? 'badge-error' : a.priority === 'warning' ? 'badge-warning' : 'badge-info';
           const stBadge = a.status === 'active' ? 'badge-success' : 'badge-error';
+          const displayType = a.display_type === 'modal' ? '弹窗' : '顶部横幅';
+          const typeBadge = a.display_type === 'modal' ? 'badge-warning' : 'badge-info';
           return `<tr>
-            <td><strong>${a.title}</strong><div class="text-sm text-muted" style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.content}</div></td>
+            <td><strong>${escapeHtml(a.title)}</strong><div class="text-sm text-muted" style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(a.content)}</div></td>
+            <td><span class="badge ${typeBadge}">${displayType}</span></td>
             <td><span class="badge ${priBadge}">${a.priority === 'critical' ? '紧急' : a.priority === 'warning' ? '提醒' : '普通'}</span></td>
             <td><span class="badge ${stBadge}">${a.status === 'active' ? '生效中' : '已归档'}</span></td>
             <td class="text-sm text-muted">${formatDateFull(a.created_at)}</td>
@@ -2652,6 +2684,11 @@
       document.getElementById('annTitle').value = editData ? editData.title : '';
       document.getElementById('annContent').value = editData ? editData.content : '';
       document.getElementById('annPriority').value = editData ? editData.priority : 'info';
+      document.getElementById('annDisplayType').value = editData ? (editData.display_type || 'banner') : 'banner';
+      document.getElementById('annAudience').value = editData ? (editData.audience || 'all') : 'all';
+      document.getElementById('annCtaLabel').value = editData ? (editData.cta_label || '') : '';
+      document.getElementById('annCtaValue').value = editData ? (editData.cta_value || '') : '';
+      document.getElementById('annImageUrl').value = editData ? (editData.image_url || '') : '';
       document.getElementById('annModalTitle').textContent = editData ? '编辑公告' : '新建公告';
       const sg = document.getElementById('annStatusGroup');
       if (editData) {
@@ -2679,12 +2716,17 @@
       const title = document.getElementById('annTitle').value.trim();
       const content = document.getElementById('annContent').value.trim();
       const priority = document.getElementById('annPriority').value;
+      const display_type = document.getElementById('annDisplayType').value;
+      const audience = document.getElementById('annAudience').value;
+      const cta_label = document.getElementById('annCtaLabel').value.trim();
+      const cta_value = document.getElementById('annCtaValue').value.trim();
+      const image_url = document.getElementById('annImageUrl').value.trim();
       if (!title) return toast('标题不能为空', 'error');
       if (!content) return toast('内容不能为空', 'error');
 
       try {
         if (editId) {
-          const payload = { title, content, priority, status: document.getElementById('annStatus').value };
+          const payload = { title, content, priority, display_type, audience, cta_label, cta_value, image_url, status: document.getElementById('annStatus').value };
           const r = await fetch(`/admin/announcements/${editId}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json', ...adminHeaders() },
@@ -2696,7 +2738,7 @@
           const r = await fetch('/admin/announcements', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...adminHeaders() },
-            body: JSON.stringify({ title, content, priority })
+            body: JSON.stringify({ title, content, priority, display_type, audience, cta_label, cta_value, image_url })
           });
           if (r.ok) { toast('创建成功', 'success'); closeModal('announcementModal'); loadAnnouncements(); }
           else toast('创建失败', 'error');
