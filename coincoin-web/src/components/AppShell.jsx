@@ -192,7 +192,7 @@ function MobileBottomNav({ location }) {
 }
 
 export default function AppShell({ title, description, actions, children }) {
-    const { authMode, hasDeveloperKey, hasLocalDeveloperKey, logout, username } = useAuth()
+    const { logout } = useAuth()
     const navigate = useNavigate()
     const location = useLocation()
     const [hasStation, setHasStation] = useState(false)
@@ -213,8 +213,6 @@ export default function AppShell({ title, description, actions, children }) {
         }
     }, [])
 
-    const accountLabel = authMode === 'api' ? '开发者 Key 会话' : (username || '控制台账号')
-    const accountSub = hasLocalDeveloperKey ? '可直接发请求' : hasDeveloperKey ? '已有 Key，但需重新生成明文' : '还没有开发者 Key'
     const navGroups = useMemo(() => {
         const groups = [
             {
@@ -273,16 +271,6 @@ export default function AppShell({ title, description, actions, children }) {
                             <span>中转站控制台</span>
                         </div>
                     </Link>
-
-                    <div className="app-sidebar-badge-row">
-                        <span className="app-sidebar-badge">OpenAI / Anthropic</span>
-                    </div>
-
-                    <div className="app-sidebar-session">
-                        <div className="app-sidebar-session-eyebrow">当前会话</div>
-                        <div className="app-sidebar-session-title">{accountLabel}</div>
-                        <div className="app-sidebar-session-sub">{accountSub}</div>
-                    </div>
                 </div>
 
                 <nav className="app-sidebar-nav">
