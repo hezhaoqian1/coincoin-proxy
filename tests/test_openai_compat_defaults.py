@@ -962,6 +962,50 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(upstream_client.calls[0]["json"]["stream"])
         self.assertEqual(upstream_client.calls[0]["json"]["tools"][0]["name"], "read_file")
 
+    async def test_chat_stream_waits_for_completed_usage_after_text_done(self) -> None:
+        settings.router_enabled = False
+        registry._initialized = False
+        registry.init_from_settings()
+        upstream_client = _RecordingStreamClient(
+            [
+                _FakeEventStreamResponse(
+                    [
+                        'data: {"type":"response.created","response":{"id":"resp_text_stream","status":"in_progress","model":"gpt-5.4","output":[]}}',
+                        'data: {"type":"response.output_text.delta","delta":"ok"}',
+                        'data: {"type":"response.output_text.done","text":"ok"}',
+                        'data: {"type":"response.completed","response":{"id":"resp_text_stream","status":"completed","model":"gpt-5.4","output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":11,"output_tokens":2,"total_tokens":13}}}',
+                        "data: [DONE]",
+                    ]
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(openai_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                openai_module,
+                "get_stream_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(openai_module.usage_buffer, "add", AsyncMock()) as add_usage:
+                response = await client.post(
+                    "/v1/chat/completions",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={
+                        "model": "gpt-5.4",
+                        "stream": True,
+                        "messages": [{"role": "user", "content": "Say ok"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn('"content": "ok"', response.text)
+        self.assertEqual(response.text.count('"finish_reason": "stop"'), 1)
+        add_usage.assert_awaited_once()
+        _, kwargs = add_usage.await_args
+        self.assertEqual(kwargs["input_tokens"], 11)
+        self.assertEqual(kwargs["output_tokens"], 2)
+        self.assertEqual(kwargs["endpoint"], "chat/completions:stream")
+
     async def test_image_generation_uses_gateway_lane_without_vertex_key(self) -> None:
         upstream_client = _RecordingStreamClient(
             [

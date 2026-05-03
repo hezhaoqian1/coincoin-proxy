@@ -1024,6 +1024,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
 
         async def iter_events():
             nonlocal tool_call_index, has_tool_calls, first_content_sent
+            finish_sent = False
             try:
                 async for line in upstream.aiter_lines():
                     if not line or not line.startswith("data:"):
@@ -1147,7 +1148,10 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                             "model": display_model,
                             "choices": [{"index": 0, "delta": {}, "finish_reason": finish_reason}],
                         }
-                        yield f"data: {json.dumps(finish)}\n\n"
+                        if not finish_sent:
+                            yield f"data: {json.dumps(finish)}\n\n"
+                            finish_sent = True
+                    if event_type == "response.completed":
                         break
                 yield "data: [DONE]\n\n"
             except Exception:
