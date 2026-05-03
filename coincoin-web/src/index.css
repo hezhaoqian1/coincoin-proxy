@@ -477,6 +477,7 @@ pre {
 @media (max-width: 768px) {
   :root {
     --space-4xl: 64px;
+    --navbar-height: 64px;
   }
 
   .section-title {
@@ -489,5 +490,34 @@ pre {
 
   .stats-grid {
     grid-template-columns: 1fr;
+  }
+
+  .glass-card {
+    padding: var(--space-lg);
+  }
+
+  .btn {
+    min-height: 40px;
+    padding: 10px 16px;
+    white-space: normal;
+    text-align: center;
+  }
+
+  .btn-lg {
+    min-height: 46px;
+    padding: 12px 18px;
+    font-size: 0.98rem;
+  }
+
+  .page-header {
+    padding: 22px 0 16px;
+  }
+
+  .page-title {
+    font-size: 1.42rem;
+  }
+
+  .page-desc {
+    font-size: 0.9rem;
   }
 }

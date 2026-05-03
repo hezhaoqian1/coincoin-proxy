@@ -166,6 +166,31 @@ function ShellGroup({ title, items, location }) {
     )
 }
 
+function MobileBottomNav({ location }) {
+    const items = [
+        { to: '/dashboard', pathname: '/dashboard', label: '概览', icon: 'dashboard' },
+        { to: '/recharge?section=recharge', pathname: '/recharge', search: { section: 'recharge' }, label: '充值', icon: 'billing' },
+        { to: '/api-keys', pathname: '/api-keys', label: '密钥', icon: 'key' },
+        { to: '/usage', pathname: '/usage', label: '日志', icon: 'logs' },
+        { to: '/docs?tab=models', pathname: '/docs', label: '更多', icon: 'docs' },
+    ]
+
+    return (
+        <nav className="mobile-bottom-nav" aria-label="移动端主导航">
+            {items.map((item) => (
+                <Link
+                    key={item.to}
+                    to={item.to}
+                    className={`mobile-bottom-link ${isNavItemActive(item, location) ? 'active' : ''}`}
+                >
+                    <span className="mobile-bottom-icon"><ShellIcon kind={item.icon} /></span>
+                    <span>{item.label}</span>
+                </Link>
+            ))}
+        </nav>
+    )
+}
+
 export default function AppShell({ title, description, actions, children }) {
     const { authMode, hasDeveloperKey, hasLocalDeveloperKey, logout, username } = useAuth()
     const navigate = useNavigate()
@@ -288,6 +313,7 @@ export default function AppShell({ title, description, actions, children }) {
                     {children}
                 </main>
             </div>
+            <MobileBottomNav location={location} />
         </div>
     )
 }

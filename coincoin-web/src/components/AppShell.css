@@ -279,6 +279,10 @@
     top: 24px;
 }
 
+.mobile-bottom-nav {
+    display: none;
+}
+
 @media (max-width: 1180px) {
     .app-shell {
         grid-template-columns: 236px minmax(0, 1fr);
@@ -291,15 +295,7 @@
     }
 
     .app-sidebar {
-        position: static;
-        height: auto;
-        border-right: none;
-        border-bottom: 1px solid var(--border-color);
-        padding: 18px 16px;
-    }
-
-    .app-sidebar-nav {
-        overflow: visible;
+        display: none;
     }
 
     .app-page-intro {
@@ -308,24 +304,75 @@
     }
 
     .app-main-content {
-        padding: 20px 20px 40px;
+        padding: 18px 16px calc(92px + env(safe-area-inset-bottom));
     }
 
     .app-page-intro-actions {
         justify-content: flex-start;
     }
+
+    .mobile-bottom-nav {
+        position: fixed;
+        left: 12px;
+        right: 12px;
+        bottom: calc(10px + env(safe-area-inset-bottom));
+        z-index: 1000;
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 4px;
+        padding: 8px;
+        border: 1px solid rgba(15, 23, 42, 0.1);
+        border-radius: 20px;
+        background: rgba(255, 255, 255, 0.92);
+        box-shadow: 0 18px 44px rgba(15, 23, 42, 0.16);
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
+    }
+
+    .mobile-bottom-link {
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        padding: 7px 4px;
+        border-radius: 14px;
+        color: var(--text-tertiary);
+        font-size: 0.7rem;
+        font-weight: 750;
+        line-height: 1;
+    }
+
+    .mobile-bottom-link.active {
+        color: #1d4ed8;
+        background: rgba(29, 78, 216, 0.1);
+    }
+
+    .mobile-bottom-icon {
+        width: 19px;
+        height: 19px;
+    }
+
+    .mobile-bottom-icon svg {
+        width: 100%;
+        height: 100%;
+        display: block;
+    }
 }
 
 @media (max-width: 640px) {
-    .app-sidebar {
-        gap: 16px;
+    .app-page-intro {
+        margin-bottom: 14px;
+        gap: 12px;
     }
 
-    .shell-link {
-        padding: 10px 11px;
+    .app-page-intro-title {
+        font-size: 1.28rem;
     }
 
-    .shell-link-caption {
-        font-size: 0.74rem;
+    .app-page-intro-desc {
+        font-size: 0.86rem;
+        line-height: 1.55;
     }
 }

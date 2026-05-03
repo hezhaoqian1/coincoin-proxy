@@ -573,17 +573,20 @@
 
 @media (max-width: 768px) {
     .landing-shell {
-        padding-top: 100px;
+        padding-top: 64px;
     }
 
     .landing-hero {
-        padding-top: var(--space-xl);
-        padding-bottom: var(--space-3xl);
+        padding-top: 30px;
+        padding-bottom: 44px;
     }
 
     .landing-copy h1 {
         max-width: 100%;
-        font-size: 2.5rem;
+        margin-bottom: 18px;
+        font-size: clamp(2.25rem, 12vw, 3.15rem);
+        line-height: 0.96;
+        letter-spacing: -0.045em;
     }
 
     .landing-summary,
@@ -591,9 +594,51 @@
         font-size: 0.96rem;
     }
 
+    .landing-summary {
+        margin-bottom: 22px;
+        line-height: 1.72;
+    }
+
+    .landing-announcement {
+        max-width: 100%;
+        margin-bottom: 14px;
+        padding: 8px 11px;
+        font-size: 0.72rem;
+    }
+
+    .landing-kicker {
+        margin-bottom: 10px;
+    }
+
     .landing-inline-actions {
-        flex-direction: column;
-        align-items: stretch;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+    }
+
+    .landing-inline-actions .btn {
+        width: 100%;
+        padding-left: 14px;
+        padding-right: 14px;
+    }
+
+    .landing-client-row {
+        margin-top: 22px;
+        gap: 10px;
+    }
+
+    .landing-client-list {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+    }
+
+    .landing-client-chip {
+        justify-content: center;
+        padding: 8px 7px;
+        font-size: 0.72rem;
+        text-align: center;
+        min-width: 0;
     }
 
     .landing-console-head,
@@ -617,6 +662,14 @@
         grid-template-columns: 1fr;
     }
 
+    .landing-hero-grid {
+        gap: 26px;
+    }
+
+    .landing-hero-stack {
+        gap: 14px;
+    }
+
     .landing-console-card,
     .landing-feature-card,
     .landing-step-card,
@@ -624,5 +677,85 @@
     .landing-code-card,
     .landing-faq-card {
         padding: 22px;
+    }
+
+    .landing-console-card {
+        box-shadow: 0 16px 34px rgba(15, 23, 42, 0.07);
+    }
+
+    .landing-console-head {
+        margin-bottom: 16px;
+    }
+
+    .landing-console-head strong {
+        max-width: 100%;
+        font-size: 1.05rem;
+    }
+
+    .landing-bridge-card {
+        display: none;
+    }
+
+    .landing-console-body {
+        gap: 0;
+    }
+
+    .landing-console-step {
+        padding: 12px 0;
+    }
+
+    .landing-console-step p {
+        display: none;
+    }
+
+    .landing-step-index,
+    .landing-step-number {
+        width: 34px;
+        height: 34px;
+        border-radius: 12px;
+        font-size: 0.76rem;
+    }
+
+    .landing-code-card pre {
+        max-height: 142px;
+        overflow: hidden;
+        font-size: 0.78rem;
+        line-height: 1.65;
+    }
+
+    .landing-band {
+        padding: 58px 0;
+    }
+
+    .landing-section-head {
+        gap: 14px;
+        margin-bottom: 22px;
+    }
+
+    .landing-section-head h2 {
+        max-width: none;
+        font-size: clamp(1.85rem, 8vw, 2.35rem);
+        line-height: 1.02;
+        letter-spacing: -0.03em;
+    }
+
+    .landing-feature-grid,
+    .landing-step-grid,
+    .landing-faq-grid {
+        gap: 12px;
+    }
+
+    .landing-pricing {
+        gap: 16px;
+    }
+}
+
+@media (max-width: 380px) {
+    .landing-inline-actions {
+        grid-template-columns: 1fr;
+    }
+
+    .landing-client-list {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 }
