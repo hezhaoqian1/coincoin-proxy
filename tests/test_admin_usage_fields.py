@@ -70,19 +70,30 @@ class _FakeScalarsResult:
         return _FakeScalarsCollection(self._rows)
 
 
+class _FakeSummaryResult:
+    def __init__(self, row):
+        self._row = row
+
+    def first(self):
+        return self._row
+
+
 class _FakeDB:
     def __init__(self, *, execute_results=None, scalar_results=None):
         self._execute_results = list(execute_results or [])
         self._scalar_results = list(scalar_results or [])
+        self.queries = []
         self.commits = 0
         self.rollbacks = 0
 
     async def execute(self, _query):
+        self.queries.append(_query)
         if not self._execute_results:
             raise AssertionError("unexpected execute call")
         return self._execute_results.pop(0)
 
     async def scalar(self, _query):
+        self.queries.append(_query)
         if not self._scalar_results:
             raise AssertionError("unexpected scalar call")
         return self._scalar_results.pop(0)
@@ -217,6 +228,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         fake_db = _FakeDB(
             execute_results=[
                 _FakeScalarResult(1),
+                _FakeSummaryResult((1, 10, 5, 0, 0, 15)),
                 _FakeScalarsResult([log]),
             ]
         )
@@ -229,7 +241,78 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(payload["total"], 1)
+        self.assertEqual(payload["summary"]["cost_cents"], 1)
+        self.assertEqual(payload["summary"]["total_tokens"], 15)
         self.assertEqual(payload["data"][0]["api_key_id"], "k_selected")
+
+    async def test_user_usage_summary_covers_all_filtered_rows_not_current_page(self) -> None:
+        user = SimpleNamespace(id="u_1")
+        log = SimpleNamespace(
+            created_at=datetime(2026, 5, 1, 18, 23, 19),
+            api_key_id="k_selected",
+            endpoint="responses",
+            model="gpt-5.4",
+            input_tokens=10,
+            output_tokens=5,
+            cached_tokens=2,
+            image_count=0,
+            provider_model="gpt-5.4",
+            customer_model_alias="gpt-5.4",
+            usage_unit_type="tokens",
+            usage_unit_count=15,
+            billable_sku="gpt-5.4",
+            cost_cents=1,
+            duration_ms=1200,
+            status_code=200,
+            route_reason="catalog:gpt-5.4",
+        )
+        fake_db = _FakeDB(
+            execute_results=[
+                _FakeScalarResult(3500),
+                _FakeSummaryResult((85, 1_200_000, 116_675, 400_000, 3, 1_316_675)),
+                _FakeScalarsResult([log]),
+            ]
+        )
+
+        with patch.object(openai_module, "authenticate_user", AsyncMock(return_value=user)):
+            payload = await openai_module.get_usage(
+                SimpleNamespace(),
+                fake_db,
+                limit=15,
+                offset=0,
+                api_key_id="k_selected",
+            )
+
+        self.assertEqual(payload["total"], 3500)
+        self.assertEqual(len(payload["data"]), 1)
+        self.assertEqual(payload["summary"]["cost_cents"], 85)
+        self.assertEqual(payload["summary"]["cost_usd"], 0.85)
+        self.assertEqual(payload["summary"]["total_tokens"], 1_316_675)
+        self.assertEqual(payload["summary"]["cached_tokens"], 400_000)
+        self.assertEqual(payload["summary"]["image_count"], 3)
+
+    async def test_usage_date_filters_use_china_day_boundaries(self) -> None:
+        user = SimpleNamespace(id="u_1")
+        fake_db = _FakeDB(
+            execute_results=[
+                _FakeScalarResult(0),
+                _FakeSummaryResult((0, 0, 0, 0, 0, 0)),
+                _FakeScalarsResult([]),
+            ]
+        )
+
+        with patch.object(openai_module, "authenticate_user", AsyncMock(return_value=user)):
+            await openai_module.get_usage(
+                SimpleNamespace(),
+                fake_db,
+                start_date="2026-05-03",
+                end_date="2026-05-03",
+            )
+
+        compiled = fake_db.queries[0].compile()
+        params = list(compiled.params.values())
+        self.assertIn(datetime(2026, 5, 2, 16, 0), params)
+        self.assertIn(datetime(2026, 5, 3, 16, 0), params)
 
     async def test_summary_metrics_expose_images_today(self) -> None:
         fake_db = _FakeDB(scalar_results=[12, 10, 987654, 45, 6, 999, 321])
