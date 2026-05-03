@@ -8,19 +8,16 @@
 
 .developer-access-panel {
     display: grid;
-    grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.95fr);
-    gap: var(--space-lg);
+    grid-template-columns: minmax(0, 1fr) minmax(360px, 0.9fr);
+    gap: var(--space-xl);
     margin: var(--space-lg) 0;
     align-items: stretch;
     border-color: rgba(99, 102, 241, 0.18);
-    background: linear-gradient(135deg, rgba(99, 102, 241, 0.08), rgba(6, 182, 212, 0.04), rgba(255, 255, 255, 0.72));
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.06), rgba(6, 182, 212, 0.035), rgba(255, 255, 255, 0.76));
 }
 
 .readiness-card {
-    display: flex;
-    align-items: stretch;
-    justify-content: space-between;
-    gap: var(--space-lg);
+    display: block;
     padding: 0;
     border: none;
     background: transparent;
@@ -37,10 +34,6 @@
 
 .readiness-muted {
     background: transparent;
-}
-
-.readiness-copy {
-    flex: 1;
 }
 
 .readiness-copy h2 {
@@ -65,10 +58,10 @@
 }
 
 .readiness-metric {
-    padding: 12px 14px;
+    padding: 14px;
     border-radius: var(--radius-md);
-    border: 1px solid rgba(255, 255, 255, 0.4);
-    background: rgba(255, 255, 255, 0.46);
+    border: 1px solid rgba(15, 23, 42, 0.07);
+    background: rgba(255, 255, 255, 0.58);
     min-width: 0;
 }
 
@@ -99,34 +92,6 @@
     color: var(--text-tertiary);
 }
 
-.readiness-tags {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-sm);
-    margin-top: var(--space-md);
-}
-
-.readiness-tag {
-    display: inline-flex;
-    align-items: center;
-    padding: 7px 12px;
-    border-radius: var(--radius-full);
-    background: rgba(255, 255, 255, 0.52);
-    border: 1px solid var(--border-color);
-    font-size: 0.78rem;
-    color: var(--text-secondary);
-}
-
-.readiness-actions {
-    display: flex;
-    flex-direction: row;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-    align-content: flex-start;
-    gap: var(--space-sm);
-    min-width: 220px;
-}
-
 .key-management-card {
     height: 100%;
     padding: 0 0 0 var(--space-xl);
@@ -134,8 +99,24 @@
     background: transparent;
 }
 
-.key-management-card h3 {
+.key-management-head {
     margin-bottom: var(--space-md);
+}
+
+.key-management-eyebrow {
+    display: inline-flex;
+    margin-bottom: var(--space-xs);
+    font-size: 0.76rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+}
+
+.key-management-card h3 {
+    margin: 0;
+    font-size: 1.18rem;
+    line-height: 1.25;
 }
 
 .stat-icon {
@@ -202,6 +183,10 @@
     border-radius: var(--radius-md);
     cursor: pointer;
     transition: all var(--transition-fast);
+    width: 100%;
+    color: inherit;
+    font: inherit;
+    text-align: left;
 }
 
 .action-item:hover {
@@ -213,8 +198,10 @@
     font-size: 1.4rem;
 }
 
-.action-item div {
+.action-item div,
+.key-copy-body {
     flex: 1;
+    min-width: 0;
 }
 
 .action-item strong {
@@ -226,6 +213,7 @@
 .action-item code {
     font-size: 0.78rem;
     color: var(--text-tertiary);
+    overflow-wrap: anywhere;
 }
 
 .action-btn {
@@ -376,8 +364,38 @@
 .key-panel-copy {
     font-size: 0.88rem;
     color: var(--text-secondary);
-    margin-bottom: var(--space-md);
     line-height: 1.6;
+}
+
+.key-panel-copy p {
+    margin: 0 0 var(--space-md);
+}
+
+.key-action-grid {
+    margin-bottom: var(--space-md);
+}
+
+.key-copy-row {
+    min-height: 72px;
+    border-radius: var(--radius-lg);
+    background: rgba(255, 255, 255, 0.62);
+}
+
+.key-copy-row-static {
+    cursor: default;
+}
+
+.key-copy-row-static:hover {
+    background: rgba(255, 255, 255, 0.62);
+    border-color: var(--border-color);
+}
+
+.key-secondary-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    flex-wrap: wrap;
+    margin-top: var(--space-md);
 }
 
 .key-warning-box {
@@ -751,7 +769,6 @@
     height: 220px;
 }
 
-
 @media (max-width: 768px) {
     .developer-access-panel {
         grid-template-columns: 1fr;
@@ -764,17 +781,11 @@
     }
 
     .readiness-card {
-        flex-direction: column;
+        min-height: auto;
     }
 
     .readiness-matrix {
         grid-template-columns: 1fr;
-    }
-
-    .readiness-actions {
-        width: 100%;
-        min-width: 0;
-        justify-content: flex-start;
     }
 
     .price-row {
@@ -783,6 +794,11 @@
 
     .action-links {
         flex-direction: column;
+    }
+
+    .key-secondary-actions {
+        flex-direction: column;
+        align-items: stretch;
     }
 
     .quick-actions-header {
