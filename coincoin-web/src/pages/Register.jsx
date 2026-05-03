@@ -47,6 +47,9 @@ export default function Register() {
                 localStorage.setItem('coincoin_signup_bonus_message', '$10 API 额度已到账。充值后，还可以再拿 $20。')
             } catch { /* ignore */ }
         }
+        try {
+            localStorage.setItem('coincoin_recent_signup', '1')
+        } catch { /* ignore */ }
         navigate('/dashboard')
     }
 

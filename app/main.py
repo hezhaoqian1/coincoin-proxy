@@ -95,6 +95,11 @@ async def _run_migrations(conn):
         ("coincoin_station_payout_batches", "payment_reference", "VARCHAR(128) DEFAULT ''"),
         ("coincoin_station_payout_batches", "payment_screenshot_url", "VARCHAR(512) DEFAULT ''"),
         ("coincoin_station_payout_batches", "payment_note", "TEXT NULL"),
+        ("coincoin_announcements", "display_type", "VARCHAR(16) DEFAULT 'banner'"),
+        ("coincoin_announcements", "audience", "VARCHAR(32) DEFAULT 'all'"),
+        ("coincoin_announcements", "cta_label", "VARCHAR(64) DEFAULT ''"),
+        ("coincoin_announcements", "cta_value", "VARCHAR(512) DEFAULT ''"),
+        ("coincoin_announcements", "image_url", "VARCHAR(512) DEFAULT ''"),
     ]
     logger = logging.getLogger("coincoin.migrations")
     for table, col, ddl in migrations:

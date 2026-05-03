@@ -20,13 +20,11 @@
 }
 
 .referrals-hero h1,
-.referrals-community h2,
 .referrals-records h2 {
     margin: var(--space-xs) 0;
 }
 
 .referrals-hero p,
-.referrals-community p,
 .referrals-section-header p,
 .referrals-empty-state p,
 .referrals-code-panel p {
@@ -126,41 +124,6 @@
     color: var(--text-tertiary);
 }
 
-.referrals-community {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 220px;
-    gap: var(--space-xl);
-    align-items: center;
-}
-
-.referrals-wechat-id {
-    display: flex;
-    align-items: center;
-    gap: var(--space-sm);
-    margin-top: var(--space-md);
-}
-
-.referrals-wechat-id span {
-    color: var(--text-secondary);
-}
-
-.referrals-wechat-id button {
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    background: var(--bg-glass);
-    color: var(--text-primary);
-    padding: 8px 12px;
-    font-weight: 700;
-    cursor: pointer;
-}
-
-.referrals-qr {
-    width: 220px;
-    max-width: 100%;
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--border);
-}
-
 .referrals-section-header {
     display: flex;
     justify-content: space-between;
@@ -213,8 +176,7 @@
 }
 
 @media (max-width: 900px) {
-    .referrals-hero,
-    .referrals-community {
+    .referrals-hero {
         grid-template-columns: 1fr;
     }
 

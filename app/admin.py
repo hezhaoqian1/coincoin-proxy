@@ -636,6 +636,11 @@ async def create_announcement(payload: AnnouncementCreate, db: AsyncSession = De
         title=payload.title,
         content=payload.content,
         priority=payload.priority,
+        display_type=payload.display_type,
+        audience=payload.audience,
+        cta_label=payload.cta_label or "",
+        cta_value=payload.cta_value or "",
+        image_url=payload.image_url or "",
         status="active",
     )
     db.add(ann)
@@ -655,6 +660,11 @@ async def list_announcements_admin(db: AsyncSession = Depends(get_db)):
             "title": a.title,
             "content": a.content,
             "priority": a.priority,
+            "display_type": getattr(a, "display_type", "banner") or "banner",
+            "audience": getattr(a, "audience", "all") or "all",
+            "cta_label": getattr(a, "cta_label", "") or "",
+            "cta_value": getattr(a, "cta_value", "") or "",
+            "image_url": getattr(a, "image_url", "") or "",
             "status": a.status,
             "created_at": a.created_at,
         }
@@ -676,6 +686,16 @@ async def update_announcement(
         ann.content = payload.content
     if payload.priority is not None:
         ann.priority = payload.priority
+    if payload.display_type is not None:
+        ann.display_type = payload.display_type
+    if payload.audience is not None:
+        ann.audience = payload.audience
+    if payload.cta_label is not None:
+        ann.cta_label = payload.cta_label or ""
+    if payload.cta_value is not None:
+        ann.cta_value = payload.cta_value or ""
+    if payload.image_url is not None:
+        ann.image_url = payload.image_url or ""
     if payload.status is not None:
         ann.status = payload.status
     await db.commit()

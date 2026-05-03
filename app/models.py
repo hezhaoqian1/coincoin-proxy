@@ -168,6 +168,11 @@ class Announcement(Base):
     title: Mapped[str] = mapped_column(String(256), default="")
     content: Mapped[str] = mapped_column(String(2048), default="")
     priority: Mapped[str] = mapped_column(String(16), default="info")
+    display_type: Mapped[str] = mapped_column(String(16), default="banner")
+    audience: Mapped[str] = mapped_column(String(32), default="all")
+    cta_label: Mapped[str] = mapped_column(String(64), default="")
+    cta_value: Mapped[str] = mapped_column(String(512), default="")
+    image_url: Mapped[str] = mapped_column(String(512), default="")
     status: Mapped[str] = mapped_column(String(16), default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

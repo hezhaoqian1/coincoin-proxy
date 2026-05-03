@@ -246,6 +246,30 @@ function KeyManagement({ copied, copy, username, generatedApiKey, hasLocalDevelo
     )
 }
 
+function ReferralNudgeCard() {
+    return (
+        <Link to="/referrals" className="referral-nudge-card animate-fade-in-up">
+            <div className="referral-nudge-icon">
+                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M16 5.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                    <path d="M8 19a5 5 0 0 1 10 0" />
+                    <path d="M5.5 9.5v5" />
+                    <path d="M3 12h5" />
+                </svg>
+            </div>
+            <div className="referral-nudge-copy">
+                <span>邀请朋友</span>
+                <strong>朋友注册得 $10，你得 $5</strong>
+                <p>朋友开始调用 API 后，你再得 $5；之后充值奖励按到账额度 20% 给你。</p>
+            </div>
+            <div className="referral-nudge-meta">
+                <span>邀请记录</span>
+                <strong>查看</strong>
+            </div>
+        </Link>
+    )
+}
+
 function DeveloperAccessPanel(props) {
     return (
         <div className="developer-access-panel glass-card animate-fade-in-up">
@@ -445,10 +469,18 @@ export default function Dashboard() {
     const [dismissedAnns, setDismissedAnns] = useState(() => {
         try { return JSON.parse(localStorage.getItem('coincoin_dismissed_anns') || '[]') } catch { return [] }
     })
+    const [dismissedModalAnns, setDismissedModalAnns] = useState(() => {
+        try { return JSON.parse(localStorage.getItem('coincoin_dismissed_modal_anns') || '[]') } catch { return [] }
+    })
+    const [sessionHiddenModalAnns, setSessionHiddenModalAnns] = useState([])
+    const [modalSlotUsed, setModalSlotUsed] = useState(false)
     const [copied, setCopied] = useState('')
     const [chartMode, setChartMode] = useState('cost')
     const [signupBonusMessage, setSignupBonusMessage] = useState(() => {
         try { return localStorage.getItem('coincoin_signup_bonus_message') || '' } catch { return '' }
+    })
+    const [recentSignup, setRecentSignup] = useState(() => {
+        try { return localStorage.getItem('coincoin_recent_signup') === '1' } catch { return false }
     })
     const [stationState, setStationState] = useState(null)
     const { confirmResult: orderConfirmed, dismiss: dismissOrder } = useOrderConfirm()
@@ -508,6 +540,26 @@ export default function Dashboard() {
         localStorage.setItem('coincoin_dismissed_anns', JSON.stringify(next))
     }
 
+    const hideModalAnn = (id) => {
+        setSessionHiddenModalAnns((current) => current.includes(id) ? current : [...current, id])
+        setModalSlotUsed(true)
+        if (recentSignup) {
+            setRecentSignup(false)
+            try { localStorage.removeItem('coincoin_recent_signup') } catch { /* ignore */ }
+        }
+    }
+
+    const dismissModalAnn = (id) => {
+        const next = [...dismissedModalAnns, id]
+        setDismissedModalAnns(next)
+        localStorage.setItem('coincoin_dismissed_modal_anns', JSON.stringify(next))
+        setModalSlotUsed(true)
+        if (recentSignup) {
+            setRecentSignup(false)
+            try { localStorage.removeItem('coincoin_recent_signup') } catch { /* ignore */ }
+        }
+    }
+
     const dismissSignupBonus = () => {
         setSignupBonusMessage('')
         try { localStorage.removeItem('coincoin_signup_bonus_message') } catch { /* ignore */ }
@@ -526,7 +578,15 @@ export default function Dashboard() {
         )
     }
 
-    const activeAnns = announcements.filter(a => !dismissedAnns.includes(a.id))
+    const activeBannerAnns = announcements.filter(a => (a.display_type || 'banner') !== 'modal' && !dismissedAnns.includes(a.id))
+    const firstEligibleModalAnn = announcements.find(a => (
+        (a.display_type || 'banner') === 'modal'
+        && ((a.audience || 'all') === 'all' || ((a.audience || 'all') === 'signup' && recentSignup))
+        && !dismissedModalAnns.includes(a.id)
+    ))
+    const activeModalAnn = modalSlotUsed || sessionHiddenModalAnns.includes(firstEligibleModalAnn?.id)
+        ? null
+        : firstEligibleModalAnn
 
     const todayStr = getLocalIsoDate()
     const todaySummary = dailyData?.find(d => d.day === todayStr) || dailyData?.[dailyData.length - 1] || null
@@ -605,7 +665,7 @@ export default function Dashboard() {
             <div className="dashboard-page dashboard">
 
                 {/* Announcements */}
-                {activeAnns.map(a => (
+                {activeBannerAnns.map(a => (
                     <div key={a.id} className={`announcement-banner ann-${a.priority} animate-fade-in`}>
                         <div className="ann-content">
                             <strong>{a.title}</strong>
@@ -614,6 +674,34 @@ export default function Dashboard() {
                         <button className="ann-close" onClick={() => dismissAnn(a.id)}>&times;</button>
                     </div>
                 ))}
+
+                {activeModalAnn && (
+                    <div className="announcement-modal-backdrop animate-fade-in" role="dialog" aria-modal="true" aria-labelledby="announcement-modal-title">
+                        <div className={`announcement-modal ann-${activeModalAnn.priority || 'info'}`}>
+                            <button className="ann-modal-close" onClick={() => hideModalAnn(activeModalAnn.id)} aria-label="关闭公告">&times;</button>
+                            {activeModalAnn.image_url ? (
+                                <img className="ann-modal-image" src={activeModalAnn.image_url} alt="" />
+                            ) : null}
+                            <div className="ann-modal-copy">
+                                <span className="ann-modal-kicker">CoinCoin</span>
+                                <h2 id="announcement-modal-title">{activeModalAnn.title}</h2>
+                                <p>{activeModalAnn.content}</p>
+                            </div>
+                            <div className="ann-modal-actions">
+                                {activeModalAnn.cta_label && activeModalAnn.cta_value ? (
+                                    <button className="btn btn-primary" onClick={() => copy(activeModalAnn.cta_value, `ann-${activeModalAnn.id}`)}>
+                                        {copied === `ann-${activeModalAnn.id}` ? '已复制' : activeModalAnn.cta_label}
+                                    </button>
+                                ) : null}
+                                <button className="btn btn-secondary" onClick={() => hideModalAnn(activeModalAnn.id)}>暂时不用</button>
+                            </div>
+                            <label className="ann-modal-dismiss">
+                                <input type="checkbox" onChange={(event) => event.target.checked && dismissModalAnn(activeModalAnn.id)} />
+                                <span>不再显示</span>
+                            </label>
+                        </div>
+                    </div>
+                )}
 
                 {/* Low balance warning */}
                 {balance.balance_usd < 0.10 && (
@@ -679,6 +767,8 @@ export default function Dashboard() {
                         </div>
                     </div>
                 </div>
+
+                <ReferralNudgeCard />
 
                 <DeveloperAccessPanel
                     copied={copied}
