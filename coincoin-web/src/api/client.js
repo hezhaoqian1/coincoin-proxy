@@ -311,6 +311,15 @@ export async function getReferralInfo() {
     return res.json()
 }
 
+export async function updateReferralCode(referralCode) {
+    const res = await fetch(`${PROXY_BASE}/v1/referral/code`, {
+        method: 'PATCH',
+        headers: authHeaders(),
+        body: JSON.stringify({ referral_code: referralCode })
+    })
+    return parseApiResponse(res, 'Failed to update referral code')
+}
+
 export async function getStationApplication() {
     const res = await fetch(`${PROXY_BASE}/v1/stations/application`, {
         headers: authHeaders()

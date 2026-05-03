@@ -116,6 +116,10 @@ class BalanceResponse(BaseModel):
     price_output_per_million: float = Field(description="输出价格（美元/百万 tokens）")
 
 
+class ReferralCodeUpdateRequest(BaseModel):
+    referral_code: str = Field(..., min_length=4, max_length=16, pattern=r'^[A-Za-z0-9]+$')
+
+
 # ===== Payment =====
 
 class OrderCreateRequest(BaseModel):

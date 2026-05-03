@@ -89,7 +89,12 @@ async def compute_finance_breakdown(db: AsyncSession, user_id: str) -> FinanceBr
         await db.execute(select(RechargeLog).where(RechargeLog.user_id == user_id))
     ).scalars().all()
     referral_rewards = (
-        await db.execute(select(ReferralReward).where(ReferralReward.referrer_id == user_id))
+        await db.execute(
+            select(ReferralReward).where(
+                (ReferralReward.recipient_id == user_id)
+                | (ReferralReward.recipient_id.is_(None) & (ReferralReward.referrer_id == user_id))
+            )
+        )
     ).scalars().all()
     request_logs = (
         await db.execute(

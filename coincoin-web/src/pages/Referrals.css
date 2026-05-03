@@ -1,0 +1,234 @@
+.referrals-page {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xl);
+}
+
+.referrals-hero {
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) minmax(280px, 0.6fr);
+    gap: var(--space-xl);
+    align-items: stretch;
+}
+
+.referrals-kicker {
+    color: var(--accent-emerald);
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.referrals-hero h1,
+.referrals-community h2,
+.referrals-records h2 {
+    margin: var(--space-xs) 0;
+}
+
+.referrals-hero p,
+.referrals-community p,
+.referrals-section-header p,
+.referrals-empty-state p,
+.referrals-code-panel p {
+    color: var(--text-secondary);
+    line-height: 1.7;
+}
+
+.referrals-actions {
+    display: flex;
+    gap: var(--space-sm);
+    flex-wrap: wrap;
+    margin-top: var(--space-lg);
+}
+
+.referrals-link-panel {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: var(--space-sm);
+    padding: var(--space-lg);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background: rgba(16, 185, 129, 0.08);
+    min-width: 0;
+}
+
+.referrals-link-panel span {
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+}
+
+.referrals-link-panel strong {
+    font-size: 2rem;
+    letter-spacing: 0.12em;
+}
+
+.referrals-link-panel code {
+    color: var(--text-secondary);
+    overflow-wrap: anywhere;
+}
+
+.referrals-code-panel form {
+    display: flex;
+    gap: var(--space-sm);
+    align-items: flex-end;
+    flex-wrap: wrap;
+}
+
+.referrals-code-panel label {
+    display: flex;
+    flex: 1;
+    min-width: 220px;
+    flex-direction: column;
+    gap: var(--space-xs);
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+}
+
+.referrals-code-panel input {
+    height: 42px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    padding: 0 var(--space-md);
+    background: var(--bg-glass);
+    color: var(--text-primary);
+    font: inherit;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.referrals-error {
+    color: var(--accent-rose) !important;
+}
+
+.referrals-stats {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--space-md);
+}
+
+.referrals-stat {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+}
+
+.referrals-stat span {
+    color: var(--text-secondary);
+    font-size: 0.86rem;
+}
+
+.referrals-stat strong {
+    font-size: 1.8rem;
+}
+
+.referrals-stat small {
+    color: var(--text-tertiary);
+}
+
+.referrals-community {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 220px;
+    gap: var(--space-xl);
+    align-items: center;
+}
+
+.referrals-wechat-id {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    margin-top: var(--space-md);
+}
+
+.referrals-wechat-id span {
+    color: var(--text-secondary);
+}
+
+.referrals-wechat-id button {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-glass);
+    color: var(--text-primary);
+    padding: 8px 12px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.referrals-qr {
+    width: 220px;
+    max-width: 100%;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+}
+
+.referrals-section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: var(--space-md);
+    margin-bottom: var(--space-lg);
+}
+
+.referrals-empty,
+.referrals-empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-sm);
+}
+
+.referrals-table-wrap {
+    overflow-x: auto;
+}
+
+.referrals-table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 760px;
+}
+
+.referrals-table th,
+.referrals-table td {
+    padding: 14px 12px;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+    white-space: nowrap;
+}
+
+.referrals-table th {
+    color: var(--text-tertiary);
+    font-size: 0.78rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.referrals-status {
+    display: inline-flex;
+    padding: 5px 9px;
+    border-radius: 999px;
+    background: rgba(16, 185, 129, 0.12);
+    color: var(--accent-emerald);
+    font-size: 0.82rem;
+    font-weight: 700;
+}
+
+@media (max-width: 900px) {
+    .referrals-hero,
+    .referrals-community {
+        grid-template-columns: 1fr;
+    }
+
+    .referrals-stats {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 600px) {
+    .referrals-stats {
+        grid-template-columns: 1fr;
+    }
+
+    .referrals-section-header {
+        flex-direction: column;
+    }
+}

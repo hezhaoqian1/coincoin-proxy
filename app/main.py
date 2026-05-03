@@ -65,6 +65,9 @@ async def _run_migrations(conn):
         ("coincoin_users", "register_ip", "VARCHAR(64) NULL"),
         ("coincoin_users", "email", "VARCHAR(255) NULL UNIQUE"),
         ("coincoin_users", "email_verified_at", "DATETIME NULL"),
+        ("coincoin_referral_rewards", "recipient_id", "VARCHAR(32) NULL"),
+        ("coincoin_referral_rewards", "reward_type", "VARCHAR(32) DEFAULT 'purchase_commission'"),
+        ("coincoin_referral_rewards", "idempotency_key", "VARCHAR(128) NULL UNIQUE"),
         ("coincoin_accounts", "status", "VARCHAR(32) DEFAULT 'active'"),
         ("coincoin_request_logs", "cached_tokens", "BIGINT DEFAULT 0"),
         ("coincoin_request_logs", "api_key_id", "VARCHAR(32) NULL"),
@@ -247,6 +250,8 @@ async def _run_migrations(conn):
 
     index_migrations = [
         "CREATE INDEX ix_request_logs_user_key_created ON coincoin_request_logs (user_id, api_key_id, created_at)",
+        "CREATE INDEX ix_referral_rewards_recipient_id ON coincoin_referral_rewards (recipient_id)",
+        "CREATE INDEX ix_referral_rewards_reward_type ON coincoin_referral_rewards (reward_type)",
     ]
     for sql in index_migrations:
         try:

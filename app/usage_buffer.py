@@ -4,13 +4,14 @@ from collections import defaultdict
 from datetime import UTC, date, datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
-from sqlalchemy import update
+from sqlalchemy import select
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 
 from .config import settings
 from .db import SessionLocal
 from .finance_summary import increment_finance_summary
 from .models import RequestLog, UsageDaily, User
+from .referral import process_first_usage_referral_reward
 from .security import generate_id
 
 
@@ -341,21 +342,21 @@ async def flush_once() -> None:
                 total_tokens = input_tokens + output_tokens
                 
                 if total_tokens > 0 or cost_cents > 0:
-                    await session.execute(
-                        update(User)
-                        .where(User.id == user_id)
-                        .values(
-                            token_used=User.token_used + total_tokens,
-                            input_tokens_used=User.input_tokens_used + input_tokens,
-                            output_tokens_used=User.output_tokens_used + output_tokens,
-                            balance=User.balance - cost_cents,  # 扣除余额
-                        )
-                    )
+                    user = (
+                        await session.execute(select(User).where(User.id == user_id).with_for_update())
+                    ).scalar_one_or_none()
+                    if not user:
+                        continue
+                    user.token_used = int(user.token_used or 0) + total_tokens
+                    user.input_tokens_used = int(user.input_tokens_used or 0) + input_tokens
+                    user.output_tokens_used = int(user.output_tokens_used or 0) + output_tokens
+                    user.balance = int(user.balance or 0) - cost_cents
                     await increment_finance_summary(
                         session,
                         user_id,
                         consumed_cents=cost_cents,
                     )
+                    await process_first_usage_referral_reward(user_id, session)
 
             # 更新每日统计
             for (user_id, day), stats in daily.items():

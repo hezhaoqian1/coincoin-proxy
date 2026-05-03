@@ -16,6 +16,7 @@ import ApiKeys from './pages/ApiKeys'
 import Playground from './pages/Playground'
 import PayReturn from './pages/PayReturn'
 import Station from './pages/Station'
+import Referrals from './pages/Referrals'
 
 function PublicShell({ children }) {
     return (
@@ -98,6 +99,9 @@ export default function App() {
                 } />
                 <Route path="/api-keys" element={
                     <ProtectedRoute><ApiKeys /></ProtectedRoute>
+                } />
+                <Route path="/referrals" element={
+                    <ProtectedRoute><Referrals /></ProtectedRoute>
                 } />
                 <Route path="/station" element={
                     <ProtectedRoute><Station /></ProtectedRoute>

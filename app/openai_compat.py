@@ -9,6 +9,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func
 
 from .config import settings
 from .db import get_db
@@ -24,9 +25,14 @@ from .router import (
     UnknownModelError,
     registry as model_registry,
 )
-from .schemas import BalanceResponse
+from .schemas import BalanceResponse, ReferralCodeUpdateRequest
 from .usage_buffer import china_today, extract_cached_tokens, usage_buffer
 from .finance_summary import ensure_finance_summary_initialized, increment_finance_summary
+from .models import ReferralReward, User
+from .referral import (
+    REWARD_PURCHASE_COMMISSION,
+    build_referral_record,
+)
 
 
 router = APIRouter(prefix="/v1", tags=["openai-compat"])
@@ -391,16 +397,13 @@ async def redeem_code(request: Request, db: AsyncSession = Depends(get_db)):
 
 @router.get("/referral")
 async def get_referral_info(request: Request, db: AsyncSession = Depends(get_db)):
-    """查询邀请码、邀请人数和累计佣金"""
+    """查询邀请码、邀请记录和累计 API 额度奖励"""
     try:
         cached_user = await authenticate_user(request, db)
     except HTTPException as e:
         if e.status_code == 401:
             return openai_error("Invalid API key", "authentication_error", code="invalid_api_key", status_code=401)
         raise
-
-    from .models import ReferralReward, User
-    from sqlalchemy import select, func
 
     user = (await db.execute(select(User).where(User.id == cached_user.id))).scalar_one()
 
@@ -409,42 +412,102 @@ async def get_referral_info(request: Request, db: AsyncSession = Depends(get_db)
         user.referral_code = generate_referral_code()
         await db.commit()
 
-    invited_count = (await db.execute(
-        select(func.count()).select_from(User).where(User.referred_by == user.id)
-    )).scalar() or 0
+    referred_users = (
+        await db.execute(
+            select(User)
+            .where(User.referred_by == user.id)
+            .order_by(User.created_at.desc())
+            .limit(200)
+        )
+    ).scalars().all()
+    referred_ids = [row.id for row in referred_users]
 
     total_reward = (await db.execute(
         select(func.coalesce(func.sum(ReferralReward.reward_cents), 0))
         .where(ReferralReward.referrer_id == user.id)
+        .where((ReferralReward.recipient_id == user.id) | (ReferralReward.recipient_id.is_(None)))
     )).scalar() or 0
 
-    recent_rewards = (await db.execute(
-        select(ReferralReward)
-        .where(ReferralReward.referrer_id == user.id)
-        .order_by(ReferralReward.created_at.desc())
-        .limit(20)
-    )).scalars().all()
+    referred_reward = 0
+    rewards_by_referred = {referred_id: [] for referred_id in referred_ids}
+    if referred_ids:
+        all_rewards = (
+            await db.execute(
+                select(ReferralReward)
+                .where(ReferralReward.referrer_id == user.id)
+                .where(ReferralReward.referred_id.in_(referred_ids))
+                .order_by(ReferralReward.created_at.desc())
+            )
+        ).scalars().all()
+        for reward in all_rewards:
+            rewards_by_referred.setdefault(reward.referred_id, []).append(reward)
+            if getattr(reward, "recipient_id", None) == reward.referred_id:
+                referred_reward += int(reward.reward_cents or 0)
+
+    records = [build_referral_record(row, rewards_by_referred.get(row.id, [])) for row in referred_users]
+    pending_count = sum(1 for row in records if row["next_step"] != "持续充值奖励中")
 
     return {
         "referral_code": user.referral_code,
-        "invited_count": invited_count,
+        "invite_url_path": f"/register?ref={user.referral_code}",
+        "invited_count": len(referred_users),
         "total_reward_cents": total_reward,
         "total_reward_usd": total_reward / 100,
+        "friend_reward_cents": referred_reward,
+        "friend_reward_usd": referred_reward / 100,
+        "pending_count": pending_count,
         "commission_rate": settings.referral_commission_rate,
         "max_rewards_per_user": settings.referral_max_rewards_per_user,
         "reward_cap_usd": settings.referral_reward_cap_cents / 100,
+        "signup_bonus_usd": settings.referral_signup_bonus_cents / 100,
+        "signup_referrer_bonus_usd": settings.referral_signup_referrer_bonus_cents / 100,
+        "first_usage_referrer_bonus_usd": settings.referral_first_usage_referrer_bonus_cents / 100,
         "new_user_bonus_usd": settings.referral_new_user_bonus_cents / 100,
+        "records": records,
         "recent_rewards": [
             {
                 "order_no": r.order_no,
+                "reward_type": getattr(r, "reward_type", None) or REWARD_PURCHASE_COMMISSION,
+                "recipient_id": getattr(r, "recipient_id", None) or r.referrer_id,
                 "order_amount_cents": r.order_amount_cents,
                 "reward_cents": r.reward_cents,
                 "reward_usd": r.reward_cents / 100,
                 "created_at": r.created_at.isoformat() + "Z" if r.created_at else None,
             }
-            for r in recent_rewards
+            for rewards in rewards_by_referred.values()
+            for r in rewards[:20]
         ],
     }
+
+
+@router.patch("/referral/code")
+async def update_referral_code(
+    payload: ReferralCodeUpdateRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        cached_user = await authenticate_user(request, db)
+    except HTTPException as e:
+        if e.status_code == 401:
+            return openai_error("Invalid API key", "authentication_error", code="invalid_api_key", status_code=401)
+        raise
+
+    next_code = payload.referral_code.strip().upper()
+    reserved = {"ADMIN", "ROOT", "SUPPORT", "COINCOIN", "CLAWFATHER", "BIRDSYNC"}
+    if next_code in reserved:
+        raise HTTPException(status_code=400, detail="这个邀请码暂不可用")
+
+    existing = (
+        await db.execute(select(User).where(User.referral_code == next_code, User.id != cached_user.id))
+    ).scalar_one_or_none()
+    if existing:
+        raise HTTPException(status_code=409, detail="这个邀请码已经被使用")
+
+    user = (await db.execute(select(User).where(User.id == cached_user.id))).scalar_one()
+    user.referral_code = next_code
+    await db.commit()
+    return {"referral_code": user.referral_code, "invite_url_path": f"/register?ref={user.referral_code}"}
 
 
 @router.get("/announcements")

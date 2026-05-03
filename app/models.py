@@ -173,12 +173,15 @@ class Announcement(Base):
 
 
 class ReferralReward(Base):
-    """返佣记录 — 被邀请人充值时给邀请人发放佣金"""
+    """邀请奖励记录 — 记录邀请人和朋友各自拿到的 API 额度。"""
     __tablename__ = "coincoin_referral_rewards"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     referrer_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_users.id"), index=True)
     referred_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_users.id"))
+    recipient_id: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("coincoin_users.id"), nullable=True, index=True)
+    reward_type: Mapped[str] = mapped_column(String(32), default="purchase_commission", index=True)
+    idempotency_key: Mapped[Optional[str]] = mapped_column(String(128), unique=True, nullable=True)
     order_no: Mapped[str] = mapped_column(String(128), index=True)
     order_amount_cents: Mapped[int] = mapped_column(BigInteger, default=0)
     reward_cents: Mapped[int] = mapped_column(BigInteger, default=0)

@@ -20,6 +20,7 @@ from .emailer import send_verification_email
 from .finance_summary import ensure_finance_summary_initialized, increment_finance_summary
 from .models import Account, ApiKey, EmailVerificationCode, User
 from .rate_limiter import rate_limiter
+from .referral import process_signup_referral_rewards
 from .schemas import (
     AuthLoginRequest,
     AuthProfileResponse,
@@ -448,6 +449,7 @@ async def register(
 
     raw_key, session_key = _create_session_key(user.id)
     db.add(session_key)
+    await process_signup_referral_rewards(user, db)
     await db.commit()
 
     logger.info("User registered with verified email: %s -> %s", username, user.id)

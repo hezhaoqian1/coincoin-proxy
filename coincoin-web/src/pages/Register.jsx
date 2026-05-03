@@ -42,6 +42,11 @@ export default function Register() {
         setApiKey(data.session_key)
         setUserId(data.user_id)
         storeUsername(data.username)
+        if (referralCode.trim()) {
+            try {
+                localStorage.setItem('coincoin_signup_bonus_message', '$10 API 额度已到账。充值后，还可以再拿 $20。')
+            } catch { /* ignore */ }
+        }
         navigate('/dashboard')
     }
 
@@ -299,6 +304,9 @@ export default function Register() {
                             onChange={(e) => setReferralCode(e.target.value.toUpperCase())}
                             style={{ textTransform: 'uppercase', letterSpacing: '0.1em' }}
                         />
+                        {referralCode.trim() && (
+                            <span className="input-hint">你正在使用好友的邀请码。注册成功后，可获得 $10 API 额度。</span>
+                        )}
                     </div>
 
                     {(error || message) && (

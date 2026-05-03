@@ -795,6 +795,24 @@
     flex: 1;
 }
 
+.referral-community-note {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-sm);
+    margin-top: var(--space-md);
+    padding: var(--space-sm) var(--space-md);
+    border-radius: var(--radius-sm);
+    background: rgba(16, 185, 129, 0.08);
+    color: var(--text-secondary);
+    font-size: 0.86rem;
+}
+
+.referral-community-note a {
+    color: var(--accent-emerald);
+    font-weight: 700;
+    white-space: nowrap;
+}
+
 @media (max-width: 768px) {
     .developer-access-panel {
         grid-template-columns: 1fr;
@@ -857,5 +875,9 @@
     .referral-code-row {
         flex-direction: column;
         text-align: center;
+    }
+
+    .referral-community-note {
+        flex-direction: column;
     }
 }
