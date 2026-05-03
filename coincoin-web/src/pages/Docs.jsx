@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { describePublicModel, formatModelPrice } from '../api/client'
+import { describePublicModel, getCachedInputPricePerMillion } from '../api/client'
 import AppShell from '../components/AppShell'
 import { useAuth } from '../hooks/useAuth'
 import { usePublicModels } from '../hooks/usePublicModels'
@@ -49,6 +49,18 @@ function formatTier(model) {
     if (tier === 'explicit') return '显式'
     if (tier === 'stable') return '稳定'
     return '可用'
+}
+
+function formatUsdPerMillion(cents, precision = 2) {
+    const value = Number(cents || 0)
+    if (!value) return '后台配置'
+    return `$${(value / 100).toFixed(precision)} / 1M tokens`
+}
+
+function formatImagePrice(cents) {
+    const value = Number(cents || 0)
+    if (!value) return '后台配置'
+    return `$${(value / 100).toFixed(3)} / image`
 }
 
 export default function Docs() {
@@ -427,50 +439,75 @@ function ModelsAndPricing({ textModels, imageModels }) {
             <p className="doc-intro">公开模型目录来自 ClawFather 的真实运行配置。你也可以通过 <code>GET /v1/models</code> 拉取。</p>
 
             <h3>文本模型</h3>
-            <table className="data-table">
-                <thead>
-                    <tr><th>模型</th><th>能力</th><th>价格</th><th>状态</th></tr>
-                </thead>
-                <tbody>
-                    {textModels.map((model) => (
-                        <tr key={model.id}>
-                            <td>
-                                <code className="model-tag-sm">{model.id}</code>
-                                {(model.coincoin_default_for || []).includes('text') && <span className="inline-badge">默认文本</span>}
-                            </td>
-                            <td>
-                                <div>{formatCaps(model)}</div>
-                                <div className="table-subtle">{describePublicModel(model)}</div>
-                            </td>
-                            <td>{formatModelPrice(model)}</td>
-                            <td><span className={`badge ${model.coincoin_metadata?.tier === 'preview' ? 'badge-warning' : 'badge-success'}`}>{formatTier(model)}</span></td>
+            <div className="pricing-table-wrap">
+                <table className="data-table pricing-table pricing-table-text">
+                    <thead>
+                        <tr>
+                            <th>模型名称</th>
+                            <th>输入价格</th>
+                            <th>输出价格</th>
+                            <th>缓存读取</th>
+                            <th>描述</th>
+                            <th>状态</th>
                         </tr>
-                    ))}
-                </tbody>
-            </table>
+                    </thead>
+                    <tbody>
+                        {textModels.map((model) => {
+                            const isDefault = (model.coincoin_default_for || []).includes('text')
+                            return (
+                                <tr key={model.id}>
+                                    <td>
+                                        <div className="model-name-cell">
+                                            <code className="model-tag-sm">{model.id}</code>
+                                            {isDefault && <span className="inline-badge">默认文本</span>}
+                                        </div>
+                                    </td>
+                                    <td className="price-cell">{formatUsdPerMillion(model.coincoin_price_input_per_million)}</td>
+                                    <td className="price-cell">{formatUsdPerMillion(model.coincoin_price_output_per_million)}</td>
+                                    <td className="price-cell">{formatUsdPerMillion(getCachedInputPricePerMillion(model), 3)}</td>
+                                    <td>
+                                        <div>{describePublicModel(model)}</div>
+                                        <div className="table-subtle">{formatCaps(model)}</div>
+                                    </td>
+                                    <td><span className={`badge ${model.coincoin_metadata?.tier === 'preview' ? 'badge-warning' : 'badge-success'}`}>{formatTier(model)}</span></td>
+                                </tr>
+                            )
+                        })}
+                    </tbody>
+                </table>
+            </div>
 
             <h3>图片模型</h3>
-            <table className="data-table">
-                <thead>
-                    <tr><th>模型</th><th>能力</th><th>价格</th><th>状态</th></tr>
-                </thead>
-                <tbody>
-                    {imageModels.map((model) => (
-                        <tr key={model.id}>
-                            <td>
-                                <code className="model-tag-sm">{model.id}</code>
-                                {(model.coincoin_default_for || []).includes('image') && <span className="inline-badge">默认图片</span>}
-                            </td>
-                            <td>
-                                <div>{formatCaps(model)}</div>
-                                <div className="table-subtle">{describePublicModel(model)}</div>
-                            </td>
-                            <td>{formatModelPrice(model)}</td>
-                            <td><span className={`badge ${model.coincoin_metadata?.tier === 'preview' ? 'badge-warning' : 'badge-success'}`}>{formatTier(model)}</span></td>
+            <div className="pricing-table-wrap">
+                <table className="data-table pricing-table pricing-table-image">
+                    <thead>
+                        <tr>
+                            <th>模型名称</th>
+                            <th>图片价格</th>
+                            <th>描述</th>
+                            <th>状态</th>
                         </tr>
-                    ))}
-                </tbody>
-            </table>
+                    </thead>
+                    <tbody>
+                        {imageModels.map((model) => (
+                            <tr key={model.id}>
+                                <td>
+                                    <div className="model-name-cell">
+                                        <code className="model-tag-sm">{model.id}</code>
+                                        {(model.coincoin_default_for || []).includes('image') && <span className="inline-badge">默认图片</span>}
+                                    </div>
+                                </td>
+                                <td className="price-cell">{formatImagePrice(model.coincoin_price_per_image_cents)}</td>
+                                <td>
+                                    <div>{describePublicModel(model)}</div>
+                                    <div className="table-subtle">{formatCaps(model)}</div>
+                                </td>
+                                <td><span className={`badge ${model.coincoin_metadata?.tier === 'preview' ? 'badge-warning' : 'badge-success'}`}>{formatTier(model)}</span></td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
 
             <h3>计费说明</h3>
             <ul className="doc-list">

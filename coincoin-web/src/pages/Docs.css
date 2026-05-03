@@ -323,9 +323,101 @@
     line-height: 1.5;
 }
 
+.pricing-table-wrap {
+    width: 100%;
+    overflow-x: auto;
+    margin-bottom: var(--space-xl);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-card);
+}
+
+.pricing-table {
+    min-width: 1220px;
+}
+
+.pricing-table th {
+    padding-top: 16px;
+    padding-bottom: 16px;
+    background: var(--bg-glass);
+    white-space: nowrap;
+}
+
+.pricing-table td {
+    padding-top: 20px;
+    padding-bottom: 20px;
+    vertical-align: middle;
+}
+
+.pricing-table tr:last-child td {
+    border-bottom: none;
+}
+
+.pricing-table-text th:nth-child(1),
+.pricing-table-text td:nth-child(1) {
+    width: 18%;
+}
+
+.pricing-table-text th:nth-child(2),
+.pricing-table-text td:nth-child(2),
+.pricing-table-text th:nth-child(3),
+.pricing-table-text td:nth-child(3),
+.pricing-table-text th:nth-child(4),
+.pricing-table-text td:nth-child(4) {
+    width: 17%;
+}
+
+.pricing-table-text th:nth-child(5),
+.pricing-table-text td:nth-child(5) {
+    width: 25%;
+}
+
+.pricing-table-text th:nth-child(6),
+.pricing-table-text td:nth-child(6) {
+    width: 6%;
+}
+
+.pricing-table-image {
+    min-width: 760px;
+}
+
+.pricing-table-image th:nth-child(1),
+.pricing-table-image td:nth-child(1) {
+    width: 28%;
+}
+
+.pricing-table-image th:nth-child(2),
+.pricing-table-image td:nth-child(2) {
+    width: 22%;
+}
+
+.pricing-table-image th:nth-child(3),
+.pricing-table-image td:nth-child(3) {
+    width: 40%;
+}
+
+.pricing-table-image th:nth-child(4),
+.pricing-table-image td:nth-child(4) {
+    width: 10%;
+}
+
+.model-name-cell {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.price-cell {
+    color: var(--text-primary);
+    font-size: 0.98rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
 .inline-badge {
     display: inline-flex;
-    margin-left: 8px;
     padding: 2px 8px;
     border-radius: var(--radius-full);
     background: rgba(99, 102, 241, 0.12);
@@ -406,5 +498,17 @@
 
     .audience-grid {
         grid-template-columns: 1fr;
+    }
+
+    .pricing-table {
+        min-width: 1080px;
+    }
+
+    .pricing-table-image {
+        min-width: 680px;
+    }
+
+    .price-cell {
+        font-size: 0.9rem;
     }
 }
