@@ -162,27 +162,6 @@ export default function Usage() {
                     </div>
                 </div>
 
-                <div className="usage-guide glass-card animate-fade-in-up">
-                    <div className="usage-guide-copy">
-                        <span className="usage-kicker">Request Logs</span>
-                        <p>排查模型路由、缓存命中、计量和状态码时，先看这里。</p>
-                    </div>
-                    <div className="usage-guide-pills">
-                        <div className="usage-guide-pill">
-                            <strong>路由</strong>
-                            <span>endpoint / model</span>
-                        </div>
-                        <div className="usage-guide-pill">
-                            <strong>缓存</strong>
-                            <span>cached / non-cached / hit rate</span>
-                        </div>
-                        <div className="usage-guide-pill">
-                            <strong>计量</strong>
-                            <span>tokens / images / cost</span>
-                        </div>
-                    </div>
-                </div>
-
                 {/* Filters */}
                 <div className="usage-filters glass-card animate-fade-in-up">
                     <div className="usage-filters-header">
