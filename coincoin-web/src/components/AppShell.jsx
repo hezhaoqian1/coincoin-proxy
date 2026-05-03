@@ -221,24 +221,24 @@ export default function AppShell({ title, description, actions, children }) {
                     { to: '/dashboard', pathname: '/dashboard', label: '控制台', caption: '余额、密钥、最近请求', icon: 'dashboard' },
                     { to: '/api-keys', pathname: '/api-keys', label: 'API 密钥', caption: '多把 Key 管理与禁用', icon: 'key' },
                     { to: '/usage', pathname: '/usage', label: '使用记录', caption: '状态码、计量、请求明细', icon: 'logs' },
-                    { to: '/docs?tab=models', pathname: '/docs', search: { tab: 'models' }, label: '模型价格', caption: '模型目录与计费', icon: 'pricing' },
                 ],
             },
             {
                 title: '资金',
                 items: [
                     { to: '/recharge?section=recharge', pathname: '/recharge', search: { section: 'recharge' }, label: '充值', caption: '套餐与支付', icon: 'billing' },
+                    { to: '/referrals', pathname: '/referrals', label: '邀请朋友', caption: '邀请记录与额度奖励', icon: 'invite' },
                     { to: '/recharge?section=orders', pathname: '/recharge', search: { section: 'orders' }, label: '我的订单', caption: '最近订单与到账状态', icon: 'order' },
                     { to: '/recharge?section=redeem', pathname: '/recharge', search: { section: 'redeem' }, label: '兑换', caption: '兑换码入账', icon: 'redeem' },
-                    { to: '/referrals', pathname: '/referrals', label: '邀请朋友', caption: '邀请记录与额度奖励', icon: 'invite' },
                 ],
             },
             {
-                title: '教程',
+                title: '接入指南',
                 items: [
-                    { to: '/guides/api-quickstart', pathname: '/guides/api-quickstart', label: '默认 API 教程', caption: '第一条请求怎么发', icon: 'docs' },
-                    { to: '/guides/codex', pathname: '/guides/codex', label: 'Codex 配置', caption: '一条命令写好 config.toml', icon: 'terminal' },
-                    { to: '/guides/claude-code', pathname: '/guides/claude-code', label: 'Claude Code 配置', caption: 'Anthropic 兼容配置', icon: 'access' },
+                    { to: '/docs?tab=models', pathname: '/docs', search: { tab: 'models' }, label: '模型与价格', caption: '可用模型与扣费', icon: 'pricing' },
+                    { to: '/guides/api-quickstart', pathname: '/guides/api-quickstart', label: 'API 快速接入', caption: '第一条请求怎么发', icon: 'docs' },
+                    { to: '/guides/codex', pathname: '/guides/codex', label: 'Codex 接入', caption: '写好 config.toml', icon: 'terminal' },
+                    { to: '/guides/claude-code', pathname: '/guides/claude-code', label: 'Claude Code 接入', caption: 'Anthropic 兼容配置', icon: 'access' },
                 ],
             },
         ]
