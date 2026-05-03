@@ -66,51 +66,6 @@
     color: var(--text-tertiary);
 }
 
-.app-sidebar-badge-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-}
-
-.app-sidebar-badge {
-    display: inline-flex;
-    align-items: center;
-    padding: 5px 10px;
-    border-radius: 999px;
-    background: rgba(14, 165, 233, 0.1);
-    color: #0369a1;
-    font-size: 0.72rem;
-    font-weight: 700;
-}
-
-.app-sidebar-session {
-    padding: 14px 14px 13px;
-    border: 1px solid rgba(15, 23, 42, 0.07);
-    border-radius: 14px;
-    background: rgba(255, 255, 255, 0.8);
-    box-shadow: 0 8px 18px rgba(15, 23, 42, 0.04);
-}
-
-.app-sidebar-session-eyebrow {
-    margin-bottom: 8px;
-    font-size: 0.72rem;
-    font-weight: 700;
-    color: var(--text-tertiary);
-}
-
-.app-sidebar-session-title {
-    font-size: 0.9rem;
-    font-weight: 700;
-    color: var(--text-primary);
-}
-
-.app-sidebar-session-sub {
-    margin-top: 5px;
-    font-size: 0.8rem;
-    color: var(--text-secondary);
-    line-height: 1.5;
-}
-
 .app-sidebar-nav {
     display: flex;
     flex-direction: column;
