@@ -52,46 +52,34 @@ function ReadinessCard({ authMode, username, hasDeveloperKey }) {
         session_only: {
             tone: 'warning',
             eyebrow: '还差一步',
-            title: '还没有开发者 Key',
-            description: `${username || '当前账户'} 已登录控制台。生成开发者 Key 后，CLI、SDK 和常见客户端就能直接使用。`,
+            title: '接口调用还未开通',
+            description: `${username || '当前账户'} 已进入控制台。右侧生成调用凭证后，CLI、SDK 和常见客户端才能发起请求。`,
             statusItems: [
-                { label: '登录方式', value: '控制台账号' },
-                { label: 'API 调用', value: '尚未开通' },
-                { label: '下一步', value: '生成开发者 Key' },
-            ],
-            actions: [
-                { href: '#developer-key', label: '去生成 API Key', style: 'btn btn-primary btn-sm' },
-                { to: '/settings', label: '查看接入配置', style: 'btn btn-secondary btn-sm' },
+                { label: '当前会话', value: '控制台账号' },
+                { label: '接口调用', value: '等待开通' },
+                { label: '下一步', value: '在右侧生成' },
             ],
         },
         session_with_api: {
             tone: 'success',
             eyebrow: '已就绪',
-            title: '账户可直接调用',
-            description: `${username || '当前账户'} 已有可用的开发者 Key。下一步通常是复制配置，或者直接发一条测试请求。`,
+            title: '接口状态正常',
+            description: `${username || '当前账户'} 已具备调用凭证。右侧处理复制、重新生成和接入配置。`,
             statusItems: [
-                { label: '登录方式', value: '控制台账号' },
-                { label: 'API 调用', value: '可直接请求' },
-                { label: '常用动作', value: '复制配置 / 测试请求' },
-            ],
-            actions: [
-                { to: '/settings', label: '复制配置片段', style: 'btn btn-primary btn-sm' },
-                { to: '/docs', label: '查看接入文档', style: 'btn btn-secondary btn-sm' },
+                { label: '当前会话', value: '控制台账号' },
+                { label: '接口调用', value: '可直接请求' },
+                { label: '常用动作', value: '复制配置' },
             ],
         },
         api: {
             tone: 'info',
             eyebrow: '当前会话',
-            title: '你现在是用开发者 Key 直登',
-            description: '这种方式适合直接调接口。充值、账户管理和重新生成密钥，还是回控制台账号处理。',
+            title: '接口状态正常',
+            description: '当前浏览器已通过接口凭证进入控制台。请求可以继续使用当前凭证；充值、轮换和账户设置需要切回控制台账号。',
             statusItems: [
-                { label: '登录方式', value: '开发者 Key 直登' },
-                { label: 'API 调用', value: '可直接请求' },
-                { label: '账户管理', value: '回控制台处理' },
-            ],
-            actions: [
-                { to: '/settings', label: '查看接入配置', style: 'btn btn-primary btn-sm' },
-                { to: '/docs', label: '查看文档', style: 'btn btn-secondary btn-sm' },
+                { label: '当前会话', value: 'Key 会话' },
+                { label: '接口调用', value: '可直接请求' },
+                { label: '账户操作', value: '切回控制台账号' },
             ],
         },
     }
@@ -111,23 +99,6 @@ function ReadinessCard({ authMode, username, hasDeveloperKey }) {
                         </div>
                     ))}
                 </div>
-                <div className="readiness-tags">
-                    <span className="readiness-tag">{authMode === 'session_only' ? '控制台会话' : '可直接继续'}</span>
-                    <span className="readiness-tag">{hasDeveloperKey ? '开发者 Key 已就绪' : '尚未生成开发者 Key'}</span>
-                </div>
-            </div>
-            <div className="readiness-actions">
-                {content.actions.map((action) => (
-                    action.to ? (
-                        <Link key={action.to + action.label} to={action.to} className={action.style}>
-                            {action.label}
-                        </Link>
-                    ) : (
-                        <a key={action.href + action.label} href={action.href} className={action.style}>
-                            {action.label}
-                        </a>
-                    )
-                ))}
             </div>
         </div>
     )
@@ -169,47 +140,48 @@ function KeyManagement({ copied, copy, username, generatedApiKey, hasLocalDevelo
 
     return (
         <div id="developer-key" className="key-management-card">
-            <h3>开发者 Key</h3>
+            <div className="key-management-head">
+                <span className="key-management-eyebrow">凭证操作</span>
+                <h3>开发者 Key</h3>
+            </div>
             {!username ? (
                 <div className="key-panel-copy">
-                    <p>
-                        当前就是开发者 Key 登录。
-                        需要轮换密钥或处理账户设置时，再回控制台账号。
-                    </p>
-                    <div className="action-grid" style={{ marginTop: 'var(--space-md)' }}>
-                        <div className="action-item" onClick={() => copy(effectiveApiKey, 'key')}>
-                            <div className="action-icon">&#128273;</div>
-                            <div>
+                    <p>复制当前会话 Key，或查看可直接粘贴到客户端里的配置片段。</p>
+                    <div className="action-grid key-action-grid">
+                        <button className="action-item key-copy-row" type="button" onClick={() => copy(effectiveApiKey, 'key')}>
+                            <span className="action-icon">&#128273;</span>
+                            <span className="key-copy-body">
                                 <strong>当前开发者 Key</strong>
                                 <code>{effectiveApiKey.substring(0, 12)}...</code>
-                            </div>
+                            </span>
                             <span className="action-btn">{copied === 'key' ? '&#10003; 已复制' : '复制'}</span>
-                        </div>
+                        </button>
                     </div>
                     <div className="action-links">
-                        <Link to="/settings" className="btn btn-secondary btn-sm">查看配置片段</Link>
+                        <Link to="/settings" className="btn btn-primary btn-sm">查看接入配置</Link>
+                        <Link to="/docs" className="btn btn-ghost btn-sm">查看文档</Link>
                     </div>
                 </div>
             ) : generatedKey && !showKey ? (
                 <div>
                     <p className="key-panel-copy">
-                        这把 Key 已可使用。平时直接复制即可。
+                        这把 Key 已可使用。复制 Key 或直接查看客户端配置。
                     </p>
-                    <div className="action-grid">
-                        <div className="action-item" onClick={() => copy(generatedKey, 'apikey')}>
-                            <div className="action-icon">&#128273;</div>
-                            <div>
+                    <div className="action-grid key-action-grid">
+                        <button className="action-item key-copy-row" type="button" onClick={() => copy(generatedKey, 'apikey')}>
+                            <span className="action-icon">&#128273;</span>
+                            <span className="key-copy-body">
                                 <strong>开发者 API Key</strong>
                                 <code>{maskedKey}</code>
-                            </div>
+                            </span>
                             <span className="action-btn">{copied === 'apikey' ? '&#10003; 已复制' : '复制'}</span>
-                        </div>
+                        </button>
                     </div>
-                    <div style={{ marginTop: 'var(--space-md)', display: 'flex', gap: 'var(--space-sm)' }}>
+                    <div className="key-secondary-actions">
+                        <Link to="/settings" className="btn btn-primary btn-sm">查看接入配置</Link>
                         <button className="btn btn-secondary btn-sm" onClick={handleGenerate} disabled={generating}>
                             {generating ? '生成中...' : '重新生成 Key'}
                         </button>
-                        <Link to="/settings" className="btn btn-ghost btn-sm">查看配置</Link>
                     </div>
                     {genError && <p style={{ color: 'var(--accent-rose)', fontSize: '0.85rem', marginTop: 'var(--space-sm)' }}>{genError}</p>}
                 </div>
@@ -219,18 +191,18 @@ function KeyManagement({ copied, copy, username, generatedApiKey, hasLocalDevelo
                         当前账户已经有开发者 Key，但明文不会跨浏览器恢复。
                         如果你没有保存原值，需要重新生成一把新的开发者 Key。
                     </p>
-                    <div className="action-grid">
-                        <div className="action-item">
-                            <div className="action-icon">&#128273;</div>
-                            <div>
+                    <div className="action-grid key-action-grid">
+                        <div className="action-item key-copy-row key-copy-row-static">
+                            <span className="action-icon">&#128273;</span>
+                            <span className="key-copy-body">
                                 <strong>最近一把开发者 Key</strong>
                                 <code>{latestDeveloperKey.masked_key}</code>
-                            </div>
+                            </span>
                             <span className="action-btn">{activeDeveloperKeyCount} 把有效 Key</span>
                         </div>
                     </div>
-                    <div style={{ marginTop: 'var(--space-md)', display: 'flex', gap: 'var(--space-sm)' }}>
-                        <button className="btn btn-secondary btn-sm" onClick={handleGenerate} disabled={generating}>
+                    <div className="key-secondary-actions">
+                        <button className="btn btn-primary btn-sm" onClick={handleGenerate} disabled={generating}>
                             {generating ? '生成中...' : '重新生成 Key'}
                         </button>
                         <Link to="/settings" className="btn btn-ghost btn-sm">查看配置说明</Link>
@@ -262,7 +234,7 @@ function KeyManagement({ copied, copy, username, generatedApiKey, hasLocalDevelo
             ) : (
                 <div>
                     <p className="key-panel-copy">
-                        给当前账户生成一把开发者 Key。
+                        给当前账户生成一把开发者 Key，生成后会显示一次完整值。
                     </p>
                     <button className="btn btn-primary btn-sm" onClick={handleGenerate} disabled={generating}>
                         {generating ? '生成中...' : '生成开发者 Key'}
