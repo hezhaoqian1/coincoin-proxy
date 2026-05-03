@@ -2,6 +2,7 @@ import asyncio
 import json
 import secrets
 import time
+from datetime import UTC, date, datetime, time as dt_time, timedelta
 from typing import Any, Dict, Optional
 
 import httpx
@@ -24,7 +25,7 @@ from .router import (
     registry as model_registry,
 )
 from .schemas import BalanceResponse
-from .usage_buffer import extract_cached_tokens, usage_buffer
+from .usage_buffer import china_today, extract_cached_tokens, usage_buffer
 from .finance_summary import ensure_finance_summary_initialized, increment_finance_summary
 
 
@@ -55,6 +56,27 @@ def _model_resolution_to_openai_error(exc: Exception) -> JSONResponse:
     if isinstance(exc, ModelCapabilityError):
         return openai_error(str(exc), "invalid_request_error", param="model", code="model_capability_mismatch", status_code=400)
     return openai_error("Unable to resolve model", "server_error", code="model_resolution_failed", status_code=500)
+
+
+def _parse_usage_datetime_filter(value: Optional[str], *, is_end: bool = False):
+    raw = (value or "").strip()
+    if not raw:
+        return None, False
+    try:
+        if len(raw) == 10:
+            day = date.fromisoformat(raw)
+            china_boundary = datetime.combine(
+                day + (timedelta(days=1) if is_end else timedelta()),
+                dt_time.min,
+            )
+            return china_boundary - timedelta(hours=8), is_end
+
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(UTC).replace(tzinfo=None)
+        return parsed, False
+    except ValueError:
+        return None, False
 
 
 def _serialize_public_model(public_model) -> Dict[str, Any]:
@@ -164,7 +186,6 @@ async def get_usage(
 
     from .models import RequestLog
     from sqlalchemy import select, func, and_
-    from datetime import datetime as dt
 
     limit = max(1, min(limit, 200))
     offset = max(0, offset)
@@ -177,15 +198,16 @@ async def get_usage(
     if api_key_id:
         conditions.append(RequestLog.api_key_id == api_key_id)
     if start_date:
-        try:
-            conditions.append(RequestLog.created_at >= dt.fromisoformat(start_date))
-        except ValueError:
-            pass
+        start_bound, _ = _parse_usage_datetime_filter(start_date)
+        if start_bound is not None:
+            conditions.append(RequestLog.created_at >= start_bound)
     if end_date:
-        try:
-            conditions.append(RequestLog.created_at <= dt.fromisoformat(end_date))
-        except ValueError:
-            pass
+        end_bound, end_exclusive = _parse_usage_datetime_filter(end_date, is_end=True)
+        if end_bound is not None:
+            if end_exclusive:
+                conditions.append(RequestLog.created_at < end_bound)
+            else:
+                conditions.append(RequestLog.created_at <= end_bound)
 
     where = and_(*conditions)
 
@@ -193,6 +215,33 @@ async def get_usage(
         select(func.count()).select_from(RequestLog).where(where)
     )
     total = count_result.scalar() or 0
+
+    summary_result = await db.execute(
+        select(
+            func.coalesce(func.sum(RequestLog.cost_cents), 0).label("cost_cents"),
+            func.coalesce(func.sum(RequestLog.input_tokens), 0).label("input_tokens"),
+            func.coalesce(func.sum(RequestLog.output_tokens), 0).label("output_tokens"),
+            func.coalesce(func.sum(RequestLog.cached_tokens), 0).label("cached_tokens"),
+            func.coalesce(func.sum(RequestLog.image_count), 0).label("image_count"),
+            func.coalesce(func.sum(RequestLog.usage_unit_count), 0).label("usage_unit_count"),
+        ).where(where)
+    )
+    summary_row = summary_result.first()
+
+    def _summary_value(index: int, key: str) -> int:
+        if summary_row is None:
+            return 0
+        mapping = getattr(summary_row, "_mapping", None)
+        if mapping is not None and key in mapping:
+            return int(mapping[key] or 0)
+        return int(summary_row[index] or 0)
+
+    summary_cost_cents = _summary_value(0, "cost_cents")
+    summary_input_tokens = _summary_value(1, "input_tokens")
+    summary_output_tokens = _summary_value(2, "output_tokens")
+    summary_cached_tokens = _summary_value(3, "cached_tokens")
+    summary_image_count = _summary_value(4, "image_count")
+    summary_usage_unit_count = _summary_value(5, "usage_unit_count")
 
     result = await db.execute(
         select(RequestLog)
@@ -208,6 +257,16 @@ async def get_usage(
         "total": total,
         "limit": limit,
         "offset": offset,
+        "summary": {
+            "cost_cents": summary_cost_cents,
+            "cost_usd": summary_cost_cents / 100,
+            "input_tokens": summary_input_tokens,
+            "output_tokens": summary_output_tokens,
+            "cached_tokens": summary_cached_tokens,
+            "total_tokens": summary_input_tokens + summary_output_tokens,
+            "image_count": summary_image_count,
+            "usage_unit_count": summary_usage_unit_count,
+        },
         "data": [
             {
                 "created_at": (log.created_at.isoformat() + "Z") if log.created_at else None,
@@ -245,8 +304,6 @@ async def get_daily_usage(request: Request, db: AsyncSession = Depends(get_db), 
 
     from .models import UsageDaily
     from sqlalchemy import select
-    from datetime import timedelta
-    from .usage_buffer import china_today
 
     days = max(1, min(days, 90))
     start = china_today() - timedelta(days=days - 1)

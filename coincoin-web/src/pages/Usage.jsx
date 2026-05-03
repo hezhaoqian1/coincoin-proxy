@@ -98,11 +98,12 @@ export default function Usage() {
         )
     }
 
-    const totalCost = usage.data.reduce((s, d) => s + d.cost_usd, 0)
-    const totalTokens = usage.data.reduce((s, d) => s + d.total_tokens, 0)
-    const totalImages = usage.data.reduce((s, d) => s + (d.image_count || 0), 0)
-    const totalCachedTokens = usage.data.reduce((s, d) => s + (d.cached_tokens || 0), 0)
-    const totalInputTokens = usage.data.reduce((s, d) => s + (d.input_tokens || 0), 0)
+    const summary = usage.summary || null
+    const totalCost = summary ? summary.cost_usd : usage.data.reduce((s, d) => s + d.cost_usd, 0)
+    const totalTokens = summary ? summary.total_tokens : usage.data.reduce((s, d) => s + d.total_tokens, 0)
+    const totalImages = summary ? summary.image_count : usage.data.reduce((s, d) => s + (d.image_count || 0), 0)
+    const totalCachedTokens = summary ? summary.cached_tokens : usage.data.reduce((s, d) => s + (d.cached_tokens || 0), 0)
+    const totalInputTokens = summary ? summary.input_tokens : usage.data.reduce((s, d) => s + (d.input_tokens || 0), 0)
 
     return (
         <AppShell
