@@ -245,8 +245,12 @@ export async function getBalance() {
 }
 
 /** Get usage logs */
-export async function getUsageLogs(limit = 50, offset = 0) {
-    const res = await fetch(`${PROXY_BASE}/v1/usage?limit=${limit}&offset=${offset}`, {
+export async function getUsageLogs(limit = 50, offset = 0, filters = {}) {
+    const params = new URLSearchParams({ limit, offset })
+    Object.entries(filters || {}).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== '') params.set(key, value)
+    })
+    const res = await fetch(`${PROXY_BASE}/v1/usage?${params}`, {
         headers: authHeaders()
     })
     if (!res.ok) throw new Error('Failed to fetch usage')

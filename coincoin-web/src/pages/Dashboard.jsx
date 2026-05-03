@@ -432,6 +432,7 @@ export default function Dashboard() {
     } = useAuth()
     const [balance, setBalance] = useState(null)
     const [usage, setUsage] = useState(null)
+    const [todayUsage, setTodayUsage] = useState(null)
     const [dailyData, setDailyData] = useState(null)
     const [announcements, setAnnouncements] = useState([])
     const [dismissedAnns, setDismissedAnns] = useState(() => {
@@ -453,13 +454,20 @@ export default function Dashboard() {
 
     useEffect(() => {
         async function load() {
+            const today = getChinaIsoDate()
             try {
-                const [b, u] = await Promise.all([getBalance(), getUsageLogs(20)])
+                const [b, u, todayU] = await Promise.all([
+                    getBalance(),
+                    getUsageLogs(20),
+                    getUsageLogs(1, 0, { start_date: today, end_date: today }),
+                ])
                 setBalance(b)
                 setUsage(u)
+                setTodayUsage(todayU)
             } catch {
                 setBalance(MOCK_BALANCE)
                 setUsage(MOCK_USAGE)
+                setTodayUsage(null)
             }
             try { setDailyData(await getDailyUsage(7)) } catch { /* ignore */ }
             try { setAnnouncements(await getAnnouncements()) } catch { /* ignore */ }
@@ -507,18 +515,27 @@ export default function Dashboard() {
     const todayStr = getChinaIsoDate()
     const todaySummary = dailyData?.find(d => d.day === todayStr) || dailyData?.[dailyData.length - 1] || null
     const todayUsageFallback = usage?.data?.filter(d => getChinaIsoDate(d.created_at) === todayStr) || []
-    const todayCost = todaySummary
-        ? todaySummary.cost_usd
-        : todayUsageFallback.reduce((sum, d) => sum + d.cost_cents, 0) / 100
-    const todayTokens = todaySummary
-        ? (todaySummary.tokens_total || 0)
-        : todayUsageFallback.reduce((sum, d) => sum + (d.total_tokens || d.input_tokens + d.output_tokens), 0)
-    const todayImages = todaySummary
-        ? (todaySummary.images_total || 0)
-        : todayUsageFallback.reduce((sum, d) => sum + (d.image_count || 0), 0)
-    const todayRequests = todaySummary
-        ? (todaySummary.requests_total || 0)
-        : todayUsageFallback.length
+    const todayDetailSummary = todayUsage?.summary || null
+    const todayCost = todayDetailSummary
+        ? todayDetailSummary.cost_usd
+        : todaySummary
+            ? todaySummary.cost_usd
+            : todayUsageFallback.reduce((sum, d) => sum + d.cost_cents, 0) / 100
+    const todayTokens = todayDetailSummary
+        ? (todayDetailSummary.total_tokens || 0)
+        : todaySummary
+            ? (todaySummary.tokens_total || 0)
+            : todayUsageFallback.reduce((sum, d) => sum + (d.total_tokens || d.input_tokens + d.output_tokens), 0)
+    const todayImages = todayDetailSummary
+        ? (todayDetailSummary.image_count || 0)
+        : todaySummary
+            ? (todaySummary.images_total || 0)
+            : todayUsageFallback.reduce((sum, d) => sum + (d.image_count || 0), 0)
+    const todayRequests = todayUsage
+        ? (todayUsage.total || 0)
+        : todaySummary
+            ? (todaySummary.requests_total || 0)
+            : todayUsageFallback.length
 
     const chartData = dailyData && dailyData.length > 0 ? {
         labels: dailyData.map(d => d.day.slice(5)),
