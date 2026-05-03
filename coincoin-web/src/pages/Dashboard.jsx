@@ -2,15 +2,50 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { Line } from 'react-chartjs-2'
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler } from 'chart.js'
-import { MOCK_BALANCE, MOCK_USAGE, getBalance, getUsageLogs, getDailyUsage, getAnnouncements, activateKey, getReferralInfo, getStationApplication, applyForStation, setGeneratedKey as storeGeneratedKey } from '../api/client'
+import { MOCK_BALANCE, MOCK_USAGE, getBalance, getUsageLogs, getAnnouncements, activateKey, getReferralInfo, getStationApplication, applyForStation, setGeneratedKey as storeGeneratedKey } from '../api/client'
 import useOrderConfirm from '../hooks/useOrderConfirm'
 import { useAuth } from '../hooks/useAuth'
 import { usePublicModels } from '../hooks/usePublicModels'
 import AppShell from '../components/AppShell'
-import { formatChinaTime, getChinaIsoDate } from '../utils/time'
+import { formatLocalTime, getLocalDateRangeIso, getLocalIsoDate, getLocalTodayRangeIso, getRecentLocalIsoDates } from '../utils/time'
 import './Dashboard.css'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler)
+
+async function getLocalDailyUsage(days = 7) {
+    const dates = getRecentLocalIsoDates(days)
+    const rows = await Promise.all(dates.map(async (day) => {
+        const range = getLocalDateRangeIso(day)
+        if (!range) {
+            return {
+                day,
+                input_tokens: 0,
+                output_tokens: 0,
+                tokens_total: 0,
+                images_total: 0,
+                cost_usd: 0,
+                requests_total: 0,
+            }
+        }
+
+        const usage = await getUsageLogs(1, 0, {
+            start_date: range.start,
+            end_date: range.end,
+            end_exclusive: 'true',
+        })
+        const summary = usage.summary || {}
+        return {
+            day,
+            input_tokens: summary.input_tokens || 0,
+            output_tokens: summary.output_tokens || 0,
+            tokens_total: summary.total_tokens || 0,
+            images_total: summary.image_count || 0,
+            cost_usd: summary.cost_usd || 0,
+            requests_total: usage.total || 0,
+        }
+    }))
+    return rows
+}
 
 function ReadinessCard({ authMode, username, hasDeveloperKey }) {
     const contentMap = {
@@ -454,12 +489,16 @@ export default function Dashboard() {
 
     useEffect(() => {
         async function load() {
-            const today = getChinaIsoDate()
+            const todayRange = getLocalTodayRangeIso()
             try {
                 const [b, u, todayU] = await Promise.all([
                     getBalance(),
                     getUsageLogs(20),
-                    getUsageLogs(1, 0, { start_date: today, end_date: today }),
+                    getUsageLogs(1, 0, {
+                        start_date: todayRange?.start,
+                        end_date: todayRange?.end,
+                        end_exclusive: todayRange ? 'true' : undefined,
+                    }),
                 ])
                 setBalance(b)
                 setUsage(u)
@@ -469,7 +508,7 @@ export default function Dashboard() {
                 setUsage(MOCK_USAGE)
                 setTodayUsage(null)
             }
-            try { setDailyData(await getDailyUsage(7)) } catch { /* ignore */ }
+            try { setDailyData(await getLocalDailyUsage(7)) } catch { /* ignore */ }
             try { setAnnouncements(await getAnnouncements()) } catch { /* ignore */ }
             try { setReferral(await getReferralInfo()) } catch { /* ignore */ }
             try { setStationState(await getStationApplication()) } catch { /* ignore */ }
@@ -512,9 +551,9 @@ export default function Dashboard() {
 
     const activeAnns = announcements.filter(a => !dismissedAnns.includes(a.id))
 
-    const todayStr = getChinaIsoDate()
+    const todayStr = getLocalIsoDate()
     const todaySummary = dailyData?.find(d => d.day === todayStr) || dailyData?.[dailyData.length - 1] || null
-    const todayUsageFallback = usage?.data?.filter(d => getChinaIsoDate(d.created_at) === todayStr) || []
+    const todayUsageFallback = usage?.data?.filter(d => getLocalIsoDate(d.created_at) === todayStr) || []
     const todayDetailSummary = todayUsage?.summary || null
     const todayCost = todayDetailSummary
         ? todayDetailSummary.cost_usd
@@ -856,7 +895,7 @@ export default function Dashboard() {
                                 <tbody>
                                     {usage.data.slice(0, 5).map((log, i) => (
                                         <tr key={i}>
-                                            <td>{formatChinaTime(log.created_at, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
+                                            <td>{formatLocalTime(log.created_at, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
                                             <td><code className="endpoint-tag">{log.endpoint}</code></td>
                                             <td><span className="model-tag-sm">{log.model}</span></td>
                                             <td>{log.usage_unit_type === 'images' ? `${log.image_count || log.usage_unit_count || 0} images` : `${(log.total_tokens || 0).toLocaleString()} tokens`}</td>
