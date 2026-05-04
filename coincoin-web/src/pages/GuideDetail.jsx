@@ -40,6 +40,26 @@ function GuideCommand({ title, summary, code }) {
     )
 }
 
+function GuideCodeGrid({ items }) {
+    return (
+        <section className="guide-code-grid">
+            {items.map((item) => (
+                <article className="guide-code-card glass-card" key={item.title}>
+                    <div className="guide-code-card-head">
+                        <div>
+                            <span className="guide-kicker">{item.label || 'Example'}</span>
+                            <h2>{item.title}</h2>
+                            <p>{item.summary}</p>
+                        </div>
+                        <CopyButton text={item.code} idleLabel="复制" />
+                    </div>
+                    <pre className="guide-code-block guide-code-block-compact">{item.code}</pre>
+                </article>
+            ))}
+        </section>
+    )
+}
+
 function GuideCommandGroup({ items }) {
     return (
         <div className="guide-command-group">
@@ -55,6 +75,29 @@ function GuideCommandGroup({ items }) {
     )
 }
 
+function OtherGuideCard({ item }) {
+    return (
+        <Link to={`/guides/${item.id}`} className="guide-integration-card glass-card">
+            <span className="guide-integration-icon">{item.icon}</span>
+            <span className="guide-integration-copy">
+                <strong>{item.title}</strong>
+                <span>{item.summary}</span>
+            </span>
+            <span className="guide-integration-arrow">查看</span>
+        </Link>
+    )
+}
+
+function OtherGuideGrid({ items }) {
+    return (
+        <section className="guide-integration-grid">
+            {items.map((item) => (
+                <OtherGuideCard key={item.id} item={item} />
+            ))}
+        </section>
+    )
+}
+
 export default function GuideDetail() {
     const { guideId } = useParams()
     const { effectiveApiKey, hasDeveloperKey, hasLocalDeveloperKey, latestDeveloperKey } = useAuth()
@@ -66,19 +109,132 @@ export default function GuideDetail() {
         || defaultTextModel
         || models[0]
     const defaultClaudeModel = 'claude-sonnet-4-6'
+    const snippetKey = key || 'YOUR_DEVELOPER_API_KEY'
     const maskedKey = effectiveApiKey
         ? `${effectiveApiKey.slice(0, 8)}\u2022\u2022\u2022\u2022${effectiveApiKey.slice(-4)}`
         : latestDeveloperKey?.masked_key || '还没有本地可用开发者 Key'
 
     const guides = useMemo(() => {
         const apiQuickstartCommand = `curl ${OPENAI_BASE_URL}/chat/completions \\
-  -H "Authorization: Bearer ${key}" \\
+  -H "Authorization: Bearer ${snippetKey}" \\
   -H "Content-Type: application/json" \\
   -d '{
     "model": "${codingModel?.id || 'opus'}",
     "messages": [{"role": "user", "content": "Reply with only: OK"}],
     "stream": false
   }'`
+
+        const apiPythonCommand = `from openai import OpenAI
+
+client = OpenAI(
+    api_key="${snippetKey}",
+    base_url="${OPENAI_BASE_URL}",
+)
+
+response = client.chat.completions.create(
+    model="${codingModel?.id || 'opus'}",
+    messages=[{"role": "user", "content": "Reply with only: OK"}],
+)
+
+print(response.choices[0].message.content)`
+
+        const apiJavaScriptCommand = `import OpenAI from "openai";
+
+const client = new OpenAI({
+  apiKey: "${snippetKey}",
+  baseURL: "${OPENAI_BASE_URL}",
+});
+
+const response = await client.chat.completions.create({
+  model: "${codingModel?.id || 'opus'}",
+  messages: [{ role: "user", content: "Reply with only: OK" }],
+});
+
+console.log(response.choices[0].message.content);`
+
+        const apiGoCommand = `package main
+
+import (
+  "context"
+  "fmt"
+
+  "github.com/openai/openai-go"
+  "github.com/openai/openai-go/option"
+)
+
+func main() {
+  client := openai.NewClient(
+    option.WithAPIKey("${snippetKey}"),
+    option.WithBaseURL("${OPENAI_BASE_URL}"),
+  )
+
+  resp, err := client.Chat.Completions.New(context.Background(), openai.ChatCompletionNewParams{
+    Model: "${codingModel?.id || 'opus'}",
+    Messages: []openai.ChatCompletionMessageParamUnion{
+      openai.UserMessage("Reply with only: OK"),
+    },
+  })
+  if err != nil {
+    panic(err)
+  }
+
+  fmt.Println(resp.Choices[0].Message.Content)
+}`
+
+        const apiPhpCommand = `<?php
+
+$payload = [
+    "model" => "${codingModel?.id || 'opus'}",
+    "messages" => [
+        ["role" => "user", "content" => "Reply with only: OK"],
+    ],
+];
+
+$ch = curl_init("${OPENAI_BASE_URL}/chat/completions");
+curl_setopt_array($ch, [
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_HTTPHEADER => [
+        "Authorization: Bearer ${snippetKey}",
+        "Content-Type: application/json",
+    ],
+    CURLOPT_POST => true,
+    CURLOPT_POSTFIELDS => json_encode($payload),
+]);
+
+echo curl_exec($ch);`
+
+        const apiExamples = [
+            {
+                label: 'HTTP',
+                title: 'cURL',
+                summary: '最快确认 Base URL、Key、model 都可用。',
+                code: apiQuickstartCommand,
+            },
+            {
+                label: 'Python',
+                title: 'Python SDK',
+                summary: '适合后端脚本、批处理和服务端调用。',
+                code: apiPythonCommand,
+            },
+            {
+                label: 'Node.js',
+                title: 'JavaScript SDK',
+                summary: '适合 Node 服务、CLI 工具和前端构建脚本。',
+                code: apiJavaScriptCommand,
+            },
+            {
+                label: 'Go',
+                title: 'Go SDK',
+                summary: '适合网关、后端服务和长期运行任务。',
+                code: apiGoCommand,
+            },
+            {
+                label: 'PHP',
+                title: 'PHP cURL',
+                summary: '适合传统 Web 后端和快速集成。',
+                code: apiPhpCommand,
+            },
+        ]
 
         const codexCommand = `mkdir -p ~/.codex && cat > ~/.codex/config.toml <<'EOF'
 model_provider = "coincoin"
@@ -91,7 +247,7 @@ personality = "pragmatic"
 [model_providers.coincoin]
 name = "CoinCoin"
 base_url = "${OPENAI_BASE_URL}"
-experimental_bearer_token = "${key}"
+experimental_bearer_token = "${snippetKey}"
 wire_api = "responses"
 EOF
 
@@ -109,14 +265,14 @@ personality = "pragmatic"
 [model_providers.coincoin]
 name = "CoinCoin"
 base_url = "${OPENAI_BASE_URL}"
-experimental_bearer_token = "${key}"
+experimental_bearer_token = "${snippetKey}"
 wire_api = "responses"
 "@ | Set-Content "$HOME\\.codex\\config.toml" -Encoding UTF8
 
 codex`
 
         const claudeCommand = `ANTHROPIC_BASE_URL="${SITE_ROOT}" \\
-ANTHROPIC_AUTH_TOKEN="${key}" \\
+ANTHROPIC_AUTH_TOKEN="${snippetKey}" \\
 ANTHROPIC_MODEL="${defaultClaudeModel}" \\
 ANTHROPIC_DEFAULT_SONNET_MODEL="${defaultClaudeModel}" \\
 ANTHROPIC_DEFAULT_OPUS_MODEL="claude-opus-4-7" \\
@@ -132,7 +288,7 @@ claude --model "${defaultClaudeModel}"`
       "name": "CoinCoin",
       "options": {
         "baseURL": "${OPENAI_BASE_URL}",
-        "apiKey": "${key}"
+        "apiKey": "${snippetKey}"
       },
       "models": {
         "${codingModel?.id || 'gpt-5.3-codex'}": {}
@@ -153,14 +309,14 @@ models:
   - name: CoinCoin Codex
     provider: openai
     model: ${codingModel?.id || 'gpt-5.3-codex'}
-    apiKey: ${key}
+    apiKey: ${snippetKey}
     apiBase: ${OPENAI_BASE_URL}
     roles:
       - chat
       - edit
 EOF`
 
-        const aiderCommand = `export OPENAI_API_KEY="${key}"
+        const aiderCommand = `export OPENAI_API_KEY="${snippetKey}"
 export OPENAI_API_BASE="${OPENAI_BASE_URL}"
 
 aider --model openai/${codingModel?.id || 'gpt-5.3-codex'}`
@@ -170,7 +326,7 @@ aider --model openai/${codingModel?.id || 'gpt-5.3-codex'}`
     "providers": {
       "coincoin": {
         "baseUrl": "${OPENAI_BASE_URL}",
-        "apiKey": "${key}",
+        "apiKey": "${snippetKey}",
         "api": "openai-completions",
         "models": [{"id": "${codingModel?.id || 'gpt-5.3-codex'}", "contextWindow": 131072}]
       }
@@ -183,7 +339,7 @@ aider --model openai/${codingModel?.id || 'gpt-5.3-codex'}`
 }`
 
         const imageGenerationCommand = `curl ${OPENAI_BASE_URL}/images/generations \\
-  -H "Authorization: Bearer ${key}" \\
+  -H "Authorization: Bearer ${snippetKey}" \\
   -H "Content-Type: application/json" \\
   -d '{
     "model": "gemini-image",
@@ -192,15 +348,46 @@ aider --model openai/${codingModel?.id || 'gpt-5.3-codex'}`
   }'`
 
         const usageCommand = `curl ${OPENAI_BASE_URL}/usage?limit=5 \\
-  -H "Authorization: Bearer ${key}"`
+  -H "Authorization: Bearer ${snippetKey}"`
+
+        const otherGuides = [
+            {
+                id: 'opencode',
+                icon: 'OC',
+                title: 'OpenCode 接入',
+                summary: 'OpenAI 兼容 provider，适合本地 coding agent。',
+            },
+            {
+                id: 'continue',
+                icon: 'CT',
+                title: 'Continue 接入',
+                summary: 'VS Code / JetBrains 配置，先开 chat 和 edit。',
+            },
+            {
+                id: 'aider',
+                icon: 'AI',
+                title: 'Aider 接入',
+                summary: '命令行和项目级配置，模型用 openai/<alias>。',
+            },
+            {
+                id: 'openclaw',
+                icon: 'CL',
+                title: 'OpenClaw 接入',
+                summary: '推荐 openai-completions 模式。',
+            },
+            {
+                id: 'images',
+                icon: 'IMG',
+                title: '图片接口',
+                summary: '文生图、图编辑和 usage 计费检查。',
+            },
+        ]
 
         return {
             'api-quickstart': {
-                title: '默认 API 教程',
-                description: '先确认开发者 Key 和余额，再打通第一条 OpenAI 兼容请求。',
-                commandTitle: '直接发第一条请求',
-                commandSummary: '把下面整段粘贴进终端即可。能返回 `OK` 就说明地址、Key 和 model 都通了。',
-                command: apiQuickstartCommand,
+                title: 'API 快速接入',
+                description: '用统一 `/v1` 地址接 OpenAI 兼容 SDK。先跑通最小请求，再接入你的业务代码。',
+                examples: apiExamples,
             },
             codex: {
                 title: 'Codex 配置',
@@ -269,6 +456,11 @@ aider --model openai/${codingModel?.id || 'gpt-5.3-codex'}`
                     },
                 ],
             },
+            other: {
+                title: '其他接入',
+                description: '把低频客户端和图片接口收在这里。先选你的工具，再复制对应配置。',
+                integrations: otherGuides,
+            },
         }
     }, [codingModel?.id, key])
 
@@ -299,7 +491,11 @@ aider --model openai/${codingModel?.id || 'gpt-5.3-codex'}`
                     </section>
                 )}
 
-                {effectiveApiKey && (guide.commandGroup ? (
+                {(effectiveApiKey || guide.examples || guide.integrations) && (guide.examples ? (
+                    <GuideCodeGrid items={guide.examples} />
+                ) : guide.integrations ? (
+                    <OtherGuideGrid items={guide.integrations} />
+                ) : guide.commandGroup ? (
                     <GuideCommandGroup items={guide.commandGroup} />
                 ) : (
                     <GuideCommand
