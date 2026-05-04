@@ -2,12 +2,31 @@ import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { MOCK_USAGE, getApiKey, listDeveloperKeys } from '../api/client'
 import AppShell from '../components/AppShell'
-import { formatLocalTime, getLocalDateRangeIso } from '../utils/time'
+import { formatLocalTime, getLocalDateRangeIso, getLocalIsoDate } from '../utils/time'
 import './Usage.css'
+
+const RANGE_OPTIONS = [
+    { key: 'today', label: '今天', days: 1 },
+    { key: '3d', label: '近 3 天', days: 3 },
+    { key: '7d', label: '近 7 天', days: 7 },
+    { key: '30d', label: '近 30 天', days: 30 },
+    { key: 'all', label: '全部', days: null },
+]
 
 function formatCacheHitRate(cachedTokens, inputTokens) {
     if (!inputTokens) return '0%'
     return `${((cachedTokens / inputTokens) * 100).toFixed(1)}%`
+}
+
+function getRecentDateRange(days) {
+    if (!days) return { start_date: '', end_date: '' }
+    const end = new Date()
+    const start = new Date(end)
+    start.setDate(start.getDate() - Math.max(1, Number(days)) + 1)
+    return {
+        start_date: getLocalIsoDate(start),
+        end_date: getLocalIsoDate(end),
+    }
 }
 
 function buildUsageFilterParams(filters) {
@@ -29,6 +48,7 @@ function buildUsageFilterParams(filters) {
 
 export default function Usage() {
     const [searchParams, setSearchParams] = useSearchParams()
+    const defaultDateRange = getRecentDateRange(1)
     const [usage, setUsage] = useState(null)
     const [keysState, setKeysState] = useState({ data: [] })
     const [page, setPage] = useState(0)
@@ -36,8 +56,9 @@ export default function Usage() {
         endpoint: '',
         status_code: '',
         api_key_id: searchParams.get('api_key_id') || '',
-        start_date: '',
-        end_date: '',
+        start_date: searchParams.get('start_date') || defaultDateRange.start_date,
+        end_date: searchParams.get('end_date') || defaultDateRange.end_date,
+        range_key: searchParams.get('range') || 'today',
     })
     const limit = 15
 
@@ -92,12 +113,50 @@ export default function Usage() {
 
     const applyFilter = (key, value) => {
         setFilters(f => ({ ...f, [key]: value }))
-        if (key === 'api_key_id') {
+        if (['api_key_id', 'start_date', 'end_date', 'range_key'].includes(key)) {
             const next = new URLSearchParams(searchParams)
-            if (value) next.set('api_key_id', value)
-            else next.delete('api_key_id')
+            if (key === 'range_key') {
+                if (value && value !== 'today') next.set('range', value)
+                else next.delete('range')
+            } else if (value) {
+                next.set(key, value)
+            } else {
+                next.delete(key)
+            }
             setSearchParams(next, { replace: true })
         }
+        setPage(0)
+    }
+
+    const applyDateRange = (option) => {
+        const range = getRecentDateRange(option.days)
+        setFilters(f => ({
+            ...f,
+            start_date: range.start_date,
+            end_date: range.end_date,
+            range_key: option.key,
+        }))
+        const next = new URLSearchParams(searchParams)
+        if (option.key === 'today') next.delete('range')
+        else next.set('range', option.key)
+        if (range.start_date) next.set('start_date', range.start_date)
+        else next.delete('start_date')
+        if (range.end_date) next.set('end_date', range.end_date)
+        else next.delete('end_date')
+        setSearchParams(next, { replace: true })
+        setPage(0)
+    }
+
+    const applyCustomDate = (key, value) => {
+        const nextFilters = { ...filters, [key]: value, range_key: 'custom' }
+        setFilters(nextFilters)
+        const next = new URLSearchParams(searchParams)
+        next.set('range', 'custom')
+        if (nextFilters.start_date) next.set('start_date', nextFilters.start_date)
+        else next.delete('start_date')
+        if (nextFilters.end_date) next.set('end_date', nextFilters.end_date)
+        else next.delete('end_date')
+        setSearchParams(next, { replace: true })
         setPage(0)
     }
 
@@ -180,8 +239,20 @@ export default function Usage() {
                     <div className="usage-filters-header">
                         <div>
                             <h3>筛选与导出</h3>
-                            <p>先缩小范围，再导出 CSV。看问题会快很多。</p>
+                            <p>默认显示今天。需要排查趋势时，直接切 3 天、7 天或 30 天。</p>
                         </div>
+                    </div>
+                    <div className="usage-range-strip" role="group" aria-label="时间范围">
+                        {RANGE_OPTIONS.map(option => (
+                            <button
+                                key={option.key}
+                                type="button"
+                                className={`range-chip ${filters.range_key === option.key ? 'active' : ''}`}
+                                onClick={() => applyDateRange(option)}
+                            >
+                                {option.label}
+                            </button>
+                        ))}
                     </div>
                     <div className="filter-row">
                         <select className="filter-select" value={filters.endpoint} onChange={e => applyFilter('endpoint', e.target.value)}>
@@ -211,8 +282,14 @@ export default function Usage() {
                                 <option value={filters.api_key_id}>当前选定 Key</option>
                             )}
                         </select>
-                        <input type="date" className="filter-input" value={filters.start_date} onChange={e => applyFilter('start_date', e.target.value)} placeholder="开始日期" />
-                        <input type="date" className="filter-input" value={filters.end_date} onChange={e => applyFilter('end_date', e.target.value)} placeholder="结束日期" />
+                        <label className="date-filter-field">
+                            <span>开始</span>
+                            <input type="date" className="filter-input" value={filters.start_date} onChange={e => applyCustomDate('start_date', e.target.value)} />
+                        </label>
+                        <label className="date-filter-field">
+                            <span>结束</span>
+                            <input type="date" className="filter-input" value={filters.end_date} onChange={e => applyCustomDate('end_date', e.target.value)} />
+                        </label>
                         <button className="btn btn-secondary btn-sm" onClick={exportCSV}>&#128190; 导出 CSV</button>
                     </div>
                 </div>
