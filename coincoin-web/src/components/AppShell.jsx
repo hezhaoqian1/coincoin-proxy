@@ -239,6 +239,11 @@ export default function AppShell({ title, description, actions, children }) {
                     { to: '/guides/api-quickstart', pathname: '/guides/api-quickstart', label: 'API 快速接入', caption: '第一条请求怎么发', icon: 'docs' },
                     { to: '/guides/codex', pathname: '/guides/codex', label: 'Codex 接入', caption: '写好 config.toml', icon: 'terminal' },
                     { to: '/guides/claude-code', pathname: '/guides/claude-code', label: 'Claude Code 接入', caption: 'Anthropic 兼容配置', icon: 'access' },
+                    { to: '/guides/opencode', pathname: '/guides/opencode', label: 'OpenCode 接入', caption: 'OpenAI 兼容 provider', icon: 'terminal' },
+                    { to: '/guides/continue', pathname: '/guides/continue', label: 'Continue 接入', caption: 'VS Code / JetBrains 配置', icon: 'docs' },
+                    { to: '/guides/aider', pathname: '/guides/aider', label: 'Aider 接入', caption: '命令行与项目配置', icon: 'terminal' },
+                    { to: '/guides/openclaw', pathname: '/guides/openclaw', label: 'OpenClaw 接入', caption: 'openai-completions 模式', icon: 'access' },
+                    { to: '/guides/images', pathname: '/guides/images', label: '图片接口', caption: '文生图和图片编辑', icon: 'docs' },
                 ],
             },
         ]
