@@ -21,14 +21,54 @@
     line-height: 1.65;
 }
 
+.usage-range-strip {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 8px;
+    margin-bottom: var(--space-md);
+    padding: 6px;
+    border: 1px solid rgba(15, 23, 42, 0.07);
+    border-radius: 14px;
+    background: rgba(15, 23, 42, 0.03);
+}
+
+.range-chip {
+    min-height: 38px;
+    padding: 8px 10px;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.84rem;
+    font-weight: 750;
+    white-space: nowrap;
+    transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.range-chip:hover {
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.72);
+}
+
+.range-chip.active {
+    color: #0f766e;
+    border-color: rgba(20, 184, 166, 0.18);
+    background: rgba(45, 212, 191, 0.18);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
+}
+
 .filter-row {
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(150px, 1fr) minmax(132px, 0.75fr) minmax(220px, 1.25fr) repeat(2, minmax(158px, 0.85fr)) auto;
     gap: var(--space-md);
-    align-items: center;
-    flex-wrap: wrap;
+    align-items: end;
 }
 
 .filter-select, .filter-input {
+    width: 100%;
+    height: 38px;
     padding: 6px 12px;
     border: 1px solid var(--border-color);
     border-radius: var(--radius-sm);
@@ -40,6 +80,19 @@
 
 .filter-select-key {
     min-width: 240px;
+}
+
+.date-filter-field {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.date-filter-field span {
+    color: var(--text-tertiary);
+    font-size: 0.73rem;
+    font-weight: 750;
 }
 
 .filter-select:focus, .filter-input:focus {
@@ -113,4 +166,30 @@
 .table-pagination button:disabled {
     opacity: 0.3;
     cursor: not-allowed;
+}
+
+@media (max-width: 1180px) {
+    .filter-row {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 720px) {
+    .usage-range-strip {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .filter-row {
+        grid-template-columns: 1fr;
+    }
+
+    .filter-select-key {
+        min-width: 0;
+    }
+
+    .table-footer {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: var(--space-md);
+    }
 }
