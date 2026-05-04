@@ -25,7 +25,7 @@
 
 .filter-row {
     display: grid;
-    grid-template-columns: minmax(136px, 0.9fr) minmax(124px, 0.65fr) minmax(220px, 1.1fr) minmax(430px, 1.4fr) auto;
+    grid-template-columns: minmax(128px, 0.8fr) minmax(118px, 0.6fr) minmax(180px, 0.75fr) minmax(360px, 1.2fr) auto;
     gap: var(--space-md);
     align-items: center;
 }
@@ -43,7 +43,7 @@
 }
 
 .filter-select-key {
-    min-width: 240px;
+    min-width: 180px;
 }
 
 .date-filter-field {
@@ -71,7 +71,7 @@
     width: 100%;
     min-height: 38px;
     display: grid;
-    grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 2px;
     padding: 3px;
     border: 1px solid var(--border-color);

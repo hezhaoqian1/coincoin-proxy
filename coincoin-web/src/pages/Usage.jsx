@@ -9,7 +9,6 @@ const RANGE_OPTIONS = [
     { key: 'today', label: '今天', days: 1 },
     { key: 'yesterday', label: '昨天', preset: 'yesterday' },
     { key: '7d', label: '近 7 天', days: 7 },
-    { key: '30d', label: '近 30 天', days: 30 },
     { key: 'month', label: '本月迄今', preset: 'month' },
 ]
 
