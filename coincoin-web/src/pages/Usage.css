@@ -1,5 +1,7 @@
 /* Filters */
 .usage-filters {
+    position: relative;
+    z-index: 30;
     padding: 14px 16px;
     margin-bottom: var(--space-lg);
 }
@@ -105,7 +107,7 @@
     position: absolute;
     top: calc(100% + 10px);
     right: 0;
-    z-index: 20;
+    z-index: 40;
     width: min(430px, calc(100vw - 48px));
     overflow: hidden;
     border: 1px solid rgba(15, 23, 42, 0.08);
@@ -168,6 +170,8 @@
 }
 
 .usage-table {
+    position: relative;
+    z-index: 1;
     padding: var(--space-lg);
 }
 
