@@ -291,6 +291,51 @@ claude --model claude-opus-4-7`
 }`
         },
         {
+            title: 'OpenCode',
+            summary: 'OpenCode 使用 OpenAI-compatible provider。',
+            code: `{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "coincoin": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "CoinCoin",
+      "options": {
+        "baseURL": "${baseUrl}",
+        "apiKey": "${key}"
+      },
+      "models": {
+        "${codexModel}": {}
+      }
+    }
+  },
+  "model": "coincoin/${codexModel}"
+}`
+        },
+        {
+            title: 'Continue',
+            summary: 'VS Code / JetBrains 里新增 OpenAI provider。',
+            code: `name: CoinCoin
+version: 0.0.1
+schema: v1
+models:
+  - name: CoinCoin Codex
+    provider: openai
+    model: ${codexModel}
+    apiKey: ${key}
+    apiBase: ${baseUrl}
+    roles:
+      - chat
+      - edit`
+        },
+        {
+            title: 'Aider',
+            summary: '命令行直接指定 OpenAI-compatible 地址。',
+            code: `export OPENAI_API_KEY="${key}"
+export OPENAI_API_BASE="${baseUrl}"
+
+aider --model openai/${codexModel}`
+        },
+        {
             title: 'Image Generation',
             summary: '文生图和图编辑统一看这段。',
             code: `curl ${baseUrl}/images/generations \\
@@ -319,6 +364,7 @@ claude --model claude-opus-4-7`
         'Claude Code 的地址填根域名，不要手动加 /v1。',
         '模型没切换成功时，先检查请求体里的 model。',
         '图片模型走 /v1/images/generations 或 /v1/images/edits。',
+        '单条小文本请求 cost_cents 可能显示 0，累计用量和余额才是扣费依据。',
         '余额、充值和日志都以控制台记录为准。',
     ]
 

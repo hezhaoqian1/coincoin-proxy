@@ -123,6 +123,77 @@ ANTHROPIC_DEFAULT_OPUS_MODEL="claude-opus-4-7" \\
 ANTHROPIC_DEFAULT_HAIKU_MODEL="claude-haiku-4-5" \\
 claude --model "${defaultClaudeModel}"`
 
+        const opencodeCommand = `mkdir -p ~/.config/opencode && cat > ~/.config/opencode/opencode.json <<'EOF'
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "coincoin": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "CoinCoin",
+      "options": {
+        "baseURL": "${OPENAI_BASE_URL}",
+        "apiKey": "${key}"
+      },
+      "models": {
+        "${codingModel?.id || 'gpt-5.3-codex'}": {}
+      }
+    }
+  },
+  "model": "coincoin/${codingModel?.id || 'gpt-5.3-codex'}"
+}
+EOF
+
+opencode`
+
+        const continueCommand = `mkdir -p ~/.continue && cat > ~/.continue/config.yaml <<'EOF'
+name: CoinCoin
+version: 0.0.1
+schema: v1
+models:
+  - name: CoinCoin Codex
+    provider: openai
+    model: ${codingModel?.id || 'gpt-5.3-codex'}
+    apiKey: ${key}
+    apiBase: ${OPENAI_BASE_URL}
+    roles:
+      - chat
+      - edit
+EOF`
+
+        const aiderCommand = `export OPENAI_API_KEY="${key}"
+export OPENAI_API_BASE="${OPENAI_BASE_URL}"
+
+aider --model openai/${codingModel?.id || 'gpt-5.3-codex'}`
+
+        const openclawCommand = `{
+  "models": {
+    "providers": {
+      "coincoin": {
+        "baseUrl": "${OPENAI_BASE_URL}",
+        "apiKey": "${key}",
+        "api": "openai-completions",
+        "models": [{"id": "${codingModel?.id || 'gpt-5.3-codex'}", "contextWindow": 131072}]
+      }
+    },
+    "defaults": {
+      "provider": "coincoin",
+      "model": "${codingModel?.id || 'gpt-5.3-codex'}"
+    }
+  }
+}`
+
+        const imageGenerationCommand = `curl ${OPENAI_BASE_URL}/images/generations \\
+  -H "Authorization: Bearer ${key}" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "gemini-image",
+    "prompt": "A clean product poster for an AI gateway",
+    "size": "1024x1024"
+  }'`
+
+        const usageCommand = `curl ${OPENAI_BASE_URL}/usage?limit=5 \\
+  -H "Authorization: Bearer ${key}"`
+
         return {
             'api-quickstart': {
                 title: '默认 API 教程',
@@ -153,6 +224,50 @@ claude --model "${defaultClaudeModel}"`
                 commandTitle: '直接用环境变量启动 Claude Code',
                 commandSummary: '如果之前登录过官方 Claude，先在 Claude Code 里执行一次 `/logout`，再粘贴下面这段命令。',
                 command: claudeCommand,
+            },
+            opencode: {
+                title: 'OpenCode 配置',
+                description: 'OpenCode 走 OpenAI-compatible provider，model 用 `coincoin/<公开 alias>`。',
+                commandTitle: '写入 OpenCode provider',
+                commandSummary: '写入 `~/.config/opencode/opencode.json` 后直接启动 OpenCode。',
+                command: opencodeCommand,
+            },
+            continue: {
+                title: 'Continue 配置',
+                description: 'Continue 走 OpenAI provider，`apiBase` 填统一 `/v1` 入口。',
+                commandTitle: '写入 Continue config.yaml',
+                commandSummary: '写入 `~/.continue/config.yaml`。能 chat 后，再按需补 autocomplete/edit 模型。',
+                command: continueCommand,
+            },
+            aider: {
+                title: 'Aider 配置',
+                description: 'Aider 走 OpenAI-compatible base URL，模型名用 `openai/<公开 alias>`。',
+                commandTitle: '用环境变量启动 Aider',
+                commandSummary: '如果你有项目级 `.aider.conf.yml`，确保没有覆盖这里的 base URL 和 key。',
+                command: aiderCommand,
+            },
+            openclaw: {
+                title: 'OpenClaw 配置',
+                description: 'OpenClaw 推荐先用 `openai-completions`，不要绕到内部 gateway。',
+                commandTitle: 'Provider 配置片段',
+                commandSummary: '把这段合并进 OpenClaw 的模型 provider 配置。',
+                command: openclawCommand,
+            },
+            images: {
+                title: '图片接口',
+                description: '文生图和图片编辑走同一个公开 `/v1` 入口，成功产出图片后按张计费。',
+                commandGroup: [
+                    {
+                        title: '文生图',
+                        summary: '返回图片后，使用记录里会显示 `usage_unit_type=images`。',
+                        code: imageGenerationCommand,
+                    },
+                    {
+                        title: '查看最近用量',
+                        summary: '小文本请求单条 `cost_cents` 可能是 0，图片请求按张计费更直观。',
+                        code: usageCommand,
+                    },
+                ],
             },
         }
     }, [codingModel?.id, key])
