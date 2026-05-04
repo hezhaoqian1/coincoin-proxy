@@ -8,13 +8,9 @@ import './Usage.css'
 const RANGE_OPTIONS = [
     { key: 'today', label: '今天', days: 1 },
     { key: 'yesterday', label: '昨天', preset: 'yesterday' },
-    { key: '3d', label: '近 3 天', days: 3 },
     { key: '7d', label: '近 7 天', days: 7 },
-    { key: '14d', label: '近 14 天', days: 14 },
     { key: '30d', label: '近 30 天', days: 30 },
-    { key: 'month', label: '本月', preset: 'month' },
-    { key: 'last-month', label: '上月', preset: 'last-month' },
-    { key: 'all', label: '全部', days: null },
+    { key: 'month', label: '本月迄今', preset: 'month' },
 ]
 
 function formatCacheHitRate(cachedTokens, inputTokens) {
@@ -23,7 +19,7 @@ function formatCacheHitRate(cachedTokens, inputTokens) {
 }
 
 function getDateRange(option) {
-    if (!option || option.key === 'all') return { start_date: '', end_date: '' }
+    if (!option) return { start_date: '', end_date: '' }
     const now = new Date()
     const start = new Date(now)
     const end = new Date(now)
@@ -33,9 +29,6 @@ function getDateRange(option) {
         end.setDate(end.getDate() - 1)
     } else if (option.preset === 'month') {
         start.setDate(1)
-    } else if (option.preset === 'last-month') {
-        start.setMonth(start.getMonth() - 1, 1)
-        end.setDate(0)
     } else {
         start.setDate(start.getDate() - Math.max(1, Number(option.days || 1)) + 1)
     }
@@ -65,23 +58,33 @@ function buildUsageFilterParams(filters) {
 
 export default function Usage() {
     const [searchParams, setSearchParams] = useSearchParams()
-    const defaultDateRange = getDateRange(RANGE_OPTIONS[0])
+    const requestedRangeKey = searchParams.get('range') || 'today'
+    const initialRangeKey = requestedRangeKey === 'custom' || RANGE_OPTIONS.some(option => option.key === requestedRangeKey)
+        ? requestedRangeKey
+        : 'today'
+    const initialRangeOption = RANGE_OPTIONS.find(option => option.key === initialRangeKey) || RANGE_OPTIONS[0]
+    const initialDateRange = initialRangeKey === 'custom'
+        ? {
+            start_date: searchParams.get('start_date') || getDateRange(RANGE_OPTIONS[0]).start_date,
+            end_date: searchParams.get('end_date') || getDateRange(RANGE_OPTIONS[0]).end_date,
+        }
+        : getDateRange(initialRangeOption)
     const [usage, setUsage] = useState(null)
     const [keysState, setKeysState] = useState({ data: [] })
     const [rangeOpen, setRangeOpen] = useState(false)
     const rangePickerRef = useRef(null)
     const [customRange, setCustomRange] = useState({
-        start_date: searchParams.get('start_date') || defaultDateRange.start_date,
-        end_date: searchParams.get('end_date') || defaultDateRange.end_date,
+        start_date: searchParams.get('start_date') || initialDateRange.start_date,
+        end_date: searchParams.get('end_date') || initialDateRange.end_date,
     })
     const [page, setPage] = useState(0)
     const [filters, setFilters] = useState({
         endpoint: '',
         status_code: '',
         api_key_id: searchParams.get('api_key_id') || '',
-        start_date: searchParams.get('start_date') || defaultDateRange.start_date,
-        end_date: searchParams.get('end_date') || defaultDateRange.end_date,
-        range_key: searchParams.get('range') || 'today',
+        start_date: searchParams.get('start_date') || initialDateRange.start_date,
+        end_date: searchParams.get('end_date') || initialDateRange.end_date,
+        range_key: initialRangeKey,
     })
     const limit = 15
 
@@ -208,8 +211,6 @@ export default function Usage() {
     }
 
     const selectedKey = (keysState.data || []).find(key => key.key_id === filters.api_key_id)
-    const selectedRange = RANGE_OPTIONS.find(option => option.key === filters.range_key)
-    const rangeLabel = selectedRange?.label || '自定义'
 
     if (!usage) {
         return (
@@ -319,39 +320,30 @@ export default function Usage() {
                                 <option value={filters.api_key_id}>当前选定 Key</option>
                             )}
                         </select>
-                        <div className="range-picker" ref={rangePickerRef}>
-                            <button
-                                type="button"
-                                className={`range-trigger ${rangeOpen ? 'active' : ''}`}
-                                onClick={() => setRangeOpen(open => !open)}
-                                aria-expanded={rangeOpen}
-                                aria-haspopup="dialog"
-                            >
-                                <svg className="range-trigger-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                    <path d="M8 2v4" />
-                                    <path d="M16 2v4" />
-                                    <rect x="3" y="4" width="18" height="18" rx="2" />
-                                    <path d="M3 10h18" />
-                                </svg>
-                                <span className="range-trigger-label">{rangeLabel}</span>
-                                <svg className="range-trigger-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                    <path d={rangeOpen ? 'm18 15-6-6-6 6' : 'm6 9 6 6 6-6'} />
-                                </svg>
-                            </button>
+                        <div className="range-picker range-picker-segmented" ref={rangePickerRef}>
+                            <div className="range-segmented" role="group" aria-label="时间范围">
+                                {RANGE_OPTIONS.map(option => (
+                                    <button
+                                        key={option.key}
+                                        type="button"
+                                        className={`range-segment ${filters.range_key === option.key ? 'active' : ''}`}
+                                        onClick={() => applyDateRange(option)}
+                                    >
+                                        {option.label}
+                                    </button>
+                                ))}
+                                <button
+                                    type="button"
+                                    className={`range-segment ${filters.range_key === 'custom' || rangeOpen ? 'active' : ''}`}
+                                    onClick={() => setRangeOpen(open => !open)}
+                                    aria-expanded={rangeOpen}
+                                    aria-haspopup="dialog"
+                                >
+                                    自定义
+                                </button>
+                            </div>
                             {rangeOpen && (
                                 <div className="range-popover" role="dialog" aria-label="选择时间范围">
-                                    <div className="range-presets">
-                                        {RANGE_OPTIONS.map(option => (
-                                            <button
-                                                key={option.key}
-                                                type="button"
-                                                className={`range-preset ${filters.range_key === option.key ? 'active' : ''}`}
-                                                onClick={() => applyDateRange(option)}
-                                            >
-                                                {option.label}
-                                            </button>
-                                        ))}
-                                    </div>
                                     <div className="range-custom">
                                         <label className="date-filter-field">
                                             <span>开始日期</span>
