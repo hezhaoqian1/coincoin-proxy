@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { MOCK_USAGE, getApiKey, listDeveloperKeys } from '../api/client'
 import AppShell from '../components/AppShell'
@@ -7,9 +7,13 @@ import './Usage.css'
 
 const RANGE_OPTIONS = [
     { key: 'today', label: '今天', days: 1 },
+    { key: 'yesterday', label: '昨天', preset: 'yesterday' },
     { key: '3d', label: '近 3 天', days: 3 },
     { key: '7d', label: '近 7 天', days: 7 },
+    { key: '14d', label: '近 14 天', days: 14 },
     { key: '30d', label: '近 30 天', days: 30 },
+    { key: 'month', label: '本月', preset: 'month' },
+    { key: 'last-month', label: '上月', preset: 'last-month' },
     { key: 'all', label: '全部', days: null },
 ]
 
@@ -18,11 +22,24 @@ function formatCacheHitRate(cachedTokens, inputTokens) {
     return `${((cachedTokens / inputTokens) * 100).toFixed(1)}%`
 }
 
-function getRecentDateRange(days) {
-    if (!days) return { start_date: '', end_date: '' }
-    const end = new Date()
-    const start = new Date(end)
-    start.setDate(start.getDate() - Math.max(1, Number(days)) + 1)
+function getDateRange(option) {
+    if (!option || option.key === 'all') return { start_date: '', end_date: '' }
+    const now = new Date()
+    const start = new Date(now)
+    const end = new Date(now)
+
+    if (option.preset === 'yesterday') {
+        start.setDate(start.getDate() - 1)
+        end.setDate(end.getDate() - 1)
+    } else if (option.preset === 'month') {
+        start.setDate(1)
+    } else if (option.preset === 'last-month') {
+        start.setMonth(start.getMonth() - 1, 1)
+        end.setDate(0)
+    } else {
+        start.setDate(start.getDate() - Math.max(1, Number(option.days || 1)) + 1)
+    }
+
     return {
         start_date: getLocalIsoDate(start),
         end_date: getLocalIsoDate(end),
@@ -48,9 +65,15 @@ function buildUsageFilterParams(filters) {
 
 export default function Usage() {
     const [searchParams, setSearchParams] = useSearchParams()
-    const defaultDateRange = getRecentDateRange(1)
+    const defaultDateRange = getDateRange(RANGE_OPTIONS[0])
     const [usage, setUsage] = useState(null)
     const [keysState, setKeysState] = useState({ data: [] })
+    const [rangeOpen, setRangeOpen] = useState(false)
+    const rangePickerRef = useRef(null)
+    const [customRange, setCustomRange] = useState({
+        start_date: searchParams.get('start_date') || defaultDateRange.start_date,
+        end_date: searchParams.get('end_date') || defaultDateRange.end_date,
+    })
     const [page, setPage] = useState(0)
     const [filters, setFilters] = useState({
         endpoint: '',
@@ -91,6 +114,27 @@ export default function Usage() {
         return () => { cancelled = true }
     }, [])
 
+    useEffect(() => {
+        if (!rangeOpen) return undefined
+
+        const closeOnOutside = (event) => {
+            if (!rangePickerRef.current?.contains(event.target)) {
+                setRangeOpen(false)
+            }
+        }
+
+        const closeOnEscape = (event) => {
+            if (event.key === 'Escape') setRangeOpen(false)
+        }
+
+        document.addEventListener('mousedown', closeOnOutside)
+        document.addEventListener('keydown', closeOnEscape)
+        return () => {
+            document.removeEventListener('mousedown', closeOnOutside)
+            document.removeEventListener('keydown', closeOnEscape)
+        }
+    }, [rangeOpen])
+
     const exportCSV = () => {
         if (!usage?.data?.length) return
         const headers = ['时间', '端点', '模型', '计量类型', '计量值', 'Input Token', '缓存输入 Token', '非缓存输入 Token', 'Output Token', '总 Token', '缓存命中率', '花费($)', '耗时(ms)', '状态码']
@@ -129,13 +173,14 @@ export default function Usage() {
     }
 
     const applyDateRange = (option) => {
-        const range = getRecentDateRange(option.days)
+        const range = getDateRange(option)
         setFilters(f => ({
             ...f,
             start_date: range.start_date,
             end_date: range.end_date,
             range_key: option.key,
         }))
+        setCustomRange(range)
         const next = new URLSearchParams(searchParams)
         if (option.key === 'today') next.delete('range')
         else next.set('range', option.key)
@@ -145,10 +190,11 @@ export default function Usage() {
         else next.delete('end_date')
         setSearchParams(next, { replace: true })
         setPage(0)
+        setRangeOpen(false)
     }
 
-    const applyCustomDate = (key, value) => {
-        const nextFilters = { ...filters, [key]: value, range_key: 'custom' }
+    const applyCustomRange = () => {
+        const nextFilters = { ...filters, ...customRange, range_key: 'custom' }
         setFilters(nextFilters)
         const next = new URLSearchParams(searchParams)
         next.set('range', 'custom')
@@ -158,9 +204,12 @@ export default function Usage() {
         else next.delete('end_date')
         setSearchParams(next, { replace: true })
         setPage(0)
+        setRangeOpen(false)
     }
 
     const selectedKey = (keysState.data || []).find(key => key.key_id === filters.api_key_id)
+    const selectedRange = RANGE_OPTIONS.find(option => option.key === filters.range_key)
+    const rangeLabel = selectedRange?.label || '自定义'
 
     if (!usage) {
         return (
@@ -239,20 +288,8 @@ export default function Usage() {
                     <div className="usage-filters-header">
                         <div>
                             <h3>筛选与导出</h3>
-                            <p>默认显示今天。需要排查趋势时，直接切 3 天、7 天或 30 天。</p>
+                            <p>默认显示今天。需要排查趋势时，切换时间范围即可。</p>
                         </div>
-                    </div>
-                    <div className="usage-range-strip" role="group" aria-label="时间范围">
-                        {RANGE_OPTIONS.map(option => (
-                            <button
-                                key={option.key}
-                                type="button"
-                                className={`range-chip ${filters.range_key === option.key ? 'active' : ''}`}
-                                onClick={() => applyDateRange(option)}
-                            >
-                                {option.label}
-                            </button>
-                        ))}
                     </div>
                     <div className="filter-row">
                         <select className="filter-select" value={filters.endpoint} onChange={e => applyFilter('endpoint', e.target.value)}>
@@ -282,14 +319,54 @@ export default function Usage() {
                                 <option value={filters.api_key_id}>当前选定 Key</option>
                             )}
                         </select>
-                        <label className="date-filter-field">
-                            <span>开始</span>
-                            <input type="date" className="filter-input" value={filters.start_date} onChange={e => applyCustomDate('start_date', e.target.value)} />
-                        </label>
-                        <label className="date-filter-field">
-                            <span>结束</span>
-                            <input type="date" className="filter-input" value={filters.end_date} onChange={e => applyCustomDate('end_date', e.target.value)} />
-                        </label>
+                        <div className="range-picker" ref={rangePickerRef}>
+                            <button
+                                type="button"
+                                className={`range-trigger ${rangeOpen ? 'active' : ''}`}
+                                onClick={() => setRangeOpen(open => !open)}
+                                aria-expanded={rangeOpen}
+                                aria-haspopup="dialog"
+                            >
+                                <svg className="range-trigger-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                    <path d="M8 2v4" />
+                                    <path d="M16 2v4" />
+                                    <rect x="3" y="4" width="18" height="18" rx="2" />
+                                    <path d="M3 10h18" />
+                                </svg>
+                                <span className="range-trigger-label">{rangeLabel}</span>
+                                <svg className="range-trigger-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                    <path d={rangeOpen ? 'm18 15-6-6-6 6' : 'm6 9 6 6 6-6'} />
+                                </svg>
+                            </button>
+                            {rangeOpen && (
+                                <div className="range-popover" role="dialog" aria-label="选择时间范围">
+                                    <div className="range-presets">
+                                        {RANGE_OPTIONS.map(option => (
+                                            <button
+                                                key={option.key}
+                                                type="button"
+                                                className={`range-preset ${filters.range_key === option.key ? 'active' : ''}`}
+                                                onClick={() => applyDateRange(option)}
+                                            >
+                                                {option.label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                    <div className="range-custom">
+                                        <label className="date-filter-field">
+                                            <span>开始日期</span>
+                                            <input type="date" className="filter-input" value={customRange.start_date} onChange={e => setCustomRange(range => ({ ...range, start_date: e.target.value }))} />
+                                        </label>
+                                        <span className="range-custom-arrow">至</span>
+                                        <label className="date-filter-field">
+                                            <span>结束日期</span>
+                                            <input type="date" className="filter-input" value={customRange.end_date} onChange={e => setCustomRange(range => ({ ...range, end_date: e.target.value }))} />
+                                        </label>
+                                        <button className="btn btn-primary btn-sm" type="button" onClick={applyCustomRange}>应用</button>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
                         <button className="btn btn-secondary btn-sm" onClick={exportCSV}>&#128190; 导出 CSV</button>
                     </div>
                 </div>
