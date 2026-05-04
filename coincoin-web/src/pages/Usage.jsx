@@ -73,16 +73,16 @@ export default function Usage() {
     const [rangeOpen, setRangeOpen] = useState(false)
     const rangePickerRef = useRef(null)
     const [customRange, setCustomRange] = useState({
-        start_date: searchParams.get('start_date') || initialDateRange.start_date,
-        end_date: searchParams.get('end_date') || initialDateRange.end_date,
+        start_date: initialRangeKey === 'custom' ? initialDateRange.start_date : searchParams.get('start_date') || initialDateRange.start_date,
+        end_date: initialRangeKey === 'custom' ? initialDateRange.end_date : searchParams.get('end_date') || initialDateRange.end_date,
     })
     const [page, setPage] = useState(0)
     const [filters, setFilters] = useState({
         endpoint: '',
         status_code: '',
         api_key_id: searchParams.get('api_key_id') || '',
-        start_date: searchParams.get('start_date') || initialDateRange.start_date,
-        end_date: searchParams.get('end_date') || initialDateRange.end_date,
+        start_date: initialDateRange.start_date,
+        end_date: initialDateRange.end_date,
         range_key: initialRangeKey,
     })
     const limit = 15
@@ -186,10 +186,8 @@ export default function Usage() {
         const next = new URLSearchParams(searchParams)
         if (option.key === 'today') next.delete('range')
         else next.set('range', option.key)
-        if (range.start_date) next.set('start_date', range.start_date)
-        else next.delete('start_date')
-        if (range.end_date) next.set('end_date', range.end_date)
-        else next.delete('end_date')
+        next.delete('start_date')
+        next.delete('end_date')
         setSearchParams(next, { replace: true })
         setPage(0)
         setRangeOpen(false)

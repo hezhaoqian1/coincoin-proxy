@@ -248,7 +248,21 @@
     }
 
     .range-segmented {
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        display: flex;
+        gap: 4px;
+        overflow-x: auto;
+        overscroll-behavior-x: contain;
+        scrollbar-width: none;
+    }
+
+    .range-segmented::-webkit-scrollbar {
+        display: none;
+    }
+
+    .range-segment {
+        flex: 0 0 auto;
+        min-width: max-content;
+        padding: 0 12px;
     }
 
     .range-custom {
