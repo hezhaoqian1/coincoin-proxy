@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { describePublicModel, getAuthProfile, sendAccountEmailCode, verifyAccountEmail } from '../api/client'
+import { changeAccountPassword, describePublicModel, getAuthProfile, sendAccountEmailCode, verifyAccountEmail } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
 import { usePublicModels } from '../hooks/usePublicModels'
 import AppShell from '../components/AppShell'
@@ -149,6 +149,95 @@ function EmailBindingCard({ isConsoleSession }) {
     )
 }
 
+function PasswordCard({ isConsoleSession }) {
+    const [currentPassword, setCurrentPassword] = useState('')
+    const [newPassword, setNewPassword] = useState('')
+    const [confirmPassword, setConfirmPassword] = useState('')
+    const [loading, setLoading] = useState(false)
+    const [message, setMessage] = useState('')
+    const [error, setError] = useState('')
+
+    if (!isConsoleSession) return null
+
+    const handleSubmit = async (event) => {
+        event.preventDefault()
+        setError('')
+        setMessage('')
+        if (!currentPassword) { setError('请输入当前密码'); return }
+        if (newPassword.length < 6) { setError('新密码至少 6 位'); return }
+        if (newPassword !== confirmPassword) { setError('两次输入的新密码不一致'); return }
+
+        setLoading(true)
+        try {
+            await changeAccountPassword(currentPassword, newPassword)
+            setCurrentPassword('')
+            setNewPassword('')
+            setConfirmPassword('')
+            setMessage('密码已更新，下次登录请使用新密码。')
+        } catch (err) {
+            setError(err.message || '修改失败')
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    return (
+        <div className="glass-card settings-section password-card animate-fade-in-up">
+            <div className="settings-section-head">
+                <div>
+                    <h3>登录密码</h3>
+                    <p className="settings-subtitle">修改控制台登录密码，不影响已经生成的开发者 Key。</p>
+                </div>
+                <span className="meta-pill">个人中心</span>
+            </div>
+            <form className="password-form" onSubmit={handleSubmit}>
+                <div className="password-grid">
+                    <label className="password-field">
+                        <span>当前密码</span>
+                        <input
+                            type="password"
+                            className="input-field"
+                            value={currentPassword}
+                            onChange={(event) => { setCurrentPassword(event.target.value); setError(''); setMessage('') }}
+                            autoComplete="current-password"
+                            disabled={loading}
+                        />
+                    </label>
+                    <label className="password-field">
+                        <span>新密码</span>
+                        <input
+                            type="password"
+                            className="input-field"
+                            value={newPassword}
+                            onChange={(event) => { setNewPassword(event.target.value); setError(''); setMessage('') }}
+                            autoComplete="new-password"
+                            disabled={loading}
+                        />
+                    </label>
+                    <label className="password-field">
+                        <span>确认新密码</span>
+                        <input
+                            type="password"
+                            className="input-field"
+                            value={confirmPassword}
+                            onChange={(event) => { setConfirmPassword(event.target.value); setError(''); setMessage('') }}
+                            autoComplete="new-password"
+                            disabled={loading}
+                        />
+                    </label>
+                </div>
+                <div className="password-actions">
+                    <button className="btn btn-primary btn-sm" type="submit" disabled={loading}>
+                        {loading ? '更新中...' : '更新密码'}
+                    </button>
+                </div>
+            </form>
+            {message && <p className="settings-form-message success">{message}</p>}
+            {error && <p className="settings-form-message error">{error}</p>}
+        </div>
+    )
+}
+
 export default function Settings() {
     const [searchParams, setSearchParams] = useSearchParams()
     const { authMode, effectiveApiKey, generatedApiKey, hasDeveloperKey, hasLocalDeveloperKey, isConsoleSession, latestDeveloperKey, username } = useAuth()
@@ -184,6 +273,42 @@ export default function Settings() {
         || textModels.find((model) => model.id === 'claude-opus-4-7')
         || defaultTextModel
     const codexModel = defaultCodingModel?.id || selectedModel || 'opus'
+    const codexShellCommand = `mkdir -p ~/.codex
+if [ -f ~/.codex/config.toml ]; then
+  cp ~/.codex/config.toml ~/.codex/config.toml.bak.$(date +%Y%m%d%H%M%S)
+fi
+cat > ~/.codex/config.toml <<'EOF'
+model_provider = "coincoin"
+model = "${codexModel}"
+disable_response_storage = true
+model_reasoning_effort = "high"
+web_search = "live"
+personality = "pragmatic"
+
+[model_providers.coincoin]
+name = "CoinCoin"
+base_url = "${baseUrl}"
+experimental_bearer_token = "${key}"
+wire_api = "responses"
+EOF
+
+codex`
+    const claudeShellCommand = `COINCOIN_CLAUDE_ENV="$HOME/.coincoin-claude-code.env"
+if [ -f "$COINCOIN_CLAUDE_ENV" ]; then
+  cp "$COINCOIN_CLAUDE_ENV" "$COINCOIN_CLAUDE_ENV.bak.$(date +%Y%m%d%H%M%S)"
+fi
+cat > "$COINCOIN_CLAUDE_ENV" <<'EOF'
+export ANTHROPIC_BASE_URL="${anthropicBaseUrl}"
+export ANTHROPIC_AUTH_TOKEN="${key}"
+export ANTHROPIC_MODEL="claude-opus-4-7"
+export ANTHROPIC_DEFAULT_OPUS_MODEL="claude-opus-4-7"
+export ANTHROPIC_DEFAULT_SONNET_MODEL="claude-sonnet-4-6"
+export ANTHROPIC_DEFAULT_HAIKU_MODEL="claude-haiku-4-5"
+EOF
+
+. "$COINCOIN_CLAUDE_ENV"
+# 旧登录态会干扰新地址，先在 Claude Code 里执行 /logout
+claude --model claude-opus-4-7`
 
     const handleCopy = () => {
         if (!effectiveApiKey) return
@@ -238,37 +363,13 @@ console.log(response.choices[0].message.content);`
         },
         {
             title: 'Codex CLI (config.toml)',
-            summary: '直接复制到终端，一次写好配置并启动 Codex。',
-            code: `mkdir -p ~/.codex && cat > ~/.codex/config.toml <<'EOF'
-model_provider = "coincoin"
-model = "${codexModel}"
-disable_response_storage = true
-model_reasoning_effort = "high"
-web_search = "live"
-personality = "pragmatic"
-
-[model_providers.coincoin]
-name = "CoinCoin"
-base_url = "${baseUrl}"
-experimental_bearer_token = "${key}"
-wire_api = "responses"
-EOF
-
-codex`
+            summary: '写入前会把已有 config.toml 备份成带时间戳的 .bak 文件。',
+            code: codexShellCommand
         },
         {
             title: 'Claude Code',
-            summary: 'Claude Code 走 Anthropic 兼容入口。',
-            code: `# macOS / Linux
-export ANTHROPIC_BASE_URL="${anthropicBaseUrl}"
-export ANTHROPIC_AUTH_TOKEN="${key}"
-export ANTHROPIC_MODEL="claude-opus-4-7"
-export ANTHROPIC_DEFAULT_OPUS_MODEL="claude-opus-4-7"
-export ANTHROPIC_DEFAULT_SONNET_MODEL="claude-sonnet-4-6"
-export ANTHROPIC_DEFAULT_HAIKU_MODEL="claude-haiku-4-5"
-
-# 旧登录态会干扰新地址，先在 Claude Code 里执行 /logout
-claude --model claude-opus-4-7`
+            summary: '写到独立环境文件，若旧文件存在会先备份，不覆盖 shell 配置。',
+            code: claudeShellCommand
         },
         {
             title: 'OpenClaw',
@@ -347,7 +448,7 @@ aider --model openai/${codexModel}`
     "size": "1024x1024"
   }'`
         }
-    ], [baseUrl, anthropicBaseUrl, key, selectedModel, codexModel, imageModel])
+    ], [baseUrl, key, selectedModel, codexModel, imageModel, codexShellCommand, claudeShellCommand])
 
     const activeSnippetContent = snippets.find((snippet) => snippet.title === activeSnippet) || snippets[0]
     const activePanel = searchParams.get('panel') || 'keys'
@@ -431,6 +532,7 @@ aider --model openai/${codexModel}`
                 )}
 
                 <EmailBindingCard isConsoleSession={isConsoleSession} />
+                <PasswordCard isConsoleSession={isConsoleSession} />
 
                 <div className="glass-card settings-section animate-fade-in-up" id="api-keys">
                     <h3>&#128273; 开发者 Key</h3>

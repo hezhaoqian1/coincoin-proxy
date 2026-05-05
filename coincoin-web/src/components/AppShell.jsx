@@ -110,6 +110,13 @@ function ShellIcon({ kind }) {
                     <path d="M3 12h5" />
                 </svg>
             )
+        case 'settings':
+            return (
+                <svg {...common}>
+                    <circle cx="12" cy="12" r="3" />
+                    <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.1 2.1-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V20h-3v-.2a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1-2.1-2.1.1-.1A1.7 1.7 0 0 0 5 14.6a1.7 1.7 0 0 0-1.5-1H3v-3h.2a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1 2.1-2.1.1.1A1.7 1.7 0 0 0 8.4 6a1.7 1.7 0 0 0 1-1.5V4h3v.2a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1 2.1 2.1-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.5 1h.4v3h-.2a1.7 1.7 0 0 0-1.4 1.6Z" />
+                </svg>
+            )
         case 'logout':
             return (
                 <svg {...common}>
@@ -140,7 +147,12 @@ function isNavItemActive(item, location) {
     if (item.hash) {
         return location.hash === item.hash
     }
-    return !location.search || location.pathname === '/dashboard' || location.pathname === '/usage' || location.pathname === '/station' || location.pathname === '/api-keys'
+    return !location.search
+        || location.pathname === '/dashboard'
+        || location.pathname === '/usage'
+        || location.pathname === '/station'
+        || location.pathname === '/api-keys'
+        || location.pathname === '/settings'
 }
 
 function ShellGroup({ title, items, location }) {
@@ -172,7 +184,7 @@ function MobileBottomNav({ location }) {
         { to: '/recharge?section=recharge', pathname: '/recharge', search: { section: 'recharge' }, label: '充值', icon: 'billing' },
         { to: '/api-keys', pathname: '/api-keys', label: '密钥', icon: 'key' },
         { to: '/usage', pathname: '/usage', label: '日志', icon: 'logs' },
-        { to: '/docs?tab=models', pathname: '/docs', label: '更多', icon: 'docs' },
+        { to: '/settings', pathname: '/settings', label: '我的', icon: 'settings' },
     ]
 
     return (
@@ -220,6 +232,7 @@ export default function AppShell({ title, description, actions, children }) {
                 items: [
                     { to: '/dashboard', pathname: '/dashboard', label: '控制台', caption: '余额、密钥、最近请求', icon: 'dashboard' },
                     { to: '/api-keys', pathname: '/api-keys', label: 'API 密钥', caption: '多把 Key 管理与禁用', icon: 'key' },
+                    { to: '/settings', pathname: '/settings', label: '个人中心', caption: '密码、邮箱和接入配置', icon: 'settings' },
                     { to: '/usage', pathname: '/usage', label: '使用记录', caption: '状态码、计量、请求明细', icon: 'logs' },
                 ],
             },

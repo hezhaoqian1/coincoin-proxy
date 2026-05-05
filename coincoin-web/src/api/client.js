@@ -223,6 +223,20 @@ export async function verifyAccountEmail(code) {
     return data
 }
 
+export async function changeAccountPassword(currentPassword, newPassword) {
+    const res = await fetch(`${PROXY_BASE}/v1/auth/me/password`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({
+            current_password: currentPassword,
+            new_password: newPassword,
+        })
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || 'failed to change password')
+    return data
+}
+
 // ===== User-side APIs (real) =====
 
 /** Activate: create user and get API key (kind=api) */
