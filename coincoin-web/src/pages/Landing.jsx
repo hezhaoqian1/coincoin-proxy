@@ -13,7 +13,7 @@ const ACCESS_STEPS = [
         body: '程序调用使用独立开发者 Key，不和网页登录态混用。',
     },
     {
-        title: '复制接入配置',
+        title: '查看接入指南',
         body: 'OpenAI 兼容客户端走 /v1，Claude Code 走根地址，平时主要替换 model。',
     },
 ]
@@ -34,7 +34,7 @@ const ENTRY_POINTS = [
     },
     {
         title: '控制台管理',
-        detail: '充值、请求日志、开发者 Key 和接入配置都在同一个后台里。',
+        detail: '充值、请求日志和开发者 Key 都在同一个后台里。',
     },
     {
         title: '低心智负担',

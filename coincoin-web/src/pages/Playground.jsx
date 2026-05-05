@@ -131,10 +131,10 @@ export default function Playground() {
             <div className="playground-toolbar glass-card animate-fade-in-up">
                 <div className="playground-toolbar-copy">
                     <span className="playground-kicker">Live Request</span>
-                    <p>{hasLocalDeveloperKey ? '直接试模型、提示词和返回速度。需要复制配置时再去接入配置页。' : hasDeveloperKey ? '当前账号已有开发者 Key，但本浏览器没有保存明文。先重新生成一把，再发送真实请求。' : '先生成开发者 Key，再发送真实请求。'}</p>
+                    <p>{hasLocalDeveloperKey ? '直接试模型、提示词和返回速度。需要配置客户端时再去接入指南。' : hasDeveloperKey ? '当前账号已有开发者 Key，但本浏览器没有保存明文。先重新生成一把，再发送真实请求。' : '先生成开发者 Key，再发送真实请求。'}</p>
                 </div>
                 <div className="playground-toolbar-links">
-                    <Link to="/settings" className="btn btn-secondary btn-sm">去接入配置</Link>
+                    <Link to="/guides/api-quickstart" className="btn btn-secondary btn-sm">去接入指南</Link>
                     <Link to="/docs" className="btn btn-ghost btn-sm">阅读文档</Link>
                     <Link to="/recharge" className="btn btn-ghost btn-sm">账户充值</Link>
                 </div>
