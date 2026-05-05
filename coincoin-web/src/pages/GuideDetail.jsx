@@ -236,7 +236,11 @@ echo curl_exec($ch);`
             },
         ]
 
-        const codexCommand = `mkdir -p ~/.codex && cat > ~/.codex/config.toml <<'EOF'
+        const codexCommand = `mkdir -p ~/.codex
+if [ -f ~/.codex/config.toml ]; then
+  cp ~/.codex/config.toml ~/.codex/config.toml.bak.$(date +%Y%m%d%H%M%S)
+fi
+cat > ~/.codex/config.toml <<'EOF'
 model_provider = "coincoin"
 model = "${codingModel?.id || 'opus'}"
 disable_response_storage = true
@@ -254,6 +258,10 @@ EOF
 codex`
 
         const codexWindowsCommand = `New-Item -ItemType Directory -Force "$HOME\\.codex" | Out-Null
+if (Test-Path "$HOME\\.codex\\config.toml") {
+  $stamp = Get-Date -Format "yyyyMMddHHmmss"
+  Copy-Item "$HOME\\.codex\\config.toml" "$HOME\\.codex\\config.toml.bak.$stamp"
+}
 @"
 model_provider = "coincoin"
 model = "${codingModel?.id || 'opus'}"
@@ -271,12 +279,20 @@ wire_api = "responses"
 
 codex`
 
-        const claudeCommand = `ANTHROPIC_BASE_URL="${SITE_ROOT}" \\
-ANTHROPIC_AUTH_TOKEN="${snippetKey}" \\
-ANTHROPIC_MODEL="${defaultClaudeModel}" \\
-ANTHROPIC_DEFAULT_SONNET_MODEL="${defaultClaudeModel}" \\
-ANTHROPIC_DEFAULT_OPUS_MODEL="claude-opus-4-7" \\
-ANTHROPIC_DEFAULT_HAIKU_MODEL="claude-haiku-4-5" \\
+        const claudeCommand = `COINCOIN_CLAUDE_ENV="$HOME/.coincoin-claude-code.env"
+if [ -f "$COINCOIN_CLAUDE_ENV" ]; then
+  cp "$COINCOIN_CLAUDE_ENV" "$COINCOIN_CLAUDE_ENV.bak.$(date +%Y%m%d%H%M%S)"
+fi
+cat > "$COINCOIN_CLAUDE_ENV" <<'EOF'
+export ANTHROPIC_BASE_URL="${SITE_ROOT}"
+export ANTHROPIC_AUTH_TOKEN="${snippetKey}"
+export ANTHROPIC_MODEL="${defaultClaudeModel}"
+export ANTHROPIC_DEFAULT_SONNET_MODEL="${defaultClaudeModel}"
+export ANTHROPIC_DEFAULT_OPUS_MODEL="claude-opus-4-7"
+export ANTHROPIC_DEFAULT_HAIKU_MODEL="claude-haiku-4-5"
+EOF
+
+. "$COINCOIN_CLAUDE_ENV"
 claude --model "${defaultClaudeModel}"`
 
         const opencodeCommand = `mkdir -p ~/.config/opencode && cat > ~/.config/opencode/opencode.json <<'EOF'
@@ -395,12 +411,12 @@ aider --model openai/${codingModel?.id || 'gpt-5.3-codex'}`
                 commandGroup: [
                     {
                         title: 'macOS / Linux 一键配置',
-                        summary: '覆盖 `~/.codex/config.toml`，写入 CoinCoin provider，然后立刻启动 `codex`。',
+                        summary: '写入 CoinCoin provider；已有 `~/.codex/config.toml` 时先复制一份带时间戳的备份。',
                         code: codexCommand,
                     },
                     {
                         title: 'Windows PowerShell 一键配置',
-                        summary: '覆盖 `$HOME\\.codex\\config.toml`，直接填入 key，然后立刻启动 `codex`。',
+                        summary: '写入 `$HOME\\.codex\\config.toml`；旧文件存在时先复制一份带时间戳的备份。',
                         code: codexWindowsCommand,
                     },
                 ],
@@ -409,7 +425,7 @@ aider --model openai/${codingModel?.id || 'gpt-5.3-codex'}`
                 title: 'Claude Code 配置',
                 description: 'Claude Code 走 Anthropic 兼容入口，地址填根域名，不要手动加 `/v1`。',
                 commandTitle: '直接用环境变量启动 Claude Code',
-                commandSummary: '如果之前登录过官方 Claude，先在 Claude Code 里执行一次 `/logout`，再粘贴下面这段命令。',
+                commandSummary: '写入独立环境文件并自动备份旧文件；如果之前登录过官方 Claude，先在 Claude Code 里执行一次 `/logout`。',
                 command: claudeCommand,
             },
             opencode: {

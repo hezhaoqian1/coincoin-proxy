@@ -451,6 +451,74 @@ class EmailVerificationAuthTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(verification.consumed_at)
         self.assertEqual(db.commits, 1)
 
+    async def test_change_current_user_password_updates_account_password(self):
+        now = datetime.utcnow()
+        user = SimpleNamespace(id="u_1", username="alice", status="active")
+        session_key = SimpleNamespace(
+            user_id="u_1",
+            kind="session",
+            expires_at=now + timedelta(days=1),
+        )
+        account = SimpleNamespace(
+            linked_user_id="u_1",
+            password_hash="old-hash",
+            failed_attempts=3,
+            locked_until=now + timedelta(minutes=5),
+        )
+        db = _FakeDB(
+            execute_results=[
+                _ScalarOneOrNoneResult(session_key),
+                _ScalarOneOrNoneResult(user),
+                _ScalarOneOrNoneResult(account),
+            ]
+        )
+        payload = auth_module.AuthChangePasswordRequest(
+            current_password="old-secret",
+            new_password="new-secret",
+        )
+
+        with patch.object(auth_module, "hash_key", return_value="hashed-session"), patch.object(
+            auth_module, "verify_password", AsyncMock(return_value=True)
+        ), patch.object(auth_module, "hash_password", AsyncMock(return_value="new-hash")):
+            result = await auth_module.change_current_user_password(payload, _session_request(), db)
+
+        self.assertEqual(result.status, "password_updated")
+        self.assertEqual(account.password_hash, "new-hash")
+        self.assertEqual(account.failed_attempts, 0)
+        self.assertIsNone(account.locked_until)
+        self.assertEqual(db.commits, 1)
+
+    async def test_change_current_user_password_rejects_wrong_current_password(self):
+        now = datetime.utcnow()
+        user = SimpleNamespace(id="u_1", username="alice", status="active")
+        session_key = SimpleNamespace(
+            user_id="u_1",
+            kind="session",
+            expires_at=now + timedelta(days=1),
+        )
+        account = SimpleNamespace(linked_user_id="u_1", password_hash="old-hash")
+        db = _FakeDB(
+            execute_results=[
+                _ScalarOneOrNoneResult(session_key),
+                _ScalarOneOrNoneResult(user),
+                _ScalarOneOrNoneResult(account),
+            ]
+        )
+        payload = auth_module.AuthChangePasswordRequest(
+            current_password="wrong-secret",
+            new_password="new-secret",
+        )
+
+        with patch.object(auth_module, "hash_key", return_value="hashed-session"), patch.object(
+            auth_module, "verify_password", AsyncMock(return_value=False)
+        ):
+            with self.assertRaises(HTTPException) as ctx:
+                await auth_module.change_current_user_password(payload, _session_request(), db)
+
+        self.assertEqual(ctx.exception.status_code, 401)
+        self.assertEqual(account.password_hash, "old-hash")
+        self.assertEqual(db.commits, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

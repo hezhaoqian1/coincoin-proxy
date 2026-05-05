@@ -130,6 +130,40 @@
     font-weight: 700;
 }
 
+.password-card {
+    border-color: rgba(99, 102, 241, 0.18);
+}
+
+.password-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+}
+
+.password-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--space-md);
+}
+
+.password-field {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+}
+
+.password-field span {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.password-actions {
+    display: flex;
+    justify-content: flex-end;
+}
+
 .settings-form-message {
     margin-top: var(--space-sm);
     font-size: 0.84rem;
@@ -462,6 +496,18 @@
 
     .settings-troubleshooting-grid {
         grid-template-columns: 1fr;
+    }
+
+    .password-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .password-actions {
+        justify-content: stretch;
+    }
+
+    .password-actions .btn {
+        width: 100%;
     }
 
     .snippet-tabs {

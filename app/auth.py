@@ -22,6 +22,8 @@ from .models import Account, ApiKey, EmailVerificationCode, User
 from .rate_limiter import rate_limiter
 from .referral import process_signup_referral_rewards
 from .schemas import (
+    AuthChangePasswordRequest,
+    AuthChangePasswordResponse,
     AuthLoginRequest,
     AuthProfileResponse,
     AuthRegisterCheckCodeRequest,
@@ -624,6 +626,31 @@ async def verify_current_user_email(
     user.email_verified_at = now
     await db.commit()
     return _profile_response(user)
+
+
+@router.post("/me/password", response_model=AuthChangePasswordResponse)
+async def change_current_user_password(
+    payload: AuthChangePasswordRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    user, _ = await _user_from_session(request, db)
+    account = (
+        await db.execute(select(Account).where(Account.linked_user_id == user.id))
+    ).scalar_one_or_none()
+    if not account:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "account not found")
+
+    if not await verify_password(payload.current_password, account.password_hash):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "current password is incorrect")
+    if payload.current_password == payload.new_password:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "new password must be different")
+
+    account.password_hash = await hash_password(payload.new_password)
+    account.failed_attempts = 0
+    account.locked_until = None
+    await db.commit()
+    return AuthChangePasswordResponse()
 
 
 @router.post("/login", response_model=AuthResponse)
