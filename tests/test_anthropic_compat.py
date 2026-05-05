@@ -107,14 +107,19 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.json()["input_tokens"], 2)
 
     async def test_messages_forwards_to_cpa_and_returns_anthropic_shape(self):
-        fake_user = SimpleNamespace(id="u_test", status="active")
+        fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_claude")
         client = _RecordingClient(
             [
                 _FakeUpstreamResponse(
                     {
                         "id": "chatcmpl_test",
                         "choices": [{"message": {"role": "assistant", "content": "OK"}}],
-                        "usage": {"prompt_tokens": 12, "completion_tokens": 3, "total_tokens": 15},
+                        "usage": {
+                            "prompt_tokens": 12,
+                            "completion_tokens": 3,
+                            "total_tokens": 15,
+                            "prompt_tokens_details": {"cached_tokens": 7},
+                        },
                     }
                 )
             ]
@@ -123,7 +128,7 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
             patch.object(anthropic_module, "get_http_client", AsyncMock(return_value=client)),
-            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()) as add_usage,
         ):
             async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
                 response = await http_client.post(
@@ -147,6 +152,10 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["content"][0]["text"], "OK")
         self.assertEqual(client.calls[0]["url"], "https://cliproxyapi-deploy-production.up.railway.app/v1/chat/completions")
         self.assertEqual(client.calls[0]["json"]["model"], "gpt-5.5")
+        add_usage.assert_awaited_once()
+        usage_kwargs = add_usage.await_args.kwargs
+        self.assertEqual(usage_kwargs["api_key_id"], "k_claude")
+        self.assertEqual(usage_kwargs["cached_tokens"], 7)
 
     async def test_claude_alias_resolves_to_gpt_55_upstream(self):
         fake_user = SimpleNamespace(id="u_test", status="active")
@@ -284,13 +293,13 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["content"][0]["input"]["path"], "foo.txt")
 
     async def test_streaming_messages_translate_openai_sse_to_anthropic_sse(self):
-        fake_user = SimpleNamespace(id="u_test", status="active")
+        fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_claude_stream")
         stream_client = _RecordingStreamClient(
             [
                 _FakeEventStreamResponse(
                     [
                         'data: {"id":"chatcmpl_stream","model":"gpt-5.5","choices":[{"delta":{"role":"assistant","content":"Hello"},"finish_reason":null}]}',
-                        'data: {"id":"chatcmpl_stream","model":"gpt-5.5","choices":[{"delta":{"content":" world"},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":3,"total_tokens":15}}',
+                        'data: {"id":"chatcmpl_stream","model":"gpt-5.5","choices":[{"delta":{"content":" world"},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":3,"total_tokens":15,"prompt_tokens_details":{"cached_tokens":5}}}',
                         "data: [DONE]",
                     ]
                 )
@@ -327,6 +336,9 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("event: message_stop", response.text)
         self.assertIn('"stop_reason":"end_turn"', response.text)
         add_usage.assert_awaited_once()
+        usage_kwargs = add_usage.await_args.kwargs
+        self.assertEqual(usage_kwargs["api_key_id"], "k_claude_stream")
+        self.assertEqual(usage_kwargs["cached_tokens"], 5)
 
     async def test_streaming_tool_calls_translate_to_tool_use_events(self):
         fake_user = SimpleNamespace(id="u_test", status="active")

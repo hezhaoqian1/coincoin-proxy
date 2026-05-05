@@ -13,6 +13,7 @@ from .config import settings
 from .db import get_db
 from .proxy import (
     _build_upstream_headers,
+    _KEY_ID_ATTR,
     authenticate_user,
     authorize_request,
     extract_upstream_request_id,
@@ -26,7 +27,7 @@ from .router import (
     build_model_cloak,
     registry as model_registry,
 )
-from .usage_buffer import usage_buffer
+from .usage_buffer import extract_cached_tokens, usage_buffer
 
 
 router = APIRouter(prefix="/v1", tags=["anthropic-compat"])
@@ -737,9 +738,10 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                 if stream_state.usage:
                     await usage_buffer.add(
                         user.id,
+                        api_key_id=getattr(user, _KEY_ID_ATTR, ""),
                         input_tokens=int(stream_state.usage.get("prompt_tokens") or stream_state.usage.get("input_tokens") or 0),
                         output_tokens=int(stream_state.usage.get("completion_tokens") or stream_state.usage.get("output_tokens") or 0),
-                        cached_tokens=0,
+                        cached_tokens=extract_cached_tokens(stream_state.usage),
                         requests=1,
                         endpoint="messages",
                         model=display_model,
@@ -793,9 +795,10 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
 
     await usage_buffer.add(
         user.id,
-        input_tokens=int(usage.get("prompt_tokens") or 0),
-        output_tokens=int(usage.get("completion_tokens") or 0),
-        cached_tokens=0,
+        api_key_id=getattr(user, _KEY_ID_ATTR, ""),
+        input_tokens=int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0),
+        output_tokens=int(usage.get("completion_tokens") or usage.get("output_tokens") or 0),
+        cached_tokens=extract_cached_tokens(usage),
         requests=1,
         endpoint="messages",
         model=display_model,
