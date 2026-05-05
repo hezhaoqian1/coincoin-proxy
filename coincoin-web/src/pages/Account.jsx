@@ -4,7 +4,7 @@ import { useAuth } from '../hooks/useAuth'
 import AppShell from '../components/AppShell'
 import './Settings.css'
 
-function AccountEmailCard({ isConsoleSession }) {
+function AccountProfileCard({ isConsoleSession, username }) {
     const [profile, setProfile] = useState(null)
     const [error, setError] = useState('')
 
@@ -25,24 +25,16 @@ function AccountEmailCard({ isConsoleSession }) {
 
     if (!isConsoleSession) return null
 
-    const verified = !!profile?.email_verified_at
     const hasEmail = !!profile?.email
-    const savedEmail = profile?.email || ''
+    const emailLabel = error ? '读取失败' : hasEmail ? profile.email : '未绑定邮箱'
 
     return (
-        <div className="glass-card settings-section account-email-card animate-fade-in-up">
-            <div className="settings-section-head">
-                <div>
-                    <h3>账号邮箱</h3>
-                    <p className="settings-subtitle">
-                        邮箱仅用于显示当前控制台账号，不在这里修改。
-                    </p>
-                </div>
-                <span className="meta-pill">{verified ? '已验证' : hasEmail ? '未验证' : '未绑定'}</span>
-            </div>
-            <div className="email-readonly-box">
-                <span>邮箱地址</span>
-                <code>{hasEmail ? savedEmail : '未绑定邮箱'}</code>
+        <div className="glass-card settings-section settings-alert animate-fade-in-up">
+            <h3>账号资料</h3>
+            <div className="settings-inline-meta">
+                <span className="meta-pill">账户：{username || '未命名用户'}</span>
+                <span className="meta-pill">邮箱地址：{emailLabel}</span>
+                <span className="meta-pill">登录方式：控制台账号</span>
             </div>
             {error && <p className="settings-form-message error">{error}</p>}
         </div>
@@ -144,7 +136,7 @@ export default function Account() {
     return (
         <AppShell
             title="个人中心"
-            description="账号邮箱和登录密码。"
+            description="账号资料和登录密码。"
         >
             <div className="settings-grid">
                 {!isConsoleSession && (
@@ -159,17 +151,7 @@ export default function Account() {
                     </div>
                 )}
 
-                {isConsoleSession && (
-                    <div className="glass-card settings-section settings-alert animate-fade-in-up">
-                        <h3>账号资料</h3>
-                        <div className="settings-inline-meta">
-                            <span className="meta-pill">账户：{username || '未命名用户'}</span>
-                            <span className="meta-pill">登录方式：控制台账号</span>
-                        </div>
-                    </div>
-                )}
-
-                <AccountEmailCard isConsoleSession={isConsoleSession} />
+                <AccountProfileCard isConsoleSession={isConsoleSession} username={username} />
                 <PasswordCard isConsoleSession={isConsoleSession} />
             </div>
         </AppShell>
