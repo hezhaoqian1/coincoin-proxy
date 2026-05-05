@@ -384,10 +384,7 @@ async def register(
             await db.execute(select(User).where(User.referral_code == payload.referral_code.strip().upper()))
         ).scalar_one_or_none()
         if referrer:
-            if getattr(referrer, "register_ip", None) and referrer.register_ip == ip:
-                logger.warning("referral blocked: same IP %s (referrer=%s)", ip, referrer.id)
-            else:
-                referrer_id = referrer.id
+            referrer_id = referrer.id
 
     if existing_account:
         user = (

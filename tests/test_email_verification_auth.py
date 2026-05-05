@@ -187,6 +187,50 @@ class EmailVerificationAuthTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(account.status, "active")
         self.assertTrue(any(getattr(obj, "kind", "") == "session" for obj in db.added))
 
+    async def test_register_with_referral_accepts_same_ip_referrer(self):
+        now = datetime.utcnow()
+        verification = SimpleNamespace(
+            user_id="regv_123",
+            email="alice@gmail.com",
+            purpose="register",
+            consumed_at=None,
+            attempts=0,
+            code_hash=auth_module._hash_email_code("123456"),
+            expires_at=now + timedelta(minutes=10),
+        )
+        referrer = SimpleNamespace(id="u_ref", referral_code="BIRD2026", register_ip="10.0.0.1")
+        db = _FakeDB(
+            execute_results=[
+                _ScalarOneOrNoneResult(verification),
+                _ScalarOneOrNoneResult(None),
+                _ScalarOneOrNoneResult(None),
+                _ScalarOneOrNoneResult(referrer),
+                _ScalarOneOrNoneResult(None),
+            ]
+        )
+        payload = auth_module.AuthRegisterRequest(
+            username="alice",
+            email="Alice@Gmail.com",
+            password="secret123",
+            referral_code="bird2026",
+            verification_id="regv_123",
+            verification_code="123456",
+        )
+
+        with patch.object(auth_module.rate_limiter, "allow", AsyncMock(return_value=True)), patch.object(
+            auth_module, "ensure_finance_summary_initialized", AsyncMock()
+        ), patch.object(auth_module, "process_signup_referral_rewards", AsyncMock()) as signup_rewards, patch.object(
+            auth_module, "generate_api_key", return_value="sk_cc_session_test"
+        ), patch.object(auth_module, "hash_key", return_value="hashed-session"), patch.object(
+            auth_module, "encrypt_api_key", return_value="encrypted-session"
+        ):
+            await auth_module.register(payload, _request(ip="10.0.0.1"), db)
+
+        user = next(obj for obj in db.added if obj.__class__.__name__ == "User")
+        self.assertEqual(user.referred_by, "u_ref")
+        signup_rewards.assert_awaited_once()
+        self.assertIs(signup_rewards.await_args.args[0], user)
+
     async def test_register_with_code_accepts_dot_in_username(self):
         now = datetime.utcnow()
         verification = SimpleNamespace(
