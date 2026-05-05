@@ -408,8 +408,8 @@ function StatusCard({ label, value, tone = 'neutral', action }) {
 }
 
 function ModelsAndPricing({ textModels, imageModels, defaultTextModel, defaultImageModel }) {
-    const { activeDeveloperKeyCount, effectiveApiKey, hasDeveloperKey } = useAuth()
-    const [balance, setBalance] = useState(null)
+    const { activeDeveloperKeyCount, effectiveApiKey, hasDeveloperKey, isLoggedIn } = useAuth()
+    const [balance, setBalance] = useState({ status: 'idle', data: null })
     const [copied, setCopied] = useState('')
     const openaiBaseUrl = `${SITE}/v1`
     const claudeBaseUrl = SITE
@@ -420,18 +420,23 @@ function ModelsAndPricing({ textModels, imageModels, defaultTextModel, defaultIm
   -d '{"model":"${defaultTextModel?.id || textModels[0]?.id || 'opus'}","messages":[{"role":"user","content":"Reply with only: OK"}]}'`
 
     useEffect(() => {
+        if (!isLoggedIn) {
+            setBalance({ status: 'idle', data: null })
+            return undefined
+        }
         let active = true
+        setBalance({ status: 'loading', data: null })
         getBalance()
             .then((data) => {
-                if (active) setBalance(data)
+                if (active) setBalance({ status: 'ready', data })
             })
             .catch(() => {
-                if (active) setBalance(null)
+                if (active) setBalance({ status: 'error', data: null })
             })
         return () => {
             active = false
         }
-    }, [])
+    }, [isLoggedIn])
 
     const copy = async (text, label) => {
         await navigator.clipboard.writeText(text)
@@ -443,18 +448,22 @@ function ModelsAndPricing({ textModels, imageModels, defaultTextModel, defaultIm
         <div className="doc-section animate-fade-in">
             <h2>可用模型</h2>
             <div className="access-status-grid">
-                <StatusCard
-                    label="余额"
-                    value={balance ? `$${Number(balance.balance_usd || 0).toFixed(2)}` : '未读取'}
-                    tone={balance && balance.balance_usd > 0 ? 'ok' : 'warn'}
-                    action={<Link className="btn btn-ghost btn-sm" to="/recharge?section=recharge">充值</Link>}
-                />
-                <StatusCard
-                    label="开发者 Key"
-                    value={hasDeveloperKey ? `${activeDeveloperKeyCount || 1} 把可用` : '未生成'}
-                    tone={hasDeveloperKey ? 'ok' : 'warn'}
-                    action={<Link className="btn btn-ghost btn-sm" to="/api-keys">管理</Link>}
-                />
+                {isLoggedIn && (
+                    <StatusCard
+                        label="余额"
+                        value={balance.status === 'ready' ? `$${Number(balance.data?.balance_usd || 0).toFixed(2)}` : balance.status === 'loading' ? '读取中' : '读取失败'}
+                        tone={balance.status === 'ready' && balance.data?.balance_usd > 0 ? 'ok' : 'warn'}
+                        action={<Link className="btn btn-ghost btn-sm" to="/recharge?section=recharge">充值</Link>}
+                    />
+                )}
+                {isLoggedIn && (
+                    <StatusCard
+                        label="开发者 Key"
+                        value={hasDeveloperKey ? `${activeDeveloperKeyCount || 1} 把可用` : '未生成'}
+                        tone={hasDeveloperKey ? 'ok' : 'warn'}
+                        action={<Link className="btn btn-ghost btn-sm" to="/api-keys">管理</Link>}
+                    />
+                )}
                 <StatusCard
                     label="文本模型"
                     value={defaultTextModel?.id || textModels[0]?.id || '未配置'}
