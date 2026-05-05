@@ -153,92 +153,6 @@
     margin-bottom: var(--space-xl);
 }
 
-.quick-actions-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-sm);
-    margin: calc(-1 * var(--space-sm)) 0 var(--space-xl);
-}
-
-.access-status-grid {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: var(--space-md);
-    margin-bottom: var(--space-lg);
-}
-
-.access-status-card {
-    padding: 16px;
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border-color);
-    background: var(--bg-glass);
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-
-.access-status-card span {
-    color: var(--text-tertiary);
-    font-size: 0.78rem;
-    font-weight: 750;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-}
-
-.access-status-card strong {
-    font-size: 1.15rem;
-    overflow-wrap: anywhere;
-}
-
-.access-status-card.ok {
-    border-color: rgba(16, 185, 129, 0.22);
-}
-
-.access-status-card.warn {
-    border-color: rgba(245, 158, 11, 0.28);
-}
-
-.endpoint-strip {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: var(--space-md);
-    margin-bottom: var(--space-xl);
-}
-
-.endpoint-strip button {
-    min-width: 0;
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-md);
-    background: var(--surface-elevated);
-    color: var(--text-primary);
-    padding: 14px;
-    display: grid;
-    grid-template-columns: 1fr auto;
-    gap: 6px 12px;
-    text-align: left;
-    cursor: pointer;
-}
-
-.endpoint-strip span {
-    color: var(--text-tertiary);
-    font-size: 0.78rem;
-    font-weight: 750;
-}
-
-.endpoint-strip code {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.endpoint-strip strong {
-    grid-row: 1 / span 2;
-    grid-column: 2;
-    align-self: center;
-    color: var(--accent-indigo);
-    font-size: 0.84rem;
-}
-
 .quickstart-step {
     display: flex;
     gap: 12px;
@@ -579,11 +493,6 @@
     }
 
     .quickstart-rail {
-        grid-template-columns: 1fr;
-    }
-
-    .access-status-grid,
-    .endpoint-strip {
         grid-template-columns: 1fr;
     }
 

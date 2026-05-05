@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
-import { describePublicModel, getBalance, getCachedInputPricePerMillion } from '../api/client'
+import { useSearchParams } from 'react-router-dom'
+import { describePublicModel, getCachedInputPricePerMillion } from '../api/client'
 import AppShell from '../components/AppShell'
 import { useAuth } from '../hooks/useAuth'
 import { usePublicModels } from '../hooks/usePublicModels'
@@ -14,9 +14,9 @@ const TABS = [
         intro: '从开发者 Key 到第一条请求。'
     },
     {
-        label: '可用模型',
+        label: '模型与价格',
         kicker: 'Catalog',
-        intro: '模型、价格和当前接入状态。'
+        intro: '公开模型目录和计费。'
     },
     {
         label: 'API 参考',
@@ -78,7 +78,7 @@ export default function Docs() {
     }, [requestedTab])
 
     const docsIntro = useMemo(() => {
-        if (requestedTab === 'models') return '模型、价格和当前接入状态。'
+        if (requestedTab === 'models') return '公开模型目录和计费。'
         if (requestedTab === 'api') return '端点、认证方式和兼容边界。'
         if (requestedTab === 'snippets') return '常见客户端、CLI 和 SDK 配置。'
         return '从开发者 Key 到第一条请求。'
@@ -119,7 +119,7 @@ export default function Docs() {
 
                     <div className="docs-content glass-card">
                         {activeTab === 0 && <QuickStart primaryTextModel={primaryTextModel} primaryImageModel={primaryImageModel} />}
-                        {activeTab === 1 && <ModelsAndPricing textModels={textModels} imageModels={imageModels} defaultTextModel={defaultTextModel} defaultImageModel={defaultImageModel} />}
+                        {activeTab === 1 && <ModelsAndPricing textModels={textModels} imageModels={imageModels} />}
                         {activeTab === 2 && <ApiReference primaryTextModel={primaryTextModel} primaryImageModel={primaryImageModel} />}
                         {activeTab === 3 && <CodeExamples primaryTextModel={primaryTextModel} primaryImageModel={primaryImageModel} />}
                     </div>
@@ -131,10 +131,10 @@ export default function Docs() {
     if (isLoggedIn) {
         if (activeTab === 1) {
             return (
-                <AppShell title="可用模型" description="模型、价格和当前接入状态。">
+                <AppShell title="模型与价格" description="查看可调用的模型、能力和计费。">
                     <div className="docs-shell-page">
                         <div className="docs-content glass-card">
-                            <ModelsAndPricing textModels={textModels} imageModels={imageModels} defaultTextModel={defaultTextModel} defaultImageModel={defaultImageModel} />
+                            <ModelsAndPricing textModels={textModels} imageModels={imageModels} />
                         </div>
                     </div>
                 </AppShell>
@@ -171,7 +171,7 @@ export default function Docs() {
 
                         <div className="docs-content glass-card">
                             {activeTab === 0 && <QuickStart primaryTextModel={primaryTextModel} primaryImageModel={primaryImageModel} />}
-                            {activeTab === 1 && <ModelsAndPricing textModels={textModels} imageModels={imageModels} defaultTextModel={defaultTextModel} defaultImageModel={defaultImageModel} />}
+                            {activeTab === 1 && <ModelsAndPricing textModels={textModels} imageModels={imageModels} />}
                             {activeTab === 2 && <ApiReference primaryTextModel={primaryTextModel} primaryImageModel={primaryImageModel} />}
                             {activeTab === 3 && <CodeExamples primaryTextModel={primaryTextModel} primaryImageModel={primaryImageModel} />}
                         </div>
@@ -272,7 +272,7 @@ function QuickStart({ primaryTextModel, primaryImageModel }) {
     return (
         <div className="doc-section animate-fade-in">
             <h2>快速开始</h2>
-            <p className="doc-intro">先跑通一条请求，再接客户端。</p>
+            <p className="doc-intro">登录控制台，生成开发者 Key，确认余额，然后发出第一条请求。</p>
 
             <div className="quickstart-rail">
                 {quickstartSteps.map((step, index) => (
@@ -286,17 +286,25 @@ function QuickStart({ primaryTextModel, primaryImageModel }) {
                 ))}
             </div>
 
-            <div className="quick-actions-row">
-                <Link className="btn btn-primary btn-sm" to="/api-keys">生成 Key</Link>
-                <Link className="btn btn-secondary btn-sm" to="/docs?tab=models">看可用模型</Link>
-                <Link className="btn btn-ghost btn-sm" to="/usage">请求记录</Link>
+            <AudienceGuide />
+
+            <div className="doc-callout">
+                <strong>先用对 Key</strong>
+                <p>控制台登录态只用来进站内页面。程序调用统一使用你在概览页里生成的开发者 Key。</p>
             </div>
 
-            <h3>查余额</h3>
+            <h3>Step 1: 创建控制台账号</h3>
+            <p>在 <a href="/register">注册页面</a> 创建账户并进入控制台。</p>
+
+            <h3>Step 2: 生成开发者 Key</h3>
+            <p>进入概览页后，在“开发者 Key”区域生成开发者 Key。这个 Key 用于 SDK、CLI 和服务端请求。</p>
+
+            <h3>Step 3: 先确认余额</h3>
+            <p>新 Key 如果余额是 0，请先去充值页补余额，再继续请求。</p>
             <pre className="code-block">{`curl ${SITE}/v1/balance \\
   -H "Authorization: Bearer sk_cc_xxxxx"`}</pre>
 
-            <h3>发请求</h3>
+            <h3>Step 4: 发一条最小请求</h3>
             <pre className="code-block">{`curl ${SITE}/v1/chat/completions \\
   -H "Authorization: Bearer sk_cc_xxxxx" \\
   -H "Content-Type: application/json" \\
@@ -306,7 +314,8 @@ function QuickStart({ primaryTextModel, primaryImageModel }) {
     "stream": false
   }'`}</pre>
 
-            <h3>Codex</h3>
+            <h3>Step 5: 配置客户端</h3>
+            <p>以 Codex CLI 为例，编辑 <code>~/.codex/config.toml</code>：</p>
             <pre className="code-block">{`model = "${textModelId}"
 model_provider = "coincoin"
 disable_response_storage = true
@@ -320,12 +329,38 @@ base_url = "${SITE}/v1"
 experimental_bearer_token = "sk_cc_xxxxx"
 wire_api = "responses"`}</pre>
 
-            <h3>Claude Code</h3>
+            <p>如果你接的是官方 Claude Code，走另一条兼容入口：</p>
             <pre className="code-block">{`export ANTHROPIC_BASE_URL="${SITE}"
 export ANTHROPIC_AUTH_TOKEN="sk_cc_xxxxx"
 claude --model claude-opus-4-7`}</pre>
 
+            <h3>Step 6: 设置环境变量</h3>
+            <pre className="code-block">{`# 现在不再要求必须改 ~/.zshrc
+# 你可以直接把 token 写进 Codex config.toml 的 experimental_bearer_token
+
+# 如果你更想让 token 不落盘，也可以只在本次启动前带上环境变量：
+CLAWFATHER_OPENAI_API_KEY="sk_cc_xxxxx" codex`}</pre>
+
+            <div className="doc-callout">
+                <strong>模型切换规则</strong>
+                <p>平时只改请求里的 <code>model</code>。老客户端如果不传 <code>model</code>，仍然会默认走兼容文本模型。</p>
+            </div>
+
+            <h3>第一次接入最短排查顺序</h3>
+            <ol className="doc-list ordered">
+                <li>先确认 <code>Base URL</code> 末尾带了 <code>/v1</code>。</li>
+                <li>再确认你传的是 <code>sk_cc_</code> 开头的开发者 Key，不是网页登录态。</li>
+                <li>再跑一次 <code>GET /v1/balance</code>，确认余额不是 0。</li>
+                <li>最后用 <code>GET /v1/models</code> 确认你填的 <code>model</code> 真在公开目录里。</li>
+            </ol>
+
+            <div className="doc-callout">
+                <strong>Claude Code 是个例外</strong>
+                <p>官方 Claude Code 不要填 <code>{SITE}/v1</code>。它要求的是 <code>ANTHROPIC_BASE_URL={SITE}</code> 这样的根地址，然后自己去请求 <code>/v1/messages</code> 和 <code>/v1/models</code>。</p>
+            </div>
+
             <h3>第三方客户端配置</h3>
+            <p>大多数 OpenAI 兼容客户端只需要这 3 个值：</p>
             <div className="config-table">
                 <div className="config-row">
                     <span className="config-label">Base URL</span>
@@ -397,81 +432,11 @@ claude --model claude-opus-4-7`}</pre>
     )
 }
 
-function StatusCard({ label, value, tone = 'neutral', action }) {
-    return (
-        <div className={`access-status-card ${tone}`}>
-            <span>{label}</span>
-            <strong>{value}</strong>
-            {action}
-        </div>
-    )
-}
-
-function ModelsAndPricing({ textModels, imageModels, defaultTextModel, defaultImageModel }) {
-    const { activeDeveloperKeyCount, effectiveApiKey, hasDeveloperKey } = useAuth()
-    const [balance, setBalance] = useState(null)
-    const [copied, setCopied] = useState('')
-    const openaiBaseUrl = `${SITE}/v1`
-    const claudeBaseUrl = SITE
-    const snippetKey = effectiveApiKey || 'sk_cc_xxxxx'
-    const firstCurl = `curl ${openaiBaseUrl}/chat/completions \\
-  -H "Authorization: Bearer ${snippetKey}" \\
-  -H "Content-Type: application/json" \\
-  -d '{"model":"${defaultTextModel?.id || textModels[0]?.id || 'opus'}","messages":[{"role":"user","content":"Reply with only: OK"}]}'`
-
-    useEffect(() => {
-        let active = true
-        getBalance()
-            .then((data) => {
-                if (active) setBalance(data)
-            })
-            .catch(() => {
-                if (active) setBalance(null)
-            })
-        return () => {
-            active = false
-        }
-    }, [])
-
-    const copy = async (text, label) => {
-        await navigator.clipboard.writeText(text)
-        setCopied(label)
-        setTimeout(() => setCopied(''), 1800)
-    }
-
+function ModelsAndPricing({ textModels, imageModels }) {
     return (
         <div className="doc-section animate-fade-in">
-            <h2>可用模型</h2>
-            <div className="access-status-grid">
-                <StatusCard
-                    label="余额"
-                    value={balance ? `$${Number(balance.balance_usd || 0).toFixed(2)}` : '未读取'}
-                    tone={balance && balance.balance_usd > 0 ? 'ok' : 'warn'}
-                    action={<Link className="btn btn-ghost btn-sm" to="/recharge?section=recharge">充值</Link>}
-                />
-                <StatusCard
-                    label="开发者 Key"
-                    value={hasDeveloperKey ? `${activeDeveloperKeyCount || 1} 把可用` : '未生成'}
-                    tone={hasDeveloperKey ? 'ok' : 'warn'}
-                    action={<Link className="btn btn-ghost btn-sm" to="/api-keys">管理</Link>}
-                />
-                <StatusCard
-                    label="文本模型"
-                    value={defaultTextModel?.id || textModels[0]?.id || '未配置'}
-                    tone={textModels.length ? 'ok' : 'warn'}
-                />
-                <StatusCard
-                    label="图片模型"
-                    value={defaultImageModel?.id || imageModels[0]?.id || '未配置'}
-                    tone={imageModels.length ? 'ok' : 'neutral'}
-                />
-            </div>
-
-            <div className="endpoint-strip">
-                <button onClick={() => copy(openaiBaseUrl, 'openai')}><span>OpenAI Base URL</span><code>{openaiBaseUrl}</code><strong>{copied === 'openai' ? '已复制' : '复制'}</strong></button>
-                <button onClick={() => copy(claudeBaseUrl, 'claude')}><span>Claude Code Base URL</span><code>{claudeBaseUrl}</code><strong>{copied === 'claude' ? '已复制' : '复制'}</strong></button>
-                <button onClick={() => copy(firstCurl, 'curl')}><span>第一条请求</span><code>curl chat/completions</code><strong>{copied === 'curl' ? '已复制' : '复制'}</strong></button>
-            </div>
+            <h2>模型与价格</h2>
+            <p className="doc-intro">公开模型目录来自 ClawFather 的真实运行配置。你也可以通过 <code>GET /v1/models</code> 拉取。</p>
 
             <h3>文本模型</h3>
             <div className="pricing-table-wrap">
