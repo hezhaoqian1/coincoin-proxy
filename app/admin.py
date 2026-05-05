@@ -1,5 +1,6 @@
+import os
 import secrets
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -9,7 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .db import get_db
-from .epay import EpayVerificationError, extract_epay_params_from_proof_url, verify_epay_callback_params
+from .epay import EpayVerificationError, epay_configured, extract_epay_params_from_proof_url, verify_epay_callback_params
 from .finance_summary import (
     build_user_finance_snapshot,
     build_user_finance_snapshots,
@@ -35,11 +36,16 @@ from .schemas import (
     RedemptionGenerateRequest, RedemptionGenerateResponse,
 )
 from .config import settings as _settings
+from .router import registry as model_registry
 from .security import decrypt_api_key, encrypt_api_key, generate_api_key, generate_id, hash_key, require_admin
 
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 ADMIN_UPLOAD_ROOT = Path(_settings.admin_upload_dir)
+
+
+def _configured(value: Optional[str]) -> bool:
+    return bool((value or "").strip())
 
 
 def _key_fingerprint(key_hash: str) -> str:
@@ -345,6 +351,12 @@ async def update_key(key_id: str, payload: AdminKeyUpdate, db: AsyncSession = De
         key.status = payload.status
 
     await db.commit()
+    try:
+        from .proxy import key_cache
+
+        await key_cache.delete(key.key_hash)
+    except Exception:
+        pass
     return {"id": key.id, "status": key.status}
 
 
@@ -478,6 +490,110 @@ async def list_keys(user_id: Optional[str] = None, db: AsyncSession = Depends(ge
         }
         for key, user in rows
     ]
+
+
+@router.get("/ops/health", dependencies=[Depends(admin_guard)])
+async def ops_health(db: AsyncSession = Depends(get_db)):
+    now = datetime.utcnow()
+    since = now - timedelta(hours=24)
+    total_requests = (
+        await db.execute(select(func.count()).select_from(RequestLog).where(RequestLog.created_at >= since))
+    ).scalar() or 0
+    failed_requests = (
+        await db.execute(
+            select(func.count()).select_from(RequestLog).where(RequestLog.created_at >= since, RequestLog.status_code >= 400)
+        )
+    ).scalar() or 0
+    latest_success = (
+        await db.execute(
+            select(RequestLog.created_at)
+            .where(RequestLog.status_code < 400)
+            .order_by(RequestLog.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    status_rows = (
+        await db.execute(
+            select(RequestLog.status_code, func.count())
+            .where(RequestLog.created_at >= since, RequestLog.status_code >= 400)
+            .group_by(RequestLog.status_code)
+            .order_by(func.count().desc())
+            .limit(8)
+        )
+    ).all()
+    model_rows = (
+        await db.execute(
+            select(RequestLog.model, func.count())
+            .where(RequestLog.created_at >= since, RequestLog.status_code >= 400)
+            .group_by(RequestLog.model)
+            .order_by(func.count().desc())
+            .limit(8)
+        )
+    ).all()
+    failed_rows = (
+        await db.execute(
+            select(RequestLog, User)
+            .join(User, RequestLog.user_id == User.id)
+            .where(RequestLog.status_code >= 400)
+            .order_by(RequestLog.created_at.desc())
+            .limit(20)
+        )
+    ).all()
+
+    model_registry.ensure_initialized()
+    public_models = model_registry.list_public_models()
+    default_text = getattr(model_registry, "default_text_model_id", "") or None
+    default_image = getattr(model_registry, "default_image_model_id", "") or None
+
+    env_checks = {
+        "railway_environment": _configured(os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_ENVIRONMENT_NAME")),
+        "port": _configured(os.getenv("PORT")),
+        "database": _configured(_settings.database_url)
+        or (_configured(_settings.db_host) and _configured(_settings.db_name) and _configured(_settings.db_user)),
+        "self_base_url": _configured(_settings.self_base_url),
+        "gateway_base_url": _configured(_settings.gateway_base_url),
+        "gateway_api_key": _configured(_settings.gateway_api_key),
+        "model_catalog": _configured(_settings.model_catalog_json) or Path(_settings.model_catalog_path).exists(),
+        "email": _configured(_settings.resend_api_key),
+        "payment": epay_configured(),
+        "monitoring": _configured(_settings.monitoring_token),
+        "gateway_health_url": _configured(_settings.monitoring_gateway_health_url),
+    }
+
+    return {
+        "generated_at": now,
+        "window_hours": 24,
+        "traffic": {
+            "total_requests": int(total_requests),
+            "failed_requests": int(failed_requests),
+            "error_rate": (float(failed_requests) / float(total_requests)) if total_requests else 0,
+            "latest_success_at": latest_success,
+        },
+        "errors": {
+            "by_status": [{"status_code": int(code), "count": int(count)} for code, count in status_rows],
+            "by_model": [{"model": model or "-", "count": int(count)} for model, count in model_rows],
+            "recent": [
+                {
+                    "created_at": log.created_at,
+                    "user": user.username or user.email or user.external_id or user.id,
+                    "status_code": log.status_code,
+                    "endpoint": log.endpoint,
+                    "model": log.model,
+                    "duration_ms": log.duration_ms,
+                    "route_reason": log.route_reason,
+                    "upstream_request_id": log.upstream_request_id,
+                }
+                for log, user in failed_rows
+            ],
+        },
+        "models": {
+            "count": len(public_models),
+            "default_text": default_text,
+            "default_image": default_image,
+            "routable": model_registry.has_routable_models(),
+        },
+        "config": env_checks,
+    }
 
 
 @router.get("/recharges", dependencies=[Depends(admin_guard)])

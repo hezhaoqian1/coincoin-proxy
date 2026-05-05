@@ -233,7 +233,7 @@ export default function AppShell({ title, description, actions, children }) {
                     { to: '/dashboard', pathname: '/dashboard', label: '控制台', caption: '余额、密钥、最近请求', icon: 'dashboard' },
                     { to: '/api-keys', pathname: '/api-keys', label: 'API 密钥', caption: '多把 Key 管理与禁用', icon: 'key' },
                     { to: '/usage', pathname: '/usage', label: '使用记录', caption: '状态码、计量、请求明细', icon: 'logs' },
-                    { to: '/account', pathname: '/account', label: '个人中心', caption: '邮箱与登录密码', icon: 'settings' },
+                    { to: '/account', pathname: '/account', label: '个人中心', caption: '账号资料', icon: 'settings' },
                 ],
             },
             {
@@ -248,7 +248,7 @@ export default function AppShell({ title, description, actions, children }) {
             {
                 title: '接入指南',
                 items: [
-                    { to: '/docs?tab=models', pathname: '/docs', search: { tab: 'models' }, label: '模型与价格', caption: '可用模型与扣费', icon: 'pricing' },
+                    { to: '/docs?tab=models', pathname: '/docs', search: { tab: 'models' }, label: '可用模型', caption: '模型、价格、接入状态', icon: 'pricing' },
                     { to: '/guides/api-quickstart', pathname: '/guides/api-quickstart', label: 'API 快速接入', caption: '第一条请求怎么发', icon: 'docs' },
                     { to: '/guides/codex', pathname: '/guides/codex', label: 'Codex 接入', caption: '写好 config.toml', icon: 'terminal' },
                     { to: '/guides/claude-code', pathname: '/guides/claude-code', label: 'Claude Code 接入', caption: 'Anthropic 兼容配置', icon: 'access' },
