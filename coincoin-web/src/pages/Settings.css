@@ -110,32 +110,8 @@
     gap: var(--space-sm);
 }
 
-.email-binding-card {
+.account-email-card {
     border-color: rgba(245, 158, 11, 0.18);
-}
-
-.email-binding-form {
-    margin-top: var(--space-sm);
-}
-
-.email-field-label {
-    display: block;
-    margin-bottom: 8px;
-    font-size: 0.82rem;
-    font-weight: 600;
-    color: var(--text-secondary);
-}
-
-.email-binding-row {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: var(--space-sm);
-    align-items: center;
-}
-
-.email-code-field {
-    letter-spacing: 0.18em;
-    font-weight: 700;
 }
 
 .email-readonly-box {

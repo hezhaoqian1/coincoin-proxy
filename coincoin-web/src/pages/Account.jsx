@@ -1,15 +1,11 @@
 import { useEffect, useState } from 'react'
-import { changeAccountPassword, getAuthProfile, sendAccountEmailCode, verifyAccountEmail } from '../api/client'
+import { changeAccountPassword, getAuthProfile } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
 import AppShell from '../components/AppShell'
 import './Settings.css'
 
-function EmailBindingCard({ isConsoleSession }) {
+function AccountEmailCard({ isConsoleSession }) {
     const [profile, setProfile] = useState(null)
-    const [email, setEmail] = useState('')
-    const [code, setCode] = useState('')
-    const [loading, setLoading] = useState(false)
-    const [message, setMessage] = useState('')
     const [error, setError] = useState('')
 
     useEffect(() => {
@@ -19,7 +15,6 @@ function EmailBindingCard({ isConsoleSession }) {
             .then((data) => {
                 if (!active) return
                 setProfile(data)
-                setEmail(data.email || '')
             })
             .catch(() => {
                 if (!active) return
@@ -33,105 +28,22 @@ function EmailBindingCard({ isConsoleSession }) {
     const verified = !!profile?.email_verified_at
     const hasEmail = !!profile?.email
     const savedEmail = profile?.email || ''
-    const sendButtonLabel = hasEmail
-        ? (verified ? '重新验证邮箱' : '重新发送验证码')
-        : '发送验证码'
-
-    const handleSend = async (event) => {
-        event.preventDefault()
-        const targetEmail = hasEmail ? savedEmail : email.trim()
-        if (!targetEmail) { setError('请输入邮箱'); return }
-        setLoading(true)
-        setError('')
-        setMessage('')
-        try {
-            const data = await sendAccountEmailCode(targetEmail)
-            setProfile(data)
-            setEmail(data.email || targetEmail)
-            setMessage(`验证码已发送到 ${data.email || targetEmail}`)
-        } catch (err) {
-            setError(err.message || '发送失败')
-        } finally {
-            setLoading(false)
-        }
-    }
-
-    const handleVerify = async (event) => {
-        event.preventDefault()
-        if (!code.trim()) { setError('请输入验证码'); return }
-        setLoading(true)
-        setError('')
-        setMessage('')
-        try {
-            const data = await verifyAccountEmail(code.trim())
-            setProfile(data)
-            setCode('')
-            setMessage('邮箱已验证')
-        } catch (err) {
-            setError(err.message || '验证失败')
-        } finally {
-            setLoading(false)
-        }
-    }
 
     return (
-        <div className={`glass-card settings-section email-binding-card animate-fade-in-up ${verified ? 'settings-alert-success' : 'settings-alert-warning'}`}>
+        <div className="glass-card settings-section account-email-card animate-fade-in-up">
             <div className="settings-section-head">
                 <div>
-                    <h3>邮箱验证</h3>
+                    <h3>账号邮箱</h3>
                     <p className="settings-subtitle">
-                        {verified ? '当前账号已绑定邮箱。' : hasEmail ? `验证码会发送到 ${savedEmail}。` : '老账号可以继续使用，建议补一个邮箱。'}
+                        邮箱仅用于显示当前控制台账号，不在这里修改。
                     </p>
                 </div>
-                <span className="meta-pill">{verified ? '已验证' : hasEmail ? '待验证' : '未绑定'}</span>
+                <span className="meta-pill">{verified ? '已验证' : hasEmail ? '未验证' : '未绑定'}</span>
             </div>
-            <form className="email-binding-form" onSubmit={handleSend}>
-                {hasEmail ? (
-                    <div className="email-readonly-box">
-                        <span>邮箱地址</span>
-                        <code>{savedEmail}</code>
-                    </div>
-                ) : (
-                    <label className="email-field-label" htmlFor="account-email">
-                        邮箱地址
-                    </label>
-                )}
-                <div className="email-binding-row">
-                    {!hasEmail && (
-                        <input
-                            id="account-email"
-                            type="email"
-                            className="input-field"
-                            placeholder="name@example.com"
-                            value={email}
-                            onChange={(event) => { setEmail(event.target.value); setError(''); setMessage('') }}
-                            disabled={loading}
-                        />
-                    )}
-                    <button className="btn btn-secondary btn-sm" type="submit" disabled={loading}>
-                        {sendButtonLabel}
-                    </button>
-                </div>
-            </form>
-            {!verified && hasEmail && (
-                <form className="email-binding-form" onSubmit={handleVerify}>
-                    <div className="email-binding-row">
-                        <input
-                            type="text"
-                            inputMode="numeric"
-                            className="input-field email-code-field"
-                            placeholder="6 位验证码"
-                            value={code}
-                            onChange={(event) => { setCode(event.target.value.replace(/\D/g, '').slice(0, 6)); setError(''); setMessage('') }}
-                            disabled={loading}
-                        />
-                        <button className="btn btn-primary btn-sm" type="submit" disabled={loading}>
-                            {loading ? '处理中...' : '验证邮箱'}
-                        </button>
-                    </div>
-                </form>
-            )}
-            {message && <p className="settings-form-message success">{message}</p>}
+            <div className="email-readonly-box">
+                <span>邮箱地址</span>
+                <code>{hasEmail ? savedEmail : '未绑定邮箱'}</code>
+            </div>
             {error && <p className="settings-form-message error">{error}</p>}
         </div>
     )
@@ -257,7 +169,7 @@ export default function Account() {
                     </div>
                 )}
 
-                <EmailBindingCard isConsoleSession={isConsoleSession} />
+                <AccountEmailCard isConsoleSession={isConsoleSession} />
                 <PasswordCard isConsoleSession={isConsoleSession} />
             </div>
         </AppShell>
