@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import ipaddress
 import json
 import logging
 import secrets
@@ -7,7 +8,7 @@ import time
 from urllib.parse import urlsplit, urlunsplit
 from collections import OrderedDict
 from copy import deepcopy
-from datetime import datetime
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Awaitable, Callable, Dict, List, Optional, Tuple
 
@@ -15,13 +16,13 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.datastructures import UploadFile
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from .config import settings
 from .db import get_db
-from .models import ApiKey, UsageDaily, User
+from .models import ApiKey, RequestLog, UsageDaily, User
 from .rate_limiter import rate_limiter
 from .security import extract_api_key, hash_key
 from .router import (
@@ -163,6 +164,52 @@ def _responses_text_input_item(text: str) -> dict:
         "role": "user",
         "content": [{"type": "input_text", "text": text or ""}],
     }
+
+
+def _client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    real_ip = request.headers.get("x-real-ip")
+    if real_ip:
+        return real_ip.strip()
+    return request.client.host if request.client else ""
+
+
+def _parse_ip_allowlist(raw: object) -> List[str]:
+    if not raw:
+        return []
+    if isinstance(raw, list):
+        return [str(item).strip() for item in raw if str(item).strip()]
+    text = str(raw)
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, list):
+            return [str(item).strip() for item in parsed if str(item).strip()]
+    except Exception:
+        pass
+    return [item.strip() for item in text.replace("\n", ",").split(",") if item.strip()]
+
+
+def _ip_allowed(client_ip: str, allowlist: List[str]) -> bool:
+    if not allowlist:
+        return True
+    try:
+        parsed_ip = ipaddress.ip_address(client_ip)
+    except ValueError:
+        return False
+    for raw in allowlist:
+        try:
+            if parsed_ip in ipaddress.ip_network(raw, strict=False):
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def _month_start_utc() -> datetime:
+    now = datetime.utcnow()
+    return datetime(now.year, now.month, 1)
 
 
 def _clone_responses_items(raw_items) -> list:
@@ -630,6 +677,10 @@ class KeyCache:
                 self._data.pop(next(iter(self._data)))
             self._data[key_hash] = (expires_at, value)
 
+    async def delete(self, key_hash: str) -> None:
+        async with self._lock:
+            self._data.pop(key_hash, None)
+
 
 key_cache = KeyCache(settings.key_cache_ttl, settings.key_cache_max)
 
@@ -1087,16 +1138,24 @@ async def _resolve_user(request: Request, db: AsyncSession):
         user = api_key.user
         key_id = api_key.id
         key_kind = getattr(api_key, "kind", None) or "api"
+        key_controls = {
+            "monthly_quota_cents": getattr(api_key, "monthly_quota_cents", None),
+            "total_quota_cents": getattr(api_key, "total_quota_cents", None),
+            "ip_allowlist": getattr(api_key, "ip_allowlist", None),
+            "expires_at": getattr(api_key, "expires_at", None),
+        }
         await key_cache.set(
             key_hash,
             {
                 "id": user.id,
                 _KEY_ID_ATTR: key_id,
                 _KEY_KIND_ATTR: key_kind,
+                "controls": key_controls,
             },
         )
     setattr(user, _KEY_KIND_ATTR, key_kind)
     setattr(user, _KEY_ID_ATTR, key_id)
+    setattr(user, "_api_key_controls", cached.get("controls", {}) if cached else key_controls)
     if user.status != "active":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="user blocked")
     return user
@@ -1118,6 +1177,64 @@ async def _mark_api_key_used(db: AsyncSession, user: User) -> None:
         await db.rollback()
 
 
+async def _enforce_api_key_controls(request: Request, db: AsyncSession, user: User) -> None:
+    key_id = getattr(user, _KEY_ID_ATTR, "")
+    if not key_id or getattr(user, _KEY_KIND_ATTR, "api") != "api":
+        return
+
+    key_controls = getattr(user, "_api_key_controls", {}) or {}
+    if not key_controls:
+        return
+
+    expires_at = key_controls.get("expires_at")
+    if expires_at:
+        if isinstance(expires_at, str):
+            try:
+                expires_at = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+                if expires_at.tzinfo is not None:
+                    expires_at = expires_at.astimezone(timezone.utc).replace(tzinfo=None)
+            except ValueError:
+                expires_at = None
+        if isinstance(expires_at, datetime) and expires_at < datetime.utcnow():
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="api key expired")
+
+    allowlist = _parse_ip_allowlist(key_controls.get("ip_allowlist"))
+    if allowlist and not _ip_allowed(_client_ip(request), allowlist):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="api key ip not allowed")
+
+    monthly_quota = key_controls.get("monthly_quota_cents")
+    total_quota = key_controls.get("total_quota_cents")
+    if not monthly_quota and not total_quota:
+        return
+
+    try:
+        pending_cost = await usage_buffer.get_pending_cost_for_api_key(key_id)
+        if total_quota:
+            total_used = (
+                await db.execute(
+                    select(func.coalesce(func.sum(RequestLog.cost_cents), 0)).where(RequestLog.api_key_id == key_id)
+                )
+            ).scalar() or 0
+            if int(total_used) + int(pending_cost) >= int(total_quota):
+                raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="api key total quota exceeded")
+        if monthly_quota:
+            monthly_used = (
+                await db.execute(
+                    select(func.coalesce(func.sum(RequestLog.cost_cents), 0)).where(
+                        RequestLog.api_key_id == key_id,
+                        RequestLog.created_at >= _month_start_utc(),
+                    )
+                )
+            ).scalar() or 0
+            if int(monthly_used) + int(pending_cost) >= int(monthly_quota):
+                raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="api key monthly quota exceeded")
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("api key quota lookup failed")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="internal error")
+
+
 async def authenticate_user(request: Request, db: AsyncSession):
     """Light auth: identity + active check only. No balance/quota enforcement.
     Use for payment, redeem, balance queries — endpoints where zero balance is fine."""
@@ -1135,6 +1252,8 @@ async def authorize_request(request: Request, db: AsyncSession):
             status_code=status.HTTP_403_FORBIDDEN,
             detail="please generate an API key from your dashboard",
         )
+
+    await _enforce_api_key_controls(request, db, user)
 
     if user.request_limit_per_minute is not None:
         allowed = await rate_limiter.allow(user.id, int(user.request_limit_per_minute))
