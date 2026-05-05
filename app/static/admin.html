@@ -1183,7 +1183,11 @@
           </div>
           <div class="nav-item" data-page="monitoring">
             <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3l7 4v5c0 5-3.5 8.5-7 9-3.5-.5-7-4-7-9V7l7-4z"/></svg>
-            监控设计
+            实时监控
+          </div>
+          <div class="nav-item" data-page="ops-health">
+            <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 19h16M7 16V9m5 7V5m5 11v-4"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5h14v14H5z"/></svg>
+            运维健康
           </div>
         </div>
 
@@ -1716,6 +1720,40 @@
             </div>
             <div class="card-body" id="monitoringChecksCard">
               <div class="text-sm text-muted">加载中...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="page-ops-health" class="page">
+        <div class="page-header">
+          <h1 class="page-title">运维健康</h1>
+          <p class="page-desc">失败请求、模型目录、支付配置和 Railway 环境。</p>
+        </div>
+        <div class="stats-grid" id="opsHealthStats">
+          <div class="stat-card"><div class="stat-label">加载中</div></div>
+        </div>
+        <div class="grid grid-2">
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">环境配置</span>
+              <button class="btn btn-secondary btn-sm" onclick="loadOpsHealth()">刷新</button>
+            </div>
+            <div class="card-body" id="opsHealthConfig"></div>
+          </div>
+          <div class="card">
+            <div class="card-header"><span class="card-title">错误分布</span></div>
+            <div class="card-body" id="opsHealthErrors"></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><span class="card-title">最近失败</span></div>
+          <div class="card-body flush">
+            <div class="table-wrapper">
+              <table>
+                <thead><tr><th>时间</th><th>用户</th><th>状态</th><th>端点</th><th>模型</th><th>耗时</th><th>Route</th></tr></thead>
+                <tbody id="opsHealthRecent"></tbody>
+              </table>
             </div>
           </div>
         </div>
@@ -3113,6 +3151,56 @@
       }
     }
 
+    async function loadOpsHealth() {
+      try {
+        const r = await fetch('/admin/ops/health', { headers: adminHeaders() });
+        if (!r.ok) return toast('加载失败', 'error');
+        const d = await r.json();
+        const traffic = d.traffic || {};
+        const models = d.models || {};
+        const errorRate = Number(traffic.error_rate || 0);
+        document.getElementById('opsHealthStats').innerHTML = `
+          <div class="stat-card"><div class="stat-icon">↗</div><div class="stat-value">${formatNum(traffic.total_requests || 0)}</div><div class="stat-label">24h 请求</div></div>
+          <div class="stat-card"><div class="stat-icon">!</div><div class="stat-value">${formatNum(traffic.failed_requests || 0)}</div><div class="stat-label">24h 失败 · ${(errorRate * 100).toFixed(1)}%</div></div>
+          <div class="stat-card"><div class="stat-icon">M</div><div class="stat-value">${formatNum(models.count || 0)}</div><div class="stat-label">模型 · ${models.routable ? '可路由' : '无路由'}</div></div>
+          <div class="stat-card"><div class="stat-icon">✓</div><div class="stat-value" style="font-size:20px">${formatDate(traffic.latest_success_at)}</div><div class="stat-label">最近成功</div></div>
+        `;
+
+        const config = d.config || {};
+        document.getElementById('opsHealthConfig').innerHTML = Object.entries(config).map(([key, ok]) => `
+          <div class="monitoring-probe-item" style="grid-template-columns:1fr auto">
+            <div><div class="monitoring-probe-name">${escapeHtml(key)}</div></div>
+            <span class="badge ${ok ? 'badge-success' : 'badge-warning'}">${ok ? '已配置' : '缺失'}</span>
+          </div>
+        `).join('');
+
+        const byStatus = (d.errors?.by_status || []).map(x => `<div class="monitoring-probe-item" style="grid-template-columns:1fr auto"><div>HTTP ${x.status_code}</div><strong>${x.count}</strong></div>`).join('');
+        const byModel = (d.errors?.by_model || []).map(x => `<div class="monitoring-probe-item" style="grid-template-columns:1fr auto"><div>${escapeHtml(x.model || '-')}</div><strong>${x.count}</strong></div>`).join('');
+        document.getElementById('opsHealthErrors').innerHTML = `
+          <div class="card-title" style="margin-bottom:12px">状态码</div>
+          <div class="monitoring-probe-list">${byStatus || '<div class="text-sm text-muted">暂无失败</div>'}</div>
+          <div class="card-title" style="margin:18px 0 12px">模型</div>
+          <div class="monitoring-probe-list">${byModel || '<div class="text-sm text-muted">暂无失败</div>'}</div>
+        `;
+
+        const recent = d.errors?.recent || [];
+        document.getElementById('opsHealthRecent').innerHTML = recent.length ? recent.map(item => `
+          <tr>
+            <td class="text-sm text-muted">${formatDateFull(item.created_at)}</td>
+            <td>${escapeHtml(item.user || '-')}</td>
+            <td><span class="badge badge-error">${item.status_code}</span></td>
+            <td>${escapeHtml(item.endpoint || '-')}</td>
+            <td>${escapeHtml(item.model || '-')}</td>
+            <td>${formatNum(item.duration_ms || 0)}ms</td>
+            <td><div class="text-sm text-muted">${escapeHtml(item.route_reason || '-')}</div>${item.upstream_request_id ? `<div class="text-sm text-muted">${escapeHtml(item.upstream_request_id)}</div>` : ''}</td>
+          </tr>
+        `).join('') : '<tr><td colspan="7" style="text-align:center;padding:32px;color:var(--text-tertiary)">暂无失败请求</td></tr>';
+      } catch (e) {
+        console.error(e);
+        toast('加载失败', 'error');
+      }
+    }
+
     async function createStationPayoutBatch() {
       const station_id = document.getElementById('stationPayoutStationId').value.trim();
       const notes = document.getElementById('stationPayoutNotes').value.trim();
@@ -3212,6 +3300,7 @@
       loadUsage();
       loadFinanceSummary();
       loadMonitoringSummary();
+      loadOpsHealth();
     }
 
     loadAll();
