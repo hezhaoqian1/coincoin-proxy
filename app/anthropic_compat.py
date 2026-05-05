@@ -331,6 +331,10 @@ def _extract_usage_from_openai_chat_response(data: Dict[str, Any]) -> Dict[str, 
     return usage
 
 
+def _elapsed_ms_since(start: float) -> int:
+    return max(1, int((time.monotonic() - start) * 1000))
+
+
 def _anthropic_sse_bytes(event_type: str, payload: Dict[str, Any]) -> bytes:
     data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     return f"event: {event_type}\ndata: {data}\n\n".encode("utf-8")
@@ -710,6 +714,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
     upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/chat/completions"
     headers = _build_anthropic_upstream_headers(used_cfg, request)
 
+    request_t0 = time.monotonic()
     if openai_payload.get("stream"):
         stream_client = await get_stream_client()
         req = stream_client.build_request("POST", upstream_url, json=openai_payload, headers=headers)
@@ -735,6 +740,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                 if not stream_state.message_stopped:
                     for event in _finalize_anthropic_stream(stream_state, display_model=display_model):
                         yield event
+                duration_ms = _elapsed_ms_since(request_t0)
                 if stream_state.usage:
                     await usage_buffer.add(
                         user.id,
@@ -748,7 +754,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                         customer_model_alias=display_model,
                         provider_model=public_model.provider_model or used_cfg.model_id,
                         route_reason=used_route_reason,
-                        duration_ms=0,
+                        duration_ms=duration_ms,
                         status_code=upstream.status_code,
                         price_input_per_million=used_cfg.price_input_per_million,
                         price_output_per_million=used_cfg.price_output_per_million,
@@ -767,6 +773,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
 
     client = await get_http_client()
     upstream = await client.post(upstream_url, json=openai_payload, headers=headers)
+    duration_ms = _elapsed_ms_since(request_t0)
     response_headers = filter_headers(dict(upstream.headers))
     response_headers.pop("content-length", None)
     upstream_request_id = extract_upstream_request_id(upstream.headers)
@@ -805,7 +812,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
         customer_model_alias=display_model,
         provider_model=public_model.provider_model or used_cfg.model_id,
         route_reason=used_route_reason,
-        duration_ms=0,
+        duration_ms=duration_ms,
         status_code=upstream.status_code,
         price_input_per_million=used_cfg.price_input_per_million,
         price_output_per_million=used_cfg.price_output_per_million,
