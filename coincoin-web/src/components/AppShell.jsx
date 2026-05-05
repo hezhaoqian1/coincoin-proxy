@@ -152,7 +152,7 @@ function isNavItemActive(item, location) {
         || location.pathname === '/usage'
         || location.pathname === '/station'
         || location.pathname === '/api-keys'
-        || location.pathname === '/settings'
+        || location.pathname === '/account'
 }
 
 function ShellGroup({ title, items, location }) {
@@ -184,7 +184,7 @@ function MobileBottomNav({ location }) {
         { to: '/recharge?section=recharge', pathname: '/recharge', search: { section: 'recharge' }, label: '充值', icon: 'billing' },
         { to: '/api-keys', pathname: '/api-keys', label: '密钥', icon: 'key' },
         { to: '/usage', pathname: '/usage', label: '日志', icon: 'logs' },
-        { to: '/settings', pathname: '/settings', label: '我的', icon: 'settings' },
+        { to: '/account', pathname: '/account', label: '我的', icon: 'settings' },
     ]
 
     return (
@@ -232,8 +232,8 @@ export default function AppShell({ title, description, actions, children }) {
                 items: [
                     { to: '/dashboard', pathname: '/dashboard', label: '控制台', caption: '余额、密钥、最近请求', icon: 'dashboard' },
                     { to: '/api-keys', pathname: '/api-keys', label: 'API 密钥', caption: '多把 Key 管理与禁用', icon: 'key' },
-                    { to: '/settings', pathname: '/settings', label: '个人中心', caption: '密码、邮箱和接入配置', icon: 'settings' },
                     { to: '/usage', pathname: '/usage', label: '使用记录', caption: '状态码、计量、请求明细', icon: 'logs' },
+                    { to: '/account', pathname: '/account', label: '个人中心', caption: '邮箱与登录密码', icon: 'settings' },
                 ],
             },
             {

@@ -397,7 +397,7 @@ export default function Recharge() {
                                 <>
                                     <Link to="/dashboard" className="btn btn-ghost btn-sm">返回仪表盘</Link>
                                     <Link to="/usage" className="btn btn-ghost btn-sm">查看请求日志</Link>
-                                    <Link to="/settings" className="btn btn-ghost btn-sm">去接入配置</Link>
+                                    <Link to="/guides/api-quickstart" className="btn btn-ghost btn-sm">去接入指南</Link>
                                 </>
                             ) : (
                                 <>

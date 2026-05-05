@@ -11,7 +11,7 @@ import Usage from './pages/Usage'
 import Recharge from './pages/Recharge'
 import Docs from './pages/Docs'
 import GuideDetail from './pages/GuideDetail'
-import Settings from './pages/Settings'
+import Account from './pages/Account'
 import ApiKeys from './pages/ApiKeys'
 import Playground from './pages/Playground'
 import PayReturn from './pages/PayReturn'
@@ -94,9 +94,10 @@ export default function App() {
                 <Route path="/playground" element={
                     <ProtectedRoute><Playground /></ProtectedRoute>
                 } />
-                <Route path="/settings" element={
-                    <ProtectedRoute><Settings /></ProtectedRoute>
+                <Route path="/account" element={
+                    <ProtectedRoute><Account /></ProtectedRoute>
                 } />
+                <Route path="/settings" element={<Navigate to="/guides/api-quickstart" replace />} />
                 <Route path="/api-keys" element={
                     <ProtectedRoute><ApiKeys /></ProtectedRoute>
                 } />

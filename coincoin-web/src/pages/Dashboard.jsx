@@ -64,7 +64,7 @@ function ReadinessCard({ authMode, username, hasDeveloperKey }) {
             tone: 'success',
             eyebrow: '已就绪',
             title: '接口状态正常',
-            description: `${username || '当前账户'} 已具备调用凭证。右侧处理复制、重新生成和接入配置。`,
+            description: `${username || '当前账户'} 已具备调用凭证。右侧处理复制、重新生成和接入指南。`,
             statusItems: [
                 { label: '当前会话', value: '控制台账号' },
                 { label: '接口调用', value: '可直接请求' },
@@ -158,7 +158,7 @@ function KeyManagement({ copied, copy, username, generatedApiKey, hasLocalDevelo
                         </button>
                     </div>
                     <div className="action-links">
-                        <Link to="/settings" className="btn btn-primary btn-sm">查看接入配置</Link>
+                        <Link to="/guides/api-quickstart" className="btn btn-primary btn-sm">查看接入指南</Link>
                         <Link to="/docs" className="btn btn-ghost btn-sm">查看文档</Link>
                     </div>
                 </div>
@@ -178,7 +178,7 @@ function KeyManagement({ copied, copy, username, generatedApiKey, hasLocalDevelo
                         </button>
                     </div>
                     <div className="key-secondary-actions">
-                        <Link to="/settings" className="btn btn-primary btn-sm">查看接入配置</Link>
+                        <Link to="/guides/api-quickstart" className="btn btn-primary btn-sm">查看接入指南</Link>
                         <button className="btn btn-secondary btn-sm" onClick={handleGenerate} disabled={generating}>
                             {generating ? '生成中...' : '重新生成 Key'}
                         </button>
@@ -205,7 +205,7 @@ function KeyManagement({ copied, copy, username, generatedApiKey, hasLocalDevelo
                         <button className="btn btn-primary btn-sm" onClick={handleGenerate} disabled={generating}>
                             {generating ? '生成中...' : '重新生成 Key'}
                         </button>
-                        <Link to="/settings" className="btn btn-ghost btn-sm">查看配置说明</Link>
+                        <Link to="/guides/api-quickstart" className="btn btn-ghost btn-sm">查看接入指南</Link>
                     </div>
                     {genError && <p style={{ color: 'var(--accent-rose)', fontSize: '0.85rem', marginTop: 'var(--space-sm)' }}>{genError}</p>}
                 </div>
@@ -847,11 +847,11 @@ export default function Dashboard() {
                                 <p>查看请求明细和状态码。</p>
                             </div>
                         </Link>
-                        <Link to="/settings" className="shortcut-card">
-                            <span className="shortcut-icon">&#128736;</span>
+                        <Link to="/account" className="shortcut-card">
+                            <span className="shortcut-icon">&#9881;</span>
                             <div>
-                                <strong>接入配置</strong>
-                                <p>复制各类客户端配置。</p>
+                                <strong>个人中心</strong>
+                                <p>修改邮箱和登录密码。</p>
                             </div>
                         </Link>
                         <Link to="/docs" className="shortcut-card">
