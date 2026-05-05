@@ -27,9 +27,15 @@ def china_today(now: datetime | None = None) -> date:
 
 
 def extract_cached_tokens(usage: dict) -> int:
-    """Extract cached_tokens across Chat Completions and Responses API shapes."""
+    """Extract cache-read tokens across Anthropic, Chat Completions, and Responses shapes."""
     if not isinstance(usage, dict):
         return 0
+    ct = usage.get("cache_read_input_tokens")
+    if ct is not None:
+        try:
+            return int(ct)
+        except (TypeError, ValueError):
+            return 0
     details = usage.get("input_tokens_details") or {}
     ct = details.get("cached_tokens")
     if ct is not None:

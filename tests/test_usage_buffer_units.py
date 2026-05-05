@@ -3,13 +3,16 @@ import unittest
 from datetime import UTC, date, datetime
 
 from app.config import settings
-from app.usage_buffer import UsageBuffer, china_today
+from app.usage_buffer import UsageBuffer, china_today, extract_cached_tokens
 
 
 class UsageBufferUnitsTests(unittest.TestCase):
     def test_china_today_rolls_over_at_beijing_midnight(self) -> None:
         self.assertEqual(china_today(datetime(2026, 5, 2, 15, 59, 59, tzinfo=UTC)), date(2026, 5, 2))
         self.assertEqual(china_today(datetime(2026, 5, 2, 16, 0, 0, tzinfo=UTC)), date(2026, 5, 3))
+
+    def test_extract_cached_tokens_accepts_anthropic_cache_read_shape(self) -> None:
+        self.assertEqual(extract_cached_tokens({"cache_read_input_tokens": 1234}), 1234)
 
     def test_cached_tokens_follow_configured_discount_rate(self) -> None:
         original_rate = settings.cache_discount_rate
