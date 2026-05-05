@@ -62,6 +62,15 @@ function EmailBindingCard({ isConsoleSession }) {
 
     const verified = !!profile?.email_verified_at
     const hasEmail = !!profile?.email
+    const savedEmail = profile?.email || ''
+    const normalizedEmail = email.trim().toLowerCase()
+    const normalizedSavedEmail = savedEmail.trim().toLowerCase()
+    const emailChanged = !!normalizedEmail && normalizedEmail !== normalizedSavedEmail
+    const sendButtonLabel = verified
+        ? (emailChanged ? '发送到新邮箱' : '重新验证邮箱')
+        : hasEmail
+            ? (emailChanged ? '发送到新邮箱' : '重新发送验证码')
+            : '发送验证码'
 
     const handleSend = async (event) => {
         event.preventDefault()
@@ -70,10 +79,11 @@ function EmailBindingCard({ isConsoleSession }) {
         setError('')
         setMessage('')
         try {
-            const data = await sendAccountEmailCode(email.trim())
+            const targetEmail = email.trim()
+            const data = await sendAccountEmailCode(targetEmail)
             setProfile(data)
-            setEmail(data.email || email.trim())
-            setMessage('验证码已发送')
+            setEmail(data.email || targetEmail)
+            setMessage(`验证码已发送到 ${data.email || targetEmail}`)
         } catch (err) {
             setError(err.message || '发送失败')
         } finally {
@@ -105,14 +115,18 @@ function EmailBindingCard({ isConsoleSession }) {
                 <div>
                     <h3>邮箱验证</h3>
                     <p className="settings-subtitle">
-                        {verified ? '当前账号已绑定邮箱。' : hasEmail ? '邮箱还没验证，输入验证码完成绑定。' : '老账号可以继续使用，建议补一个邮箱。'}
+                        {verified ? '当前账号已绑定邮箱。修改地址后，需要重新验证新邮箱。' : hasEmail ? `验证码会发送到 ${savedEmail}。如果要换邮箱，先改上面的地址再发送。` : '老账号可以继续使用，建议补一个邮箱。'}
                     </p>
                 </div>
                 <span className="meta-pill">{verified ? '已验证' : hasEmail ? '待验证' : '未绑定'}</span>
             </div>
             <form className="email-binding-form" onSubmit={handleSend}>
+                <label className="email-field-label" htmlFor="account-email">
+                    邮箱地址{hasEmail ? '（可修改）' : ''}
+                </label>
                 <div className="email-binding-row">
                     <input
+                        id="account-email"
                         type="email"
                         className="input-field"
                         placeholder="name@example.com"
@@ -121,9 +135,14 @@ function EmailBindingCard({ isConsoleSession }) {
                         disabled={loading}
                     />
                     <button className="btn btn-secondary btn-sm" type="submit" disabled={loading}>
-                        {hasEmail && !verified ? '重新发送' : verified ? '更换邮箱' : '发送验证码'}
+                        {sendButtonLabel}
                     </button>
                 </div>
+                {emailChanged && (
+                    <p className="email-change-note">
+                        将把验证邮件发送到新地址：{email.trim()}
+                    </p>
+                )}
             </form>
             {!verified && hasEmail && (
                 <form className="email-binding-form" onSubmit={handleVerify}>
