@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 
 class KeyActivateRequest(BaseModel):
@@ -19,11 +19,9 @@ class KeyActivateResponse(BaseModel):
 class DeveloperKeySummary(BaseModel):
     key_id: str
     masked_key: str
-    name: str = ""
     created_at: datetime
     last_used_at: Optional[datetime] = None
     status: str
-    expires_at: Optional[datetime] = None
 
 
 class DeveloperKeyStateResponse(BaseModel):
@@ -33,20 +31,10 @@ class DeveloperKeyStateResponse(BaseModel):
 
 
 class DeveloperKeyListItem(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
     key_id: str
     masked_key: str
     api_key: Optional[str] = None
-    name: str = ""
-    purpose: str = ""
     status: str
-    expires_at: Optional[datetime] = None
-    monthly_quota_cents: Optional[int] = None
-    total_quota_cents: Optional[int] = None
-    monthly_used_cents: int = 0
-    total_used_cents: int = 0
-    ip_allowlist: List[str] = []
     created_at: datetime
     last_used_at: Optional[datetime] = None
 
@@ -59,42 +47,15 @@ class DeveloperKeyListResponse(BaseModel):
 
 
 class DeveloperKeyCreateResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
     key_id: str
     api_key: str
     masked_key: str
-    name: str = ""
-    purpose: str = ""
     status: str
-    expires_at: Optional[datetime] = None
-    monthly_quota_cents: Optional[int] = None
-    total_quota_cents: Optional[int] = None
-    ip_allowlist: List[str] = []
     created_at: datetime
 
 
-class DeveloperKeyCreateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    name: Optional[str] = Field(default=None, max_length=100)
-    purpose: Optional[str] = Field(default=None, max_length=255)
-    expires_at: Optional[datetime] = None
-    monthly_quota_cents: Optional[int] = Field(default=None, ge=0)
-    total_quota_cents: Optional[int] = Field(default=None, ge=0)
-    ip_allowlist: Optional[List[str]] = Field(default=None, max_length=50)
-
-
 class DeveloperKeyUpdateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    status: Optional[str] = Field(default=None, pattern=r"^(active|disabled)$")
-    name: Optional[str] = Field(default=None, max_length=100)
-    purpose: Optional[str] = Field(default=None, max_length=255)
-    expires_at: Optional[datetime] = None
-    monthly_quota_cents: Optional[int] = Field(default=None, ge=0)
-    total_quota_cents: Optional[int] = Field(default=None, ge=0)
-    ip_allowlist: Optional[List[str]] = Field(default=None, max_length=50)
+    status: str = Field(..., pattern=r"^(active|disabled)$")
 
 
 class AdminUserUpdate(BaseModel):

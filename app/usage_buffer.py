@@ -132,7 +132,6 @@ class UsageBuffer:
                 "cost_cents_f": 0.0,
             }
         )
-        self._cost_by_api_key: Dict[str, float] = defaultdict(float)
         # 请求日志缓冲（每次 API 调用一条）
         self._request_logs: List[dict] = []
         # 全局锁（用于 snapshot_and_reset）
@@ -224,8 +223,6 @@ class UsageBuffer:
             user_bucket["output_tokens"] += int(output_tokens)
             user_bucket["images_total"] += int(image_count or 0)
             user_bucket["cost_cents_f"] += cost_cents  # 保留浮点精度
-            if api_key_id:
-                self._cost_by_api_key[(api_key_id or "")[:32]] += cost_cents
             
             # 请求日志（append 到 list，纳秒级）
             self._request_logs.append({
@@ -266,11 +263,6 @@ class UsageBuffer:
         usage = self._usage_by_user.get(user_id, {})
         return round(usage.get("cost_cents_f", 0.0))
 
-    async def get_pending_cost_for_api_key(self, api_key_id: str) -> int:
-        if not api_key_id:
-            return 0
-        return round(self._cost_by_api_key.get(api_key_id[:32], 0.0))
-
     async def get_pending_requests_today(self, user_id: str) -> int:
         """获取今日待刷新的请求数
         
@@ -297,7 +289,6 @@ class UsageBuffer:
                 request_logs = list(self._request_logs)
                 self._daily.clear()
                 self._usage_by_user.clear()
-                self._cost_by_api_key.clear()
                 self._request_logs.clear()
             finally:
                 # 释放所有分片锁

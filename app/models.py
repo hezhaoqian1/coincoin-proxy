@@ -59,12 +59,7 @@ class ApiKey(Base):
     key_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     encrypted_key: Mapped[Optional[str]] = mapped_column(LONGTEXT, nullable=True)
     kind: Mapped[str] = mapped_column(String(16), default="api")  # api / session
-    name: Mapped[str] = mapped_column(String(100), default="")
-    purpose: Mapped[str] = mapped_column(String(255), default="")
     status: Mapped[str] = mapped_column(String(16), default="active")
-    monthly_quota_cents: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
-    total_quota_cents: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
-    ip_allowlist: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
