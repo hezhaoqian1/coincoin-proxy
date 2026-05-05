@@ -74,10 +74,11 @@ export async function listDeveloperKeys() {
     return data
 }
 
-export async function createDeveloperKey() {
+export async function createDeveloperKey(payload = {}) {
     const res = await fetch(`${PROXY_BASE}/v1/keys`, {
         method: 'POST',
         headers: authHeaders(),
+        body: JSON.stringify(payload || {}),
     })
     const data = await res.json()
     if (!res.ok) throw new Error(data.detail || data.error?.message || 'Failed to create developer key')
@@ -525,6 +526,17 @@ export function formatModelPrice(model) {
     const output = Number(model?.coincoin_price_output_per_million || 0)
     if (!input && !output) return '按后台配置计费'
     return `Input $${(input / 100).toFixed(2)} / M · Cached $${(cachedInput / 100).toFixed(3)} / M · Output $${(output / 100).toFixed(2)} / M`
+}
+
+export function centsToDollars(cents) {
+    const value = Number(cents || 0)
+    return value / 100
+}
+
+export function dollarsToCents(value) {
+    const parsed = Number(value)
+    if (!Number.isFinite(parsed) || parsed <= 0) return null
+    return Math.round(parsed * 100)
 }
 
 // ===== Mock Data =====

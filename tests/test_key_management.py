@@ -48,9 +48,11 @@ class DeveloperKeyManagementTests(unittest.IsolatedAsyncioTestCase):
         key_row = SimpleNamespace(
             id="k_123",
             encrypted_key="encrypted-payload",
+            name="Prod",
             created_at=created_at,
             last_used_at=None,
             status="active",
+            expires_at=None,
         )
         db = _FakeDB(
             execute_results=[
@@ -95,19 +97,31 @@ class DeveloperKeyManagementTests(unittest.IsolatedAsyncioTestCase):
             SimpleNamespace(
                 id="k_new",
                 encrypted_key="enc-new",
+                name="Prod",
+                purpose="server",
                 status="active",
+                expires_at=None,
+                monthly_quota_cents=1000,
+                total_quota_cents=5000,
+                ip_allowlist='["203.0.113.0/24"]',
                 created_at=datetime(2026, 4, 29, 12, 0, 0),
                 last_used_at=datetime(2026, 4, 29, 13, 0, 0),
             ),
             SimpleNamespace(
                 id="k_old",
                 encrypted_key="enc-old",
+                name="",
+                purpose="",
                 status="disabled",
+                expires_at=None,
+                monthly_quota_cents=None,
+                total_quota_cents=None,
+                ip_allowlist=None,
                 created_at=datetime(2026, 4, 20, 12, 0, 0),
                 last_used_at=None,
             ),
         ]
-        db = _FakeDB(execute_results=[_ScalarResult(keys)])
+        db = _FakeDB(execute_results=[_ScalarResult(keys), _ScalarResult([]), _ScalarResult([])])
         request = SimpleNamespace()
 
         with patch.object(keys_module, "authenticate_user", AsyncMock(return_value=user)), patch(
@@ -124,6 +138,10 @@ class DeveloperKeyManagementTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.disabled, 1)
         self.assertEqual(result.data[0].key_id, "k_new")
         self.assertEqual(result.data[0].api_key, "sk_cc_newabcdefghijklmnopqrstuvwxyz1234")
+        self.assertEqual(result.data[0].name, "Prod")
+        self.assertEqual(result.data[0].purpose, "server")
+        self.assertEqual(result.data[0].monthly_quota_cents, 1000)
+        self.assertEqual(result.data[0].ip_allowlist, ["203.0.113.0/24"])
         self.assertEqual(result.data[1].status, "disabled")
 
     async def test_creates_new_developer_key(self):
@@ -138,13 +156,25 @@ class DeveloperKeyManagementTests(unittest.IsolatedAsyncioTestCase):
         ), patch.object(
             keys_module, "encrypt_api_key", return_value="encrypted-created"
         ):
-            result = await keys_module.create_my_developer_key(request, db)
+            payload = keys_module.DeveloperKeyCreateRequest(
+                name="Prod API",
+                purpose="web backend",
+                monthly_quota_cents=2500,
+                total_quota_cents=10000,
+                ip_allowlist=["203.0.113.7"],
+            )
+            result = await keys_module.create_my_developer_key(request, payload, db)
 
         self.assertEqual(result.key_id, "k_created")
         self.assertTrue(result.api_key.startswith("sk_cc_created"))
         self.assertEqual(result.masked_key, "sk_cc_cr...9999")
         self.assertEqual(len(db.added), 1)
         self.assertEqual(db.added[0].kind, "api")
+        self.assertEqual(db.added[0].name, "Prod API")
+        self.assertEqual(db.added[0].purpose, "web backend")
+        self.assertEqual(db.added[0].monthly_quota_cents, 2500)
+        self.assertEqual(db.added[0].total_quota_cents, 10000)
+        self.assertEqual(db.added[0].ip_allowlist, '["203.0.113.7/32"]')
         self.assertEqual(db.commits, 1)
 
     async def test_updates_existing_developer_key_status(self):
@@ -153,21 +183,38 @@ class DeveloperKeyManagementTests(unittest.IsolatedAsyncioTestCase):
             id="k_disable",
             user_id="u_update",
             kind="api",
+            key_hash="hash-disable",
             encrypted_key="enc-disable",
+            name="Old",
+            purpose="",
             status="active",
+            expires_at=None,
+            monthly_quota_cents=None,
+            total_quota_cents=None,
+            ip_allowlist=None,
             created_at=datetime(2026, 4, 28, 10, 0, 0),
             last_used_at=None,
         )
-        db = _FakeDB(execute_results=[_ScalarResult(key_row)])
+        db = _FakeDB(execute_results=[_ScalarResult(key_row), _ScalarResult([]), _ScalarResult([])])
         request = SimpleNamespace()
-        payload = keys_module.DeveloperKeyUpdateRequest(status="disabled")
+        payload = keys_module.DeveloperKeyUpdateRequest(
+            status="disabled",
+            name="Deploy",
+            purpose="railway",
+            monthly_quota_cents=3000,
+            ip_allowlist=["198.51.100.0/24"],
+        )
 
         with patch.object(keys_module, "authenticate_user", AsyncMock(return_value=user)), patch(
             "app.security.decrypt_api_key", return_value="sk_cc_disableabcdefghijklmnopqrstuvwxyz7777"
-        ):
+        ), patch("app.proxy.key_cache.delete", AsyncMock()) as cache_delete:
             result = await keys_module.update_my_developer_key("k_disable", payload, request, db)
 
         self.assertEqual(result.key_id, "k_disable")
         self.assertEqual(result.status, "disabled")
+        self.assertEqual(result.name, "Deploy")
         self.assertEqual(key_row.status, "disabled")
+        self.assertEqual(key_row.monthly_quota_cents, 3000)
+        self.assertEqual(key_row.ip_allowlist, '["198.51.100.0/24"]')
         self.assertEqual(db.commits, 1)
+        cache_delete.assert_awaited_once_with("hash-disable")
