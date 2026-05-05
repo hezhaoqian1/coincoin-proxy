@@ -156,6 +156,7 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         usage_kwargs = add_usage.await_args.kwargs
         self.assertEqual(usage_kwargs["api_key_id"], "k_claude")
         self.assertEqual(usage_kwargs["cached_tokens"], 7)
+        self.assertGreater(usage_kwargs["duration_ms"], 0)
 
     async def test_claude_alias_resolves_to_gpt_55_upstream(self):
         fake_user = SimpleNamespace(id="u_test", status="active")
@@ -339,6 +340,7 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         usage_kwargs = add_usage.await_args.kwargs
         self.assertEqual(usage_kwargs["api_key_id"], "k_claude_stream")
         self.assertEqual(usage_kwargs["cached_tokens"], 5)
+        self.assertGreater(usage_kwargs["duration_ms"], 0)
 
     async def test_streaming_tool_calls_translate_to_tool_use_events(self):
         fake_user = SimpleNamespace(id="u_test", status="active")
