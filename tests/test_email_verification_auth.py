@@ -414,6 +414,61 @@ class EmailVerificationAuthTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(db.commits, 1)
         self.assertEqual(len(background_tasks.tasks), 1)
 
+    async def test_send_current_user_email_code_reuses_existing_email(self):
+        user = SimpleNamespace(id="u_1", username="alice", email="alice@gmail.com", email_verified_at=None, status="active")
+        session_key = SimpleNamespace(
+            user_id="u_1",
+            kind="session",
+            expires_at=datetime.utcnow() + timedelta(days=1),
+        )
+        db = _FakeDB(
+            execute_results=[
+                _ScalarOneOrNoneResult(session_key),
+                _ScalarOneOrNoneResult(user),
+                _ScalarOneOrNoneResult(None),  # latest code for cooldown
+            ]
+        )
+        payload = auth_module.AuthSendEmailCodeRequest(email="Alice@Gmail.com")
+        background_tasks = _BackgroundTasks()
+
+        with patch.object(auth_module.rate_limiter, "allow", AsyncMock(return_value=True)), patch.object(
+            auth_module, "hash_key", return_value="hashed-session"
+        ):
+            result = await auth_module.send_current_user_email_code(payload, _session_request(), background_tasks, db)
+
+        self.assertEqual(result.email, "alice@gmail.com")
+        self.assertTrue(result.email_verification_required)
+        self.assertEqual(user.email, "alice@gmail.com")
+        self.assertEqual(db.commits, 1)
+        self.assertEqual(len(background_tasks.tasks), 1)
+
+    async def test_send_current_user_email_code_rejects_email_change(self):
+        user = SimpleNamespace(id="u_1", username="alice", email="alice@gmail.com", email_verified_at=None, status="active")
+        session_key = SimpleNamespace(
+            user_id="u_1",
+            kind="session",
+            expires_at=datetime.utcnow() + timedelta(days=1),
+        )
+        db = _FakeDB(
+            execute_results=[
+                _ScalarOneOrNoneResult(session_key),
+                _ScalarOneOrNoneResult(user),
+            ]
+        )
+        payload = auth_module.AuthSendEmailCodeRequest(email="other@gmail.com")
+        background_tasks = _BackgroundTasks()
+
+        with patch.object(auth_module.rate_limiter, "allow", AsyncMock(return_value=True)), patch.object(
+            auth_module, "hash_key", return_value="hashed-session"
+        ):
+            with self.assertRaises(HTTPException) as ctx:
+                await auth_module.send_current_user_email_code(payload, _session_request(), background_tasks, db)
+
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertEqual(user.email, "alice@gmail.com")
+        self.assertEqual(db.commits, 0)
+        self.assertEqual(len(background_tasks.tasks), 0)
+
     async def test_verify_current_user_email_sets_verified_at(self):
         now = datetime.utcnow()
         user = SimpleNamespace(id="u_1", username="alice", email="alice@gmail.com", email_verified_at=None, status="active")

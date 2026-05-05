@@ -133,15 +133,32 @@
     align-items: center;
 }
 
-.email-change-note {
-    margin-top: 8px;
-    font-size: 0.82rem;
-    color: var(--accent-amber);
-}
-
 .email-code-field {
     letter-spacing: 0.18em;
     font-weight: 700;
+}
+
+.email-readonly-box {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-md);
+    margin-bottom: var(--space-sm);
+    padding: 12px 14px;
+    background: var(--bg-glass);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+}
+
+.email-readonly-box span {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.email-readonly-box code {
+    color: var(--accent-cyan);
+    overflow-wrap: anywhere;
 }
 
 .password-card {
