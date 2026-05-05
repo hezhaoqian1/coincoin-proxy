@@ -572,12 +572,18 @@ async def send_current_user_email_code(
     if not await rate_limiter.allow(f"auth_email_send:{ip}:{user.id}", AUTH_RATE_LIMIT):
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "too many requests, try later")
 
-    email = _normalize_email(payload.email)
-    email_owner = (
-        await db.execute(select(User).where(User.email == email))
-    ).scalar_one_or_none()
-    if email_owner and email_owner.id != user.id:
-        raise HTTPException(status.HTTP_409_CONFLICT, "email already registered")
+    requested_email = _normalize_email(payload.email)
+    current_email = _normalize_email(user.email) if getattr(user, "email", None) else ""
+    if current_email and requested_email != current_email:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "email address cannot be changed here")
+
+    email = current_email or requested_email
+    if not current_email:
+        email_owner = (
+            await db.execute(select(User).where(User.email == email))
+        ).scalar_one_or_none()
+        if email_owner and email_owner.id != user.id:
+            raise HTTPException(status.HTTP_409_CONFLICT, "email already registered")
 
     latest = await _latest_open_email_code(db, user.id)
     if latest and latest.created_at:
@@ -585,8 +591,9 @@ async def send_current_user_email_code(
         if _utc_naive(latest.created_at) and _utc_naive(latest.created_at) > datetime.utcnow() - timedelta(seconds=cooldown):
             raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "发送太频繁，请稍后再试")
 
-    user.email = email
-    user.email_verified_at = None
+    if not current_email:
+        user.email = email
+        user.email_verified_at = None
     code = await _queue_email_code(db, user_id=user.id, email=email, ip=ip)
     await db.commit()
     background_tasks.add_task(_send_email_code_background, email, code)

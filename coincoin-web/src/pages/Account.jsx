@@ -33,23 +33,18 @@ function EmailBindingCard({ isConsoleSession }) {
     const verified = !!profile?.email_verified_at
     const hasEmail = !!profile?.email
     const savedEmail = profile?.email || ''
-    const normalizedEmail = email.trim().toLowerCase()
-    const normalizedSavedEmail = savedEmail.trim().toLowerCase()
-    const emailChanged = !!normalizedEmail && normalizedEmail !== normalizedSavedEmail
-    const sendButtonLabel = verified
-        ? (emailChanged ? '发送到新邮箱' : '重新验证邮箱')
-        : hasEmail
-            ? (emailChanged ? '发送到新邮箱' : '重新发送验证码')
-            : '发送验证码'
+    const sendButtonLabel = hasEmail
+        ? (verified ? '重新验证邮箱' : '重新发送验证码')
+        : '发送验证码'
 
     const handleSend = async (event) => {
         event.preventDefault()
-        if (!email.trim()) { setError('请输入邮箱'); return }
+        const targetEmail = hasEmail ? savedEmail : email.trim()
+        if (!targetEmail) { setError('请输入邮箱'); return }
         setLoading(true)
         setError('')
         setMessage('')
         try {
-            const targetEmail = email.trim()
             const data = await sendAccountEmailCode(targetEmail)
             setProfile(data)
             setEmail(data.email || targetEmail)
@@ -85,34 +80,38 @@ function EmailBindingCard({ isConsoleSession }) {
                 <div>
                     <h3>邮箱验证</h3>
                     <p className="settings-subtitle">
-                        {verified ? '当前账号已绑定邮箱。修改地址后，需要重新验证新邮箱。' : hasEmail ? `验证码会发送到 ${savedEmail}。如果要换邮箱，先改上面的地址再发送。` : '老账号可以继续使用，建议补一个邮箱。'}
+                        {verified ? '当前账号已绑定邮箱。' : hasEmail ? `验证码会发送到 ${savedEmail}。` : '老账号可以继续使用，建议补一个邮箱。'}
                     </p>
                 </div>
                 <span className="meta-pill">{verified ? '已验证' : hasEmail ? '待验证' : '未绑定'}</span>
             </div>
             <form className="email-binding-form" onSubmit={handleSend}>
-                <label className="email-field-label" htmlFor="account-email">
-                    邮箱地址{hasEmail ? '（可修改）' : ''}
-                </label>
+                {hasEmail ? (
+                    <div className="email-readonly-box">
+                        <span>邮箱地址</span>
+                        <code>{savedEmail}</code>
+                    </div>
+                ) : (
+                    <label className="email-field-label" htmlFor="account-email">
+                        邮箱地址
+                    </label>
+                )}
                 <div className="email-binding-row">
-                    <input
-                        id="account-email"
-                        type="email"
-                        className="input-field"
-                        placeholder="name@example.com"
-                        value={email}
-                        onChange={(event) => { setEmail(event.target.value); setError(''); setMessage('') }}
-                        disabled={loading}
-                    />
+                    {!hasEmail && (
+                        <input
+                            id="account-email"
+                            type="email"
+                            className="input-field"
+                            placeholder="name@example.com"
+                            value={email}
+                            onChange={(event) => { setEmail(event.target.value); setError(''); setMessage('') }}
+                            disabled={loading}
+                        />
+                    )}
                     <button className="btn btn-secondary btn-sm" type="submit" disabled={loading}>
                         {sendButtonLabel}
                     </button>
                 </div>
-                {emailChanged && (
-                    <p className="email-change-note">
-                        将把验证邮件发送到新地址：{email.trim()}
-                    </p>
-                )}
             </form>
             {!verified && hasEmail && (
                 <form className="email-binding-form" onSubmit={handleVerify}>
