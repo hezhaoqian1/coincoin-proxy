@@ -110,33 +110,6 @@
     gap: var(--space-sm);
 }
 
-.account-email-card {
-    border-color: rgba(245, 158, 11, 0.18);
-}
-
-.email-readonly-box {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-md);
-    margin-bottom: var(--space-sm);
-    padding: 12px 14px;
-    background: var(--bg-glass);
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-sm);
-}
-
-.email-readonly-box span {
-    font-size: 0.82rem;
-    font-weight: 600;
-    color: var(--text-secondary);
-}
-
-.email-readonly-box code {
-    color: var(--accent-cyan);
-    overflow-wrap: anywhere;
-}
-
 .password-card {
     border-color: rgba(99, 102, 241, 0.18);
 }
