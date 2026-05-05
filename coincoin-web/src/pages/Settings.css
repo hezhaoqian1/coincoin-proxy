@@ -118,11 +118,25 @@
     margin-top: var(--space-sm);
 }
 
+.email-field-label {
+    display: block;
+    margin-bottom: 8px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
 .email-binding-row {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     gap: var(--space-sm);
     align-items: center;
+}
+
+.email-change-note {
+    margin-top: 8px;
+    font-size: 0.82rem;
+    color: var(--accent-amber);
 }
 
 .email-code-field {
