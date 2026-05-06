@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -89,6 +90,7 @@ IMAGE_ENDPOINTS = frozenset({"images/generations", "images/edits"})
 DELIVERY_LANES = frozenset({"legacy", "gateway", "vertex_direct", "upstream_direct"})
 _ENV_PATTERN = re.compile(r"\$\{([A-Z0-9_]+)(:-([^}]*))?\}")
 _ROOT_DIR = Path(__file__).resolve().parent.parent
+ALIAS_OVERRIDE_FIELDS = frozenset({"provider_model", "upstream_model", "enabled"})
 LEGACY_PROVIDER_MODEL_ALIASES = {
     # CPA no longer publishes this historical public alias directly.
     # Keep the user-facing model id stable, but send a provider model CPA knows.
@@ -225,6 +227,51 @@ def _resolve_placeholders(value: Any) -> Any:
     return value
 
 
+def _catalog_path(raw_path: str) -> Path:
+    path = Path((raw_path or "").strip())
+    if not path.is_absolute():
+        path = _ROOT_DIR / path
+    return path
+
+
+def _load_json_file(path: Path) -> Dict[str, Any]:
+    if not path.is_file():
+        return {}
+    raw = path.read_text(encoding="utf-8").strip()
+    if not raw:
+        return {}
+    try:
+        loaded = json.loads(raw)
+    except Exception as exc:
+        logger.warning("failed to load json file %s: %s", path, exc)
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _safe_alias_overrides(raw: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    aliases = raw.get("aliases") if isinstance(raw, dict) else None
+    if not isinstance(aliases, dict):
+        return {}
+
+    safe: Dict[str, Dict[str, Any]] = {}
+    for alias_id, fields in aliases.items():
+        alias = str(alias_id or "").strip()
+        if not alias or not isinstance(fields, dict):
+            continue
+        filtered: Dict[str, Any] = {}
+        for field_name in ALIAS_OVERRIDE_FIELDS:
+            if field_name not in fields:
+                continue
+            value = fields[field_name]
+            if field_name == "enabled":
+                filtered[field_name] = bool(value) if isinstance(value, bool) else str(value).strip().lower()
+            else:
+                filtered[field_name] = str(value or "").strip()
+        if filtered:
+            safe[alias] = filtered
+    return safe
+
+
 class ModelRegistry:
     def __init__(self) -> None:
         self.models: Dict[str, ModelConfig] = {}
@@ -235,6 +282,11 @@ class ModelRegistry:
         self.default_text_model_id: str = ""
         self.default_embedding_model_id: str = ""
         self.default_image_model_id: str = ""
+        self.alias_overrides: Dict[str, Dict[str, Any]] = {}
+        self._runtime_alias_overrides: Optional[Dict[str, Dict[str, Any]]] = None
+        self._runtime_alias_override_version: int = 0
+        self._raw_public_models: Dict[str, Dict[str, Any]] = {}
+        self._alias_override_state: Tuple[str, int] = ("", -1)
         self._initialized: bool = False
 
     def init_from_settings(self) -> None:
@@ -243,6 +295,7 @@ class ModelRegistry:
         self.tool_count_threshold = int(getattr(settings, "router_tool_count_threshold", 2) or 2)
         self._init_legacy_backends()
         self._init_public_catalog()
+        self._alias_override_state = self._current_alias_override_state()
         self._initialized = True
 
     def _init_legacy_backends(self) -> None:
@@ -375,9 +428,7 @@ class ModelRegistry:
             return _resolve_placeholders(loaded)
 
         raw_path = (getattr(settings, "model_catalog_path", "") or "config/model_catalog.json").strip()
-        catalog_path = Path(raw_path)
-        if not catalog_path.is_absolute():
-            catalog_path = _ROOT_DIR / catalog_path
+        catalog_path = _catalog_path(raw_path)
         if not catalog_path.is_file():
             logger.info("model catalog not found at %s; using default legacy-only catalog", catalog_path)
             return self._default_catalog_document()
@@ -388,6 +439,29 @@ class ModelRegistry:
             logger.warning("failed to load model catalog %s: %s", catalog_path, exc)
             return self._default_catalog_document()
         return _resolve_placeholders(loaded)
+
+    def _load_alias_overrides(self) -> Dict[str, Dict[str, Any]]:
+        if self._runtime_alias_overrides is not None:
+            return dict(self._runtime_alias_overrides)
+        raw_path = (getattr(settings, "model_alias_overrides_path", "") or "").strip()
+        if not raw_path:
+            return {}
+        return _safe_alias_overrides(_resolve_placeholders(_load_json_file(_catalog_path(raw_path))))
+
+    def _apply_alias_overrides(self, raw_models: List[Any]) -> List[Any]:
+        self.alias_overrides = self._load_alias_overrides()
+        if not self.alias_overrides:
+            return raw_models
+
+        result: List[Any] = []
+        for raw in raw_models:
+            if not isinstance(raw, dict):
+                result.append(raw)
+                continue
+            public_id = str(raw.get("id") or "").strip()
+            override = self.alias_overrides.get(public_id)
+            result.append({**raw, **override} if override else raw)
+        return result
 
     def _build_public_model(self, raw: Dict[str, Any]) -> Optional[PublicModelConfig]:
         public_id = str(raw.get("id") or "").strip()
@@ -451,15 +525,20 @@ class ModelRegistry:
     def _init_public_catalog(self) -> None:
         self.public_models = {}
         self.public_model_order = []
+        self._raw_public_models = {}
 
         document = self._load_catalog_document()
         raw_models = document.get("models")
         if not isinstance(raw_models, list):
             raw_models = []
+        raw_models = self._apply_alias_overrides(raw_models)
 
         for raw in raw_models:
             if not isinstance(raw, dict):
                 continue
+            public_id = str(raw.get("id") or "").strip()
+            if public_id:
+                self._raw_public_models[public_id] = dict(raw)
             enabled = raw.get("enabled")
             if enabled is not None and not _as_bool(enabled, True):
                 continue
@@ -525,8 +604,30 @@ class ModelRegistry:
         return ""
 
     def ensure_initialized(self) -> None:
-        if not self._initialized:
+        if not self._initialized or self._alias_override_state != self._current_alias_override_state():
             self.init_from_settings()
+
+    def _current_alias_override_state(self) -> Tuple[str, int]:
+        if self._runtime_alias_overrides is not None:
+            return ("runtime", self._runtime_alias_override_version)
+        raw_path = (getattr(settings, "model_alias_overrides_path", "") or "").strip()
+        if not raw_path:
+            return ("", -1)
+        path = _catalog_path(raw_path)
+        try:
+            return (str(path), path.stat().st_mtime_ns)
+        except OSError:
+            return (str(path), -1)
+
+    def set_runtime_alias_overrides(self, overrides: Dict[str, Dict[str, Any]], version: int = 0) -> None:
+        self._runtime_alias_overrides = _safe_alias_overrides({"aliases": overrides})
+        self._runtime_alias_override_version = int(version or 0)
+        self._initialized = False
+
+    def clear_runtime_alias_overrides(self) -> None:
+        self._runtime_alias_overrides = None
+        self._runtime_alias_override_version = 0
+        self._initialized = False
 
     def get(self, slot: str) -> ModelConfig:
         self.ensure_initialized()
@@ -549,6 +650,73 @@ class ModelRegistry:
     def get_public_model(self, model_id: str) -> Optional[PublicModelConfig]:
         self.ensure_initialized()
         return self.public_models.get(model_id)
+
+    def list_admin_aliases(self) -> List[Dict[str, Any]]:
+        self.ensure_initialized()
+        aliases: List[Dict[str, Any]] = []
+        seen = set()
+        ordered_ids = [*self.public_model_order, *self._raw_public_models.keys()]
+        for model_id in ordered_ids:
+            if model_id in seen:
+                continue
+            seen.add(model_id)
+            raw = self._raw_public_models.get(model_id) or {}
+            model = self.public_models.get(model_id)
+            capabilities = tuple(model.capabilities if model else raw.get("capabilities") or ())
+            enabled = raw.get("enabled")
+            alias = {
+                "id": model_id,
+                "enabled": _as_bool(enabled, True) if enabled is not None else model is not None,
+                "routable": model is not None,
+                "override_active": model_id in self.alias_overrides,
+                "override": self.alias_overrides.get(model_id) or {},
+                "owned_by": (model.owned_by if model else str(raw.get("owned_by") or "coincoin")),
+                "provider_name": (model.provider_name if model else str(raw.get("provider_name") or "")),
+                "provider_model": (model.provider_model if model else str(raw.get("provider_model") or "")),
+                "routing_mode": (model.routing_mode if model else str(raw.get("routing_mode") or "direct")),
+                "delivery_lane": (model.delivery_lane if model else str(raw.get("delivery_lane") or "")),
+                "upstream_model": (model.upstream_model if model else str(raw.get("upstream_model") or "")),
+                "capabilities": list(capabilities),
+                "billable_sku": (model.billable_sku if model else str(raw.get("billable_sku") or model_id)),
+            }
+            aliases.append(alias)
+        return aliases
+
+    def candidate_alias_targets(self, alias_id: str) -> List[Dict[str, Any]]:
+        self.ensure_initialized()
+        source = self.public_models.get(alias_id) or self._raw_public_models.get(alias_id)
+        if not source:
+            return []
+
+        if isinstance(source, PublicModelConfig):
+            source_caps = set(source.capabilities)
+            source_lane = source.delivery_lane
+            source_routing_mode = source.routing_mode
+        else:
+            source_caps = set(source.get("capabilities") or [])
+            source_lane = str(source.get("delivery_lane") or "").strip().lower()
+            source_routing_mode = str(source.get("routing_mode") or "direct").strip().lower()
+
+        candidates = []
+        for item in self.list_admin_aliases():
+            if item["id"] == alias_id:
+                continue
+            if set(item.get("capabilities") or []) != source_caps:
+                continue
+            if item.get("delivery_lane") != source_lane:
+                continue
+            if item.get("routing_mode") != source_routing_mode:
+                continue
+            if not item.get("provider_model") and not item.get("upstream_model"):
+                continue
+            candidates.append(item)
+        return candidates
+
+    def get_admin_alias(self, alias_id: str) -> Optional[Dict[str, Any]]:
+        for item in self.list_admin_aliases():
+            if item["id"] == alias_id:
+                return item
+        return None
 
     def has_routable_models(self) -> bool:
         self.ensure_initialized()
@@ -665,6 +833,32 @@ class ModelRegistry:
             legacy_default_slot=legacy_default_slot,
             honor_tool_routing=_as_bool(metadata.get("honor_tool_routing"), True),
         )
+
+
+def _alias_overrides_path() -> Path:
+    raw_path = (getattr(settings, "model_alias_overrides_path", "") or "").strip()
+    if not raw_path:
+        raise ModelResolutionError("model alias overrides path is not configured")
+    return _catalog_path(raw_path)
+
+
+def load_alias_override_document() -> Dict[str, Any]:
+    path = _alias_overrides_path()
+    loaded = _load_json_file(path)
+    aliases = _safe_alias_overrides(loaded)
+    return {"aliases": aliases}
+
+
+def save_alias_override_document(document: Dict[str, Any]) -> None:
+    path = _alias_overrides_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    safe_document = {"aliases": _safe_alias_overrides(document)}
+    payload = json.dumps(safe_document, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=str(path.parent), delete=False) as tmp:
+        tmp.write(payload)
+        tmp_path = Path(tmp.name)
+    tmp_path.replace(path)
 
 
 registry = ModelRegistry()

@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     embedding_price_input: int = 2
     model_catalog_path: str = "config/model_catalog.json"
     model_catalog_json: str = ""
+    model_alias_overrides_path: str = "config/model_alias_overrides.json"
+    model_alias_overrides_refresh_interval: int = 10
 
     # Gateway-backed public models (LiteLLM / internal OpenAI-compatible gateway)
     gateway_base_url: str = ""

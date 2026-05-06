@@ -1141,6 +1141,10 @@
             <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg>
             API 密钥
           </div>
+          <div class="nav-item" data-page="model-aliases">
+            <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h10M4 17h10M18 5l3 2-3 2M18 15l3 2-3 2"/></svg>
+            模型路由
+          </div>
           <div class="nav-item" data-page="station-applications">
             <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6l4 2"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 22a10 10 0 110-20 10 10 0 010 20z"/></svg>
             站长申请
@@ -1341,6 +1345,40 @@
                   </tr>
                 </thead>
                 <tbody id="usersBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- =============== Model Aliases =============== -->
+      <div id="page-model-aliases" class="page">
+        <div class="page-header">
+          <h1 class="page-title">模型路由</h1>
+          <p class="page-desc">控制公开 alias 指向的已批准上游模型；内部 URL 和密钥不在后台页面展示。</p>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <span class="card-title">Alias 覆盖</span>
+              <div class="text-sm text-muted" id="modelAliasSummary">加载中...</div>
+            </div>
+            <button class="btn btn-secondary" onclick="loadModelAliases()">刷新</button>
+          </div>
+          <div class="card-body flush">
+            <div class="table-wrapper">
+              <table>
+                <thead>
+                  <tr>
+                    <th>公开 Alias</th>
+                    <th>路由</th>
+                    <th>当前上游</th>
+                    <th>能力</th>
+                    <th>状态</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="modelAliasesBody"></tbody>
               </table>
             </div>
           </div>
@@ -1818,6 +1856,38 @@
     </div>
   </div>
 
+  <!-- Model Alias Modal -->
+  <div id="modelAliasModal" class="modal-overlay">
+    <div class="modal" style="max-width:620px">
+      <div class="modal-header">
+        <span class="modal-title" id="modelAliasModalTitle">调整模型 alias</span>
+        <button class="modal-close" onclick="closeModal('modelAliasModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">当前路由</label>
+          <div id="modelAliasCurrentRoute" class="code-display" style="white-space:normal;word-break:break-word"></div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">切换到</label>
+          <select id="modelAliasTarget" class="form-select"></select>
+          <div class="form-help">只显示 capability、delivery lane 和 routing mode 相同的候选目标。</div>
+        </div>
+        <label class="flex items-center gap-2 text-sm text-muted" style="cursor:pointer">
+          <input type="checkbox" id="modelAliasEnabled" />
+          启用这个公开 alias
+        </label>
+      </div>
+      <div class="modal-footer" style="justify-content:space-between">
+        <button class="btn btn-danger" onclick="clearModelAliasOverride()">清除覆盖</button>
+        <div class="flex gap-2">
+          <button class="btn btn-secondary" onclick="closeModal('modelAliasModal')">取消</button>
+          <button class="btn btn-primary" onclick="saveModelAliasOverride()">保存</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Generate Codes Modal -->
   <div id="generateCodesModal" class="modal-overlay">
     <div class="modal">
@@ -2035,6 +2105,8 @@
     let searchTimeout = null;
     let userSortAsc = false;
     let stationPayoutBatchCache = [];
+    let modelAliasCache = [];
+    let currentModelAliasId = null;
 
     function toggleSidebar() {
       document.getElementById('sidebar').classList.toggle('open');
@@ -2061,6 +2133,7 @@
           users: loadUsers,
           'finance-summary': loadFinanceSummary,
           keys: loadAllKeys,
+          'model-aliases': loadModelAliases,
           'station-applications': loadStationApplications,
           'station-commission': loadStationCommissionLedger,
           'station-payouts': loadStationPayoutBatches,
@@ -2408,6 +2481,122 @@
           <td><button class="btn btn-sm ${k.status==='active'?'btn-danger':'btn-success'}" onclick="toggleKey('${k.id}','${k.status}')">${k.status==='active'?'禁用':'启用'}</button></td>
         </tr>`).join('');
       } catch (e) { console.error(e); toast('加载失败', 'error'); }
+    }
+
+    // ==================== Model Aliases ====================
+    function renderAliasRoute(alias) {
+      const mode = alias.routing_mode || '-';
+      const lane = alias.delivery_lane || '-';
+      return `${mode} / ${lane}`;
+    }
+
+    function renderAliasTarget(alias) {
+      const provider = alias.provider_model || '-';
+      const upstream = alias.upstream_model || '-';
+      return `<div>${escapeHtml(provider)}</div><div class="text-sm text-muted">${escapeHtml(upstream)}</div>`;
+    }
+
+    async function loadModelAliases() {
+      try {
+        const r = await fetch('/admin/model-aliases', { headers: adminHeaders() });
+        if (!r.ok) return toast('加载模型路由失败', 'error');
+        const d = await r.json();
+        modelAliasCache = d.aliases || [];
+        const body = document.getElementById('modelAliasesBody');
+        document.getElementById('modelAliasSummary').textContent = `${modelAliasCache.length} 个 alias，${d.override_count || 0} 个运行时覆盖`;
+        if (!modelAliasCache.length) {
+          body.innerHTML = '<tr><td colspan="6"><div class="empty-state"><div class="empty-state-icon">M</div><h3>暂无模型 alias</h3><p>公开目录加载后会显示在这里</p></div></td></tr>';
+          return;
+        }
+        body.innerHTML = modelAliasCache.map(alias => `
+          <tr>
+            <td>
+              <strong>${escapeHtml(alias.id)}</strong>
+              <div class="text-sm text-muted">${escapeHtml(alias.billable_sku || '-')}</div>
+            </td>
+            <td><div>${escapeHtml(renderAliasRoute(alias))}</div><div class="text-sm text-muted">${escapeHtml(alias.provider_name || alias.owned_by || '-')}</div></td>
+            <td>${renderAliasTarget(alias)}</td>
+            <td><div class="text-sm text-muted">${escapeHtml((alias.capabilities || []).join(', ') || '-')}</div></td>
+            <td>
+              <span class="badge ${alias.routable && alias.enabled ? 'badge-success' : 'badge-warning'}">${alias.routable && alias.enabled ? '可用' : '不可路由'}</span>
+              ${alias.override_active ? '<span class="badge badge-info" style="margin-left:6px">已覆盖</span>' : ''}
+            </td>
+            <td><button class="btn btn-sm btn-secondary" onclick="openModelAliasModal('${escapeHtml(alias.id)}')">调整</button></td>
+          </tr>
+        `).join('');
+      } catch (e) {
+        console.error(e);
+        toast('加载模型路由失败', 'error');
+      }
+    }
+
+    async function openModelAliasModal(aliasId) {
+      currentModelAliasId = aliasId;
+      try {
+        const r = await fetch(`/admin/model-aliases/${encodeURIComponent(aliasId)}`, { headers: adminHeaders() });
+        const d = await r.json();
+        if (!r.ok) return toast(d.detail || '加载失败', 'error');
+        const alias = d.alias || {};
+        const targets = d.targets || [];
+        document.getElementById('modelAliasModalTitle').textContent = `调整 ${alias.id}`;
+        document.getElementById('modelAliasCurrentRoute').innerHTML = `
+          <div><strong>${escapeHtml(alias.id || '-')}</strong> · ${escapeHtml(renderAliasRoute(alias))}</div>
+          <div class="text-sm text-muted">${escapeHtml(alias.provider_model || '-')} → ${escapeHtml(alias.upstream_model || '-')}</div>
+        `;
+        document.getElementById('modelAliasEnabled').checked = alias.enabled !== false;
+        const select = document.getElementById('modelAliasTarget');
+        select.innerHTML = '<option value="">只调整启用状态</option>' + targets.map(target => `
+          <option value="${escapeHtml(target.id)}">${escapeHtml(target.id)} · ${escapeHtml(target.provider_model || target.upstream_model || '-')}</option>
+        `).join('');
+        openModal('modelAliasModal');
+      } catch (e) {
+        console.error(e);
+        toast('加载失败', 'error');
+      }
+    }
+
+    async function saveModelAliasOverride() {
+      if (!currentModelAliasId) return;
+      const target_alias = document.getElementById('modelAliasTarget').value;
+      const enabled = document.getElementById('modelAliasEnabled').checked;
+      const payload = { enabled };
+      if (target_alias) payload.target_alias = target_alias;
+      try {
+        const r = await fetch(`/admin/model-aliases/${encodeURIComponent(currentModelAliasId)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+          body: JSON.stringify(payload)
+        });
+        const d = await r.json();
+        if (!r.ok) return toast(d.detail || '保存失败', 'error');
+        closeModal('modelAliasModal');
+        toast('模型 alias 已更新', 'success');
+        loadModelAliases();
+        loadOpsHealth();
+      } catch (e) {
+        console.error(e);
+        toast('保存失败', 'error');
+      }
+    }
+
+    async function clearModelAliasOverride() {
+      if (!currentModelAliasId) return;
+      if (!confirm(`清除 ${currentModelAliasId} 的运行时覆盖？`)) return;
+      try {
+        const r = await fetch(`/admin/model-aliases/${encodeURIComponent(currentModelAliasId)}`, {
+          method: 'DELETE',
+          headers: adminHeaders()
+        });
+        const d = await r.json();
+        if (!r.ok) return toast(d.detail || '清除失败', 'error');
+        closeModal('modelAliasModal');
+        toast('覆盖已清除', 'success');
+        loadModelAliases();
+        loadOpsHealth();
+      } catch (e) {
+        console.error(e);
+        toast('清除失败', 'error');
+      }
     }
 
     async function toggleKey(keyId, status) {
@@ -3301,6 +3490,7 @@
       loadUsers();
       loadUsage();
       loadFinanceSummary();
+      loadModelAliases();
       loadMonitoringSummary();
       loadOpsHealth();
     }

@@ -19,6 +19,7 @@ from .finance_summary import (
 from .models import (
     Announcement,
     ApiKey,
+    ModelAliasOverride,
     PaymentOrder,
     RechargeLog,
     RedemptionCode,
@@ -29,10 +30,15 @@ from .models import (
     UsageDaily,
     User,
 )
+from .model_alias_overrides import (
+    apply_runtime_alias_override,
+    clear_runtime_alias_override,
+    refresh_model_alias_registry_from_db,
+)
 from .payment_common import PaymentConfirmError, confirm_paid_order
 from .schemas import (
     AdminKeyUpdate, AdminPaymentManualConfirmRequest, AdminUserUpdate,
-    AnnouncementCreate, AnnouncementUpdate,
+    AdminModelAliasUpdate, AnnouncementCreate, AnnouncementUpdate,
     RedemptionGenerateRequest, RedemptionGenerateResponse,
 )
 from .config import settings as _settings
@@ -61,6 +67,32 @@ def _recover_raw_key(encrypted_key: Optional[str]) -> Optional[str]:
         return decrypt_api_key(encrypted_key)
     except Exception:
         return None
+
+
+def _alias_payload(alias_id: str):
+    alias = model_registry.get_admin_alias(alias_id)
+    if not alias:
+        return None
+    return {
+        "alias": alias,
+        "targets": model_registry.candidate_alias_targets(alias_id),
+    }
+
+
+def _matching_target(alias_id: str, target_alias: str):
+    for candidate in model_registry.candidate_alias_targets(alias_id):
+        if candidate["id"] == target_alias:
+            return candidate
+    return None
+
+
+def _matching_target_by_models(alias_id: str, provider_model: str, upstream_model: str):
+    for candidate in model_registry.candidate_alias_targets(alias_id):
+        candidate_provider = candidate.get("provider_model") or ""
+        candidate_upstream = candidate.get("upstream_model") or candidate_provider
+        if candidate_provider == provider_model and candidate_upstream == upstream_model:
+            return candidate
+    return None
 
 
 def admin_guard(request: Request):
@@ -106,6 +138,89 @@ async def admin_ui(token: str = ""):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
     ui_path = Path(__file__).parent / "static" / "admin.html"
     return FileResponse(ui_path)
+
+
+@router.get("/model-aliases", dependencies=[Depends(admin_guard)])
+async def list_model_aliases(db: AsyncSession = Depends(get_db)):
+    await refresh_model_alias_registry_from_db(db)
+    aliases = model_registry.list_admin_aliases()
+    return {
+        "aliases": aliases,
+        "override_count": sum(1 for item in aliases if item.get("override_active")),
+    }
+
+
+@router.get("/model-aliases/{alias_id}", dependencies=[Depends(admin_guard)])
+async def get_model_alias(alias_id: str, db: AsyncSession = Depends(get_db)):
+    await refresh_model_alias_registry_from_db(db)
+    payload = _alias_payload(alias_id)
+    if not payload:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="alias not found")
+    return payload
+
+
+@router.patch("/model-aliases/{alias_id}", dependencies=[Depends(admin_guard)])
+async def update_model_alias(alias_id: str, payload: AdminModelAliasUpdate, db: AsyncSession = Depends(get_db)):
+    await refresh_model_alias_registry_from_db(db)
+    alias = model_registry.get_admin_alias(alias_id)
+    if not alias:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="alias not found")
+
+    override = {}
+    if payload.target_alias:
+        target = _matching_target(alias_id, payload.target_alias.strip())
+        if not target:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="target alias is not compatible")
+        override["provider_model"] = target.get("provider_model") or ""
+        override["upstream_model"] = target.get("upstream_model") or target.get("provider_model") or ""
+    else:
+        provider_model = payload.provider_model.strip() if payload.provider_model is not None else ""
+        upstream_model = payload.upstream_model.strip() if payload.upstream_model is not None else ""
+        if provider_model or upstream_model:
+            target = _matching_target_by_models(alias_id, provider_model, upstream_model or provider_model)
+            if not target:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="target model is not compatible")
+            override["provider_model"] = target.get("provider_model") or ""
+            override["upstream_model"] = target.get("upstream_model") or target.get("provider_model") or ""
+
+    if payload.enabled is not None:
+        override["enabled"] = payload.enabled
+
+    if not override:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="no override fields provided")
+
+    existing = (await db.execute(select(ModelAliasOverride).where(ModelAliasOverride.alias_id == alias_id))).scalar_one_or_none()
+    if existing is None:
+        existing = ModelAliasOverride(alias_id=alias_id)
+        db.add(existing)
+    if "provider_model" in override:
+        existing.provider_model = override["provider_model"]
+    if "upstream_model" in override:
+        existing.upstream_model = override["upstream_model"]
+    if "enabled" in override:
+        existing.enabled = 1 if override["enabled"] else 0
+    existing.updated_by = "admin"
+    await db.commit()
+    apply_runtime_alias_override(alias_id, override)
+
+    updated = _alias_payload(alias_id)
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="alias update failed")
+    return updated
+
+
+@router.delete("/model-aliases/{alias_id}", dependencies=[Depends(admin_guard)])
+async def clear_model_alias_override(alias_id: str, db: AsyncSession = Depends(get_db)):
+    existing = (await db.execute(select(ModelAliasOverride).where(ModelAliasOverride.alias_id == alias_id))).scalar_one_or_none()
+    if existing is not None:
+        await db.delete(existing)
+        await db.commit()
+    clear_runtime_alias_override(alias_id)
+
+    payload = _alias_payload(alias_id)
+    if not payload:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="alias not found")
+    return payload
 
 
 @router.get("/users", dependencies=[Depends(admin_guard)])

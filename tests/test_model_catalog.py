@@ -1,9 +1,11 @@
 import json
 import os
+import tempfile
 import unittest
 from unittest.mock import patch
 
 from app.config import settings
+from app.model_alias_overrides import override_rows_to_snapshot
 from app.router import ModelCapabilityError, _resolve_placeholders, registry
 
 
@@ -100,6 +102,7 @@ class ModelCatalogTests(unittest.TestCase):
             "fallback_auth_style": settings.fallback_auth_style,
             "gateway_auth_style": settings.gateway_auth_style,
             "model_catalog_json": settings.model_catalog_json,
+            "model_alias_overrides_path": settings.model_alias_overrides_path,
         }
 
         settings.fixed_model = "gpt-5.4"
@@ -127,6 +130,7 @@ class ModelCatalogTests(unittest.TestCase):
         settings.fallback_price_output = 3000
         settings.fallback_auth_style = "azure"
         settings.gateway_auth_style = "bearer"
+        settings.model_alias_overrides_path = ""
         settings.model_catalog_json = json.dumps(
             {
                 "default_text_model": "gpt-5.4",
@@ -188,6 +192,7 @@ class ModelCatalogTests(unittest.TestCase):
     def tearDown(self) -> None:
         for key, value in self._originals.items():
             setattr(settings, key, value)
+        registry.clear_runtime_alias_overrides()
         registry._initialized = False
 
     def test_default_text_model_keeps_legacy_public_alias(self) -> None:
@@ -216,6 +221,77 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertEqual(resolved.execution_profile, "gateway_direct")
         self.assertEqual(resolved.execution_pool, "gateway_direct_pool")
         self.assertEqual(resolved.route_reason, "catalog:gemini-fast:gateway")
+
+    def test_runtime_alias_override_changes_upstream_without_editing_catalog(self) -> None:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8") as override_file:
+            json.dump(
+                {
+                    "aliases": {
+                        "gemini-fast": {
+                            "provider_model": "gemini-2.5-pro",
+                            "upstream_model": "vertex-gemini-2.5-pro",
+                        }
+                    }
+                },
+                override_file,
+            )
+            override_file.flush()
+            settings.model_alias_overrides_path = override_file.name
+            registry._initialized = False
+            registry.init_from_settings()
+
+            resolved = registry.resolve_public_model("gemini-fast", "responses")
+
+        self.assertEqual(resolved.public_model.public_id, "gemini-fast")
+        self.assertEqual(resolved.public_model.provider_model, "gemini-2.5-pro")
+        self.assertEqual(resolved.backend.model_id, "vertex-gemini-2.5-pro")
+        self.assertEqual(resolved.backend.upstream_url, "https://gateway.example/v1")
+        self.assertEqual(resolved.route_reason, "catalog:gemini-fast:gateway")
+
+    def test_runtime_alias_override_snapshot_is_used_from_memory(self) -> None:
+        settings.model_alias_overrides_path = "/tmp/coincoin-override-file-should-not-be-read.json"
+        registry.set_runtime_alias_overrides(
+            {
+                "gemini-fast": {
+                    "provider_model": "gemini-2.5-pro",
+                    "upstream_model": "vertex-gemini-2.5-pro",
+                }
+            },
+            version=42,
+        )
+        registry._initialized = False
+
+        with patch("app.router._load_json_file", side_effect=AssertionError("hot path should not read override file")):
+            registry.init_from_settings()
+            resolved = registry.resolve_public_model("gemini-fast", "responses")
+
+        self.assertEqual(resolved.public_model.provider_model, "gemini-2.5-pro")
+        self.assertEqual(resolved.backend.model_id, "vertex-gemini-2.5-pro")
+
+    def test_db_alias_override_enabled_only_preserves_catalog_models(self) -> None:
+        overrides, version = override_rows_to_snapshot(
+            [
+                type(
+                    "Row",
+                    (),
+                    {
+                        "alias_id": "gemini-fast",
+                        "provider_model": "",
+                        "upstream_model": "",
+                        "enabled": 1,
+                        "updated_at": None,
+                    },
+                )()
+            ]
+        )
+        registry.set_runtime_alias_overrides(overrides, version=version)
+        registry._initialized = False
+        registry.init_from_settings()
+
+        resolved = registry.resolve_public_model("gemini-fast", "responses")
+
+        self.assertEqual(resolved.public_model.provider_model, "gemini-2.5-flash")
+        self.assertEqual(resolved.backend.model_id, "gemini-fast")
 
     def test_explicit_legacy_public_model_keeps_legacy_lane(self) -> None:
         resolved = registry.resolve_public_model(
