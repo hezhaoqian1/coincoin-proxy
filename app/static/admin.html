@@ -2588,7 +2588,10 @@
         `;
         document.getElementById('modelAliasEnabled').checked = alias.enabled !== false;
         const select = document.getElementById('modelAliasTarget');
-        select.innerHTML = '<option value="">先不改转发目标，只调整开关</option>' + targets.map(target => `
+        const restoreOption = alias.override_active
+          ? `<option value="__restore_default__">恢复默认转发（清除自定义转发）</option>`
+          : '';
+        select.innerHTML = '<option value="">不改转发目标，只保存启用状态</option>' + restoreOption + targets.map(target => `
           <option value="${escapeHtml(target.id)}">${escapeHtml(renderAliasTargetOption(target))}</option>
         `).join('');
         openModal('modelAliasModal');
@@ -2603,6 +2606,10 @@
       const target_alias = document.getElementById('modelAliasTarget').value;
       const enabled = document.getElementById('modelAliasEnabled').checked;
       const payload = { enabled };
+      if (target_alias === '__restore_default__') {
+        clearModelAliasOverride({ skipConfirm: true, enabledAfterClear: enabled });
+        return;
+      }
       if (target_alias) payload.target_alias = target_alias;
       try {
         const r = await fetch(`/admin/model-aliases/${encodeURIComponent(currentModelAliasId)}`, {
@@ -2622,9 +2629,9 @@
       }
     }
 
-    async function clearModelAliasOverride() {
+    async function clearModelAliasOverride(options = {}) {
       if (!currentModelAliasId) return;
-      if (!confirm(`恢复 ${currentModelAliasId} 的默认转发？`)) return;
+      if (!options.skipConfirm && !confirm(`恢复 ${currentModelAliasId} 的默认转发？`)) return;
       try {
         const r = await fetch(`/admin/model-aliases/${encodeURIComponent(currentModelAliasId)}`, {
           method: 'DELETE',
@@ -2632,6 +2639,15 @@
         });
         const d = await r.json();
         if (!r.ok) return toast(d.detail || '清除失败', 'error');
+        if (options.enabledAfterClear === false) {
+          const disableResponse = await fetch(`/admin/model-aliases/${encodeURIComponent(currentModelAliasId)}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+            body: JSON.stringify({ enabled: false })
+          });
+          const disablePayload = await disableResponse.json();
+          if (!disableResponse.ok) return toast(disablePayload.detail || '停用失败', 'error');
+        }
         closeModal('modelAliasModal');
         toast('已恢复默认转发', 'success');
         loadModelAliases();
