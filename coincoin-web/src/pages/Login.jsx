@@ -14,7 +14,7 @@ export default function Login() {
 
     const handlePasswordLogin = async (e) => {
         e.preventDefault()
-        if (!username.trim()) { setError('请输入用户名'); return }
+        if (!username.trim()) { setError('请输入邮箱或用户名'); return }
         if (!password) { setError('请输入密码'); return }
         const result = await loginWithPassword(username.trim(), password)
         if (result.success) {
@@ -46,7 +46,6 @@ export default function Login() {
                 <div className="auth-header">
                     <div className="logo-icon" style={{ width: 48, height: 48, fontSize: '1.1rem', borderRadius: 14 }}>CF</div>
                     <h1>登录控制台</h1>
-                    <p>默认使用控制台账号登录。已有开发者 Key 时，再走下面的直登入口。</p>
                 </div>
 
                 <div className="auth-tabs">
@@ -63,11 +62,11 @@ export default function Login() {
                 {tab === 'password' ? (
                     <form onSubmit={handlePasswordLogin} className="auth-form">
                         <div className="input-group">
-                            <label>用户名</label>
+                            <label>邮箱或用户名</label>
                             <input
                                 type="text"
                                 className="input-field"
-                                placeholder="输入控制台用户名"
+                                placeholder="输入邮箱或控制台用户名"
                                 value={username}
                                 onChange={(e) => { setUsername(e.target.value); clearError() }}
                                 autoFocus
@@ -87,9 +86,6 @@ export default function Login() {
                         <button type="submit" className="btn btn-primary" style={{ width: '100%' }} disabled={loading}>
                             {loading ? '登录中...' : '进入控制台'}
                         </button>
-                        <p className="auth-helper-text">
-                            还没有控制台账号？先注册。
-                        </p>
                     </form>
                 ) : (
                     <form onSubmit={handleKeyLogin} className="auth-form">

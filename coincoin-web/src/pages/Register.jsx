@@ -188,7 +188,6 @@ export default function Register() {
                 <div className="auth-header">
                     <div className="logo-icon" style={{ width: 48, height: 48, fontSize: '1.1rem', borderRadius: 14 }}>CF</div>
                     <h1>创建控制台账号</h1>
-                    <p>先验证邮箱，再完成注册。开发者 Key 在概览页生成。</p>
                 </div>
 
                 <form onSubmit={handleSubmit} className="auth-form">
@@ -323,12 +322,8 @@ export default function Register() {
                         {loading ? '创建中...' : '创建账号'}
                     </button>
 
-                    <p className="auth-helper-text">
-                        使用主流邮箱，后续找回账号和风控都靠它。
-                    </p>
-
                     <p className="auth-footer-text">
-                        已有控制台账号？<Link to="/login">去登录</Link>
+                        已有账号？<Link to="/login">去登录</Link>
                     </p>
                 </form>
             </div>

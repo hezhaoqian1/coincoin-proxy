@@ -150,6 +150,25 @@ async def _latest_open_email_code_by_email(
     return result.scalar_one_or_none()
 
 
+async def _lookup_login_account(db: AsyncSession, identifier: str) -> Account | None:
+    login_id = (identifier or "").strip()
+    normalized_email = login_id.lower()
+    if EMAIL_RE.match(normalized_email):
+        user = (
+            await db.execute(select(User).where(User.email == normalized_email))
+        ).scalar_one_or_none()
+        if user:
+            account = (
+                await db.execute(select(Account).where(Account.linked_user_id == user.id))
+            ).scalar_one_or_none()
+            if account:
+                return account
+
+    return (
+        await db.execute(select(Account).where(Account.username == login_id))
+    ).scalar_one_or_none()
+
+
 async def _queue_email_code(db: AsyncSession, *, user_id: str, email: str, ip: str) -> str:
     code = _new_email_code()
     ttl_minutes = max(1, int(settings.email_verification_ttl_minutes or 10))
@@ -667,12 +686,11 @@ async def login(
     if not await rate_limiter.allow(f"auth_login:{ip}", AUTH_RATE_LIMIT):
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "too many requests, try later")
 
-    account = (
-        await db.execute(select(Account).where(Account.username == payload.username))
-    ).scalar_one_or_none()
+    login_identifier = payload.username.strip()
+    account = await _lookup_login_account(db, login_identifier)
 
     if not account:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid username or password")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid username/email or password")
 
     now = datetime.utcnow()
     if account.locked_until and account.locked_until > now:
@@ -683,9 +701,9 @@ async def login(
         account.failed_attempts = (account.failed_attempts or 0) + 1
         if account.failed_attempts >= MAX_FAILED_ATTEMPTS:
             account.locked_until = now + timedelta(minutes=LOCKOUT_MINUTES)
-            logger.warning("Account locked: %s after %d failures", payload.username, account.failed_attempts)
+            logger.warning("Account locked: %s after %d failures", account.username, account.failed_attempts)
         await db.commit()
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid username or password")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid username/email or password")
 
     user = (
         await db.execute(select(User).where(User.id == account.linked_user_id))
@@ -704,6 +722,6 @@ async def login(
     db.add(session_key)
 
     await db.commit()
-    logger.info("User logged in: %s", payload.username)
+    logger.info("User logged in: %s", account.username)
 
-    return AuthResponse(user_id=user.id, username=payload.username, session_key=raw_key)
+    return AuthResponse(user_id=user.id, username=account.username, session_key=raw_key)
