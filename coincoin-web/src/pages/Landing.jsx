@@ -29,16 +29,16 @@ const CLIENTS = [
 
 const ENTRY_POINTS = [
     {
-        title: '统一入口',
-        detail: '一个 OpenAI 兼容地址，覆盖文本、图片和常见开发工具接入。',
+        title: '一把开发者 Key',
+        detail: '同一把 Key 可用于 OpenAI 兼容客户端、Claude Code、CLI、SDK 和图片接口。',
     },
     {
-        title: '控制台管理',
-        detail: '充值、请求日志和开发者 Key 都在同一个后台里。',
+        title: '统一管理调用',
+        detail: '余额、请求日志、开发者 Key 和充值记录都在同一个控制台里。',
     },
     {
-        title: '低心智负担',
-        detail: '拿到 Key 后直接替换 Base URL 和模型名，不需要维护多套线路。',
+        title: '清楚的接入路径',
+        detail: 'OpenAI 兼容客户端用 /v1，Claude Code 用根地址，按文档复制配置即可开始。',
     },
 ]
 
@@ -65,11 +65,11 @@ const FAQS = [
     },
     {
         question: 'Claude Code 怎么接？',
-        answer: 'Claude Code 走根地址，不走 /v1。欢迎页里已经给了对应配置片段，控制台里也会提供可复制的接入说明。',
+        answer: 'Claude Code 走根地址，不走 /v1。接入文档里提供了可复制的环境变量配置。',
     },
     {
         question: '余额和计费怎么处理？',
-        answer: '公开页展示充值入口和套餐说明，实际调用时由控制台统一管理余额、请求日志和开发者 Key。',
+        answer: '充值后按模型用量扣费，文本和图片共用同一个账户余额。控制台会展示余额、请求日志和开发者 Key。',
     },
 ]
 
@@ -84,7 +84,7 @@ function PricingPreview({ isLoggedIn }) {
                         <span className="landing-eyebrow">Pricing</span>
                         <h2>充值后按量扣费</h2>
                     </div>
-                    <p>文本和图片共用一个余额，公开页展示套餐，实际调用按模型计费。</p>
+                    <p>文本和图片共用一个余额，实际调用按模型计费。</p>
                 </div>
                 <div className="landing-pricing-grid">
                     {featuredPlans.map((plan) => (
@@ -134,7 +134,7 @@ export default function Landing() {
                                 <span>统一入口，统一计费，统一控制台</span>
                             </div>
                             <span className="landing-kicker">ClawFather API</span>
-                            <h1>把文本、图片和 Claude Code 收进同一个开发者入口</h1>
+                            <h1>一个开发者 Key 接入 Codex、Claude Code、SDK 和图片接口</h1>
                             <p className="landing-summary">
                                 不用在多个平台之间来回切换。登录控制台、生成开发者 Key，再把一套配置复制到
                                 CLI、SDK 和常用客户端里，就能开始调用。
@@ -216,9 +216,9 @@ export default function Landing() {
                     <div className="landing-section-head">
                         <div>
                             <span className="landing-eyebrow">Platform</span>
-                            <h2>公开页负责说明，控制台负责操作</h2>
+                            <h2>从拿到 Key 到发出请求，路径保持清楚</h2>
                         </div>
-                        <p>欢迎页负责建立信任和说明接入方式，真正的充值、日志、密钥管理在控制台里完成。</p>
+                        <p>先创建账号并生成开发者 Key，再按客户端选择 Base URL 和模型名；余额、日志和密钥都在控制台管理。</p>
                     </div>
                     <div className="landing-feature-grid">
                         {ENTRY_POINTS.map((item) => (
@@ -260,7 +260,7 @@ export default function Landing() {
                             <span className="landing-eyebrow">FAQ</span>
                             <h2>开发者最常问的三个问题</h2>
                         </div>
-                        <p>把最影响接入决策的问题提前回答掉，减少第一次打开页面时的信息摩擦。</p>
+                        <p>先确认协议、Claude Code 接法和计费方式，再开始接入。</p>
                     </div>
                     <div className="landing-faq-grid">
                         {FAQS.map((item, index) => (
