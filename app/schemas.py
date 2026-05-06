@@ -108,6 +108,17 @@ class AdminUserUpdate(BaseModel):
     request_limit_per_day: Optional[int] = None
 
 
+class AdminUserPasswordResetRequest(BaseModel):
+    new_password: str = Field(..., min_length=6, max_length=128, description="新的控制台登录密码")
+
+
+class AdminUserPasswordResetResponse(BaseModel):
+    user_id: str
+    username: Optional[str] = None
+    account_status: str
+    status: str = "password_reset"
+
+
 class AdminKeyUpdate(BaseModel):
     status: Optional[str] = Field(default=None, examples=["active", "disabled"])
 

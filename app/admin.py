@@ -29,6 +29,7 @@ from .models import (
     StationCustomerLink,
     UsageDaily,
     User,
+    Account,
 )
 from .model_alias_overrides import (
     apply_runtime_alias_override,
@@ -37,13 +38,14 @@ from .model_alias_overrides import (
 )
 from .payment_common import PaymentConfirmError, confirm_paid_order
 from .schemas import (
-    AdminKeyUpdate, AdminPaymentManualConfirmRequest, AdminUserUpdate,
+    AdminKeyUpdate, AdminPaymentManualConfirmRequest, AdminUserPasswordResetRequest,
+    AdminUserPasswordResetResponse, AdminUserUpdate,
     AdminModelAliasUpdate, AnnouncementCreate, AnnouncementUpdate,
     RedemptionGenerateRequest, RedemptionGenerateResponse,
 )
 from .config import settings as _settings
 from .router import registry as model_registry
-from .security import decrypt_api_key, encrypt_api_key, generate_api_key, generate_id, hash_key, require_admin
+from .security import decrypt_api_key, encrypt_api_key, generate_api_key, generate_id, hash_key, hash_password, require_admin
 
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -358,6 +360,39 @@ async def reset_user_usage(user_id: str, db: AsyncSession = Depends(get_db)):
             "output_tokens_used": 0,
         },
         "message": "usage reset successfully"
+    }
+
+
+@router.post(
+    "/users/{user_id}/reset-password",
+    dependencies=[Depends(admin_guard)],
+    response_model=AdminUserPasswordResetResponse,
+)
+async def reset_user_password(
+    user_id: str,
+    payload: AdminUserPasswordResetRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
+
+    account = (
+        await db.execute(select(Account).where(Account.linked_user_id == user.id))
+    ).scalar_one_or_none()
+    if not account:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="account not found")
+
+    account.password_hash = await hash_password(payload.new_password)
+    account.failed_attempts = 0
+    account.locked_until = None
+    await db.commit()
+    return {
+        "user_id": user.id,
+        "username": account.username,
+        "account_status": account.status,
+        "status": "password_reset",
     }
 
 

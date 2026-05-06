@@ -216,6 +216,90 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(item["billable_sku"], "gemini-image")
         self.assertEqual(item["upstream_request_id"], "req_img_123")
 
+    async def test_admin_can_reset_user_password(self) -> None:
+        user = SimpleNamespace(id="u_1")
+        account = SimpleNamespace(
+            username="alice",
+            password_hash="old-hash",
+            status="active",
+            failed_attempts=4,
+            locked_until=datetime(2026, 5, 1, 12, 0, 0),
+        )
+        fake_db = _FakeDB(
+            execute_results=[
+                _FakeScalarOneResult(user),
+                _FakeScalarOneResult(account),
+            ]
+        )
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+
+        with patch.object(admin_module, "hash_password", AsyncMock(return_value="new-hash")) as hashed:
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                response = await client.post(
+                    "/admin/users/u_1/reset-password",
+                    json={"new_password": "new-secret"},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["status"], "password_reset")
+        self.assertEqual(response.json()["username"], "alice")
+        hashed.assert_awaited_once_with("new-secret")
+        self.assertEqual(account.password_hash, "new-hash")
+        self.assertEqual(account.failed_attempts, 0)
+        self.assertIsNone(account.locked_until)
+        self.assertEqual(fake_db.commits, 1)
+
+    async def test_admin_reset_user_password_requires_existing_account(self) -> None:
+        user = SimpleNamespace(id="u_1")
+        fake_db = _FakeDB(
+            execute_results=[
+                _FakeScalarOneResult(user),
+                _FakeScalarOneResult(None),
+            ]
+        )
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.post(
+                "/admin/users/u_1/reset-password",
+                json={"new_password": "new-secret"},
+            )
+
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertEqual(response.json()["detail"], "account not found")
+        self.assertEqual(fake_db.commits, 0)
+
+    async def test_admin_reset_user_password_validates_length(self) -> None:
+        fake_db = _FakeDB()
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.post(
+                "/admin/users/u_1/reset-password",
+                json={"new_password": "short"},
+            )
+
+        self.assertEqual(response.status_code, 422, response.text)
+        self.assertEqual(fake_db.commits, 0)
+
     async def test_user_usage_can_filter_by_api_key(self) -> None:
         user = SimpleNamespace(id="u_1")
         log = SimpleNamespace(

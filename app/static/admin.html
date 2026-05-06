@@ -2384,6 +2384,14 @@
             <div class="form-group"><label class="form-label">每天请求上限</label><input type="number" id="modalRPD" class="form-input" value="${u.request_limit_per_day||''}" placeholder="不限" /></div>
           </div>
           <div class="form-group">
+            <label class="form-label">重置登录密码</label>
+            <div style="display:flex;gap:8px">
+              <input type="password" id="modalNewPassword" class="form-input" placeholder="至少 6 位，最多 128 位" autocomplete="new-password" style="flex:1" />
+              <button class="btn btn-warning" onclick="resetUserPassword('${u.id}')">重置密码</button>
+            </div>
+            <div class="text-sm text-muted" style="margin-top:8px">仅重置控制台登录密码，同时清除登录失败锁定；不会影响 API Key 或 session。</div>
+          </div>
+          <div class="form-group">
             <label class="form-label">站长归属</label>
             ${stationHtml}
           </div>
@@ -2400,6 +2408,29 @@
           <div class="form-group"><label class="form-label">API 密钥 (${u.keys?.length||0})</label><div style="max-height:200px;overflow-y:auto">${keysHtml}</div>${policyHtml}</div>`;
         openModal('userModal');
       } catch (e) { console.error(e); toast('加载失败', 'error'); }
+    }
+
+    async function resetUserPassword(userId) {
+      const input = document.getElementById('modalNewPassword');
+      const newPassword = (input?.value || '').trim();
+      if (newPassword.length < 6) return toast('新密码至少 6 位', 'error');
+      if (!confirm('确认重置该用户的控制台登录密码吗？')) return;
+      try {
+        const r = await fetch(`/admin/users/${userId}/reset-password`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+          body: JSON.stringify({ new_password: newPassword })
+        });
+        const d = await r.json().catch(() => ({}));
+        if (r.ok) {
+          if (input) input.value = '';
+          toast('密码已重置', 'success');
+        } else {
+          toast(d.detail || '密码重置失败', 'error');
+        }
+      } catch (e) {
+        toast('密码重置失败', 'error');
+      }
     }
 
     async function resetUsage(userId) {
