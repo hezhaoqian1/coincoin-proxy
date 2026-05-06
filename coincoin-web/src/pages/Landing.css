@@ -103,8 +103,8 @@
     font-size: clamp(3.15rem, 5.8vw, 5.8rem);
     line-height: 0.96;
     letter-spacing: -0.045em;
-    color: #111827;
-    background: linear-gradient(112deg, #0f172a 0%, #111827 38%, #4f46e5 52%, #111827 66%, #0f172a 100%);
+    color: #1f2937;
+    background: linear-gradient(112deg, #1f2937 0%, #263142 42%, #334155 50%, #38bdf8 58%, #0ea5e9 66%, #334155 73%, #1f2937 100%);
     background-size: 190% 100%;
     -webkit-background-clip: text;
     background-clip: text;
@@ -166,11 +166,11 @@
 
 .landing-client-chip:hover {
     transform: translateY(-2px);
-    border-color: rgba(79, 70, 229, 0.22);
+    border-color: rgba(6, 182, 212, 0.18);
     background: rgba(255, 255, 255, 0.9);
     box-shadow:
         0 12px 24px rgba(15, 23, 42, 0.07),
-        0 0 0 4px rgba(79, 70, 229, 0.05);
+        0 0 0 4px rgba(6, 182, 212, 0.035);
 }
 
 .landing-hero .btn {
@@ -246,7 +246,7 @@
     isolation: isolate;
     padding: 22px;
     background:
-        radial-gradient(circle at 72% 18%, rgba(79, 70, 229, 0.12), transparent 30%),
+        radial-gradient(circle at 72% 18%, rgba(14, 165, 233, 0.11), transparent 30%),
         radial-gradient(circle at 18% 90%, rgba(245, 158, 11, 0.11), transparent 32%),
         rgba(255, 255, 255, 0.82);
     box-shadow:
@@ -284,7 +284,7 @@
 .landing-orbit {
     position: absolute;
     border-radius: 999px;
-    border: 1px solid rgba(79, 70, 229, 0.12);
+    border: 1px solid rgba(14, 165, 233, 0.11);
     pointer-events: none;
 }
 
@@ -400,8 +400,8 @@
     height: 1px;
     transform-origin: left center;
     background:
-        linear-gradient(90deg, rgba(79, 70, 229, 0.02), rgba(79, 70, 229, 0.34) 34%, rgba(6, 182, 212, 0.28) 72%, rgba(245, 158, 11, 0.02));
-    opacity: 0.72;
+        linear-gradient(90deg, rgba(14, 165, 233, 0.016), rgba(14, 165, 233, 0.28) 34%, rgba(6, 182, 212, 0.28) 72%, rgba(245, 158, 11, 0.012));
+    opacity: 0.7;
 }
 
 .landing-flow-line::before,
@@ -415,8 +415,8 @@
     border-radius: 999px;
     background: #ffffff;
     box-shadow:
-        0 0 0 3px rgba(79, 70, 229, 0.08),
-        0 0 18px rgba(79, 70, 229, 0.35);
+        0 0 0 3px rgba(14, 165, 233, 0.075),
+        0 0 18px rgba(14, 165, 233, 0.28);
     animation: landing-flow-packet 3.8s ease-in-out infinite;
 }
 
@@ -464,8 +464,8 @@
 }
 
 .landing-lane {
-    --lane-accent: #4f46e5;
-    --lane-accent-soft: rgba(79, 70, 229, 0.1);
+    --lane-accent: #0ea5e9;
+    --lane-accent-soft: rgba(14, 165, 233, 0.07);
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
     align-items: center;
@@ -495,8 +495,8 @@
 }
 
 .landing-lane-indigo {
-    --lane-accent: #4f46e5;
-    --lane-accent-soft: rgba(79, 70, 229, 0.1);
+    --lane-accent: #0ea5e9;
+    --lane-accent-soft: rgba(14, 165, 233, 0.07);
 }
 
 .landing-lane-cyan {
@@ -573,7 +573,7 @@
 }
 
 .landing-endpoint-note code {
-    color: #312e81;
+    color: #0e7490;
     font-weight: 800;
 }
 
@@ -607,8 +607,8 @@
     width: 46px;
     height: 46px;
     border-radius: 16px;
-    background: linear-gradient(135deg, rgba(79, 70, 229, 0.12), rgba(245, 158, 11, 0.18));
-    color: #4338ca;
+    background: linear-gradient(135deg, rgba(6, 182, 212, 0.11), rgba(245, 158, 11, 0.16));
+    color: #0e7490;
     font-size: 0.9rem;
     font-weight: 900;
     flex-shrink: 0;
@@ -670,7 +670,7 @@
 
 .landing-pricing-band {
     background:
-        radial-gradient(circle at top center, rgba(99, 102, 241, 0.08), transparent 30%),
+        radial-gradient(circle at top center, rgba(6, 182, 212, 0.065), transparent 30%),
         transparent;
 }
 
@@ -725,10 +725,10 @@
 .landing-pricing-card:hover,
 .landing-faq-card:hover {
     transform: translateY(-4px);
-    border-color: rgba(79, 70, 229, 0.16);
+    border-color: rgba(14, 165, 233, 0.15);
     box-shadow:
         0 24px 44px rgba(15, 23, 42, 0.08),
-        0 0 0 4px rgba(79, 70, 229, 0.035);
+        0 0 0 4px rgba(14, 165, 233, 0.035);
 }
 
 .landing-feature-mark {
@@ -737,8 +737,8 @@
     height: 12px;
     margin-bottom: 16px;
     border-radius: 999px;
-    background: linear-gradient(135deg, #f59e0b, #4f46e5);
-    box-shadow: 0 0 0 6px rgba(79, 70, 229, 0.08);
+    background: linear-gradient(135deg, #f59e0b, #06b6d4);
+    box-shadow: 0 0 0 6px rgba(6, 182, 212, 0.05);
 }
 
 .landing-setup-layout {
@@ -826,10 +826,10 @@
 }
 
 .landing-pricing-card.is-highlight {
-    border-color: rgba(79, 70, 229, 0.22);
+    border-color: rgba(6, 182, 212, 0.14);
     box-shadow:
-        0 24px 40px rgba(79, 70, 229, 0.08),
-        0 0 0 1px rgba(79, 70, 229, 0.08) inset;
+        0 24px 40px rgba(6, 182, 212, 0.045),
+        0 0 0 1px rgba(6, 182, 212, 0.055) inset;
 }
 
 .landing-pricing-top {
@@ -1171,10 +1171,10 @@
 @keyframes landing-pulse {
     0%,
     100% {
-        box-shadow: 0 0 0 6px rgba(79, 70, 229, 0.08);
+        box-shadow: 0 0 0 6px rgba(6, 182, 212, 0.05);
     }
     50% {
-        box-shadow: 0 0 0 10px rgba(79, 70, 229, 0.16);
+        box-shadow: 0 0 0 10px rgba(6, 182, 212, 0.09);
     }
 }
 
