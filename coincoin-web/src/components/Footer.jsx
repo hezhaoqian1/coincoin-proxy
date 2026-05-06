@@ -20,8 +20,8 @@ export default function Footer() {
                             </div>
                         </div>
                         <p className="footer-desc">
-                            为开发者提供统一入口、统一余额和统一控制台。
-                            公开页负责说明，控制台负责接入、日志和密钥管理。
+                            为开发者提供统一余额、统一日志和统一控制台。
+                            一把开发者 Key 可接入 OpenAI 兼容客户端、Claude Code、CLI、SDK 和图片接口。
                         </p>
                         <div className="footer-chip-row">
                             <span className="footer-chip">OpenAI Compatible</span>
