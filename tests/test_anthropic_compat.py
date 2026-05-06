@@ -150,16 +150,64 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["type"], "message")
         self.assertEqual(body["model"], "gpt-5.5")
         self.assertEqual(body["content"][0]["text"], "OK")
+        self.assertEqual(body["usage"]["input_tokens"], 5)
+        self.assertEqual(body["usage"]["cache_read_input_tokens"], 7)
         self.assertEqual(client.calls[0]["url"], "https://cliproxyapi-deploy-production.up.railway.app/v1/chat/completions")
         self.assertEqual(client.calls[0]["json"]["model"], "gpt-5.5")
+        self.assertNotIn("prompt_cache_key", client.calls[0]["json"])
         add_usage.assert_awaited_once()
         usage_kwargs = add_usage.await_args.kwargs
         self.assertEqual(usage_kwargs["api_key_id"], "k_claude")
-        self.assertEqual(usage_kwargs["cached_tokens"], 7)
+        self.assertEqual(usage_kwargs["cache_read_tokens"], 7)
+        self.assertEqual(usage_kwargs["cache_creation_tokens"], 0)
         self.assertGreater(usage_kwargs["duration_ms"], 0)
 
+    async def test_messages_subtract_cache_creation_from_anthropic_input_tokens(self):
+        fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_claude")
+        client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "chatcmpl_cache_write",
+                        "choices": [{"message": {"content": "OK"}, "finish_reason": "stop"}],
+                        "usage": {
+                            "input_tokens": 5,
+                            "completion_tokens": 2,
+                            "cache_read_input_tokens": 7,
+                            "cache_creation_input_tokens": 8,
+                        },
+                    }
+                )
+            ]
+        )
+
+        transport = ASGITransport(app=self.app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+            with patch("app.anthropic_compat.authorize_request", AsyncMock(return_value=fake_user)), patch(
+                "app.anthropic_compat.get_http_client", AsyncMock(return_value=client)
+            ), patch("app.anthropic_compat.usage_buffer.add", AsyncMock()) as add_usage:
+                response = await ac.post(
+                    "/v1/messages",
+                    headers={"Authorization": "Bearer sk_test"},
+                    json={
+                        "model": "gpt-5.5",
+                        "messages": [{"role": "user", "content": "hi"}],
+                        "max_tokens": 16,
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["usage"]["input_tokens"], 5)
+        self.assertEqual(body["usage"]["cache_read_input_tokens"], 7)
+        self.assertEqual(body["usage"]["cache_creation_input_tokens"], 8)
+        usage_kwargs = add_usage.await_args.kwargs
+        self.assertEqual(usage_kwargs["input_tokens"], 20)
+        self.assertEqual(usage_kwargs["cache_read_tokens"], 7)
+        self.assertEqual(usage_kwargs["cache_creation_tokens"], 8)
+
     async def test_claude_alias_resolves_to_gpt_55_upstream(self):
-        fake_user = SimpleNamespace(id="u_test", status="active")
+        fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_alias")
         client = _RecordingClient(
             [
                 _FakeUpstreamResponse(
@@ -196,6 +244,9 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         body = response.json()
         self.assertEqual(body["model"], "claude-opus-4-7")
         self.assertEqual(client.calls[0]["json"]["model"], "gpt-5.5")
+        prompt_cache_key = client.calls[0]["json"].get("prompt_cache_key", "")
+        self.assertTrue(prompt_cache_key.startswith("cc-"))
+        self.assertEqual(len(prompt_cache_key), 35)
 
     async def test_messages_preserve_tool_roundtrip_semantics(self):
         fake_user = SimpleNamespace(id="u_test", status="active")
@@ -330,16 +381,20 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("event: message_start", response.text)
+        self.assertIn('"cache_creation_input_tokens":0', response.text)
+        self.assertIn('"cache_read_input_tokens":0', response.text)
         self.assertIn("event: content_block_start", response.text)
         self.assertIn('"index":0', response.text)
         self.assertIn('"type":"text_delta"', response.text)
         self.assertIn("Hello", response.text)
         self.assertIn("event: message_stop", response.text)
         self.assertIn('"stop_reason":"end_turn"', response.text)
+        self.assertIn('"cache_read_input_tokens":5', response.text)
         add_usage.assert_awaited_once()
         usage_kwargs = add_usage.await_args.kwargs
         self.assertEqual(usage_kwargs["api_key_id"], "k_claude_stream")
-        self.assertEqual(usage_kwargs["cached_tokens"], 5)
+        self.assertEqual(usage_kwargs["cache_read_tokens"], 5)
+        self.assertEqual(usage_kwargs["cache_creation_tokens"], 0)
         self.assertGreater(usage_kwargs["duration_ms"], 0)
 
     async def test_streaming_tool_calls_translate_to_tool_use_events(self):

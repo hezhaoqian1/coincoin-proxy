@@ -26,31 +26,64 @@ def china_today(now: datetime | None = None) -> date:
     return (current.astimezone(UTC) + CHINA_TZ_OFFSET).date()
 
 
-def extract_cached_tokens(usage: dict) -> int:
+def _safe_int(value) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def extract_cache_read_tokens(usage: dict) -> int:
     """Extract cache-read tokens across Anthropic, Chat Completions, and Responses shapes."""
     if not isinstance(usage, dict):
         return 0
     ct = usage.get("cache_read_input_tokens")
     if ct is not None:
-        try:
-            return int(ct)
-        except (TypeError, ValueError):
-            return 0
+        return max(0, _safe_int(ct))
     details = usage.get("input_tokens_details") or {}
+    if not isinstance(details, dict):
+        details = {}
     ct = details.get("cached_tokens")
     if ct is not None:
-        try:
-            return int(ct)
-        except (TypeError, ValueError):
-            return 0
+        return max(0, _safe_int(ct))
     details = usage.get("prompt_tokens_details") or {}
+    if not isinstance(details, dict):
+        details = {}
     ct = details.get("cached_tokens")
     if ct is not None:
-        try:
-            return int(ct)
-        except (TypeError, ValueError):
-            return 0
+        return max(0, _safe_int(ct))
     return 0
+
+
+def extract_cache_creation_tokens(usage: dict) -> int:
+    """Extract Anthropic cache-write tokens when the upstream reports them."""
+    if not isinstance(usage, dict):
+        return 0
+    total = _safe_int(usage.get("cache_creation_input_tokens"))
+    if total:
+        return max(0, total)
+    cache_creation = usage.get("cache_creation") or {}
+    if isinstance(cache_creation, dict):
+        total += _safe_int(cache_creation.get("ephemeral_5m_input_tokens"))
+        total += _safe_int(cache_creation.get("ephemeral_1h_input_tokens"))
+    return max(0, total)
+
+
+def extract_total_input_tokens(usage: dict) -> int:
+    """Extract total input tokens while preserving provider-specific cache semantics."""
+    if not isinstance(usage, dict):
+        return 0
+    if usage.get("prompt_tokens") is not None:
+        return max(0, _safe_int(usage.get("prompt_tokens")))
+    input_tokens = max(0, _safe_int(usage.get("input_tokens")))
+    if usage.get("cache_read_input_tokens") is not None or usage.get("cache_creation_input_tokens") is not None:
+        return input_tokens + extract_cache_read_tokens(usage) + extract_cache_creation_tokens(usage)
+    return input_tokens
+
+
+def extract_cached_tokens(usage: dict) -> int:
+    """Backward-compatible alias for cache-read tokens."""
+    return extract_cache_read_tokens(usage)
 
 
 def calculate_cost_cents(
@@ -81,9 +114,7 @@ def calculate_cost_cents(
     if discount > 1.0:
         discount = 1.0
 
-    ct = int(cached_tokens or 0)
-    if ct < 0:
-        ct = 0
+    ct = max(0, int(cached_tokens or 0))
     it = int(input_tokens or 0)
     if ct > it:
         ct = it
@@ -155,6 +186,8 @@ class UsageBuffer:
         input_tokens: int = 0, 
         output_tokens: int = 0, 
         cached_tokens: int = 0,
+        cache_read_tokens: int = 0,
+        cache_creation_tokens: int = 0,
         requests: int = 0,
         endpoint: str = "",
         model: str = "",
@@ -178,9 +211,20 @@ class UsageBuffer:
         
         性能：< 1ms，锁内操作 < 100μs
         """
+        input_tokens = int(input_tokens or 0)
+        output_tokens = int(output_tokens or 0)
+        cache_read_tokens = int(cache_read_tokens or 0)
+        cached_tokens = int(cached_tokens or 0)
+        cache_creation_tokens = int(cache_creation_tokens or 0)
+        if input_tokens < cache_read_tokens + cache_creation_tokens:
+            input_tokens += cache_read_tokens + cache_creation_tokens
+
         if (
             input_tokens == 0
             and output_tokens == 0
+            and cached_tokens == 0
+            and cache_read_tokens == 0
+            and cache_creation_tokens == 0
             and requests == 0
             and image_count == 0
             and usage_unit_count == 0
@@ -199,7 +243,7 @@ class UsageBuffer:
                 cost_cents = calculate_cost_cents(
                     input_tokens,
                     output_tokens,
-                    cached_tokens=cached_tokens,
+                    cached_tokens=cache_read_tokens or cached_tokens,
                     price_input_per_million=price_input_per_million,
                     price_output_per_million=price_output_per_million,
                 )
@@ -241,7 +285,9 @@ class UsageBuffer:
                 "model": customer_model_alias or model,
                 "input_tokens": int(input_tokens),
                 "output_tokens": int(output_tokens),
-                "cached_tokens": int(cached_tokens or 0),
+                "cached_tokens": int(cache_read_tokens or cached_tokens or 0),
+                "cache_read_tokens": int(cache_read_tokens or cached_tokens or 0),
+                "cache_creation_tokens": int(cache_creation_tokens or 0),
                 "image_count": int(image_count or 0),
                 "provider_model": (provider_model or model)[:128],
                 "customer_model_alias": (customer_model_alias or model)[:128],
@@ -419,6 +465,8 @@ async def flush_once() -> None:
                         input_tokens=log["input_tokens"],
                         output_tokens=log["output_tokens"],
                         cached_tokens=log.get("cached_tokens", 0),
+                        cache_read_tokens=log.get("cache_read_tokens", log.get("cached_tokens", 0)),
+                        cache_creation_tokens=log.get("cache_creation_tokens", 0),
                         image_count=log.get("image_count", 0),
                         provider_model=log.get("provider_model", ""),
                         customer_model_alias=log.get("customer_model_alias", ""),

@@ -555,14 +555,15 @@ function ModelsAndPricing({ textModels, imageModels, defaultTextModel, defaultIm
 
             <h3>计费说明</h3>
             <ul className="doc-list">
-                <li>文本模型按 Input / Cached Input / Output Token 计费；图片模型按图片张数计费。</li>
-                <li>Cached input 使用模型目录返回的单独缓存输入价格计费，不要按普通 Input 价格估算。</li>
+                <li>文本模型按 Input / Cached Read / Output Token 计费；图片模型按图片张数计费。</li>
+                <li>Cached input 表示缓存读取 token，使用模型目录返回的单独缓存读取价格计费，不要按普通 Input 价格估算。</li>
+                <li>Claude Code 走 GPT 上游时，缓存写入只作为用量观测字段记录；实际 GPT 上游不返回独立 cache write 计费项。</li>
                 <li>同一个账户余额同时覆盖文本模型和图片模型，不需要分开充值。</li>
                 <li>老客户端不传 <code>model</code> 时，仍然走默认文本模型，以保证兼容。</li>
             </ul>
             <div className="doc-callout">
-                <strong>缓存输入价格怎么读</strong>
-                <p>例如 <code>Input $0.99 / M · Cached $0.495 / M · Output $6.99 / M</code>，表示命中缓存的输入 token 会按目录里的 Cached 价格单独计费。</p>
+                <strong>缓存读取价格怎么读</strong>
+                <p>例如 <code>Input $0.99 / M · Cached $0.099 / M · Output $6.99 / M</code>，表示命中缓存读取的输入 token 会按目录里的 Cached 价格单独计费。</p>
             </div>
         </div>
     )

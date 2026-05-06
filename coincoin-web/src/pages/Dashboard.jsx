@@ -12,6 +12,13 @@ import './Dashboard.css'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler)
 
+function formatDurationMs(durationMs) {
+    const ms = Number(durationMs || 0)
+    if (ms < 1000) return `${Math.max(0, Math.round(ms))}ms`
+    if (ms < 10_000) return `${(ms / 1000).toFixed(2)}s`
+    return `${(ms / 1000).toFixed(1)}s`
+}
+
 async function getLocalDailyUsage(days = 7) {
     const dates = getRecentLocalIsoDates(days)
     const rows = await Promise.all(dates.map(async (day) => {
@@ -890,7 +897,7 @@ export default function Dashboard() {
                             <span className="price-val">${balance.price_input_per_million} <small>/ 百万</small></span>
                         </div>
                         <div className="price-item">
-                            <span className="price-label">Cached Input</span>
+                            <span className="price-label">Cached Read</span>
                             <span className="price-val">${balance.price_cached_input_per_million} <small>/ 百万</small></span>
                         </div>
                         <div className="price-item">
@@ -938,7 +945,7 @@ export default function Dashboard() {
                                             <td><span className="model-tag-sm">{log.model}</span></td>
                                             <td>{log.usage_unit_type === 'images' ? `${log.image_count || log.usage_unit_count || 0} images` : `${(log.total_tokens || 0).toLocaleString()} tokens`}</td>
                                             <td className="cost-cell">${log.cost_usd.toFixed(2)}</td>
-                                            <td>{(log.duration_ms / 1000).toFixed(1)}s</td>
+                                            <td>{formatDurationMs(log.duration_ms)}</td>
                                             <td><span className={`badge ${log.status_code === 200 ? 'badge-success' : 'badge-error'}`}>{log.status_code}</span></td>
                                         </tr>
                                     ))}

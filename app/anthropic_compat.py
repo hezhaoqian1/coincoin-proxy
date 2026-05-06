@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import settings
 from .db import get_db
+from .prompt_cache import build_claude_code_prompt_cache_key
 from .proxy import (
     _build_upstream_headers,
     _KEY_ID_ATTR,
@@ -27,7 +28,12 @@ from .router import (
     build_model_cloak,
     registry as model_registry,
 )
-from .usage_buffer import extract_cached_tokens, usage_buffer
+from .usage_buffer import (
+    extract_cache_creation_tokens,
+    extract_cache_read_tokens,
+    extract_total_input_tokens,
+    usage_buffer,
+)
 
 
 router = APIRouter(prefix="/v1", tags=["anthropic-compat"])
@@ -257,6 +263,18 @@ def _build_anthropic_response(
     usage: Dict[str, Any],
     response_id: str = "",
 ) -> Dict[str, Any]:
+    input_tokens = extract_total_input_tokens(usage)
+    cache_read_tokens = extract_cache_read_tokens(usage)
+    cache_creation_tokens = extract_cache_creation_tokens(usage)
+    regular_input_tokens = max(0, input_tokens - cache_read_tokens - cache_creation_tokens)
+    usage_body = {
+        "input_tokens": regular_input_tokens,
+        "output_tokens": int(usage.get("completion_tokens") or usage.get("output_tokens") or 0),
+    }
+    if cache_creation_tokens:
+        usage_body["cache_creation_input_tokens"] = cache_creation_tokens
+    if cache_read_tokens:
+        usage_body["cache_read_input_tokens"] = cache_read_tokens
     return {
         "id": response_id or f"msg_coincoin_{int(time.time() * 1000)}",
         "type": "message",
@@ -265,10 +283,7 @@ def _build_anthropic_response(
         "content": message_content,
         "stop_reason": stop_reason,
         "stop_sequence": None,
-        "usage": {
-            "input_tokens": int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0),
-            "output_tokens": int(usage.get("completion_tokens") or usage.get("output_tokens") or 0),
-        },
+        "usage": usage_body,
     }
 
 
@@ -369,7 +384,12 @@ def _ensure_anthropic_message_start(
             "content": [],
             "stop_reason": None,
             "stop_sequence": None,
-            "usage": {"input_tokens": 0, "output_tokens": 0},
+            "usage": {
+                "input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+                "output_tokens": 0,
+            },
         },
     }
     return [_anthropic_sse_bytes("message_start", payload)]
@@ -481,10 +501,17 @@ def _finalize_anthropic_stream(
 
     if not state.message_delta_sent:
         state.message_delta_sent = True
+        input_tokens = extract_total_input_tokens(state.usage)
+        cache_read_tokens = extract_cache_read_tokens(state.usage)
+        cache_creation_tokens = extract_cache_creation_tokens(state.usage)
         usage = {
-            "input_tokens": int(state.usage.get("prompt_tokens") or state.usage.get("input_tokens") or 0),
+            "input_tokens": max(0, input_tokens - cache_read_tokens - cache_creation_tokens),
             "output_tokens": int(state.usage.get("completion_tokens") or state.usage.get("output_tokens") or 0),
         }
+        if cache_creation_tokens:
+            usage["cache_creation_input_tokens"] = cache_creation_tokens
+        if cache_read_tokens:
+            usage["cache_read_input_tokens"] = cache_read_tokens
         payload = {
             "type": "message_delta",
             "delta": {
@@ -704,6 +731,11 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
     if max_tokens is not None:
         openai_payload["max_tokens"] = max_tokens
 
+    api_key_id = getattr(user, _KEY_ID_ATTR, "")
+    prompt_cache_key = build_claude_code_prompt_cache_key(user, api_key_id, display_model, public_model)
+    if prompt_cache_key:
+        openai_payload["prompt_cache_key"] = prompt_cache_key
+
     if settings.model_cloak and display_model and not tools:
         cloak = build_model_cloak(display_model, public_model)
         if messages and messages[0].get("role") == "system":
@@ -744,10 +776,11 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                 if stream_state.usage:
                     await usage_buffer.add(
                         user.id,
-                        api_key_id=getattr(user, _KEY_ID_ATTR, ""),
-                        input_tokens=int(stream_state.usage.get("prompt_tokens") or stream_state.usage.get("input_tokens") or 0),
+                        api_key_id=api_key_id,
+                        input_tokens=extract_total_input_tokens(stream_state.usage),
                         output_tokens=int(stream_state.usage.get("completion_tokens") or stream_state.usage.get("output_tokens") or 0),
-                        cached_tokens=extract_cached_tokens(stream_state.usage),
+                        cache_read_tokens=extract_cache_read_tokens(stream_state.usage),
+                        cache_creation_tokens=extract_cache_creation_tokens(stream_state.usage),
                         requests=1,
                         endpoint="messages",
                         model=display_model,
@@ -802,10 +835,11 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
 
     await usage_buffer.add(
         user.id,
-        api_key_id=getattr(user, _KEY_ID_ATTR, ""),
-        input_tokens=int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0),
+        api_key_id=api_key_id,
+        input_tokens=extract_total_input_tokens(usage),
         output_tokens=int(usage.get("completion_tokens") or usage.get("output_tokens") or 0),
-        cached_tokens=extract_cached_tokens(usage),
+        cache_read_tokens=extract_cache_read_tokens(usage),
+        cache_creation_tokens=extract_cache_creation_tokens(usage),
         requests=1,
         endpoint="messages",
         model=display_model,

@@ -23,6 +23,7 @@ from sqlalchemy.orm import selectinload
 from .config import settings
 from .db import get_db
 from .models import ApiKey, RequestLog, UsageDaily, User
+from .prompt_cache import build_claude_code_prompt_cache_key
 from .rate_limiter import rate_limiter
 from .security import extract_api_key, hash_key
 from .router import (
@@ -31,7 +32,13 @@ from .router import (
     extract_messages_for_routing_from_responses_payload,
     registry as model_registry,
 )
-from .usage_buffer import china_today, extract_cached_tokens, usage_buffer
+from .usage_buffer import (
+    china_today,
+    extract_cache_creation_tokens,
+    extract_cache_read_tokens,
+    extract_total_input_tokens,
+    usage_buffer,
+)
 
 _KEY_KIND_ATTR = "_key_kind"
 _KEY_ID_ATTR = "_api_key_id"
@@ -1318,11 +1325,15 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
     display_model = public_model.public_id
     used_cfg = resolved_model.backend
     used_route_reason = resolved_model.route_reason
+    api_key_id = getattr(user, _KEY_ID_ATTR, "")
 
     payload["model"] = used_cfg.model_id
     payload.pop("model_provider", None)
     _sanitize_encrypted_ids(payload)
     _ensure_content_text(payload)
+    prompt_cache_key = build_claude_code_prompt_cache_key(user, api_key_id, display_model, public_model)
+    if prompt_cache_key:
+        payload["prompt_cache_key"] = prompt_cache_key
 
     _text = payload.get("text")
     if isinstance(_text, dict) and "verbosity" in _text:
@@ -1477,7 +1488,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             return Response(content=body, status_code=upstream.status_code, headers=response_headers, media_type=content_type)
 
         stream_t0 = time.monotonic()
-        _stream_usage = {"input": 0, "output": 0, "cached": 0}
+        _stream_usage = {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0}
 
         _model_mask = None
         if used_cfg.model_id != display_model:
@@ -1502,9 +1513,10 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                                     evt = json.loads(payload_str)
                                     usage = evt.get("usage") or (evt.get("response") or {}).get("usage")
                                     if usage:
-                                        _stream_usage["input"] = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
+                                        _stream_usage["input"] = extract_total_input_tokens(usage)
                                         _stream_usage["output"] = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
-                                        _stream_usage["cached"] = extract_cached_tokens(usage)
+                                        _stream_usage["cache_read"] = extract_cache_read_tokens(usage)
+                                        _stream_usage["cache_creation"] = extract_cache_creation_tokens(usage)
                                     _etype = evt.get("type", "")
                                     if _etype == "response.completed":
                                         _r = evt.get("response") or evt
@@ -1527,10 +1539,11 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                     dur = int((time.monotonic() - stream_t0) * 1000)
                     asyncio.create_task(usage_buffer.add(
                         user.id,
-                        api_key_id=getattr(user, _KEY_ID_ATTR, ""),
+                        api_key_id=api_key_id,
                         input_tokens=_stream_usage["input"],
                         output_tokens=_stream_usage["output"],
-                        cached_tokens=_stream_usage["cached"],
+                        cache_read_tokens=_stream_usage["cache_read"],
+                        cache_creation_tokens=_stream_usage["cache_creation"],
                         requests=1,
                         endpoint="responses:stream",
                         model=display_model,
@@ -1667,7 +1680,8 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
 
     input_tokens_delta = 0
     output_tokens_delta = 0
-    cached_tokens_delta = 0
+    cache_read_tokens_delta = 0
+    cache_creation_tokens_delta = 0
     if isinstance(data, dict) and isinstance(data.get("error"), dict):
         return JSONResponse(
             content={"error": data["error"]},
@@ -1689,9 +1703,10 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 headers=response_headers,
             )
         usage = data.get("usage") or {}
-        input_tokens_delta = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
+        input_tokens_delta = extract_total_input_tokens(usage)
         output_tokens_delta = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
-        cached_tokens_delta = extract_cached_tokens(usage)
+        cache_read_tokens_delta = extract_cache_read_tokens(usage)
+        cache_creation_tokens_delta = extract_cache_creation_tokens(usage)
         _resp_id = data.get("id")
         _resp_output = data.get("output")
         if _resp_id and isinstance(_resp_output, list):
@@ -1702,10 +1717,11 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
     if upstream.status_code < 400:
         await usage_buffer.add(
             user.id,
-            api_key_id=getattr(user, _KEY_ID_ATTR, ""),
+            api_key_id=api_key_id,
             input_tokens=input_tokens_delta,
             output_tokens=output_tokens_delta,
-            cached_tokens=cached_tokens_delta,
+            cache_read_tokens=cache_read_tokens_delta,
+            cache_creation_tokens=cache_creation_tokens_delta,
             requests=1,
             endpoint="responses",
             model=display_model,
