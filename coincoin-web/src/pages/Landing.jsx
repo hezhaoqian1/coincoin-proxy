@@ -47,16 +47,19 @@ const HERO_LANES = [
         client: 'Codex / SDK',
         endpoint: '/v1',
         model: 'opus · gpt-5.5',
+        tone: 'indigo',
     },
     {
         client: 'Claude Code',
         endpoint: 'root',
         model: 'claude-opus-4-7',
+        tone: 'cyan',
     },
     {
         client: 'Images',
         endpoint: '/v1/images',
         model: 'gemini-image',
+        tone: 'amber',
     },
 ]
 
@@ -152,7 +155,7 @@ export default function Landing() {
                                 <span>统一 Key，统一计费，统一控制台</span>
                             </div>
                             <span className="landing-kicker">ClawFather API</span>
-                            <h1>一把 Key，接入多模型开发工具</h1>
+                            <h1>用 CoinCoin，打开 AI 时代的模型网关</h1>
                             <p className="landing-summary">
                                 不用在多个平台之间来回切换。生成开发者 Key 后，把配置复制到
                                 Codex、Claude Code、SDK 或常用客户端里，就能开始调用文本和图片接口。
@@ -206,9 +209,19 @@ export default function Landing() {
                                 <span className="landing-key-badge">ready</span>
                             </div>
 
+                            <div className="landing-flow-map" aria-hidden="true">
+                                <span className="landing-flow-line landing-flow-line-one" />
+                                <span className="landing-flow-line landing-flow-line-two" />
+                                <span className="landing-flow-line landing-flow-line-three" />
+                            </div>
+
                             <div className="landing-lane-list">
                                 {HERO_LANES.map((lane, index) => (
-                                    <div key={lane.client} className="landing-lane" style={{ '--lane-index': index }}>
+                                    <div
+                                        key={lane.client}
+                                        className={`landing-lane landing-lane-${lane.tone}`}
+                                        style={{ '--lane-index': index }}
+                                    >
                                         <div className="landing-lane-pulse" />
                                         <div>
                                             <strong>{lane.client}</strong>
