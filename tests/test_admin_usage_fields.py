@@ -1,5 +1,8 @@
+import json
+import tempfile
 import unittest
 from datetime import date, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -12,6 +15,7 @@ import app.payment as payment_module
 import app.proxy as proxy_module
 import app.webhook as webhook_module
 import app.openai_compat as openai_module
+from app.router import registry as model_registry
 
 
 class _FakeAllResult:
@@ -83,6 +87,7 @@ class _FakeDB:
         self._execute_results = list(execute_results or [])
         self._scalar_results = list(scalar_results or [])
         self.queries = []
+        self.added = []
         self.commits = 0
         self.rollbacks = 0
 
@@ -104,8 +109,8 @@ class _FakeDB:
     async def rollback(self):
         self.rollbacks += 1
 
-    def add(self, _obj):
-        return None
+    def add(self, obj):
+        self.added.append(obj)
 
 
 class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
@@ -123,6 +128,9 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         epay_module.settings.epay_pid = ""
         epay_module.settings.epay_key = ""
         epay_module.settings.epay_site_name = "CoinCoin"
+        admin_module._settings.model_alias_overrides_path = ""
+        model_registry.clear_runtime_alias_overrides()
+        model_registry._initialized = False
 
     async def test_daily_usage_exposes_image_totals(self) -> None:
         usage = SimpleNamespace(
@@ -522,6 +530,59 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["expected_cents"], 4999)
         self.assertEqual(fake_db.commits, 1)
 
+    async def test_list_orders_returns_current_user_payment_history(self) -> None:
+        user = SimpleNamespace(id="u_1")
+        orders = [
+            SimpleNamespace(
+                id="po_1",
+                order_no="CC_confirmed",
+                amount_rmb="9.90",
+                add_balance_cents=4999,
+                status="confirmed",
+                trade_no="trade_1",
+                created_at=datetime(2026, 3, 25, 11, 0, 0),
+                confirmed_at=datetime(2026, 3, 25, 11, 2, 0),
+            ),
+            SimpleNamespace(
+                id="po_2",
+                order_no="CC_pending",
+                amount_rmb="29.90",
+                add_balance_cents=14999,
+                status="pending",
+                trade_no=None,
+                created_at=datetime(2026, 3, 26, 11, 0, 0),
+                confirmed_at=None,
+            ),
+        ]
+        fake_db = _FakeDB(execute_results=[_FakeScalarsResult(orders)])
+
+        async def fake_get_db():
+            yield fake_db
+
+        async def fake_authenticate_user(_request, _db):
+            return user
+
+        original_authenticate_user = payment_module.authenticate_user
+        payment_module.authenticate_user = fake_authenticate_user
+        app.dependency_overrides[payment_module.get_db] = fake_get_db
+
+        transport = httpx.ASGITransport(app=app)
+        try:
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                response = await client.get(
+                    "/v1/orders",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                )
+        finally:
+            payment_module.authenticate_user = original_authenticate_user
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual([row["order_no"] for row in payload], ["CC_confirmed", "CC_pending"])
+        self.assertEqual(payload[0]["status"], "confirmed")
+        self.assertEqual(payload[0]["add_balance_usd"], 49.99)
+        self.assertEqual(payload[1]["status"], "pending")
+
     async def test_confirm_order_accepts_signed_proof_url(self) -> None:
         payment_module.settings.epay_api_url = "https://code.nxslq.top/"
         payment_module.settings.epay_pid = "177938431"
@@ -914,6 +975,154 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload[0]["shared_balance_usd"], 25.0)
         self.assertEqual(payload[0]["fingerprint"], "0123456789ab")
         self.assertEqual(payload[0]["raw_key"], "sk_cc_test_admin_visible")
+
+    async def test_admin_model_alias_update_persists_db_override_and_refreshes_registry(self) -> None:
+        catalog = {
+            "default_text_model": "alias-a",
+            "models": [
+                {
+                    "id": "alias-a",
+                    "owned_by": "coincoin",
+                    "provider_name": "OpenAI",
+                    "provider_model": "gpt-5.4",
+                    "capabilities": ["chat/completions", "responses"],
+                    "routing_mode": "direct",
+                    "delivery_lane": "upstream_direct",
+                    "upstream_model": "gpt-5.4",
+                    "upstream_url": "https://legacy.example/v1",
+                    "api_key": "legacy-key",
+                    "auth_style": "bearer",
+                    "billable_sku": "alias-a-text",
+                },
+                {
+                    "id": "alias-b",
+                    "owned_by": "coincoin",
+                    "provider_name": "OpenAI",
+                    "provider_model": "gpt-5.5",
+                    "capabilities": ["chat/completions", "responses"],
+                    "routing_mode": "direct",
+                    "delivery_lane": "upstream_direct",
+                    "upstream_model": "gpt-5.5",
+                    "upstream_url": "https://legacy.example/v1",
+                    "api_key": "legacy-key",
+                    "auth_style": "bearer",
+                    "billable_sku": "alias-b-text",
+                },
+            ],
+        }
+        originals = {
+            "model_catalog_json": admin_module._settings.model_catalog_json,
+            "model_alias_overrides_path": admin_module._settings.model_alias_overrides_path,
+        }
+        fake_db = _FakeDB(execute_results=[_FakeScalarsResult([]), _FakeEntityResult(None)])
+
+        async def fake_get_db():
+            yield fake_db
+
+        with tempfile.NamedTemporaryFile("w+", encoding="utf-8") as override_file:
+            try:
+                admin_module._settings.model_catalog_json = json.dumps(catalog)
+                admin_module._settings.model_alias_overrides_path = ""
+                model_registry._initialized = False
+                model_registry.init_from_settings()
+                app.dependency_overrides[admin_module.get_db] = fake_get_db
+                app.dependency_overrides[admin_module.admin_guard] = lambda: None
+
+                transport = httpx.ASGITransport(app=app)
+                async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                    response = await client.patch(
+                        "/admin/model-aliases/alias-a",
+                        json={"target_alias": "alias-b"},
+                    )
+
+                self.assertEqual(response.status_code, 200, response.text)
+                payload = response.json()
+                self.assertEqual(payload["alias"]["id"], "alias-a")
+                self.assertTrue(payload["alias"]["override_active"])
+                self.assertEqual(payload["alias"]["upstream_model"], "gpt-5.5")
+
+                self.assertEqual(len(fake_db.added), 1)
+                self.assertEqual(fake_db.added[0].alias_id, "alias-a")
+                self.assertEqual(fake_db.added[0].upstream_model, "gpt-5.5")
+                self.assertEqual(fake_db.commits, 1)
+                self.assertEqual(Path(override_file.name).read_text(encoding="utf-8"), "")
+
+                resolved = model_registry.resolve_public_model("alias-a", "responses")
+                self.assertEqual(resolved.backend.model_id, "gpt-5.5")
+            finally:
+                admin_module._settings.model_catalog_json = originals["model_catalog_json"]
+                admin_module._settings.model_alias_overrides_path = originals["model_alias_overrides_path"]
+                app.dependency_overrides.pop(admin_module.get_db, None)
+                model_registry._initialized = False
+
+    async def test_admin_model_alias_update_rejects_arbitrary_upstream_model(self) -> None:
+        catalog = {
+            "default_text_model": "alias-a",
+            "models": [
+                {
+                    "id": "alias-a",
+                    "owned_by": "coincoin",
+                    "provider_name": "OpenAI",
+                    "provider_model": "gpt-5.4",
+                    "capabilities": ["chat/completions", "responses"],
+                    "routing_mode": "direct",
+                    "delivery_lane": "upstream_direct",
+                    "upstream_model": "gpt-5.4",
+                    "upstream_url": "https://legacy.example/v1",
+                    "api_key": "legacy-key",
+                    "auth_style": "bearer",
+                    "billable_sku": "alias-a-text",
+                },
+                {
+                    "id": "image-a",
+                    "owned_by": "coincoin",
+                    "provider_name": "OpenAI",
+                    "provider_model": "gpt-image-1",
+                    "capabilities": ["images/generations", "images/edits"],
+                    "routing_mode": "direct",
+                    "delivery_lane": "upstream_direct",
+                    "upstream_model": "gpt-image-1",
+                    "upstream_url": "https://legacy.example/v1",
+                    "api_key": "legacy-key",
+                    "auth_style": "bearer",
+                    "billable_sku": "image-a",
+                },
+            ],
+        }
+        originals = {
+            "model_catalog_json": admin_module._settings.model_catalog_json,
+            "model_alias_overrides_path": admin_module._settings.model_alias_overrides_path,
+        }
+        fake_db = _FakeDB(execute_results=[_FakeScalarsResult([])])
+
+        async def fake_get_db():
+            yield fake_db
+
+        with tempfile.NamedTemporaryFile("w+", encoding="utf-8") as override_file:
+            try:
+                admin_module._settings.model_catalog_json = json.dumps(catalog)
+                admin_module._settings.model_alias_overrides_path = override_file.name
+                model_registry._initialized = False
+                model_registry.init_from_settings()
+                app.dependency_overrides[admin_module.get_db] = fake_get_db
+                app.dependency_overrides[admin_module.admin_guard] = lambda: None
+
+                transport = httpx.ASGITransport(app=app)
+                async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                    response = await client.patch(
+                        "/admin/model-aliases/alias-a",
+                        json={"provider_model": "gpt-image-1", "upstream_model": "gpt-image-1"},
+                    )
+
+                self.assertEqual(response.status_code, 400, response.text)
+                self.assertIn("not compatible", response.json()["detail"])
+                self.assertEqual(Path(override_file.name).read_text(encoding="utf-8"), "")
+            finally:
+                admin_module._settings.model_catalog_json = originals["model_catalog_json"]
+                admin_module._settings.model_alias_overrides_path = originals["model_alias_overrides_path"]
+                app.dependency_overrides.pop(admin_module.get_db, None)
+                model_registry.clear_runtime_alias_overrides()
+                model_registry._initialized = False
 
 
 if __name__ == "__main__":

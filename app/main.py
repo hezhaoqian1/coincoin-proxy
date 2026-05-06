@@ -30,6 +30,7 @@ from .webhook import router as webhook_router
 from .payment import router as payment_router
 from .config import settings
 from .db import Base, engine
+from .model_alias_overrides import get_model_alias_override_db_state, refresh_model_alias_registry_from_db
 from .usage_buffer import flush_loop, flush_once
 from .reconcile import reconcile_loop
 from .router import registry as model_registry
@@ -248,6 +249,18 @@ async def _run_migrations(conn):
             INDEX ix_email_verification_created_at (created_at)
         )
         """,
+        """
+        CREATE TABLE coincoin_model_alias_overrides (
+            alias_id VARCHAR(128) PRIMARY KEY,
+            provider_model VARCHAR(128) DEFAULT '',
+            upstream_model VARCHAR(128) DEFAULT '',
+            enabled BIGINT DEFAULT 1,
+            updated_by VARCHAR(64) DEFAULT '',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX ix_model_alias_overrides_updated_at (updated_at)
+        )
+        """,
     ]
     for ddl in table_migrations:
         try:
@@ -294,6 +307,24 @@ async def _run_migrations(conn):
                 logger.warning("email verification migration failed for [%s]: %s", sql, exc)
 
 
+async def model_alias_override_refresh_loop(interval_seconds: int):
+    from .db import SessionLocal
+
+    logger = logging.getLogger("coincoin.model_alias_overrides")
+    last_state = None
+    while True:
+        try:
+            async with SessionLocal() as db:
+                state = await get_model_alias_override_db_state(db)
+                if state != last_state:
+                    await refresh_model_alias_registry_from_db(db)
+                    last_state = state
+                    logger.info("refreshed model alias overrides from database count=%s", state[0])
+        except Exception as exc:
+            logger.warning("failed to refresh model alias overrides from database: %s", exc)
+        await asyncio.sleep(max(1, int(interval_seconds or 10)))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
@@ -301,9 +332,20 @@ async def lifespan(app: FastAPI):
         await _run_migrations(conn)
     # Initialize router registry after settings/env are loaded and DB is ready.
     model_registry.init_from_settings()
+    try:
+        from .db import SessionLocal
+        async with SessionLocal() as db:
+            await refresh_model_alias_registry_from_db(db)
+    except Exception as exc:
+        logging.getLogger("coincoin.model_alias_overrides").warning(
+            "initial database model alias override refresh failed: %s", exc
+        )
 
     flush_task = asyncio.create_task(flush_loop(settings.usage_flush_interval))
     reconcile_task = asyncio.create_task(reconcile_loop())
+    alias_override_task = asyncio.create_task(
+        model_alias_override_refresh_loop(settings.model_alias_overrides_refresh_interval)
+    )
     image_job_task = None
     if settings.image_jobs_enabled:
         image_job_task = asyncio.create_task(image_job_loop(settings.image_job_poll_interval))
@@ -314,6 +356,7 @@ async def lifespan(app: FastAPI):
     finally:
         flush_task.cancel()
         reconcile_task.cancel()
+        alias_override_task.cancel()
         if image_job_task is not None:
             image_job_task.cancel()
         await flush_once()

@@ -6,3 +6,4 @@ __pycache__/
 .venv/
 .venv312/
 *.egg-info/
+config/model_alias_overrides.json
