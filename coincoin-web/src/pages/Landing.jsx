@@ -42,10 +42,28 @@ const ENTRY_POINTS = [
     },
 ]
 
-const PROVIDERS = [
-    { name: 'Text', vendor: 'compatible' },
-    { name: 'Claude', vendor: 'Anthropic' },
-    { name: 'Image', vendor: 'generation' },
+const HERO_LANES = [
+    {
+        client: 'Codex / SDK',
+        endpoint: '/v1',
+        model: 'opus · gpt-5.5',
+    },
+    {
+        client: 'Claude Code',
+        endpoint: 'root',
+        model: 'claude-opus-4-7',
+    },
+    {
+        client: 'Images',
+        endpoint: '/v1/images',
+        model: 'gemini-image',
+    },
+]
+
+const HERO_STATS = [
+    { label: '余额', value: '统一扣费' },
+    { label: '日志', value: '逐条可查' },
+    { label: '密钥', value: '独立管理' },
 ]
 
 const COMMAND_SNIPPET = `# OpenAI-compatible
@@ -128,16 +146,16 @@ export default function Landing() {
                 <div className="landing-hero-noise" />
                 <div className="container">
                     <div className="landing-hero-grid">
-                        <div className="landing-copy">
+                        <div className="landing-copy landing-copy-centered">
                             <div className="landing-announcement">
                                 <span className="landing-announcement-dot" />
-                                <span>统一入口，统一计费，统一控制台</span>
+                                <span>统一 Key，统一计费，统一控制台</span>
                             </div>
                             <span className="landing-kicker">ClawFather API</span>
-                            <h1>一个开发者 Key 接入 Codex、Claude Code、SDK 和图片接口</h1>
+                            <h1>一把 Key，接入多模型开发工具</h1>
                             <p className="landing-summary">
-                                不用在多个平台之间来回切换。登录控制台、生成开发者 Key，再把一套配置复制到
-                                CLI、SDK 和常用客户端里，就能开始调用。
+                                不用在多个平台之间来回切换。生成开发者 Key 后，把配置复制到
+                                Codex、Claude Code、SDK 或常用客户端里，就能开始调用文本和图片接口。
                             </p>
 
                             <div className="landing-inline-actions">
@@ -159,53 +177,61 @@ export default function Landing() {
                             </div>
                         </div>
 
-                        <div className="landing-hero-stack">
-                            <div className="landing-console-card">
-                                <div className="landing-console-head">
-                                    <div>
-                                        <span className="landing-console-label">Access Path</span>
-                                        <strong>控制台 {'->'} 开发者 Key {'->'} 你的 IDE / 应用</strong>
-                                    </div>
-                                    <span className="landing-console-status">推荐路径</span>
-                                </div>
+                        <div className="landing-scroll-hint" aria-hidden="true">
+                            <span />
+                        </div>
+                    </div>
+                </div>
+            </section>
 
-                                <div className="landing-bridge-card">
-                                    <div className="landing-provider-column">
-                                        {PROVIDERS.map((provider) => (
-                                            <div key={provider.name} className="landing-provider-node">
-                                                <strong>{provider.name}</strong>
-                                                <span>{provider.vendor}</span>
-                                            </div>
-                                        ))}
-                                    </div>
-                                    <div className="landing-bridge-center">
-                                        <div className="landing-bridge-line" />
-                                        <div className="landing-bridge-hub">CF</div>
-                                        <div className="landing-bridge-line" />
-                                    </div>
-                                    <div className="landing-user-node">
-                                        <strong>Your Stack</strong>
-                                        <span>CLI / SDK / App</span>
-                                    </div>
-                                </div>
+            <section className="landing-console-showcase" aria-label="ClawFather routing overview">
+                <div className="container">
+                    <div className="landing-command-center">
+                        <div className="landing-orbit landing-orbit-one" />
+                        <div className="landing-orbit landing-orbit-two" />
+                        <div className="landing-panel-head">
+                            <div>
+                                <span className="landing-console-label">Routing Console</span>
+                                <strong>一把 Key，三类接入路径</strong>
+                            </div>
+                            <span className="landing-console-status">Live</span>
+                        </div>
 
-                                <div className="landing-console-body">
-                                    {ACCESS_STEPS.map((step, index) => (
-                                        <div key={step.title} className="landing-console-step">
-                                            <span className="landing-step-index">0{index + 1}</span>
-                                            <div>
-                                                <strong>{step.title}</strong>
-                                                <p>{step.body}</p>
-                                            </div>
+                        <div className="landing-routing-surface">
+                            <div className="landing-key-strip">
+                                <div>
+                                    <span>Developer Key</span>
+                                    <strong>sk_cc_••••••••••</strong>
+                                </div>
+                                <span className="landing-key-badge">ready</span>
+                            </div>
+
+                            <div className="landing-lane-list">
+                                {HERO_LANES.map((lane, index) => (
+                                    <div key={lane.client} className="landing-lane" style={{ '--lane-index': index }}>
+                                        <div className="landing-lane-pulse" />
+                                        <div>
+                                            <strong>{lane.client}</strong>
+                                            <span>{lane.model}</span>
                                         </div>
-                                    ))}
-                                </div>
+                                        <code>{lane.endpoint}</code>
+                                    </div>
+                                ))}
                             </div>
 
-                            <div className="landing-code-card landing-code-card-wide">
-                                <span className="landing-code-label">Recommended Setup</span>
-                                <pre>{COMMAND_SNIPPET}</pre>
+                            <div className="landing-stat-grid">
+                                {HERO_STATS.map((stat) => (
+                                    <div key={stat.label} className="landing-stat">
+                                        <span>{stat.label}</span>
+                                        <strong>{stat.value}</strong>
+                                    </div>
+                                ))}
                             </div>
+                        </div>
+
+                        <div className="landing-endpoint-note">
+                            <span>OpenAI-compatible 用 <code>/v1</code></span>
+                            <span>Claude Code 用根地址</span>
                         </div>
                     </div>
                 </div>
@@ -249,6 +275,10 @@ export default function Landing() {
                                 <p>{step.body}</p>
                             </div>
                         ))}
+                    </div>
+                    <div className="landing-code-card landing-code-card-wide">
+                        <span className="landing-code-label">Recommended Setup</span>
+                        <pre>{COMMAND_SNIPPET}</pre>
                     </div>
                 </div>
             </section>
