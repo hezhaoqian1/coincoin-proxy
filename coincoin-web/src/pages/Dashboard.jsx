@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { Line } from 'react-chartjs-2'
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler } from 'chart.js'
-import { MOCK_BALANCE, MOCK_USAGE, getBalance, getUsageLogs, getAnnouncements, activateKey, getStationApplication, applyForStation, setGeneratedKey as storeGeneratedKey } from '../api/client'
+import { getBalance, getUsageLogs, getAnnouncements, activateKey, getStationApplication, applyForStation, setGeneratedKey as storeGeneratedKey } from '../api/client'
 import useOrderConfirm from '../hooks/useOrderConfirm'
 import { useAuth } from '../hooks/useAuth'
 import { usePublicModels } from '../hooks/usePublicModels'
@@ -471,6 +471,7 @@ export default function Dashboard() {
     const [balance, setBalance] = useState(null)
     const [usage, setUsage] = useState(null)
     const [todayUsage, setTodayUsage] = useState(null)
+    const [loadError, setLoadError] = useState('')
     const [dailyData, setDailyData] = useState(null)
     const [announcements, setAnnouncements] = useState([])
     const [dismissedAnns, setDismissedAnns] = useState(() => {
@@ -515,10 +516,12 @@ export default function Dashboard() {
                 setBalance(b)
                 setUsage(u)
                 setTodayUsage(todayU)
-            } catch {
-                setBalance(MOCK_BALANCE)
-                setUsage(MOCK_USAGE)
+                setLoadError('')
+            } catch (err) {
+                setBalance(null)
+                setUsage(null)
                 setTodayUsage(null)
+                setLoadError(err.message || '控制台会话已失效，请重新登录。')
             }
             try { setDailyData(await getLocalDailyUsage(7)) } catch { /* ignore */ }
             try { setAnnouncements(await getAnnouncements()) } catch { /* ignore */ }
@@ -576,10 +579,18 @@ export default function Dashboard() {
         return (
             <AppShell title="概览" description="先看余额、Key 状态和最近请求。">
                 <div className="dashboard-page">
-                    <div className="loading-state">
-                        <div className="loading-spinner"></div>
-                        <p>加载中...</p>
-                    </div>
+                    {loadError ? (
+                        <div className="loading-state error-state">
+                            <h3>需要重新登录</h3>
+                            <p>{loadError}</p>
+                            <Link className="btn btn-primary btn-sm" to="/login">去登录</Link>
+                        </div>
+                    ) : (
+                        <div className="loading-state">
+                            <div className="loading-spinner"></div>
+                            <p>加载中...</p>
+                        </div>
+                    )}
                 </div>
             </AppShell>
         )

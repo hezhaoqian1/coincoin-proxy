@@ -776,6 +776,28 @@
     color: var(--text-tertiary);
 }
 
+.loading-state.error-state {
+    height: auto;
+    min-height: 320px;
+    margin-top: var(--space-xl);
+    padding: var(--space-xl);
+    border: 1px solid rgba(244,63,94,0.2);
+    border-radius: var(--radius-lg);
+    background: rgba(244,63,94,0.06);
+    text-align: center;
+}
+
+.loading-state.error-state h3 {
+    margin: 0;
+    color: var(--text-primary);
+}
+
+.loading-state.error-state p {
+    max-width: 520px;
+    margin: 0;
+    color: var(--text-secondary);
+}
+
 .loading-spinner {
     width: 36px;
     height: 36px;

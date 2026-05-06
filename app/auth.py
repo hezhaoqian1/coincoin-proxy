@@ -54,7 +54,6 @@ logger = logging.getLogger("coincoin.auth")
 AUTH_RATE_LIMIT = 10  # per IP per minute
 MAX_FAILED_ATTEMPTS = 5
 LOCKOUT_MINUTES = 15
-SESSION_KEY_DAYS = 7
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
@@ -74,10 +73,33 @@ def _create_session_key(user_id: str) -> tuple[str, ApiKey]:
         encrypted_key=encrypt_api_key(raw_key),
         kind="session",
         status="active",
-        expires_at=datetime.utcnow() + timedelta(days=SESSION_KEY_DAYS),
+        expires_at=_session_expires_at(),
         created_at=datetime.utcnow(),
     )
     return raw_key, api_key
+
+
+def _session_expires_at(now: datetime | None = None) -> datetime:
+    now = now or datetime.utcnow()
+    session_days = max(1, int(settings.console_session_days or 30))
+    return now + timedelta(days=session_days)
+
+
+def _should_refresh_session(api_key: ApiKey, now: datetime | None = None) -> bool:
+    expires_at = _utc_naive(getattr(api_key, "expires_at", None))
+    if expires_at is None:
+        return True
+    now = now or datetime.utcnow()
+    threshold_days = max(1, int(settings.console_session_refresh_threshold_days or 15))
+    return expires_at - now <= timedelta(days=threshold_days)
+
+
+def _refresh_session_if_needed(api_key: ApiKey) -> bool:
+    now = datetime.utcnow()
+    if not _should_refresh_session(api_key, now):
+        return False
+    api_key.expires_at = _session_expires_at(now)
+    return True
 
 
 def _normalize_email(raw: str) -> str:
@@ -244,6 +266,7 @@ async def _user_from_session(request: Request, db: AsyncSession) -> tuple[User, 
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid session")
     if user.status != "active":
         raise HTTPException(status.HTTP_403_FORBIDDEN, "user blocked")
+    setattr(api_key, "_session_refreshed", _refresh_session_if_needed(api_key))
     return user, api_key
 
 
@@ -572,7 +595,9 @@ async def get_auth_profile(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
-    user, _ = await _user_from_session(request, db)
+    user, session_key = await _user_from_session(request, db)
+    if getattr(session_key, "_session_refreshed", False):
+        await db.commit()
     return _profile_response(user)
 
 

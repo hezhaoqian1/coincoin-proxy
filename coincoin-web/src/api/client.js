@@ -6,6 +6,51 @@ function emitAuthChange() {
     }
 }
 
+function clearLocalAuthState() {
+    localStorage.removeItem('coincoin_api_key')
+    localStorage.removeItem('coincoin_user_id')
+    localStorage.removeItem('coincoin_username')
+    localStorage.removeItem('coincoin_generated_key')
+}
+
+function extractErrorMessage(data, fallbackMessage) {
+    const detail = data?.detail
+    if (typeof detail === 'string' && detail) return detail
+    if (Array.isArray(detail) && detail.length > 0) {
+        const first = detail[0]
+        if (typeof first === 'string') return first
+        if (first && typeof first === 'object' && first.msg) return first.msg
+    }
+    if (detail && typeof detail === 'object' && detail.msg) return detail.msg
+    return data?.error?.message || fallbackMessage
+}
+
+function isSessionExpiredMessage(message) {
+    return String(message || '').toLowerCase().includes('session expired')
+}
+
+function handleAuthFailure(status, message) {
+    if ((status === 401 || status === 403) && isSessionExpiredMessage(message)) {
+        clearLocalAuthState()
+        emitAuthChange()
+    }
+}
+
+async function parseJsonResponse(res, fallbackMessage) {
+    let data = {}
+    try {
+        data = await res.json()
+    } catch {
+        data = {}
+    }
+    if (!res.ok) {
+        const message = extractErrorMessage(data, fallbackMessage)
+        handleAuthFailure(res.status, message)
+        throw new Error(message)
+    }
+    return data
+}
+
 /** Get stored API key */
 export function getApiKey() {
     return localStorage.getItem('coincoin_api_key') || ''
@@ -19,8 +64,7 @@ export function setApiKey(key) {
 
 /** Clear API key (logout) */
 export function clearApiKey() {
-    localStorage.removeItem('coincoin_api_key')
-    localStorage.removeItem('coincoin_user_id')
+    clearLocalAuthState()
     emitAuthChange()
 }
 
@@ -60,18 +104,14 @@ export async function getDeveloperKeyState() {
     const res = await fetch(`${PROXY_BASE}/v1/keys/me`, {
         headers: authHeaders()
     })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.detail || data.error?.message || 'Failed to fetch developer key state')
-    return data
+    return parseJsonResponse(res, 'Failed to fetch developer key state')
 }
 
 export async function listDeveloperKeys() {
     const res = await fetch(`${PROXY_BASE}/v1/keys`, {
         headers: authHeaders()
     })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.detail || data.error?.message || 'Failed to list developer keys')
-    return data
+    return parseJsonResponse(res, 'Failed to list developer keys')
 }
 
 export async function createDeveloperKey(payload = {}) {
@@ -80,9 +120,7 @@ export async function createDeveloperKey(payload = {}) {
         headers: authHeaders(),
         body: JSON.stringify(payload || {}),
     })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.detail || data.error?.message || 'Failed to create developer key')
-    return data
+    return parseJsonResponse(res, 'Failed to create developer key')
 }
 
 export async function updateDeveloperKey(keyId, payload) {
@@ -91,9 +129,7 @@ export async function updateDeveloperKey(keyId, payload) {
         headers: authHeaders(),
         body: JSON.stringify(payload),
     })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.detail || data.error?.message || 'Failed to update developer key')
-    return data
+    return parseJsonResponse(res, 'Failed to update developer key')
 }
 
 /** Auth header helper */
@@ -111,21 +147,19 @@ async function parseApiResponse(res, fallbackMessage) {
     if (contentType.includes('application/json')) {
         const data = await res.json()
         if (!res.ok) {
-            const detail = data.detail
-            if (typeof detail === 'string' && detail) throw new Error(detail)
-            if (Array.isArray(detail) && detail.length > 0) {
-                const first = detail[0]
-                if (typeof first === 'string') throw new Error(first)
-                if (first && typeof first === 'object' && first.msg) throw new Error(first.msg)
-            }
-            if (detail && typeof detail === 'object' && detail.msg) throw new Error(detail.msg)
-            throw new Error(data.error?.message || fallbackMessage)
+            const message = extractErrorMessage(data, fallbackMessage)
+            handleAuthFailure(res.status, message)
+            throw new Error(message)
         }
         return data
     }
 
     const text = await res.text()
-    if (!res.ok) throw new Error(text || fallbackMessage)
+    if (!res.ok) {
+        const message = text || fallbackMessage
+        handleAuthFailure(res.status, message)
+        throw new Error(message)
+    }
     return text
 }
 
@@ -255,8 +289,7 @@ export async function getBalance() {
     const res = await fetch(`${PROXY_BASE}/v1/balance`, {
         headers: authHeaders()
     })
-    if (!res.ok) throw new Error('Invalid API Key')
-    return res.json()
+    return parseJsonResponse(res, 'Invalid API Key')
 }
 
 /** Get usage logs */
@@ -268,8 +301,7 @@ export async function getUsageLogs(limit = 50, offset = 0, filters = {}) {
     const res = await fetch(`${PROXY_BASE}/v1/usage?${params}`, {
         headers: authHeaders()
     })
-    if (!res.ok) throw new Error('Failed to fetch usage')
-    return res.json()
+    return parseJsonResponse(res, 'Failed to fetch usage')
 }
 
 // ===== Payment APIs =====
@@ -281,6 +313,15 @@ export async function createOrder({ name, money, pay_type = 'alipay' }) {
         headers: authHeaders(),
         body: JSON.stringify({ name, money, pay_type })
     })
+    return res.json()
+}
+
+/** List current user's payment orders */
+export async function listOrders(limit = 20) {
+    const res = await fetch(`${PROXY_BASE}/v1/orders?limit=${limit}`, {
+        headers: authHeaders()
+    })
+    if (!res.ok) throw new Error('Failed to fetch orders')
     return res.json()
 }
 

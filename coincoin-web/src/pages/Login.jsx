@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
+import { useNavigate, Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import './Auth.css'
 
@@ -11,6 +11,10 @@ export default function Login() {
     const [error, setError] = useState('')
     const { login, loginWithPassword, loading } = useAuth()
     const navigate = useNavigate()
+    const location = useLocation()
+    const returnTo = typeof location.state?.from === 'string' && location.state.from.startsWith('/')
+        ? location.state.from
+        : '/dashboard'
 
     const handlePasswordLogin = async (e) => {
         e.preventDefault()
@@ -18,7 +22,7 @@ export default function Login() {
         if (!password) { setError('请输入密码'); return }
         const result = await loginWithPassword(username.trim(), password)
         if (result.success) {
-            navigate('/dashboard')
+            navigate(returnTo, { replace: true })
         } else {
             setError(result.error)
         }
@@ -29,7 +33,7 @@ export default function Login() {
         if (!key.trim()) { setError('请输入 API Key'); return }
         const result = await login(key.trim())
         if (result.success) {
-            navigate('/dashboard')
+            navigate(returnTo, { replace: true })
         } else {
             setError(result.error)
         }

@@ -8,7 +8,7 @@ import time
 from urllib.parse import urlsplit, urlunsplit
 from collections import OrderedDict
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Awaitable, Callable, Dict, List, Optional, Tuple
 
@@ -692,6 +692,39 @@ class KeyCache:
 key_cache = KeyCache(settings.key_cache_ttl, settings.key_cache_max)
 
 
+def _utc_naive(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
+
+
+def _session_expires_at(now: datetime | None = None) -> datetime:
+    now = now or datetime.utcnow()
+    session_days = max(1, int(settings.console_session_days or 30))
+    return now + timedelta(days=session_days)
+
+
+def _should_refresh_session(api_key: ApiKey, now: datetime | None = None) -> bool:
+    if getattr(api_key, "kind", "api") != "session":
+        return False
+    expires_at = _utc_naive(getattr(api_key, "expires_at", None))
+    if expires_at is None:
+        return True
+    now = now or datetime.utcnow()
+    threshold_days = max(1, int(settings.console_session_refresh_threshold_days or 15))
+    return expires_at - now <= timedelta(days=threshold_days)
+
+
+def _refresh_session_if_needed(api_key: ApiKey) -> bool:
+    now = datetime.utcnow()
+    if not _should_refresh_session(api_key, now):
+        return False
+    api_key.expires_at = _session_expires_at(now)
+    return True
+
+
 class ResponseConversationCache:
     """Polyfill cache: stores expanded input + response output per response ID.
 
@@ -1125,6 +1158,8 @@ async def _resolve_user(request: Request, db: AsyncSession):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid api key")
         key_kind = str(cached.get(_KEY_KIND_ATTR) or "api")
         key_id = str(cached.get(_KEY_ID_ATTR) or "")
+        key_controls = cached.get("controls", {}) if isinstance(cached.get("controls", {}), dict) else {}
+        session_refreshed = False
     else:
         try:
             result = await db.execute(
@@ -1139,12 +1174,13 @@ async def _resolve_user(request: Request, db: AsyncSession):
         if not api_key or not api_key.user:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid api key")
 
-        if api_key.expires_at and api_key.expires_at < datetime.utcnow():
+        if _utc_naive(getattr(api_key, "expires_at", None)) and _utc_naive(api_key.expires_at) < datetime.utcnow():
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="session expired, please login again")
 
         user = api_key.user
         key_id = api_key.id
         key_kind = getattr(api_key, "kind", None) or "api"
+        session_refreshed = _refresh_session_if_needed(api_key)
         key_controls = {
             "monthly_quota_cents": getattr(api_key, "monthly_quota_cents", None),
             "total_quota_cents": getattr(api_key, "total_quota_cents", None),
@@ -1158,13 +1194,17 @@ async def _resolve_user(request: Request, db: AsyncSession):
                 _KEY_ID_ATTR: key_id,
                 _KEY_KIND_ATTR: key_kind,
                 "controls": key_controls,
+                "session_refreshed": session_refreshed,
             },
         )
     setattr(user, _KEY_KIND_ATTR, key_kind)
     setattr(user, _KEY_ID_ATTR, key_id)
-    setattr(user, "_api_key_controls", cached.get("controls", {}) if cached else key_controls)
+    setattr(user, "_api_key_controls", key_controls)
+    setattr(user, "_session_refreshed", session_refreshed)
     if user.status != "active":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="user blocked")
+    if getattr(user, "_session_refreshed", False):
+        await db.commit()
     return user
 
 
