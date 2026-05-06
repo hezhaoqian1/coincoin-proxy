@@ -260,6 +260,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["summary"]["cache_read_tokens"], 0)
         self.assertEqual(payload["summary"]["cache_creation_tokens"], 0)
         self.assertEqual(payload["data"][0]["api_key_id"], "k_selected")
+        self.assertNotIn("provider_model", payload["data"][0])
 
     async def test_user_usage_summary_covers_all_filtered_rows_not_current_page(self) -> None:
         user = SimpleNamespace(id="u_1")
@@ -312,6 +313,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["summary"]["image_count"], 3)
         self.assertEqual(payload["data"][0]["cache_read_tokens"], 2)
         self.assertEqual(payload["data"][0]["cache_creation_tokens"], 0)
+        self.assertNotIn("provider_model", payload["data"][0])
 
     async def test_usage_date_filters_use_china_day_boundaries(self) -> None:
         user = SimpleNamespace(id="u_1")

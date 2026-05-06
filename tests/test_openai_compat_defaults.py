@@ -852,6 +852,66 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["output"][0]["content"][0]["text"], "OK")
         self.assertEqual(upstream_client.calls[0]["url"], "https://legacy.example/v1/responses")
         add_usage.assert_awaited_once()
+        self.assertEqual(add_usage.await_args.kwargs["price_input_per_million"], 250)
+        self.assertEqual(add_usage.await_args.kwargs["price_output_per_million"], 1500)
+
+    async def test_responses_alias_override_keeps_alias_prices_when_target_changes(self) -> None:
+        registry.set_runtime_alias_overrides(
+            {
+                "gpt-5.5": {
+                    "provider_model": "gpt-5.5",
+                    "upstream_model": "gpt-5.5",
+                }
+            },
+            version=1,
+        )
+        registry._initialized = False
+        registry.init_from_settings()
+
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "resp_alias_price",
+                        "status": "completed",
+                        "output": [
+                            {
+                                "type": "message",
+                                "role": "assistant",
+                                "content": [{"type": "output_text", "text": "OK"}],
+                            }
+                        ],
+                        "usage": {"input_tokens": 3, "output_tokens": 1, "total_tokens": 4},
+                    }
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        try:
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                    proxy_module,
+                    "get_http_client",
+                    AsyncMock(return_value=upstream_client),
+                ), patch.object(proxy_module.usage_buffer, "add", AsyncMock()) as add_usage:
+                    response = await client.post(
+                        "/v1/responses",
+                        headers={"Authorization": "Bearer sk_cc_test"},
+                        json={"model": "gpt-5.5", "input": "Reply with only: OK"},
+                    )
+
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-5.5")
+                add_usage.assert_awaited_once()
+                self.assertEqual(add_usage.await_args.kwargs["customer_model_alias"], "gpt-5.5")
+                self.assertEqual(add_usage.await_args.kwargs["provider_model"], "gpt-5.5")
+                self.assertEqual(add_usage.await_args.kwargs["price_input_per_million"], 500)
+                self.assertEqual(add_usage.await_args.kwargs["price_output_per_million"], 3000)
+        finally:
+            registry.clear_runtime_alias_overrides()
+            registry._initialized = False
+            registry.init_from_settings()
 
     async def test_responses_explicit_codex_alias_collapses_stream_and_preserves_reasoning(self) -> None:
         settings.router_enabled = False

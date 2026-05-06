@@ -1355,7 +1355,7 @@
       <div id="page-model-aliases" class="page">
         <div class="page-header">
           <h1 class="page-title">模型路由</h1>
-          <p class="page-desc">控制公开 alias 指向的已批准上游模型；内部 URL 和密钥不在后台页面展示。</p>
+          <p class="page-desc">这里决定“用户调用的模型名”背后实际转发到哪个已批准模型。修改后，用户看到的 alias 名称和计费档位不变，只调整后台实际转发目标。</p>
         </div>
         <div class="card">
           <div class="card-header">
@@ -1370,10 +1370,10 @@
               <table>
                 <thead>
                   <tr>
-                    <th>公开 Alias</th>
-                    <th>路由</th>
-                    <th>当前上游</th>
-                    <th>能力</th>
+                    <th>用户调用的模型名</th>
+                    <th>转发方式</th>
+                    <th>当前实际转发</th>
+                    <th>支持能力</th>
                     <th>状态</th>
                     <th>操作</th>
                   </tr>
@@ -1860,29 +1860,29 @@
   <div id="modelAliasModal" class="modal-overlay">
     <div class="modal" style="max-width:620px">
       <div class="modal-header">
-        <span class="modal-title" id="modelAliasModalTitle">调整模型 alias</span>
+        <span class="modal-title" id="modelAliasModalTitle">调整模型转发目标</span>
         <button class="modal-close" onclick="closeModal('modelAliasModal')">&times;</button>
       </div>
       <div class="modal-body">
         <div class="form-group">
-          <label class="form-label">当前路由</label>
+          <label class="form-label">当前配置</label>
           <div id="modelAliasCurrentRoute" class="code-display" style="white-space:normal;word-break:break-word"></div>
         </div>
         <div class="form-group">
-          <label class="form-label">切换到</label>
+          <label class="form-label">改为转发到</label>
           <select id="modelAliasTarget" class="form-select"></select>
-          <div class="form-help">只显示 capability、delivery lane 和 routing mode 相同的候选目标。</div>
+          <div class="form-help">这里只显示可直接替换的候选目标。选中后，用户依然调用原来的 alias，只是后台改为转发到新的模型。</div>
         </div>
         <label class="flex items-center gap-2 text-sm text-muted" style="cursor:pointer">
           <input type="checkbox" id="modelAliasEnabled" />
-          启用这个公开 alias
+          允许用户继续调用这个 alias
         </label>
       </div>
       <div class="modal-footer" style="justify-content:space-between">
-        <button class="btn btn-danger" onclick="clearModelAliasOverride()">清除覆盖</button>
+        <button class="btn btn-danger" onclick="clearModelAliasOverride()">恢复默认转发</button>
         <div class="flex gap-2">
           <button class="btn btn-secondary" onclick="closeModal('modelAliasModal')">取消</button>
-          <button class="btn btn-primary" onclick="saveModelAliasOverride()">保存</button>
+          <button class="btn btn-primary" onclick="saveModelAliasOverride()">保存修改</button>
         </div>
       </div>
     </div>
@@ -2484,16 +2484,56 @@
     }
 
     // ==================== Model Aliases ====================
+    function renderAliasRoutingMode(mode) {
+      switch ((mode || '').trim().toLowerCase()) {
+        case 'legacy_auto':
+          return '自动兼容转发';
+        case 'direct':
+          return '固定转发';
+        default:
+          return mode || '-';
+      }
+    }
+
+    function renderAliasDeliveryLane(lane) {
+      switch ((lane || '').trim().toLowerCase()) {
+        case 'legacy':
+          return '旧兼容通道';
+        case 'gateway':
+          return '网关通道';
+        case 'upstream_direct':
+          return '直连上游';
+        case 'vertex_direct':
+          return '直连 Vertex';
+        default:
+          return lane || '-';
+      }
+    }
+
     function renderAliasRoute(alias) {
-      const mode = alias.routing_mode || '-';
-      const lane = alias.delivery_lane || '-';
-      return `${mode} / ${lane}`;
+      return renderAliasRoutingMode(alias.routing_mode || '-');
+    }
+
+    function renderAliasRouteDetail(alias) {
+      const provider = alias.provider_name || alias.owned_by || '-';
+      return `${provider} · ${renderAliasDeliveryLane(alias.delivery_lane || '-')}`;
+    }
+
+    function renderAliasTargetOption(target) {
+      const provider = target.provider_model || target.upstream_model || '-';
+      const requestName = target.upstream_model && target.upstream_model !== target.provider_model
+        ? `，请求名 ${target.upstream_model}`
+        : '';
+      return `跟随 ${target.id} 的转发设置（当前到 ${provider}${requestName}）`;
     }
 
     function renderAliasTarget(alias) {
       const provider = alias.provider_model || '-';
       const upstream = alias.upstream_model || '-';
-      return `<div>${escapeHtml(provider)}</div><div class="text-sm text-muted">${escapeHtml(upstream)}</div>`;
+      if (!upstream || upstream === provider) {
+        return `<div>${escapeHtml(provider)}</div><div class="text-sm text-muted">当前实际转发模型</div>`;
+      }
+      return `<div>${escapeHtml(provider)}</div><div class="text-sm text-muted">实际请求名：${escapeHtml(upstream)}</div>`;
     }
 
     async function loadModelAliases() {
@@ -2503,7 +2543,7 @@
         const d = await r.json();
         modelAliasCache = d.aliases || [];
         const body = document.getElementById('modelAliasesBody');
-        document.getElementById('modelAliasSummary').textContent = `${modelAliasCache.length} 个 alias，${d.override_count || 0} 个运行时覆盖`;
+        document.getElementById('modelAliasSummary').textContent = `${modelAliasCache.length} 个公开 alias，${d.override_count || 0} 个已改成自定义转发`;
         if (!modelAliasCache.length) {
           body.innerHTML = '<tr><td colspan="6"><div class="empty-state"><div class="empty-state-icon">M</div><h3>暂无模型 alias</h3><p>公开目录加载后会显示在这里</p></div></td></tr>';
           return;
@@ -2514,14 +2554,14 @@
               <strong>${escapeHtml(alias.id)}</strong>
               <div class="text-sm text-muted">${escapeHtml(alias.billable_sku || '-')}</div>
             </td>
-            <td><div>${escapeHtml(renderAliasRoute(alias))}</div><div class="text-sm text-muted">${escapeHtml(alias.provider_name || alias.owned_by || '-')}</div></td>
+            <td><div>${escapeHtml(renderAliasRoute(alias))}</div><div class="text-sm text-muted">${escapeHtml(renderAliasRouteDetail(alias))}</div></td>
             <td>${renderAliasTarget(alias)}</td>
             <td><div class="text-sm text-muted">${escapeHtml((alias.capabilities || []).join(', ') || '-')}</div></td>
             <td>
-              <span class="badge ${alias.routable && alias.enabled ? 'badge-success' : 'badge-warning'}">${alias.routable && alias.enabled ? '可用' : '不可路由'}</span>
-              ${alias.override_active ? '<span class="badge badge-info" style="margin-left:6px">已覆盖</span>' : ''}
+              <span class="badge ${alias.routable && alias.enabled ? 'badge-success' : 'badge-warning'}">${alias.routable && alias.enabled ? '可用' : '已停用'}</span>
+              ${alias.override_active ? '<span class="badge badge-info" style="margin-left:6px">已改自定义转发</span>' : ''}
             </td>
-            <td><button class="btn btn-sm btn-secondary" onclick="openModelAliasModal('${escapeHtml(alias.id)}')">调整</button></td>
+            <td><button class="btn btn-sm btn-secondary" onclick="openModelAliasModal('${escapeHtml(alias.id)}')">修改</button></td>
           </tr>
         `).join('');
       } catch (e) {
@@ -2540,13 +2580,16 @@
         const targets = d.targets || [];
         document.getElementById('modelAliasModalTitle').textContent = `调整 ${alias.id}`;
         document.getElementById('modelAliasCurrentRoute').innerHTML = `
-          <div><strong>${escapeHtml(alias.id || '-')}</strong> · ${escapeHtml(renderAliasRoute(alias))}</div>
-          <div class="text-sm text-muted">${escapeHtml(alias.provider_model || '-')} → ${escapeHtml(alias.upstream_model || '-')}</div>
+          <div><strong>用户调用：</strong>${escapeHtml(alias.id || '-')}</div>
+          <div class="text-sm text-muted"><strong>当前实际转发：</strong>${escapeHtml(alias.provider_model || '-')} ${alias.upstream_model && alias.upstream_model !== alias.provider_model ? `→ ${escapeHtml(alias.upstream_model)}` : ''}</div>
+          <div class="text-sm text-muted"><strong>转发方式：</strong>${escapeHtml(renderAliasRoute(alias))}</div>
+          <div class="text-sm text-muted"><strong>技术通道：</strong>${escapeHtml(renderAliasDeliveryLane(alias.delivery_lane || '-'))}</div>
+          <div class="text-sm text-muted"><strong>说明：</strong>改这里不会改变用户看到的模型名，也不会改变这个 alias 的计费档位。</div>
         `;
         document.getElementById('modelAliasEnabled').checked = alias.enabled !== false;
         const select = document.getElementById('modelAliasTarget');
-        select.innerHTML = '<option value="">只调整启用状态</option>' + targets.map(target => `
-          <option value="${escapeHtml(target.id)}">${escapeHtml(target.id)} · ${escapeHtml(target.provider_model || target.upstream_model || '-')}</option>
+        select.innerHTML = '<option value="">先不改转发目标，只调整开关</option>' + targets.map(target => `
+          <option value="${escapeHtml(target.id)}">${escapeHtml(renderAliasTargetOption(target))}</option>
         `).join('');
         openModal('modelAliasModal');
       } catch (e) {
@@ -2570,7 +2613,7 @@
         const d = await r.json();
         if (!r.ok) return toast(d.detail || '保存失败', 'error');
         closeModal('modelAliasModal');
-        toast('模型 alias 已更新', 'success');
+        toast('模型转发设置已更新', 'success');
         loadModelAliases();
         loadOpsHealth();
       } catch (e) {
@@ -2581,7 +2624,7 @@
 
     async function clearModelAliasOverride() {
       if (!currentModelAliasId) return;
-      if (!confirm(`清除 ${currentModelAliasId} 的运行时覆盖？`)) return;
+      if (!confirm(`恢复 ${currentModelAliasId} 的默认转发？`)) return;
       try {
         const r = await fetch(`/admin/model-aliases/${encodeURIComponent(currentModelAliasId)}`, {
           method: 'DELETE',
@@ -2590,7 +2633,7 @@
         const d = await r.json();
         if (!r.ok) return toast(d.detail || '清除失败', 'error');
         closeModal('modelAliasModal');
-        toast('覆盖已清除', 'success');
+        toast('已恢复默认转发', 'success');
         loadModelAliases();
         loadOpsHealth();
       } catch (e) {
