@@ -2199,21 +2199,32 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
                 status_code=upstream.status_code,
             )
     else:
-        client = await get_http_client()
+        stream_client = await get_image_stream_client()
         upstream_url = _build_openai_image_upstream_url(used_cfg.upstream_url, "images/edits")
         headers = _build_upstream_headers(used_cfg)
-        headers.pop("content-type", None)
 
         upstream_form_fields = [(key, value) for key, value in form_fields if key != "model"]
         upstream_form_fields.append(("model", used_cfg.model_id))
+        multipart_body, multipart_content_type = _encode_multipart_form_data(upstream_form_fields, file_fields)
+        headers["content-type"] = multipart_content_type
 
         t0 = time.monotonic()
-        upstream = await client.post(
-            upstream_url,
-            data=upstream_form_fields,
-            files=file_fields,
-            headers=headers,
-        )
+        try:
+            upstream = await _send_stream_request(
+                stream_client,
+                "POST",
+                upstream_url,
+                content=multipart_body,
+                headers=headers,
+            )
+        except (httpx.TimeoutException, httpx.RequestError) as exc:
+            logger.error("OpenAI image edit transport error: %s", exc)
+            return _openai_error_response(
+                f"OpenAI image edit request failed: {exc}",
+                code="upstream_unreachable",
+                status_code=502,
+                error_type="server_error",
+            )
         duration_ms = int((time.monotonic() - t0) * 1000)
 
         response_headers = filter_headers(dict(upstream.headers))
@@ -2221,9 +2232,39 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
         content_type = upstream.headers.get("content-type", "application/json")
         upstream_request_id = extract_upstream_request_id(upstream.headers)
 
+        if "application/json" in content_type and upstream.status_code < 400:
+            image_count = _requested_image_count_from_pairs(form_fields)
+            await usage_buffer.add(
+                user.id,
+                api_key_id=getattr(user, _KEY_ID_ATTR, ""),
+                requests=1,
+                endpoint="images/edits",
+                model=display_model,
+                customer_model_alias=display_model,
+                provider_model=public_model.provider_model or used_cfg.model_id,
+                route_reason=used_route_reason,
+                duration_ms=duration_ms,
+                status_code=upstream.status_code,
+                usage_unit_type="images",
+                usage_unit_count=image_count,
+                billable_sku=public_model.billable_sku or display_model,
+                upstream_request_id=upstream_request_id,
+                image_count=image_count,
+                price_per_image_cents=public_model.price_per_image_cents,
+            )
+            return _stream_upstream_response(
+                upstream,
+                headers=response_headers,
+                media_type=content_type,
+            )
+
+        try:
+            upstream_body = await upstream.aread()
+        finally:
+            await upstream.aclose()
         if "application/json" in content_type:
             try:
-                data = upstream.json()
+                data = json.loads(upstream_body.decode("utf-8"))
             except Exception:
                 return JSONResponse(
                     content={"error": {"message": "Upstream returned invalid JSON", "type": "server_error", "code": "upstream_invalid_json"}},
@@ -2231,7 +2272,7 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
                     headers=response_headers,
                 )
         else:
-            data = upstream.text
+            data = upstream_body.decode("utf-8", errors="replace")
 
     image_count = 0
     if upstream.status_code < 400 and isinstance(data, dict):
