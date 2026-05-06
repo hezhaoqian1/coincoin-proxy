@@ -98,20 +98,37 @@
 }
 
 .landing-copy h1 {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
     margin: 0 0 16px;
-    max-width: 14ch;
+    max-width: 16ch;
     font-size: clamp(3.15rem, 5.8vw, 5.8rem);
     line-height: 0.96;
     letter-spacing: -0.045em;
     color: #1f2937;
+    text-wrap: balance;
+    overflow-wrap: anywhere;
+}
+
+.landing-title-brand,
+.landing-title-main {
+    display: block;
+}
+
+.landing-title-brand {
+    color: #1f2937;
+    -webkit-text-fill-color: #1f2937;
+}
+
+.landing-title-main {
     background: linear-gradient(112deg, #1f2937 0%, #263142 42%, #334155 50%, #38bdf8 58%, #0ea5e9 66%, #334155 73%, #1f2937 100%);
     background-size: 190% 100%;
     -webkit-background-clip: text;
     background-clip: text;
     -webkit-text-fill-color: transparent;
-    text-wrap: balance;
-    overflow-wrap: anywhere;
-    animation: landing-title-sheen 8s ease-in-out infinite;
+    animation: landing-title-sheen 4s ease-in-out infinite;
 }
 
 .landing-summary {
@@ -932,7 +949,8 @@
 
     .landing-copy h1 {
         width: min(100%, 340px);
-        max-width: 8.8ch;
+        max-width: 9.5ch;
+        gap: 6px;
         margin-bottom: 16px;
         font-size: clamp(2.2rem, 10vw, 2.8rem);
         line-height: 1.02;
@@ -1123,11 +1141,11 @@
 
 @keyframes landing-title-sheen {
     0%,
-    62%,
+    50%,
     100% {
         background-position: 0% 50%;
     }
-    78% {
+    80% {
         background-position: 100% 50%;
     }
 }
