@@ -99,6 +99,8 @@ class RequestLog(Base):
     input_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
     output_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
     cached_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
+    cache_read_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
+    cache_creation_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
     image_count: Mapped[int] = mapped_column(BigInteger, default=0)
     provider_model: Mapped[str] = mapped_column(String(128), default="")
     customer_model_alias: Mapped[str] = mapped_column(String(128), default="")

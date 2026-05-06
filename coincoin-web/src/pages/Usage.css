@@ -152,6 +152,10 @@
     padding: var(--space-lg);
 }
 
+.usage-table .data-table {
+    min-width: 1360px;
+}
+
 .model-tag-sm {
     font-family: var(--font-mono);
     font-size: 0.75rem;

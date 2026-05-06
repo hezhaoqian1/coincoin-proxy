@@ -13,6 +13,7 @@ from sqlalchemy import select, func
 
 from .config import settings
 from .db import get_db
+from .prompt_cache import build_claude_code_prompt_cache_key
 from .proxy import (
     _build_upstream_headers, _ensure_content_text, _sanitize_encrypted_ids,
     _collect_responses_event_stream_payload, _responses_payload_is_empty_success,
@@ -26,7 +27,13 @@ from .router import (
     registry as model_registry,
 )
 from .schemas import BalanceResponse, ReferralCodeUpdateRequest
-from .usage_buffer import china_today, extract_cached_tokens, usage_buffer
+from .usage_buffer import (
+    china_today,
+    extract_cache_creation_tokens,
+    extract_cache_read_tokens,
+    extract_total_input_tokens,
+    usage_buffer,
+)
 from .finance_summary import ensure_finance_summary_initialized, increment_finance_summary
 from .models import ReferralReward, User
 from .referral import (
@@ -229,6 +236,8 @@ async def get_usage(
             func.coalesce(func.sum(RequestLog.input_tokens), 0).label("input_tokens"),
             func.coalesce(func.sum(RequestLog.output_tokens), 0).label("output_tokens"),
             func.coalesce(func.sum(RequestLog.cached_tokens), 0).label("cached_tokens"),
+            func.coalesce(func.sum(RequestLog.cache_read_tokens), 0).label("cache_read_tokens"),
+            func.coalesce(func.sum(RequestLog.cache_creation_tokens), 0).label("cache_creation_tokens"),
             func.coalesce(func.sum(RequestLog.image_count), 0).label("image_count"),
             func.coalesce(func.sum(RequestLog.usage_unit_count), 0).label("usage_unit_count"),
         ).where(where)
@@ -247,8 +256,11 @@ async def get_usage(
     summary_input_tokens = _summary_value(1, "input_tokens")
     summary_output_tokens = _summary_value(2, "output_tokens")
     summary_cached_tokens = _summary_value(3, "cached_tokens")
-    summary_image_count = _summary_value(4, "image_count")
-    summary_usage_unit_count = _summary_value(5, "usage_unit_count")
+    summary_cache_read_tokens = _summary_value(4, "cache_read_tokens")
+    summary_cache_creation_tokens = _summary_value(5, "cache_creation_tokens")
+    summary_image_count = _summary_value(6, "image_count")
+    summary_usage_unit_count = _summary_value(7, "usage_unit_count")
+    summary_cache_read_tokens = max(summary_cache_read_tokens, summary_cached_tokens)
 
     result = await db.execute(
         select(RequestLog)
@@ -270,6 +282,8 @@ async def get_usage(
             "input_tokens": summary_input_tokens,
             "output_tokens": summary_output_tokens,
             "cached_tokens": summary_cached_tokens,
+            "cache_read_tokens": summary_cache_read_tokens,
+            "cache_creation_tokens": summary_cache_creation_tokens,
             "total_tokens": summary_input_tokens + summary_output_tokens,
             "image_count": summary_image_count,
             "usage_unit_count": summary_usage_unit_count,
@@ -284,6 +298,8 @@ async def get_usage(
                 "input_tokens": log.input_tokens,
                 "output_tokens": log.output_tokens,
                 "cached_tokens": getattr(log, "cached_tokens", 0),
+                "cache_read_tokens": getattr(log, "cache_read_tokens", 0) or getattr(log, "cached_tokens", 0),
+                "cache_creation_tokens": getattr(log, "cache_creation_tokens", 0),
                 "image_count": getattr(log, "image_count", 0),
                 "usage_unit_type": getattr(log, "usage_unit_type", "tokens"),
                 "usage_unit_count": getattr(log, "usage_unit_count", 0),
@@ -733,6 +749,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
     display_model = public_model.public_id
     used_cfg = resolved_model.backend
     used_route_reason = resolved_model.route_reason
+    api_key_id = getattr(user, _KEY_ID_ATTR, "")
 
     # ============== 构建 Responses API payload ==============
     resp_payload: Dict[str, Any] = {
@@ -740,6 +757,9 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
         "input": converted_messages,
         "stream": bool(payload.get("stream")),
     }
+    prompt_cache_key = build_claude_code_prompt_cache_key(user, api_key_id, display_model, public_model)
+    if prompt_cache_key:
+        resp_payload["prompt_cache_key"] = prompt_cache_key
 
     if used_cfg.strip_unsupported:
         _sanitize_encrypted_ids(resp_payload)
@@ -889,6 +909,15 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
         if tool_calls:
             message["tool_calls"] = tool_calls
 
+        usage_body = {
+            "prompt_tokens": int(prompt_tokens or 0),
+            "completion_tokens": int(completion_tokens or 0),
+            "total_tokens": int(total_tokens or 0),
+        }
+        cache_read_tokens = extract_cache_read_tokens(usage)
+        if cache_read_tokens or isinstance(usage.get("input_tokens_details"), dict) or isinstance(usage.get("prompt_tokens_details"), dict):
+            usage_body["prompt_tokens_details"] = {"cached_tokens": cache_read_tokens}
+
         return {
             "id": resp.get("id") or f"chatcmpl-{secrets.token_hex(12)}",
             "object": "chat.completion",
@@ -901,11 +930,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                     "finish_reason": finish_reason,
                 }
             ],
-            "usage": {
-                "prompt_tokens": int(prompt_tokens or 0),
-                "completion_tokens": int(completion_tokens or 0),
-                "total_tokens": int(total_tokens or 0),
-            },
+            "usage": usage_body,
         }
 
     _STRIP_PARAMS = ("temperature", "top_p", "presence_penalty", "frequency_penalty",
@@ -1020,7 +1045,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
         has_tool_calls = False
         first_content_sent = False
         compat_stream_t0 = time.monotonic()
-        _compat_stream_usage = {"input": 0, "output": 0, "cached": 0}
+        _compat_stream_usage = {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0}
 
         async def iter_events():
             nonlocal tool_call_index, has_tool_calls, first_content_sent
@@ -1040,9 +1065,10 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
 
                     usage = event.get("usage") or (event.get("response") or {}).get("usage")
                     if usage:
-                        _compat_stream_usage["input"] = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
+                        _compat_stream_usage["input"] = extract_total_input_tokens(usage)
                         _compat_stream_usage["output"] = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
-                        _compat_stream_usage["cached"] = extract_cached_tokens(usage)
+                        _compat_stream_usage["cache_read"] = extract_cache_read_tokens(usage)
+                        _compat_stream_usage["cache_creation"] = extract_cache_creation_tokens(usage)
                     
                     # 处理文本内容
                     if event_type in ("response.output_text.delta", "response.output_text.chunk"):
@@ -1162,10 +1188,11 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                     dur = int((time.monotonic() - compat_stream_t0) * 1000)
                     asyncio.create_task(usage_buffer.add(
                         user.id,
-                        api_key_id=getattr(user, _KEY_ID_ATTR, ""),
+                        api_key_id=api_key_id,
                         input_tokens=_compat_stream_usage["input"],
                         output_tokens=_compat_stream_usage["output"],
-                        cached_tokens=_compat_stream_usage["cached"],
+                        cache_read_tokens=_compat_stream_usage["cache_read"],
+                        cache_creation_tokens=_compat_stream_usage["cache_creation"],
                         requests=1,
                         endpoint="chat/completions:stream",
                         model=display_model,
@@ -1275,7 +1302,8 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
 
     input_tokens_delta = 0
     output_tokens_delta = 0
-    cached_tokens_delta = 0
+    cache_read_tokens_delta = 0
+    cache_creation_tokens_delta = 0
     if isinstance(data, dict) and isinstance(data.get("error"), dict):
         return JSONResponse(
             content={"error": data["error"]},
@@ -1291,17 +1319,19 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                 status_code=502,
             )
         usage = data.get("usage") or {}
-        input_tokens_delta = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
+        input_tokens_delta = extract_total_input_tokens(usage)
         output_tokens_delta = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
-        cached_tokens_delta = extract_cached_tokens(usage)
+        cache_read_tokens_delta = extract_cache_read_tokens(usage)
+        cache_creation_tokens_delta = extract_cache_creation_tokens(usage)
 
     if upstream.status_code < 400:
         await usage_buffer.add(
             user.id,
-            api_key_id=getattr(user, _KEY_ID_ATTR, ""),
+            api_key_id=api_key_id,
             input_tokens=input_tokens_delta,
             output_tokens=output_tokens_delta,
-            cached_tokens=cached_tokens_delta,
+            cache_read_tokens=cache_read_tokens_delta,
+            cache_creation_tokens=cache_creation_tokens_delta,
             requests=1,
             endpoint="chat/completions",
             model=display_model,
@@ -1391,11 +1421,13 @@ async def embeddings(request: Request, db: AsyncSession = Depends(get_db)):
         data = upstream.text
 
     input_tokens_delta = 0
-    cached_tokens_delta = 0
+    cache_read_tokens_delta = 0
+    cache_creation_tokens_delta = 0
     if upstream.status_code < 400 and isinstance(data, dict):
         usage = data.get("usage") or {}
         input_tokens_delta = int(usage.get("prompt_tokens") or usage.get("total_tokens") or 0)
-        cached_tokens_delta = extract_cached_tokens(usage)
+        cache_read_tokens_delta = extract_cache_read_tokens(usage)
+        cache_creation_tokens_delta = extract_cache_creation_tokens(usage)
 
     if upstream.status_code < 400:
         await usage_buffer.add(
@@ -1403,7 +1435,8 @@ async def embeddings(request: Request, db: AsyncSession = Depends(get_db)):
             api_key_id=getattr(user, _KEY_ID_ATTR, ""),
             input_tokens=input_tokens_delta,
             output_tokens=0,
-            cached_tokens=cached_tokens_delta,
+            cache_read_tokens=cache_read_tokens_delta,
+            cache_creation_tokens=cache_creation_tokens_delta,
             requests=1,
             endpoint="embeddings",
             model=display_model,

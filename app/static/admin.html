@@ -1788,7 +1788,7 @@
       <div class="modal-body" style="padding:0;max-height:520px;overflow-y:auto">
         <table>
           <thead>
-            <tr><th>时间</th><th>接口</th><th>别名</th><th>上游模型</th><th>用量</th><th>SKU</th><th>费用</th><th>延迟</th><th>状态</th></tr>
+            <tr><th>时间</th><th>接口</th><th>别名</th><th>上游模型</th><th>用量</th><th>缓存</th><th>SKU</th><th>费用</th><th>延迟</th><th>状态</th></tr>
           </thead>
           <tbody id="logsBody"></tbody>
         </table>
@@ -2512,7 +2512,7 @@
       logsUserId = userId;
       logsOffset = 0;
       document.getElementById('logsModalTitle').textContent = `请求日志 - ${displayName}`;
-      document.getElementById('logsBody').innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;color:var(--text-tertiary)">加载中...</td></tr>';
+      document.getElementById('logsBody').innerHTML = '<tr><td colspan="10" style="text-align:center;padding:40px;color:var(--text-tertiary)">加载中...</td></tr>';
       document.getElementById('logsPagination').textContent = '';
       openModal('logsModal');
       await loadRequestLogs();
@@ -2525,19 +2525,21 @@
         const data = await r.json();
         const body = document.getElementById('logsBody');
         if (!data.data.length) {
-          body.innerHTML = '<tr><td colspan="9"><div class="empty-state" style="padding:40px"><div class="empty-state-icon">📋</div><h3>暂无请求日志</h3></div></td></tr>';
+          body.innerHTML = '<tr><td colspan="10"><div class="empty-state" style="padding:40px"><div class="empty-state-icon">📋</div><h3>暂无请求日志</h3></div></td></tr>';
         } else {
           body.innerHTML = data.data.map(l => {
             const sc = l.status_code < 400 ? 'badge-success' : 'badge-error';
             const usageLabel = l.usage_unit_type === 'images'
               ? `${formatNum(l.image_count || l.usage_unit_count || 0)} 张图片`
               : `输入 ${formatNum(l.input_tokens || 0)} / 输出 ${formatNum(l.output_tokens || 0)}`;
+            const cacheLabel = `读 ${formatNum(l.cache_read_tokens || l.cached_tokens || 0)} / 写 ${formatNum(l.cache_creation_tokens || 0)}`;
             return `<tr>
               <td class="text-sm">${l.created_at ? utcDate(l.created_at).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '-'}</td>
               <td class="text-sm">${l.endpoint}</td>
               <td class="text-sm text-muted">${l.model}</td>
               <td class="text-sm text-muted">${l.provider_model || '-'}</td>
               <td class="text-sm">${usageLabel}<div class="text-muted" style="font-size:11px">${l.usage_unit_type}:${formatNum(l.usage_unit_count || 0)}</div></td>
+              <td class="text-sm text-muted">${cacheLabel}</td>
               <td class="text-sm text-muted">${l.billable_sku || '-'}</td>
               <td class="text-sm text-success">$${l.cost_usd.toFixed(4)}</td>
               <td class="text-sm text-muted">${l.duration_ms}ms</td>

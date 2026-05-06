@@ -17,6 +17,37 @@ function formatCacheHitRate(cachedTokens, inputTokens) {
     return `${((cachedTokens / inputTokens) * 100).toFixed(1)}%`
 }
 
+function getCacheReadTokens(log) {
+    return log.cache_read_tokens ?? log.cached_tokens ?? 0
+}
+
+function getCacheCreationTokens(log) {
+    return log.cache_creation_tokens ?? 0
+}
+
+function getTotalInputForCache(log) {
+    const input = Number(log.input_tokens || 0)
+    const cacheRead = getCacheReadTokens(log)
+    const cacheCreation = getCacheCreationTokens(log)
+    return input >= cacheRead + cacheCreation ? input : input + cacheRead + cacheCreation
+}
+
+function getRegularInputTokens(log) {
+    const input = Number(log.input_tokens || 0)
+    const cacheRead = getCacheReadTokens(log)
+    const cacheCreation = getCacheCreationTokens(log)
+    return input >= cacheRead + cacheCreation
+        ? Math.max(0, input - cacheRead - cacheCreation)
+        : input
+}
+
+function formatDurationMs(durationMs) {
+    const ms = Number(durationMs || 0)
+    if (ms < 1000) return `${Math.max(0, Math.round(ms))}ms`
+    if (ms < 10_000) return `${(ms / 1000).toFixed(2)}s`
+    return `${(ms / 1000).toFixed(1)}s`
+}
+
 function getDateRange(option) {
     if (!option) return { start_date: '', end_date: '' }
     const now = new Date()
@@ -139,12 +170,12 @@ export default function Usage() {
 
     const exportCSV = () => {
         if (!usage?.data?.length) return
-        const headers = ['时间', '端点', '模型', '计量类型', '计量值', 'Input Token', '缓存输入 Token', '非缓存输入 Token', 'Output Token', '总 Token', '缓存命中率', '花费($)', '耗时(ms)', '状态码']
+        const headers = ['时间', '端点', '模型', '计量类型', '计量值', 'Input Token', '缓存读取 Token', '缓存写入 Token', '普通输入 Token', 'Output Token', '总 Token', '缓存读取占比', '花费($)', '耗时(ms)', '状态码']
         const rows = usage.data.map(d => [
             d.created_at, d.endpoint, d.model,
             d.usage_unit_type, d.usage_unit_type === 'images' ? (d.image_count || d.usage_unit_count) : d.usage_unit_count,
-            d.input_tokens, d.cached_tokens || 0, Math.max(0, (d.input_tokens || 0) - (d.cached_tokens || 0)), d.output_tokens, d.total_tokens,
-            formatCacheHitRate(d.cached_tokens || 0, d.input_tokens || 0),
+            d.input_tokens, getCacheReadTokens(d), getCacheCreationTokens(d), getRegularInputTokens(d), d.output_tokens, d.total_tokens,
+            formatCacheHitRate(getCacheReadTokens(d), getTotalInputForCache(d)),
             d.cost_usd.toFixed(4), d.duration_ms, d.status_code
         ])
         const csv = [headers, ...rows].map(r => r.join(',')).join('\n')
@@ -221,13 +252,15 @@ export default function Usage() {
     const totalCost = summary ? summary.cost_usd : usage.data.reduce((s, d) => s + d.cost_usd, 0)
     const totalTokens = summary ? summary.total_tokens : usage.data.reduce((s, d) => s + d.total_tokens, 0)
     const totalImages = summary ? summary.image_count : usage.data.reduce((s, d) => s + (d.image_count || 0), 0)
-    const totalCachedTokens = summary ? summary.cached_tokens : usage.data.reduce((s, d) => s + (d.cached_tokens || 0), 0)
-    const totalInputTokens = summary ? summary.input_tokens : usage.data.reduce((s, d) => s + (d.input_tokens || 0), 0)
+    const totalCacheReadTokens = summary ? (summary.cache_read_tokens ?? summary.cached_tokens ?? 0) : usage.data.reduce((s, d) => s + getCacheReadTokens(d), 0)
+    const totalCacheCreationTokens = summary ? (summary.cache_creation_tokens ?? 0) : usage.data.reduce((s, d) => s + getCacheCreationTokens(d), 0)
+    const totalInputTokens = summary ? summary.input_tokens : usage.data.reduce((s, d) => s + getTotalInputForCache(d), 0)
+    const totalInputForCache = Math.max(totalInputTokens, totalCacheReadTokens + totalCacheCreationTokens)
 
     return (
         <AppShell
             title="请求日志"
-            description="看每次请求的模型、缓存命中、计量和花费。"
+            description="看每次请求的模型、缓存读取、缓存写入、计量和花费。"
             actions={<button className="btn btn-secondary btn-sm" onClick={exportCSV}>导出 CSV</button>}
         >
             <div className="usage-page">
@@ -274,9 +307,11 @@ export default function Usage() {
                             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ec4899" strokeWidth="2"><path d="M12 3l7 4v10l-7 4-7-4V7l7-4z" /><path d="M9 12h6" /></svg>
                         </div>
                         <div className="stat-info">
-                            <span className="stat-label">当前筛选缓存输入</span>
-                            <span className="stat-value">{totalCachedTokens.toLocaleString()}</span>
-                            <span className="stat-subvalue">{formatCacheHitRate(totalCachedTokens, totalInputTokens)} 命中率</span>
+                            <span className="stat-label">当前筛选缓存读取</span>
+                            <span className="stat-value">{totalCacheReadTokens.toLocaleString()}</span>
+                            <span className="stat-subvalue">
+                                写入 {totalCacheCreationTokens.toLocaleString()} · {formatCacheHitRate(totalCacheReadTokens, totalInputForCache)} 读取占比
+                            </span>
                         </div>
                     </div>
                 </div>
@@ -370,10 +405,11 @@ export default function Usage() {
                                     <th>模型</th>
                                     <th>计量</th>
                                     <th>Input Token</th>
-                                    <th>缓存输入</th>
-                                    <th>非缓存输入</th>
+                                    <th>缓存读取</th>
+                                    <th>缓存写入</th>
+                                    <th>普通输入</th>
                                     <th>Output Token</th>
-                                    <th>缓存命中率</th>
+                                    <th>读取占比</th>
                                     <th>总 Token</th>
                                     <th>花费</th>
                                     <th>耗时</th>
@@ -394,22 +430,23 @@ export default function Usage() {
                                             </span>
                                         </td>
                                         <td>{log.input_tokens.toLocaleString()}</td>
-                                        <td>{(log.cached_tokens || 0).toLocaleString()}</td>
-                                        <td>{Math.max(0, (log.input_tokens || 0) - (log.cached_tokens || 0)).toLocaleString()}</td>
+                                        <td>{getCacheReadTokens(log).toLocaleString()}</td>
+                                        <td>{getCacheCreationTokens(log).toLocaleString()}</td>
+                                        <td>{getRegularInputTokens(log).toLocaleString()}</td>
                                         <td>{log.output_tokens.toLocaleString()}</td>
                                         <td>
                                             {log.usage_unit_type === 'images'
                                                 ? '-'
-                                                : formatCacheHitRate(log.cached_tokens || 0, log.input_tokens || 0)}
+                                                : formatCacheHitRate(getCacheReadTokens(log), getTotalInputForCache(log))}
                                         </td>
                                         <td><strong>{log.total_tokens.toLocaleString()}</strong></td>
                                         <td className="cost-cell">${log.cost_usd.toFixed(2)}</td>
-                                        <td>{(log.duration_ms / 1000).toFixed(1)}s</td>
+                                        <td>{formatDurationMs(log.duration_ms)}</td>
                                         <td><span className={`badge ${log.status_code === 200 ? 'badge-success' : 'badge-error'}`}>{log.status_code}</span></td>
                                     </tr>
                                 ))}
                                 {usage.data.length === 0 && (
-                                    <tr><td colSpan="13" style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-tertiary)' }}>暂无数据</td></tr>
+                                    <tr><td colSpan="14" style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-tertiary)' }}>暂无数据</td></tr>
                                 )}
                             </tbody>
                         </table>

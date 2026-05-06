@@ -163,6 +163,8 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             input_tokens=0,
             output_tokens=0,
             cached_tokens=0,
+            cache_read_tokens=0,
+            cache_creation_tokens=0,
             image_count=2,
             provider_model="gemini-3.1-flash-image-preview",
             customer_model_alias="gemini-image",
@@ -201,6 +203,8 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(item["usage_unit_type"], "images")
         self.assertEqual(item["usage_unit_count"], 2)
         self.assertEqual(item["image_count"], 2)
+        self.assertEqual(item["cache_read_tokens"], 0)
+        self.assertEqual(item["cache_creation_tokens"], 0)
         self.assertEqual(item["billable_sku"], "gemini-image")
         self.assertEqual(item["upstream_request_id"], "req_img_123")
 
@@ -214,6 +218,8 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             input_tokens=10,
             output_tokens=5,
             cached_tokens=0,
+            cache_read_tokens=0,
+            cache_creation_tokens=0,
             image_count=0,
             provider_model="gpt-5.4",
             customer_model_alias="gpt-5.4",
@@ -228,7 +234,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         fake_db = _FakeDB(
             execute_results=[
                 _FakeScalarResult(1),
-                _FakeSummaryResult((1, 10, 5, 0, 0, 15)),
+                _FakeSummaryResult((1, 10, 5, 0, 0, 0, 0, 15)),
                 _FakeScalarsResult([log]),
             ]
         )
@@ -243,6 +249,8 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["total"], 1)
         self.assertEqual(payload["summary"]["cost_cents"], 1)
         self.assertEqual(payload["summary"]["total_tokens"], 15)
+        self.assertEqual(payload["summary"]["cache_read_tokens"], 0)
+        self.assertEqual(payload["summary"]["cache_creation_tokens"], 0)
         self.assertEqual(payload["data"][0]["api_key_id"], "k_selected")
 
     async def test_user_usage_summary_covers_all_filtered_rows_not_current_page(self) -> None:
@@ -255,6 +263,8 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             input_tokens=10,
             output_tokens=5,
             cached_tokens=2,
+            cache_read_tokens=0,
+            cache_creation_tokens=0,
             image_count=0,
             provider_model="gpt-5.4",
             customer_model_alias="gpt-5.4",
@@ -269,7 +279,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         fake_db = _FakeDB(
             execute_results=[
                 _FakeScalarResult(3500),
-                _FakeSummaryResult((85, 1_200_000, 116_675, 400_000, 3, 1_316_675)),
+                _FakeSummaryResult((85, 1_200_000, 116_675, 400_000, 0, 12_345, 3, 1_316_675)),
                 _FakeScalarsResult([log]),
             ]
         )
@@ -289,14 +299,18 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["summary"]["cost_usd"], 0.85)
         self.assertEqual(payload["summary"]["total_tokens"], 1_316_675)
         self.assertEqual(payload["summary"]["cached_tokens"], 400_000)
+        self.assertEqual(payload["summary"]["cache_read_tokens"], 400_000)
+        self.assertEqual(payload["summary"]["cache_creation_tokens"], 12_345)
         self.assertEqual(payload["summary"]["image_count"], 3)
+        self.assertEqual(payload["data"][0]["cache_read_tokens"], 2)
+        self.assertEqual(payload["data"][0]["cache_creation_tokens"], 0)
 
     async def test_usage_date_filters_use_china_day_boundaries(self) -> None:
         user = SimpleNamespace(id="u_1")
         fake_db = _FakeDB(
             execute_results=[
                 _FakeScalarResult(0),
-                _FakeSummaryResult((0, 0, 0, 0, 0, 0)),
+                _FakeSummaryResult((0, 0, 0, 0, 0, 0, 0, 0)),
                 _FakeScalarsResult([]),
             ]
         )
@@ -319,7 +333,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         fake_db = _FakeDB(
             execute_results=[
                 _FakeScalarResult(0),
-                _FakeSummaryResult((0, 0, 0, 0, 0, 0)),
+                _FakeSummaryResult((0, 0, 0, 0, 0, 0, 0, 0)),
                 _FakeScalarsResult([]),
             ]
         )

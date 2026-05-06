@@ -663,6 +663,8 @@ async def list_user_request_logs(
                 "input_tokens": log.input_tokens,
                 "output_tokens": log.output_tokens,
                 "cached_tokens": getattr(log, "cached_tokens", 0),
+                "cache_read_tokens": getattr(log, "cache_read_tokens", 0) or getattr(log, "cached_tokens", 0),
+                "cache_creation_tokens": getattr(log, "cache_creation_tokens", 0),
                 "image_count": getattr(log, "image_count", 0),
                 "usage_unit_type": getattr(log, "usage_unit_type", "tokens"),
                 "usage_unit_count": getattr(log, "usage_unit_count", 0),
