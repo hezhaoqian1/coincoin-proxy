@@ -399,6 +399,39 @@ class EmailVerificationAuthTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(account.failed_attempts, 0)
         self.assertEqual(db.commits, 1)
 
+    async def test_verified_account_can_login_with_email(self):
+        account = SimpleNamespace(
+            username="alice",
+            linked_user_id="u_1",
+            password_hash="stored",
+            failed_attempts=0,
+            locked_until=None,
+            last_login_at=None,
+            status="active",
+        )
+        user = SimpleNamespace(id="u_1", username="alice", email="alice@gmail.com", email_verified_at=datetime.utcnow())
+        db = _FakeDB(
+            execute_results=[
+                _ScalarOneOrNoneResult(user),
+                _ScalarOneOrNoneResult(account),
+                _ScalarOneOrNoneResult(user),
+            ]
+        )
+        payload = auth_module.AuthLoginRequest(username="Alice@Gmail.com", password="secret123")
+
+        with patch.object(auth_module.rate_limiter, "allow", AsyncMock(return_value=True)), patch.object(
+            auth_module, "verify_password", AsyncMock(return_value=True)
+        ), patch.object(auth_module, "generate_api_key", return_value="sk_cc_email_session"), patch.object(
+            auth_module, "hash_key", return_value="hashed-email-session"
+        ), patch.object(auth_module, "encrypt_api_key", return_value="encrypted-email-session"):
+            result = await auth_module.login(payload, _request(), db)
+
+        self.assertEqual(result.user_id, "u_1")
+        self.assertEqual(result.username, "alice")
+        self.assertEqual(result.session_key, "sk_cc_email_session")
+        self.assertEqual(account.failed_attempts, 0)
+        self.assertEqual(db.commits, 1)
+
     async def test_legacy_account_with_unverified_email_can_still_login(self):
         account = SimpleNamespace(
             username="legacy",
