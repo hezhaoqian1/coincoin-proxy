@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     key_prefix: str = "sk_cc_"
     key_pepper: str = "coincoin-pepper"
     key_encryption_secret: str = ""
+    console_session_days: int = 30
+    console_session_refresh_threshold_days: int = 15
     monitoring_token: str = ""
     monitoring_api_key: str = ""
     monitoring_public_base_url: str = ""

@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -179,6 +180,40 @@ class ProxyAuthCacheTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(ctx.exception.status_code, 403)
         self.assertEqual(ctx.exception.detail, "api key ip not allowed")
+
+    async def test_authenticate_user_refreshes_console_session(self) -> None:
+        request = self._request()
+        old_expires_at = datetime.utcnow() + timedelta(days=1)
+        session_key = SimpleNamespace(
+            id="k_session",
+            user=SimpleNamespace(id="u_test", status="active"),
+            user_id="u_test",
+            kind="session",
+            status="active",
+            expires_at=old_expires_at,
+            monthly_quota_cents=None,
+            total_quota_cents=None,
+            ip_allowlist=None,
+        )
+        db = SimpleNamespace(
+            execute=AsyncMock(return_value=_ScalarResult(session_key)),
+            commit=AsyncMock(),
+        )
+
+        with patch.object(proxy_module.model_registry, "ensure_initialized"), patch.object(
+            proxy_module.model_registry, "has_routable_models", return_value=True
+        ), patch.object(
+            proxy_module.key_cache, "get", AsyncMock(return_value=None)
+        ), patch.object(
+            proxy_module.key_cache, "set", AsyncMock()
+        ), patch.object(
+            proxy_module, "hash_key", return_value="hashed-session"
+        ):
+            user = await proxy_module.authenticate_user(request, db)
+
+        self.assertEqual(user.id, "u_test")
+        self.assertGreater(session_key.expires_at, old_expires_at + timedelta(days=20))
+        db.commit.assert_awaited_once()
 
     async def test_authorize_request_rejects_monthly_key_quota(self) -> None:
         request = self._request()

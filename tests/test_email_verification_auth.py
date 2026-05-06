@@ -463,10 +463,11 @@ class EmailVerificationAuthTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_send_current_user_email_code_updates_email_without_blocking_account(self):
         user = SimpleNamespace(id="u_1", username="alice", email=None, email_verified_at=None, status="active")
+        old_expires_at = datetime.utcnow() + timedelta(days=1)
         session_key = SimpleNamespace(
             user_id="u_1",
             kind="session",
-            expires_at=datetime.utcnow() + timedelta(days=1),
+            expires_at=old_expires_at,
         )
         db = _FakeDB(
             execute_results=[
@@ -489,6 +490,7 @@ class EmailVerificationAuthTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(user.email, "alice@gmail.com")
         self.assertIsNone(user.email_verified_at)
         self.assertEqual(db.commits, 1)
+        self.assertGreater(session_key.expires_at, old_expires_at + timedelta(days=20))
         self.assertEqual(len(background_tasks.tasks), 1)
 
     async def test_send_current_user_email_code_reuses_existing_email(self):

@@ -30,7 +30,8 @@ function PublicShell({ children }) {
 
 function ProtectedRoute({ children }) {
     const { isLoggedIn } = useAuth()
-    if (!isLoggedIn) return <Navigate to="/login" replace />
+    const location = useLocation()
+    if (!isLoggedIn) return <Navigate to="/login" replace state={{ from: location.pathname + location.search + location.hash }} />
     return children
 }
 

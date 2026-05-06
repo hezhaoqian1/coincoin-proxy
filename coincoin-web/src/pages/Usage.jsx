@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { MOCK_USAGE, getApiKey, listDeveloperKeys } from '../api/client'
+import { getUsageLogs, listDeveloperKeys } from '../api/client'
 import AppShell from '../components/AppShell'
 import { formatLocalTime, getLocalDateRangeIso, getLocalIsoDate } from '../utils/time'
 import './Usage.css'
@@ -100,6 +100,7 @@ export default function Usage() {
         }
         : getDateRange(initialRangeOption)
     const [usage, setUsage] = useState(null)
+    const [loadError, setLoadError] = useState('')
     const [keysState, setKeysState] = useState({ data: [] })
     const [rangeOpen, setRangeOpen] = useState(false)
     const rangePickerRef = useRef(null)
@@ -120,16 +121,13 @@ export default function Usage() {
 
     const load = useCallback(async () => {
         try {
-            const params = new URLSearchParams({ limit, offset: page * limit })
-            buildUsageFilterParams(filters).forEach((value, key) => params.set(key, value))
-
-            const res = await fetch(`/v1/usage?${params}`, {
-                headers: { 'Authorization': `Bearer ${getApiKey()}` }
-            })
-            if (!res.ok) throw new Error()
-            setUsage(await res.json())
-        } catch {
-            setUsage(MOCK_USAGE)
+            const queryFilters = {}
+            buildUsageFilterParams(filters).forEach((value, key) => { queryFilters[key] = value })
+            setUsage(await getUsageLogs(limit, page * limit, queryFilters))
+            setLoadError('')
+        } catch (err) {
+            setUsage(null)
+            setLoadError(err.message || '请求日志加载失败，请重新登录后再试。')
         }
     }, [page, filters])
 
@@ -243,7 +241,14 @@ export default function Usage() {
     if (!usage) {
         return (
             <AppShell title="请求日志" description="看每次请求的模型、计量、状态码和花费。">
-                <div className="loading-state"><div className="loading-spinner"></div><p>加载中...</p></div>
+                {loadError ? (
+                    <div className="loading-state error-state">
+                        <h3>需要重新登录</h3>
+                        <p>{loadError}</p>
+                    </div>
+                ) : (
+                    <div className="loading-state"><div className="loading-spinner"></div><p>加载中...</p></div>
+                )}
             </AppShell>
         )
     }
