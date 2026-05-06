@@ -155,7 +155,10 @@ export default function Landing() {
                                 <span>统一 Key，统一计费，统一控制台</span>
                             </div>
                             <span className="landing-kicker">ClawFather API</span>
-                            <h1>用 CoinCoin，打开 AI 时代的模型网关</h1>
+                            <h1>
+                                <span className="landing-title-brand">CoinCoin.ai</span>
+                                <span className="landing-title-main">打开 AI 时代的模型网关</span>
+                            </h1>
                             <p className="landing-summary">
                                 不用在多个平台之间来回切换。生成开发者 Key 后，把配置复制到
                                 Codex、Claude Code、SDK 或常用客户端里，就能开始调用文本和图片接口。
