@@ -7,6 +7,12 @@ import yaml
 IMAGE_CAPABILITIES = {"images/generations", "images/edits"}
 EMBEDDING_CAPABILITIES = {"embeddings"}
 TEXT_CAPABILITIES = {"chat/completions", "responses"}
+FIXED_TEXT_PRICE = (500, 3000)
+CHEAP_TEXT_PRICE = (75, 450)
+FIXED_INPUT_PRICE_PLACEHOLDER = "${COINCOIN_PRICE_INPUT_PER_MILLION:-500}"
+FIXED_OUTPUT_PRICE_PLACEHOLDER = "${COINCOIN_PRICE_OUTPUT_PER_MILLION:-3000}"
+CHEAP_INPUT_PRICE_PLACEHOLDER = "${COINCOIN_CHEAP_PRICE_INPUT:-${COINCOIN_GPT_54_MINI_INPUT_PRICE:-75}}"
+CHEAP_OUTPUT_PRICE_PLACEHOLDER = "${COINCOIN_CHEAP_PRICE_OUTPUT:-${COINCOIN_GPT_54_MINI_OUTPUT_PRICE:-450}}"
 CLAUDE_FIXED_ALIASES = {
     "claude-opus-4-7",
     "opus",
@@ -24,30 +30,30 @@ CLAUDE_CHEAP_ALIASES = {
     "sonnet[1m]",
 }
 OFFICIAL_DEFAULT_TEXT_PRICES = {
-    "${COINCOIN_FIXED_MODEL}": (500, 3000),
+    "${COINCOIN_FIXED_MODEL}": FIXED_TEXT_PRICE,
     "gpt-5.4": (250, 1500),
     "gpt-5": (125, 1000),
     "gpt-5.1": (125, 1000),
     "gpt-5.1-codex": (125, 1000),
-    "gpt-5.1-codex-mini": (75, 450),
-    "gpt-5.1-codex-max": (500, 3000),
+    "gpt-5.1-codex-mini": CHEAP_TEXT_PRICE,
+    "gpt-5.1-codex-max": FIXED_TEXT_PRICE,
     "gpt-5.2": (175, 1400),
     "gpt-5.2-codex": (175, 1400),
     "gpt-5.3-codex": (175, 1400),
-    "gpt-5.4-mini": (75, 450),
-    "gpt-5.5": (500, 3000),
-    "claude-opus-4-7": (500, 3000),
-    "claude-sonnet-4-6": (500, 3000),
-    "claude-haiku-4-5": (500, 3000),
-    "claude-haiku-4-5-20251001": (500, 3000),
-    "opus": (500, 3000),
-    "sonnet": (500, 3000),
-    "haiku": (500, 3000),
-    "best": (500, 3000),
-    "default": (500, 3000),
-    "opus[1m]": (500, 3000),
-    "sonnet[1m]": (500, 3000),
-    "opusplan": (500, 3000),
+    "gpt-5.4-mini": CHEAP_TEXT_PRICE,
+    "gpt-5.5": FIXED_TEXT_PRICE,
+    "claude-opus-4-7": FIXED_TEXT_PRICE,
+    "claude-sonnet-4-6": CHEAP_TEXT_PRICE,
+    "claude-haiku-4-5": CHEAP_TEXT_PRICE,
+    "claude-haiku-4-5-20251001": CHEAP_TEXT_PRICE,
+    "opus": FIXED_TEXT_PRICE,
+    "sonnet": CHEAP_TEXT_PRICE,
+    "haiku": CHEAP_TEXT_PRICE,
+    "best": FIXED_TEXT_PRICE,
+    "default": FIXED_TEXT_PRICE,
+    "opus[1m]": FIXED_TEXT_PRICE,
+    "sonnet[1m]": CHEAP_TEXT_PRICE,
+    "opusplan": FIXED_TEXT_PRICE,
     "${COINCOIN_EMBEDDING_MODEL:-text-embedding-3-small}": (2, 0),
     "gemini-balanced": (10, 40),
     "gemini-fast": (30, 250),
@@ -73,7 +79,10 @@ def _placeholder_default(value):
     marker = ":-"
     if marker not in value or not value.endswith("}"):
         return value
-    return value.rsplit(marker, 1)[1][:-1]
+    default = value.rsplit(marker, 1)[1][:-1]
+    while isinstance(default, str) and default.endswith("}") and default.count("${") < default.count("}"):
+        default = default[:-1]
+    return default
 
 
 class GatewayCatalogSyncTests(unittest.TestCase):
@@ -162,6 +171,8 @@ class GatewayCatalogSyncTests(unittest.TestCase):
                 model = public_models[alias]
                 self.assertEqual(model.get("provider_model"), "${COINCOIN_FIXED_MODEL}")
                 self.assertEqual(model.get("upstream_model"), "${COINCOIN_FIXED_MODEL}")
+                self.assertEqual(model.get("price_input_per_million"), FIXED_INPUT_PRICE_PLACEHOLDER)
+                self.assertEqual(model.get("price_output_per_million"), FIXED_OUTPUT_PRICE_PLACEHOLDER)
 
         for alias in CLAUDE_CHEAP_ALIASES:
             with self.subTest(alias=alias):
@@ -169,6 +180,8 @@ class GatewayCatalogSyncTests(unittest.TestCase):
                 expected = "${COINCOIN_CHEAP_MODEL:-${COINCOIN_FIXED_MODEL}}"
                 self.assertEqual(model.get("provider_model"), expected)
                 self.assertEqual(model.get("upstream_model"), expected)
+                self.assertEqual(model.get("price_input_per_million"), CHEAP_INPUT_PRICE_PLACEHOLDER)
+                self.assertEqual(model.get("price_output_per_million"), CHEAP_OUTPUT_PRICE_PLACEHOLDER)
 
     def test_text_models_match_gemini_gateway_shape(self) -> None:
         for model in self.gateway_models:
