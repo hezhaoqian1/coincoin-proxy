@@ -266,7 +266,7 @@ function ReferralNudgeCard() {
             </div>
             <div className="referral-nudge-copy">
                 <span>邀请朋友</span>
-                <strong>新人最高得 $60，你最高得 $10</strong>
+                <strong>新人最高可得 $45，你最高得 $10</strong>
                 <p>好友充值后，你还可获得到账额度 20% 的奖励。</p>
             </div>
             <div className="referral-nudge-meta">
