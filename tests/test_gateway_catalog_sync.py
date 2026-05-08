@@ -9,11 +9,20 @@ EMBEDDING_CAPABILITIES = {"embeddings"}
 TEXT_CAPABILITIES = {"chat/completions", "responses"}
 FIXED_TEXT_PRICE = (500, 3000)
 CHEAP_TEXT_PRICE = (75, 450)
+CLAUDE_OPUS_PRICE = (500, 2500)
+CLAUDE_SONNET_PRICE = (300, 1500)
+CLAUDE_HAIKU_PRICE = (100, 500)
 FIXED_INPUT_PRICE_PLACEHOLDER = "${COINCOIN_PRICE_INPUT_PER_MILLION:-500}"
 FIXED_OUTPUT_PRICE_PLACEHOLDER = "${COINCOIN_PRICE_OUTPUT_PER_MILLION:-3000}"
 CHEAP_INPUT_PRICE_PLACEHOLDER = "${COINCOIN_CHEAP_PRICE_INPUT:-${COINCOIN_GPT_54_MINI_INPUT_PRICE:-75}}"
 CHEAP_OUTPUT_PRICE_PLACEHOLDER = "${COINCOIN_CHEAP_PRICE_OUTPUT:-${COINCOIN_GPT_54_MINI_OUTPUT_PRICE:-450}}"
-CLAUDE_FIXED_ALIASES = {
+CLAUDE_OPUS_INPUT_PRICE_PLACEHOLDER = "${COINCOIN_CLAUDE_OPUS_INPUT_PRICE:-500}"
+CLAUDE_OPUS_OUTPUT_PRICE_PLACEHOLDER = "${COINCOIN_CLAUDE_OPUS_OUTPUT_PRICE:-2500}"
+CLAUDE_SONNET_INPUT_PRICE_PLACEHOLDER = "${COINCOIN_CLAUDE_SONNET_INPUT_PRICE:-300}"
+CLAUDE_SONNET_OUTPUT_PRICE_PLACEHOLDER = "${COINCOIN_CLAUDE_SONNET_OUTPUT_PRICE:-1500}"
+CLAUDE_HAIKU_INPUT_PRICE_PLACEHOLDER = "${COINCOIN_CLAUDE_HAIKU_INPUT_PRICE:-100}"
+CLAUDE_HAIKU_OUTPUT_PRICE_PLACEHOLDER = "${COINCOIN_CLAUDE_HAIKU_OUTPUT_PRICE:-500}"
+CLAUDE_OPUS_ALIASES = {
     "claude-opus-4-7",
     "opus",
     "best",
@@ -21,13 +30,15 @@ CLAUDE_FIXED_ALIASES = {
     "opus[1m]",
     "opusplan",
 }
-CLAUDE_CHEAP_ALIASES = {
+CLAUDE_SONNET_ALIASES = {
     "claude-sonnet-4-6",
+    "sonnet",
+    "sonnet[1m]",
+}
+CLAUDE_HAIKU_ALIASES = {
     "claude-haiku-4-5",
     "claude-haiku-4-5-20251001",
-    "sonnet",
     "haiku",
-    "sonnet[1m]",
 }
 OFFICIAL_DEFAULT_TEXT_PRICES = {
     "${COINCOIN_FIXED_MODEL}": FIXED_TEXT_PRICE,
@@ -42,18 +53,18 @@ OFFICIAL_DEFAULT_TEXT_PRICES = {
     "gpt-5.3-codex": (175, 1400),
     "gpt-5.4-mini": CHEAP_TEXT_PRICE,
     "gpt-5.5": FIXED_TEXT_PRICE,
-    "claude-opus-4-7": FIXED_TEXT_PRICE,
-    "claude-sonnet-4-6": CHEAP_TEXT_PRICE,
-    "claude-haiku-4-5": CHEAP_TEXT_PRICE,
-    "claude-haiku-4-5-20251001": CHEAP_TEXT_PRICE,
-    "opus": FIXED_TEXT_PRICE,
-    "sonnet": CHEAP_TEXT_PRICE,
-    "haiku": CHEAP_TEXT_PRICE,
-    "best": FIXED_TEXT_PRICE,
-    "default": FIXED_TEXT_PRICE,
-    "opus[1m]": FIXED_TEXT_PRICE,
-    "sonnet[1m]": CHEAP_TEXT_PRICE,
-    "opusplan": FIXED_TEXT_PRICE,
+    "claude-opus-4-7": CLAUDE_OPUS_PRICE,
+    "claude-sonnet-4-6": CLAUDE_SONNET_PRICE,
+    "claude-haiku-4-5": CLAUDE_HAIKU_PRICE,
+    "claude-haiku-4-5-20251001": CLAUDE_HAIKU_PRICE,
+    "opus": CLAUDE_OPUS_PRICE,
+    "sonnet": CLAUDE_SONNET_PRICE,
+    "haiku": CLAUDE_HAIKU_PRICE,
+    "best": CLAUDE_OPUS_PRICE,
+    "default": CLAUDE_OPUS_PRICE,
+    "opus[1m]": CLAUDE_OPUS_PRICE,
+    "sonnet[1m]": CLAUDE_SONNET_PRICE,
+    "opusplan": CLAUDE_OPUS_PRICE,
     "${COINCOIN_EMBEDDING_MODEL:-text-embedding-3-small}": (2, 0),
     "gemini-balanced": (10, 40),
     "gemini-fast": (30, 250),
@@ -159,29 +170,38 @@ class GatewayCatalogSyncTests(unittest.TestCase):
         self.assertIn("chat/completions", model.get("capabilities") or [])
         self.assertIn("responses", model.get("capabilities") or [])
 
-    def test_claude_compat_aliases_split_fixed_and_cheap_models(self) -> None:
+    def test_claude_compat_aliases_use_official_claude_price_defaults(self) -> None:
         public_models = {
             item["id"]: item
             for item in (self.catalog.get("models") or [])
             if isinstance(item, dict) and item.get("id")
         }
 
-        for alias in CLAUDE_FIXED_ALIASES:
+        for alias in CLAUDE_OPUS_ALIASES:
             with self.subTest(alias=alias):
                 model = public_models[alias]
                 self.assertEqual(model.get("provider_model"), "${COINCOIN_FIXED_MODEL}")
                 self.assertEqual(model.get("upstream_model"), "${COINCOIN_FIXED_MODEL}")
-                self.assertEqual(model.get("price_input_per_million"), FIXED_INPUT_PRICE_PLACEHOLDER)
-                self.assertEqual(model.get("price_output_per_million"), FIXED_OUTPUT_PRICE_PLACEHOLDER)
+                self.assertEqual(model.get("price_input_per_million"), CLAUDE_OPUS_INPUT_PRICE_PLACEHOLDER)
+                self.assertEqual(model.get("price_output_per_million"), CLAUDE_OPUS_OUTPUT_PRICE_PLACEHOLDER)
 
-        for alias in CLAUDE_CHEAP_ALIASES:
+        for alias in CLAUDE_SONNET_ALIASES:
             with self.subTest(alias=alias):
                 model = public_models[alias]
                 expected = "${COINCOIN_CHEAP_MODEL:-${COINCOIN_FIXED_MODEL}}"
                 self.assertEqual(model.get("provider_model"), expected)
                 self.assertEqual(model.get("upstream_model"), expected)
-                self.assertEqual(model.get("price_input_per_million"), CHEAP_INPUT_PRICE_PLACEHOLDER)
-                self.assertEqual(model.get("price_output_per_million"), CHEAP_OUTPUT_PRICE_PLACEHOLDER)
+                self.assertEqual(model.get("price_input_per_million"), CLAUDE_SONNET_INPUT_PRICE_PLACEHOLDER)
+                self.assertEqual(model.get("price_output_per_million"), CLAUDE_SONNET_OUTPUT_PRICE_PLACEHOLDER)
+
+        for alias in CLAUDE_HAIKU_ALIASES:
+            with self.subTest(alias=alias):
+                model = public_models[alias]
+                expected = "${COINCOIN_CHEAP_MODEL:-${COINCOIN_FIXED_MODEL}}"
+                self.assertEqual(model.get("provider_model"), expected)
+                self.assertEqual(model.get("upstream_model"), expected)
+                self.assertEqual(model.get("price_input_per_million"), CLAUDE_HAIKU_INPUT_PRICE_PLACEHOLDER)
+                self.assertEqual(model.get("price_output_per_million"), CLAUDE_HAIKU_OUTPUT_PRICE_PLACEHOLDER)
 
     def test_text_models_match_gemini_gateway_shape(self) -> None:
         for model in self.gateway_models:
