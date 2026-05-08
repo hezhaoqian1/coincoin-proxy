@@ -100,6 +100,23 @@ async def _run_migrations(conn):
         ("coincoin_user_finance_summary", "last_payment_at", "DATETIME NULL"),
         ("coincoin_image_jobs", "api_key_id", "VARCHAR(32) NULL"),
         ("coincoin_stations", "commission_rate", "DOUBLE DEFAULT 0.15"),
+        ("coincoin_stations", "mode", "VARCHAR(32) DEFAULT 'commission_station'"),
+        ("coincoin_stations", "balance_cents", "BIGINT DEFAULT 0"),
+        ("coincoin_stations", "currency", "VARCHAR(16) DEFAULT 'usd_cents'"),
+        ("coincoin_stations", "wholesale_tier", "VARCHAR(32) DEFAULT 'standard'"),
+        ("coincoin_stations", "allowed_catalog_bundle", "TEXT NULL"),
+        ("coincoin_stations", "default_text_alias", "VARCHAR(128) DEFAULT ''"),
+        ("coincoin_stations", "default_image_alias", "VARCHAR(128) DEFAULT ''"),
+        ("coincoin_stations", "request_limit_per_minute", "BIGINT NULL"),
+        ("coincoin_stations", "daily_spend_limit_cents", "BIGINT NULL"),
+        ("coincoin_stations", "monthly_spend_limit_cents", "BIGINT NULL"),
+        ("coincoin_stations", "suspended_reason", "VARCHAR(512) DEFAULT ''"),
+        ("coincoin_request_logs", "station_id", "VARCHAR(32) DEFAULT ''"),
+        ("coincoin_request_logs", "station_alias", "VARCHAR(128) DEFAULT ''"),
+        ("coincoin_request_logs", "resolved_public_model", "VARCHAR(128) DEFAULT ''"),
+        ("coincoin_request_logs", "wholesale_cost_cents", "BIGINT DEFAULT 0"),
+        ("coincoin_request_logs", "retail_charge_cents", "BIGINT DEFAULT 0"),
+        ("coincoin_request_logs", "price_version", "BIGINT DEFAULT 0"),
         ("coincoin_station_payout_batches", "payment_reference", "VARCHAR(128) DEFAULT ''"),
         ("coincoin_station_payout_batches", "payment_screenshot_url", "VARCHAR(512) DEFAULT ''"),
         ("coincoin_station_payout_batches", "payment_note", "TEXT NULL"),
@@ -261,6 +278,81 @@ async def _run_migrations(conn):
             INDEX ix_model_alias_overrides_updated_at (updated_at)
         )
         """,
+        """
+        CREATE TABLE coincoin_station_aliases (
+            id VARCHAR(32) PRIMARY KEY,
+            station_id VARCHAR(32) NOT NULL,
+            alias VARCHAR(128) NOT NULL,
+            target_public_model_id VARCHAR(128) DEFAULT '',
+            fallback_target_public_model_id VARCHAR(128) DEFAULT '',
+            capability VARCHAR(64) DEFAULT 'chat/completions',
+            status VARCHAR(16) DEFAULT 'active',
+            is_default_text BIGINT DEFAULT 0,
+            is_default_image BIGINT DEFAULT 0,
+            metadata_json TEXT NULL,
+            created_by_user_id VARCHAR(32) DEFAULT '',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY ix_station_alias_unique (station_id, alias),
+            INDEX ix_station_aliases_station_id (station_id),
+            INDEX ix_station_aliases_status (status),
+            INDEX ix_station_aliases_created_at (created_at)
+        )
+        """,
+        """
+        CREATE TABLE coincoin_station_pricebook (
+            id VARCHAR(32) PRIMARY KEY,
+            station_id VARCHAR(32) NOT NULL,
+            station_alias_id VARCHAR(32) NOT NULL,
+            billable_sku VARCHAR(128) DEFAULT '',
+            usage_unit_type VARCHAR(32) DEFAULT 'tokens',
+            retail_input_per_million_cents BIGINT DEFAULT 0,
+            retail_output_per_million_cents BIGINT DEFAULT 0,
+            retail_price_per_image_cents DOUBLE DEFAULT 0,
+            min_allowed_cents BIGINT DEFAULT 0,
+            max_allowed_cents BIGINT DEFAULT 0,
+            price_version BIGINT DEFAULT 1,
+            status VARCHAR(16) DEFAULT 'active',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX ix_station_pricebook_station_id (station_id),
+            INDEX ix_station_pricebook_station_alias_id (station_alias_id),
+            INDEX ix_station_pricebook_billable_sku (billable_sku),
+            INDEX ix_station_pricebook_status (status),
+            INDEX ix_station_pricebook_created_at (created_at)
+        )
+        """,
+        """
+        CREATE TABLE coincoin_station_ledger_entries (
+            id VARCHAR(32) PRIMARY KEY,
+            station_id VARCHAR(32) NOT NULL,
+            entry_type VARCHAR(32) DEFAULT 'adjustment',
+            amount_cents BIGINT DEFAULT 0,
+            balance_after_cents BIGINT DEFAULT 0,
+            reference_type VARCHAR(64) DEFAULT '',
+            reference_id VARCHAR(128) DEFAULT '',
+            request_log_id VARCHAR(32) DEFAULT '',
+            notes TEXT NULL,
+            created_by_user_id VARCHAR(32) DEFAULT '',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            INDEX ix_station_ledger_station_id (station_id),
+            INDEX ix_station_ledger_entry_type (entry_type),
+            INDEX ix_station_ledger_created_at (created_at)
+        )
+        """,
+        """
+        CREATE TABLE coincoin_station_branding (
+            station_id VARCHAR(32) PRIMARY KEY,
+            display_name VARCHAR(128) DEFAULT '',
+            logo_url VARCHAR(512) DEFAULT '',
+            favicon_url VARCHAR(512) DEFAULT '',
+            support_email VARCHAR(255) DEFAULT '',
+            support_link VARCHAR(512) DEFAULT '',
+            docs_intro TEXT NULL,
+            terms_url VARCHAR(512) DEFAULT '',
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        )
+        """,
     ]
     for ddl in table_migrations:
         try:
@@ -275,6 +367,7 @@ async def _run_migrations(conn):
 
     index_migrations = [
         "CREATE INDEX ix_request_logs_user_key_created ON coincoin_request_logs (user_id, api_key_id, created_at)",
+        "CREATE INDEX ix_request_logs_station_created ON coincoin_request_logs (station_id, created_at)",
         "CREATE INDEX ix_referral_rewards_recipient_id ON coincoin_referral_rewards (recipient_id)",
         "CREATE INDEX ix_referral_rewards_reward_type ON coincoin_referral_rewards (reward_type)",
     ]

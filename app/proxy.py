@@ -26,6 +26,11 @@ from .models import ApiKey, RequestLog, UsageDaily, User
 from .prompt_cache import build_claude_code_prompt_cache_key
 from .rate_limiter import rate_limiter
 from .security import extract_api_key, hash_key
+from .station_runtime import (
+    resolve_station_model_for_user,
+    station_context_for_user,
+    station_usage_kwargs,
+)
 from .router import (
     ModelCapabilityError,
     UnknownModelError,
@@ -1159,6 +1164,7 @@ async def _resolve_user(request: Request, db: AsyncSession):
         key_kind = str(cached.get(_KEY_KIND_ATTR) or "api")
         key_id = str(cached.get(_KEY_ID_ATTR) or "")
         key_controls = cached.get("controls", {}) if isinstance(cached.get("controls", {}), dict) else {}
+        station_context = cached.get("station_context", {}) if isinstance(cached.get("station_context", {}), dict) else {}
         session_refreshed = False
     else:
         try:
@@ -1187,6 +1193,11 @@ async def _resolve_user(request: Request, db: AsyncSession):
             "ip_allowlist": getattr(api_key, "ip_allowlist", None),
             "expires_at": getattr(api_key, "expires_at", None),
         }
+        try:
+            station_context = await station_context_for_user(db, user.id)
+        except Exception:
+            logger.exception("station context lookup failed")
+            station_context = {}
         await key_cache.set(
             key_hash,
             {
@@ -1194,12 +1205,14 @@ async def _resolve_user(request: Request, db: AsyncSession):
                 _KEY_ID_ATTR: key_id,
                 _KEY_KIND_ATTR: key_kind,
                 "controls": key_controls,
+                "station_context": station_context,
                 "session_refreshed": session_refreshed,
             },
         )
     setattr(user, _KEY_KIND_ATTR, key_kind)
     setattr(user, _KEY_ID_ATTR, key_id)
     setattr(user, "_api_key_controls", key_controls)
+    setattr(user, "_station_context", station_context)
     setattr(user, "_session_refreshed", session_refreshed)
     if user.status != "active":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="user blocked")
@@ -1358,14 +1371,29 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
     requested_model = str(payload.get("model") or "").strip()
     messages_for_route, tools_for_route = extract_messages_for_routing_from_responses_payload(payload)
     try:
-        resolved_model = model_registry.resolve_public_model(requested_model, "responses", messages_for_route, tools_for_route)
+        station_model = await resolve_station_model_for_user(
+            db,
+            user,
+            requested_model,
+            "responses",
+            messages_for_route,
+            tools_for_route,
+        )
+        resolved_model = station_model.resolved_model if station_model else model_registry.resolve_public_model(
+            requested_model,
+            "responses",
+            messages_for_route,
+            tools_for_route,
+        )
     except Exception as exc:
         return _model_resolution_error_response(exc)
     public_model = resolved_model.public_model
-    display_model = public_model.public_id
+    display_model = station_model.display_model if station_model else public_model.public_id
     used_cfg = resolved_model.backend
     used_route_reason = resolved_model.route_reason
     api_key_id = getattr(user, _KEY_ID_ATTR, "")
+    price_input_per_million = station_model.retail_input_per_million if station_model else public_model.price_input_per_million
+    price_output_per_million = station_model.retail_output_per_million if station_model else public_model.price_output_per_million
 
     payload["model"] = used_cfg.model_id
     payload.pop("model_provider", None)
@@ -1592,11 +1620,12 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                         route_reason=used_route_reason,
                         duration_ms=dur,
                         status_code=upstream.status_code,
-                        price_input_per_million=public_model.price_input_per_million,
-                        price_output_per_million=public_model.price_output_per_million,
+                        price_input_per_million=price_input_per_million,
+                        price_output_per_million=price_output_per_million,
                         usage_unit_type="tokens",
                         billable_sku=public_model.billable_sku or display_model,
                         upstream_request_id=upstream_request_id,
+                        **station_usage_kwargs(station_model),
                     ))
 
         stream_headers = filter_headers(dict(upstream.headers))
@@ -1770,11 +1799,12 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             route_reason=used_route_reason,
             duration_ms=duration_ms,
             status_code=upstream.status_code,
-            price_input_per_million=public_model.price_input_per_million,
-            price_output_per_million=public_model.price_output_per_million,
+            price_input_per_million=price_input_per_million,
+            price_output_per_million=price_output_per_million,
             usage_unit_type="tokens",
             billable_sku=public_model.billable_sku or display_model,
             upstream_request_id=upstream_request_id,
+            **station_usage_kwargs(station_model),
         )
     elif isinstance(data, (dict, str)):
         logger.error("upstream error %s: %s", upstream.status_code, str(data)[:500])
@@ -1800,14 +1830,16 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
 
     requested_model = str(payload.get("model") or "").strip()
     try:
-        resolved_model = model_registry.resolve_public_model(requested_model, "images/generations")
+        station_model = await resolve_station_model_for_user(db, user, requested_model, "images/generations")
+        resolved_model = station_model.resolved_model if station_model else model_registry.resolve_public_model(requested_model, "images/generations")
     except Exception as exc:
         return _model_resolution_error_response(exc)
 
     public_model = resolved_model.public_model
-    display_model = public_model.public_id
+    display_model = station_model.display_model if station_model else public_model.public_id
     used_cfg = resolved_model.backend
     used_route_reason = resolved_model.route_reason
+    price_per_image_cents = station_model.retail_price_per_image_cents if station_model else public_model.price_per_image_cents
 
     is_google_image_generation = public_model.provider_name.strip().lower() == "google"
     delivery_lane = (public_model.delivery_lane or "").strip().lower()
@@ -1905,7 +1937,8 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
                 billable_sku=public_model.billable_sku or display_model,
                 upstream_request_id=upstream_request_id,
                 image_count=image_count,
-                price_per_image_cents=public_model.price_per_image_cents,
+                price_per_image_cents=price_per_image_cents,
+                **station_usage_kwargs(station_model),
             )
             return _stream_upstream_response(
                 upstream,
@@ -1970,7 +2003,8 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
             billable_sku=public_model.billable_sku or display_model,
             upstream_request_id=upstream_request_id,
             image_count=image_count,
-            price_per_image_cents=public_model.price_per_image_cents,
+            price_per_image_cents=price_per_image_cents,
+            **station_usage_kwargs(station_model),
         )
     elif isinstance(data, (dict, str)):
         logger.error("image upstream error %s: %s", upstream.status_code, str(data)[:500])
@@ -1991,14 +2025,16 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid multipart payload") from exc
 
     try:
-        resolved_model = model_registry.resolve_public_model(requested_model, "images/edits")
+        station_model = await resolve_station_model_for_user(db, user, requested_model, "images/edits")
+        resolved_model = station_model.resolved_model if station_model else model_registry.resolve_public_model(requested_model, "images/edits")
     except Exception as exc:
         return _model_resolution_error_response(exc)
 
     public_model = resolved_model.public_model
-    display_model = public_model.public_id
+    display_model = station_model.display_model if station_model else public_model.public_id
     used_cfg = resolved_model.backend
     used_route_reason = resolved_model.route_reason
+    price_per_image_cents = station_model.retail_price_per_image_cents if station_model else public_model.price_per_image_cents
 
     response_headers: Dict[str, str] = {}
 
@@ -2119,7 +2155,8 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
                 billable_sku=public_model.billable_sku or display_model,
                 upstream_request_id=upstream_request_id,
                 image_count=image_count,
-                price_per_image_cents=public_model.price_per_image_cents,
+                price_per_image_cents=price_per_image_cents,
+                **station_usage_kwargs(station_model),
             )
             return _stream_upstream_response(
                 upstream,
@@ -2250,7 +2287,8 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
                 billable_sku=public_model.billable_sku or display_model,
                 upstream_request_id=upstream_request_id,
                 image_count=image_count,
-                price_per_image_cents=public_model.price_per_image_cents,
+                price_per_image_cents=price_per_image_cents,
+                **station_usage_kwargs(station_model),
             )
             return _stream_upstream_response(
                 upstream,
@@ -2298,7 +2336,8 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
             billable_sku=public_model.billable_sku or display_model,
             upstream_request_id=upstream_request_id,
             image_count=image_count,
-            price_per_image_cents=public_model.price_per_image_cents,
+            price_per_image_cents=price_per_image_cents,
+            **station_usage_kwargs(station_model),
         )
     elif isinstance(data, (dict, str)):
         logger.error("image edit upstream error %s: %s", upstream.status_code, str(data)[:500])

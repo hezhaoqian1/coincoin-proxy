@@ -162,6 +162,16 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload[0]["tokens_total"], 12345)
         self.assertEqual(payload[0]["cost_usd"], 0.88)
 
+    def test_admin_ui_initial_load_only_loads_active_page(self) -> None:
+        admin_html = (Path(admin_module.__file__).parent / "static" / "admin.html").read_text()
+
+        self.assertIn("function loadCurrentPage()", admin_html)
+        self.assertIn("function loadAll() {\n      loadCurrentPage();\n    }", admin_html)
+        self.assertNotIn(
+            "loadUsers();\n      loadUsage();\n      loadFinanceSummary();\n      loadModelAliases();",
+            admin_html,
+        )
+
     async def test_request_logs_expose_provider_alias_and_usage_units(self) -> None:
         log = SimpleNamespace(
             created_at=datetime(2026, 3, 25, 12, 34, 56),

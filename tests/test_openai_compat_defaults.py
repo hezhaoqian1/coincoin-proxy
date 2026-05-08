@@ -2095,6 +2095,96 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["data"][15]["coincoin_default_for"], ["image"])
         self.assertEqual(payload["data"][15]["coincoin_delivery_lane"], "gateway")
 
+    async def test_models_endpoint_returns_station_scoped_aliases_for_station_key(self) -> None:
+        station_models = [
+            {
+                "id": "fast",
+                "object": "model",
+                "created": 1700000000,
+                "owned_by": "station",
+                "coincoin_station_id": "st_1",
+                "coincoin_station_alias": "fast",
+                "coincoin_resolved_public_model": "gpt-5.4-mini",
+                "coincoin_capabilities": ["chat/completions", "responses"],
+                "coincoin_billable_sku": "legacy-gpt-5.4-mini-text",
+                "coincoin_routing_mode": "station_alias",
+                "coincoin_default_for": ["text"],
+                "coincoin_price_input_per_million": 120,
+                "coincoin_price_cached_input_per_million": 12.0,
+                "coincoin_price_output_per_million": 720,
+                "coincoin_price_per_image_cents": 0,
+            }
+        ]
+        fake_user = SimpleNamespace(id="u_station_child", _station_context={"station_id": "st_1", "status": "active"})
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(openai_module, "authenticate_user", AsyncMock(return_value=fake_user)), patch(
+                "app.stations.list_station_public_models_for_user",
+                AsyncMock(return_value=station_models),
+            ):
+                response = await client.get("/v1/models", headers={"Authorization": "Bearer sk_station"})
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["object"], "list")
+        self.assertEqual([item["id"] for item in payload["data"]], ["fast"])
+        self.assertEqual(payload["data"][0]["owned_by"], "station")
+        self.assertEqual(payload["data"][0]["coincoin_resolved_public_model"], "gpt-5.4-mini")
+        self.assertEqual(payload["data"][0]["coincoin_price_output_per_million"], 720)
+
+    async def test_balance_returns_station_price_context_for_station_session(self) -> None:
+        station_models = [
+            {
+                "id": "fast",
+                "object": "model",
+                "created": 1700000000,
+                "owned_by": "station",
+                "coincoin_station_id": "st_1",
+                "coincoin_station_alias": "fast",
+                "coincoin_resolved_public_model": "gpt-5.4-mini",
+                "coincoin_capabilities": ["chat/completions", "responses"],
+                "coincoin_billable_sku": "legacy-gpt-5.4-mini-text",
+                "coincoin_routing_mode": "station_alias",
+                "coincoin_default_for": ["text"],
+                "coincoin_price_input_per_million": 120,
+                "coincoin_price_cached_input_per_million": 12.0,
+                "coincoin_price_output_per_million": 720,
+                "coincoin_price_per_image_cents": 0,
+            }
+        ]
+        fake_user = SimpleNamespace(
+            id="u_station_child",
+            _station_context={"station_id": "st_1", "slug": "stone", "display_name": "Stone AI", "status": "active"},
+        )
+        db_user = SimpleNamespace(
+            id="u_station_child",
+            balance=1234,
+            token_used=0,
+            input_tokens_used=0,
+            output_tokens_used=0,
+            token_limit=None,
+        )
+        fake_db = SimpleNamespace(
+            execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: db_user))
+        )
+
+        with patch.object(openai_module, "authenticate_user", AsyncMock(return_value=fake_user)), patch.object(
+            openai_module.usage_buffer, "get_pending_tokens", AsyncMock(return_value=0)
+        ), patch.object(openai_module.usage_buffer, "get_pending_cost", AsyncMock(return_value=0)), patch(
+            "app.stations.get_station_public_models_by_id",
+            AsyncMock(return_value=station_models),
+        ):
+            result = await openai_module.get_balance(request=SimpleNamespace(headers={}), db=fake_db)
+
+        self.assertEqual(result.pricing_scope, "station")
+        self.assertEqual(result.pricing_model_id, "fast")
+        self.assertEqual(result.station_slug, "stone")
+        self.assertEqual(result.station_display_name, "Stone AI")
+        self.assertEqual(result.price_input_per_million, 1.2)
+        self.assertEqual(result.price_output_per_million, 7.2)
+        self.assertEqual(result.station_pricing_models[0]["id"], "fast")
+
     async def test_openai_prefixed_models_endpoint_returns_curated_metadata(self) -> None:
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:

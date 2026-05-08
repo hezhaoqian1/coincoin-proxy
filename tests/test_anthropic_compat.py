@@ -248,6 +248,75 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(prompt_cache_key.startswith("cc-"))
         self.assertEqual(len(prompt_cache_key), 35)
 
+    async def test_messages_uses_station_alias_and_retail_price(self):
+        fake_user = SimpleNamespace(
+            id="u_station_child",
+            status="active",
+            _api_key_id="k_station_child",
+            _station_context={
+                "station_id": "st_1",
+                "slug": "stone",
+                "status": "active",
+                "mode": "commission_station",
+                "default_text_alias": "fast",
+                "default_image_alias": "",
+            },
+        )
+        station_model = SimpleNamespace(
+            resolved_model=registry.resolve_public_model("gpt-5.4-mini", "chat/completions"),
+            display_model="fast",
+            station_id="st_1",
+            station_alias="fast",
+            resolved_public_model="gpt-5.4-mini",
+            retail_input_per_million=120,
+            retail_output_per_million=720,
+            retail_price_per_image_cents=0.0,
+            wholesale_input_per_million=75,
+            wholesale_output_per_million=450,
+            wholesale_price_per_image_cents=0.0,
+            price_version=3,
+        )
+        client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "chatcmpl_station_alias",
+                        "choices": [{"message": {"role": "assistant", "content": "OK"}}],
+                        "usage": {"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
+                    }
+                )
+            ]
+        )
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_http_client", AsyncMock(return_value=client)),
+            patch.object(anthropic_module, "resolve_station_model_for_user", AsyncMock(return_value=station_model)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()) as add_usage,
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={"authorization": "Bearer sk_station", "anthropic-version": "2023-06-01"},
+                    json={
+                        "model": "fast",
+                        "max_tokens": 64,
+                        "messages": [{"role": "user", "content": "Reply with exactly OK"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["model"], "fast")
+        self.assertEqual(client.calls[0]["json"]["model"], "gpt-5.4-mini")
+        usage_kwargs = add_usage.await_args.kwargs
+        self.assertEqual(usage_kwargs["model"], "fast")
+        self.assertEqual(usage_kwargs["price_input_per_million"], 120)
+        self.assertEqual(usage_kwargs["price_output_per_million"], 720)
+        self.assertEqual(usage_kwargs["station_id"], "st_1")
+        self.assertEqual(usage_kwargs["station_alias"], "fast")
+        self.assertEqual(usage_kwargs["resolved_public_model"], "gpt-5.4-mini")
+        self.assertEqual(usage_kwargs["price_version"], 3)
+
     async def test_messages_preserve_tool_roundtrip_semantics(self):
         fake_user = SimpleNamespace(id="u_test", status="active")
         client = _RecordingClient(

@@ -88,6 +88,49 @@
     gap: 20px;
 }
 
+.station-access-panel {
+    display: grid;
+    gap: 18px;
+}
+
+.station-access-list {
+    display: grid;
+    gap: 12px;
+}
+
+.station-access-row {
+    display: grid;
+    grid-template-columns: 120px minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: center;
+    padding: 14px 16px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    background: var(--bg-secondary);
+}
+
+.station-access-row span {
+    font-weight: 700;
+    color: var(--text-secondary);
+}
+
+.station-access-row a,
+.station-access-row code {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    color: var(--text-primary);
+}
+
+.station-access-row a {
+    text-decoration: none;
+}
+
+.station-access-note {
+    margin: 0;
+    color: var(--text-tertiary);
+    line-height: 1.6;
+}
+
 .station-grid-bottom {
     align-items: start;
 }
@@ -100,6 +143,13 @@
 
 .station-panel-header {
     margin-bottom: 18px;
+}
+
+.station-panel-header-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 18px;
+    align-items: flex-start;
 }
 
 .station-panel-header h2 {
@@ -128,13 +178,21 @@
     color: var(--text-secondary);
 }
 
-.station-field input {
+.station-field input,
+.station-field select,
+.station-field textarea {
     width: 100%;
     padding: 12px 14px;
     border-radius: var(--radius-md);
     border: 1px solid var(--border-color);
     background: var(--bg-secondary);
     color: var(--text-primary);
+    font: inherit;
+}
+
+.station-field textarea {
+    min-height: 104px;
+    resize: vertical;
 }
 
 .station-checkbox {
@@ -169,6 +227,26 @@
     padding: 14px 18px;
     border-radius: var(--radius-lg);
     background: rgba(220, 38, 38, 0.06);
+}
+
+.station-error-banner,
+.station-success-banner {
+    padding: 12px 14px;
+    margin-bottom: 14px;
+    border-radius: var(--radius-md);
+    font-size: 0.9rem;
+}
+
+.station-error-banner {
+    color: #dc2626;
+    background: rgba(220, 38, 38, 0.07);
+    border: 1px solid rgba(220, 38, 38, 0.18);
+}
+
+.station-success-banner {
+    color: #047857;
+    background: rgba(16, 185, 129, 0.08);
+    border: 1px solid rgba(16, 185, 129, 0.2);
 }
 
 .station-success-box {
@@ -220,6 +298,66 @@
     color: var(--text-secondary);
 }
 
+.station-alias-count {
+    min-width: 96px;
+    display: grid;
+    justify-items: end;
+    gap: 4px;
+}
+
+.station-alias-count strong {
+    font-size: 1.7rem;
+    color: var(--text-primary);
+    line-height: 1;
+}
+
+.station-alias-count span {
+    color: var(--text-tertiary);
+    font-size: 0.82rem;
+}
+
+.station-alias-form {
+    display: grid;
+    grid-template-columns: 1fr 1fr minmax(220px, 2fr) repeat(3, minmax(116px, 0.75fr)) auto auto auto;
+    gap: 12px;
+    align-items: end;
+    margin-bottom: 20px;
+}
+
+.station-inline-check {
+    min-height: 46px;
+    align-self: end;
+}
+
+.station-alias-table-wrap {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+}
+
+.station-price-inputs {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(82px, 1fr));
+    gap: 8px;
+    min-width: 280px;
+}
+
+.station-price-inputs input {
+    min-width: 0;
+    width: 100%;
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font: inherit;
+}
+
+.station-default-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
 .station-empty-cell {
     text-align: center;
     color: var(--text-tertiary);
@@ -259,6 +397,15 @@
         grid-template-columns: 1fr;
     }
 
+    .station-access-row {
+        grid-template-columns: 1fr;
+        align-items: start;
+    }
+
+    .station-access-row .btn {
+        width: fit-content;
+    }
+
     .station-panel {
         padding: 18px;
     }
@@ -267,5 +414,17 @@
     .station-table td {
         padding: 10px 8px;
         font-size: 0.88rem;
+    }
+
+    .station-panel-header-row {
+        flex-direction: column;
+    }
+
+    .station-alias-count {
+        justify-items: start;
+    }
+
+    .station-alias-form {
+        grid-template-columns: 1fr;
     }
 }

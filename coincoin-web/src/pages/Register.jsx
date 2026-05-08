@@ -3,9 +3,11 @@ import { useNavigate, Link } from 'react-router-dom'
 import {
     checkRegisterEmailCode,
     clearGeneratedKey,
+    getStationContext,
     registerUser,
     sendRegisterEmailCode,
     setApiKey,
+    setStationContext,
     setUserId,
     setUsername as storeUsername,
 } from '../api/client'
@@ -19,6 +21,15 @@ export default function Register() {
     const [referralCode, setReferralCode] = useState(() => {
         const params = new URLSearchParams(window.location.search)
         return params.get('ref') || ''
+    })
+    const [stationContext] = useState(() => {
+        const params = new URLSearchParams(window.location.search)
+        const stationParam = (params.get('station') || '').trim().toLowerCase()
+        const stored = getStationContext()
+        return {
+            slug: stationParam || stored.slug || '',
+            displayName: stored.displayName || stationParam || '',
+        }
     })
     const [code, setCode] = useState('')
     const [verificationId, setVerificationId] = useState('')
@@ -36,6 +47,11 @@ export default function Register() {
     const normalizedEmail = useMemo(() => email.trim().toLowerCase(), [email])
     const emailLocked = emailVerified && verifiedEmail === normalizedEmail
     const hasCodeReady = Boolean(verificationId && code.trim().length >= 4 && normalizedEmail)
+
+    useEffect(() => {
+        if (!stationContext.slug) return
+        setStationContext({ slug: stationContext.slug, display_name: stationContext.displayName || stationContext.slug })
+    }, [stationContext.slug, stationContext.displayName])
 
     const completeLogin = (data) => {
         clearGeneratedKey()
@@ -168,6 +184,7 @@ export default function Register() {
                 referralCode.trim() || undefined,
                 verificationId,
                 code.trim(),
+                stationContext.slug || undefined,
             )
             setVerifiedEmail(normalizedEmail)
             setEmailVerified(true)
@@ -188,6 +205,7 @@ export default function Register() {
                 <div className="auth-header">
                     <div className="logo-icon" style={{ width: 48, height: 48, fontSize: '1.1rem', borderRadius: 14 }}>CF</div>
                     <h1>创建控制台账号</h1>
+                    {stationContext.slug && <p>注册后会绑定到 {stationContext.displayName || stationContext.slug}。</p>}
                 </div>
 
                 <form onSubmit={handleSubmit} className="auth-form">

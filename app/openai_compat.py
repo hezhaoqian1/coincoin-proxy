@@ -27,6 +27,7 @@ from .router import (
     registry as model_registry,
 )
 from .schemas import BalanceResponse, ReferralCodeUpdateRequest
+from .station_runtime import resolve_station_model_for_user, station_usage_kwargs, user_station_context
 from .usage_buffer import (
     china_today,
     extract_cache_creation_tokens,
@@ -161,6 +162,34 @@ async def get_balance(request: Request, db: AsyncSession = Depends(get_db)):
     if token_limit is not None:
         token_remaining = max(0, token_limit - token_used)
     
+    station_models = []
+    station_context = user_station_context(cached_user)
+    if station_context:
+        try:
+            from .stations import get_station_public_models_by_id
+            station_models = await get_station_public_models_by_id(str(station_context.get("station_id") or ""), db)
+        except Exception:
+            station_models = []
+    default_station_model = next(
+        (model for model in station_models if "text" in (model.get("coincoin_default_for") or [])),
+        station_models[0] if station_models else None,
+    )
+    price_input_per_million = settings.price_input_per_million / 100
+    price_cached_input_per_million = (settings.price_input_per_million * settings.cache_discount_rate) / 100
+    price_output_per_million = settings.price_output_per_million / 100
+    pricing_scope = "official"
+    pricing_model_id = None
+    station_slug = None
+    station_display_name = None
+    if default_station_model:
+        pricing_scope = "station"
+        pricing_model_id = default_station_model.get("id")
+        station_slug = station_context.get("slug") or None
+        station_display_name = station_context.get("display_name") or None
+        price_input_per_million = float(default_station_model.get("coincoin_price_input_per_million") or 0) / 100
+        price_cached_input_per_million = float(default_station_model.get("coincoin_price_cached_input_per_million") or 0) / 100
+        price_output_per_million = float(default_station_model.get("coincoin_price_output_per_million") or 0) / 100
+
     return BalanceResponse(
         user_id=user.id,
         balance=balance,
@@ -170,9 +199,15 @@ async def get_balance(request: Request, db: AsyncSession = Depends(get_db)):
         output_tokens_used=output_tokens_used,
         token_limit=token_limit,
         token_remaining=token_remaining,
-        price_input_per_million=settings.price_input_per_million / 100,  # 分转美元
-        price_cached_input_per_million=(settings.price_input_per_million * settings.cache_discount_rate) / 100,  # 分转美元
-        price_output_per_million=settings.price_output_per_million / 100,  # 分转美元
+        price_input_per_million=price_input_per_million,
+        price_cached_input_per_million=price_cached_input_per_million,
+        price_output_per_million=price_output_per_million,
+        pricing_scope=pricing_scope,
+        pricing_model_id=pricing_model_id,
+        station_id=station_context.get("station_id") or None,
+        station_slug=station_slug,
+        station_display_name=station_display_name,
+        station_pricing_models=station_models if station_models else None,
     )
 
 
@@ -555,20 +590,42 @@ async def list_announcements(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/models")
-async def list_models(request: Request):
+async def list_models(request: Request, db: AsyncSession = Depends(get_db)):
     """列出可用模型目录。"""
+    station_models = None
+    try:
+        cached_user = await authenticate_user(request, db)
+        from .stations import list_station_public_models_for_user
+        station_models = await list_station_public_models_for_user(cached_user, db)
+    except HTTPException:
+        station_models = None
+    except Exception:
+        station_models = None
+
     user_agent = request.headers.get("user-agent", "")
     if user_agent.startswith("claude-cli"):
         models = []
-        for public_model in model_registry.list_public_models("chat/completions"):
-            models.append(
-                {
-                    "type": "model",
-                    "id": public_model.public_id,
-                    "display_name": public_model.public_id,
-                    "created_at": public_model.created,
-                }
-            )
+        if station_models is not None:
+            source_models = [model for model in station_models if "chat/completions" in (model.get("coincoin_capabilities") or [])]
+            for model in source_models:
+                models.append(
+                    {
+                        "type": "model",
+                        "id": model["id"],
+                        "display_name": model["id"],
+                        "created_at": model.get("created", 1700000000),
+                    }
+                )
+        else:
+            for public_model in model_registry.list_public_models("chat/completions"):
+                models.append(
+                    {
+                        "type": "model",
+                        "id": public_model.public_id,
+                        "display_name": public_model.public_id,
+                        "created_at": public_model.created,
+                    }
+                )
         return {
             "data": models,
             "has_more": False,
@@ -576,7 +633,9 @@ async def list_models(request: Request):
             "last_id": models[-1]["id"] if models else None,
         }
 
-    models = [_serialize_public_model(public_model) for public_model in model_registry.list_public_models()]
+    models = station_models if station_models is not None else [
+        _serialize_public_model(public_model) for public_model in model_registry.list_public_models()
+    ]
     return {
         "object": "list",
         "data": models,
@@ -741,14 +800,29 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
     requested_model = str(payload.get("model") or "").strip()
     tools = payload.get("tools") if isinstance(payload.get("tools"), list) else None
     try:
-        resolved_model = model_registry.resolve_public_model(requested_model, "chat/completions", messages, tools)
+        station_model = await resolve_station_model_for_user(
+            db,
+            user,
+            requested_model,
+            "chat/completions",
+            messages,
+            tools,
+        )
+        resolved_model = station_model.resolved_model if station_model else model_registry.resolve_public_model(
+            requested_model,
+            "chat/completions",
+            messages,
+            tools,
+        )
     except Exception as exc:
         return _model_resolution_to_openai_error(exc)
     public_model = resolved_model.public_model
-    display_model = public_model.public_id
+    display_model = station_model.display_model if station_model else public_model.public_id
     used_cfg = resolved_model.backend
     used_route_reason = resolved_model.route_reason
     api_key_id = getattr(user, _KEY_ID_ATTR, "")
+    price_input_per_million = station_model.retail_input_per_million if station_model else public_model.price_input_per_million
+    price_output_per_million = station_model.retail_output_per_million if station_model else public_model.price_output_per_million
 
     # ============== 构建 Responses API payload ==============
     resp_payload: Dict[str, Any] = {
@@ -1200,11 +1274,12 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                         route_reason=used_route_reason,
                         duration_ms=dur,
                         status_code=upstream.status_code,
-                        price_input_per_million=public_model.price_input_per_million,
-                        price_output_per_million=public_model.price_output_per_million,
+                        price_input_per_million=price_input_per_million,
+                        price_output_per_million=price_output_per_million,
                         usage_unit_type="tokens",
                         billable_sku=public_model.billable_sku or display_model,
                         upstream_request_id=extract_upstream_request_id(upstream.headers),
+                        **station_usage_kwargs(station_model),
                     ))
         stream_headers = filter_headers(dict(upstream.headers))
         stream_headers.pop("content-length", None)
@@ -1339,11 +1414,12 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
             route_reason=used_route_reason,
             duration_ms=duration_ms,
             status_code=upstream.status_code,
-            price_input_per_million=public_model.price_input_per_million,
-            price_output_per_million=public_model.price_output_per_million,
+            price_input_per_million=price_input_per_million,
+            price_output_per_million=price_output_per_million,
             usage_unit_type="tokens",
             billable_sku=public_model.billable_sku or display_model,
             upstream_request_id=upstream_request_id,
+            **station_usage_kwargs(station_model),
         )
     else:
         import logging
@@ -1387,14 +1463,17 @@ async def embeddings(request: Request, db: AsyncSession = Depends(get_db)):
 
     requested_model = str(payload.get("model") or "").strip()
     try:
-        resolved_model = model_registry.resolve_public_model(requested_model, "embeddings")
+        station_model = await resolve_station_model_for_user(db, user, requested_model, "embeddings")
+        resolved_model = station_model.resolved_model if station_model else model_registry.resolve_public_model(requested_model, "embeddings")
     except Exception as exc:
         return _model_resolution_to_openai_error(exc)
 
     public_model = resolved_model.public_model
-    display_model = public_model.public_id
+    display_model = station_model.display_model if station_model else public_model.public_id
     used_cfg = resolved_model.backend
     used_route_reason = resolved_model.route_reason
+    price_input_per_million = station_model.retail_input_per_million if station_model else public_model.price_input_per_million
+    price_output_per_million = station_model.retail_output_per_million if station_model else public_model.price_output_per_million
 
     payload["model"] = used_cfg.model_id
     payload.pop("model_provider", None)
@@ -1444,11 +1523,12 @@ async def embeddings(request: Request, db: AsyncSession = Depends(get_db)):
             route_reason=used_route_reason,
             duration_ms=duration_ms,
             status_code=upstream.status_code,
-            price_input_per_million=public_model.price_input_per_million,
-            price_output_per_million=public_model.price_output_per_million,
+            price_input_per_million=price_input_per_million,
+            price_output_per_million=price_output_per_million,
             usage_unit_type="tokens",
             billable_sku=public_model.billable_sku or display_model,
             upstream_request_id=upstream_request_id,
+            **station_usage_kwargs(station_model),
         )
 
     if isinstance(data, dict):

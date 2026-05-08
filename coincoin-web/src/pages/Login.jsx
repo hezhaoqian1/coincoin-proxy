@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate, Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
+import { getStationContext, setStationContext } from '../api/client'
 import './Auth.css'
 
 export default function Login() {
@@ -12,6 +13,11 @@ export default function Login() {
     const { login, loginWithPassword, loading } = useAuth()
     const navigate = useNavigate()
     const location = useLocation()
+    const params = new URLSearchParams(location.search)
+    const stationParam = (params.get('station') || '').trim().toLowerCase()
+    const stationContext = getStationContext()
+    const stationSlug = stationParam || stationContext.slug || ''
+    const stationDisplayName = stationContext.displayName || stationSlug
     const returnTo = typeof location.state?.from === 'string' && location.state.from.startsWith('/')
         ? location.state.from
         : '/dashboard'
@@ -20,7 +26,8 @@ export default function Login() {
         e.preventDefault()
         if (!username.trim()) { setError('请输入邮箱或用户名'); return }
         if (!password) { setError('请输入密码'); return }
-        const result = await loginWithPassword(username.trim(), password)
+        if (stationSlug) setStationContext({ slug: stationSlug, display_name: stationDisplayName || stationSlug })
+        const result = await loginWithPassword(username.trim(), password, stationSlug || undefined)
         if (result.success) {
             navigate(returnTo, { replace: true })
         } else {
@@ -50,6 +57,7 @@ export default function Login() {
                 <div className="auth-header">
                     <div className="logo-icon" style={{ width: 48, height: 48, fontSize: '1.1rem', borderRadius: 14 }}>CF</div>
                     <h1>登录控制台</h1>
+                    {stationSlug && <p>登录后会进入 {stationDisplayName || stationSlug} 的站点上下文。</p>}
                 </div>
 
                 <div className="auth-tabs">
@@ -119,7 +127,7 @@ export default function Login() {
                 )}
 
                 <p className="auth-footer-text">
-                    还没有控制台账号？<Link to="/register">立即注册</Link>
+                    还没有控制台账号？<Link to={stationSlug ? `/register?station=${encodeURIComponent(stationSlug)}` : '/register'}>立即注册</Link>
                 </p>
             </div>
         </div>

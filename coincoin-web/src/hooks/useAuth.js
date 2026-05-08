@@ -9,6 +9,7 @@ import {
     getGeneratedKey,
     getUsername,
     setUserId,
+    getStationContext,
     loginUser,
     setUsername as storeUsername,
 } from '../api/client'
@@ -125,10 +126,11 @@ export function useAuth() {
         setDeveloperKeyState({ hasActiveKey: false, activeKeyCount: 0, latestKey: null })
     }, [])
 
-    const loginWithPassword = useCallback(async (username, password) => {
+    const loginWithPassword = useCallback(async (username, password, stationSlug) => {
         setLoading(true)
         try {
-            const data = await loginUser(username, password)
+            const context = getStationContext()
+            const data = await loginUser(username, password, stationSlug || context.slug || undefined)
             clearGeneratedKey()
             storeApiKey(data.session_key)
             setUserId(data.user_id)

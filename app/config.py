@@ -119,6 +119,12 @@ class Settings(BaseSettings):
     station_default_commission_rate: float = 0.15
     station_payout_hold_days: int = 7
     station_min_payout_rmb_cents: int = 20000
+    station_public_base_url: str = ""
+    station_portal_domain: str = ""
+    station_api_domain: str = ""
+    station_api_base_url: str = ""
+    station_portal_path_prefix: str = "/s"
+    station_api_path_prefix: str = "/v1"
 
     # Payment (direct Epay integration)
     epay_api_url: str = ""

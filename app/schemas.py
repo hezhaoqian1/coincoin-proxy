@@ -173,6 +173,12 @@ class BalanceResponse(BaseModel):
     price_input_per_million: float = Field(description="输入价格（美元/百万 tokens）")
     price_cached_input_per_million: float = Field(description="缓存输入价格（美元/百万 tokens）")
     price_output_per_million: float = Field(description="输出价格（美元/百万 tokens）")
+    pricing_scope: str = Field(default="official", description="official / station")
+    pricing_model_id: Optional[str] = Field(default=None, description="当前简表采用的模型或站长别名")
+    station_id: Optional[str] = None
+    station_slug: Optional[str] = None
+    station_display_name: Optional[str] = None
+    station_pricing_models: Optional[List[dict]] = None
 
 
 class ReferralCodeUpdateRequest(BaseModel):
@@ -259,6 +265,7 @@ class AuthRegisterRequest(BaseModel):
     email: str = Field(..., min_length=5, max_length=255)
     password: str = Field(..., min_length=6, max_length=128)
     referral_code: Optional[str] = Field(default=None, description="邀请码（可选）")
+    station_slug: Optional[str] = Field(default=None, min_length=1, max_length=64, description="站长入口 slug（可选）")
     verification_id: Optional[str] = Field(default=None, description="预注册邮箱验证会话 ID")
     verification_code: Optional[str] = Field(default=None, min_length=4, max_length=12, description="邮箱验证码")
 
@@ -287,6 +294,7 @@ class AuthRegisterCheckCodeResponse(BaseModel):
 class AuthLoginRequest(BaseModel):
     username: str
     password: str
+    station_slug: Optional[str] = Field(default=None, min_length=1, max_length=64, description="站长入口 slug（可选）")
 
 class AuthResponse(BaseModel):
     user_id: str
@@ -348,6 +356,29 @@ class StationApplicationReviewRequest(BaseModel):
     review_note: str = Field(default="", max_length=5000)
 
 
+class AdminStationCreateRequest(BaseModel):
+    owner_user_id: Optional[str] = Field(default=None, max_length=64)
+    owner_username: Optional[str] = Field(default=None, max_length=128)
+    owner_email: Optional[str] = Field(default=None, max_length=255)
+    display_name: str = Field(..., min_length=2, max_length=128)
+    slug: Optional[str] = Field(default=None, max_length=64)
+    mode: str = Field(default="commission_station")
+    commission_rate: float = Field(default=0.15, ge=0, le=1)
+    balance_cents: int = Field(default=0, ge=0)
+    wholesale_tier: str = Field(default="standard", max_length=32)
+    settlement_method: str = Field(default="alipay_manual")
+    settlement_payee_name: str = Field(default="", max_length=128)
+    settlement_payee_account: str = Field(default="", max_length=128)
+    settlement_qr_url: str = Field(default="", max_length=512)
+    create_default_alias: bool = Field(default=False)
+    default_alias: str = Field(default="fast", min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")
+    default_target_public_model_id: str = Field(default="", max_length=128)
+    default_capability: str = Field(default="chat/completions", max_length=64)
+    retail_input_per_million_cents: int = Field(default=0, ge=0)
+    retail_output_per_million_cents: int = Field(default=0, ge=0)
+    retail_price_per_image_cents: float = Field(default=0, ge=0)
+
+
 class StationPayoutBatchCreateRequest(BaseModel):
     station_id: str
     notes: Optional[str] = Field(default=None, max_length=5000)
@@ -369,3 +400,40 @@ class StationSettlementUpdateRequest(BaseModel):
     settlement_payee_name: str = Field(default="", max_length=128)
     settlement_payee_account: str = Field(default="", max_length=128)
     settlement_qr_url: str = Field(default="", max_length=512)
+
+
+class StationAliasCreateRequest(BaseModel):
+    alias: str = Field(..., min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")
+    target_public_model_id: str = Field(..., min_length=1, max_length=128)
+    fallback_target_public_model_id: str = Field(default="", max_length=128)
+    capability: str = Field(default="chat/completions", max_length=64)
+    retail_input_per_million_cents: int = Field(default=0, ge=0)
+    retail_output_per_million_cents: int = Field(default=0, ge=0)
+    retail_price_per_image_cents: float = Field(default=0, ge=0)
+    is_default_text: bool = Field(default=False)
+    is_default_image: bool = Field(default=False)
+
+
+class StationAliasUpdateRequest(BaseModel):
+    status: Optional[str] = Field(default=None, pattern=r"^(active|disabled)$")
+    target_public_model_id: Optional[str] = Field(default=None, max_length=128)
+    fallback_target_public_model_id: Optional[str] = Field(default=None, max_length=128)
+    is_default_text: Optional[bool] = None
+    is_default_image: Optional[bool] = None
+
+
+class StationPricebookUpdateRequest(BaseModel):
+    retail_input_per_million_cents: Optional[int] = Field(default=None, ge=0)
+    retail_output_per_million_cents: Optional[int] = Field(default=None, ge=0)
+    retail_price_per_image_cents: Optional[float] = Field(default=None, ge=0)
+    status: Optional[str] = Field(default=None, pattern=r"^(active|disabled)$")
+
+
+class StationBrandingUpdateRequest(BaseModel):
+    display_name: Optional[str] = Field(default=None, max_length=128)
+    logo_url: Optional[str] = Field(default=None, max_length=512)
+    favicon_url: Optional[str] = Field(default=None, max_length=512)
+    support_email: Optional[str] = Field(default=None, max_length=255)
+    support_link: Optional[str] = Field(default=None, max_length=512)
+    docs_intro: Optional[str] = Field(default=None, max_length=5000)
+    terms_url: Optional[str] = Field(default=None, max_length=512)

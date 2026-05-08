@@ -13,6 +13,24 @@ function clearLocalAuthState() {
     localStorage.removeItem('coincoin_generated_key')
 }
 
+export function setStationContext(station) {
+    if (!station?.slug) return
+    localStorage.setItem('coincoin_station_slug', station.slug)
+    localStorage.setItem('coincoin_station_display_name', station.display_name || station.slug)
+}
+
+export function clearStationContext() {
+    localStorage.removeItem('coincoin_station_slug')
+    localStorage.removeItem('coincoin_station_display_name')
+}
+
+export function getStationContext() {
+    return {
+        slug: localStorage.getItem('coincoin_station_slug') || '',
+        displayName: localStorage.getItem('coincoin_station_display_name') || '',
+    }
+}
+
 function extractErrorMessage(data, fallbackMessage) {
     const detail = data?.detail
     if (typeof detail === 'string' && detail) return detail
@@ -163,11 +181,12 @@ async function parseApiResponse(res, fallbackMessage) {
     return text
 }
 
-export async function registerUser(username, email, password, referralCode, verificationId, verificationCode) {
+export async function registerUser(username, email, password, referralCode, verificationId, verificationCode, stationSlug) {
     const body = { username, email, password }
     if (referralCode) body.referral_code = referralCode
     if (verificationId) body.verification_id = verificationId
     if (verificationCode) body.verification_code = verificationCode
+    if (stationSlug) body.station_slug = stationSlug
     const res = await fetch(`${PROXY_BASE}/v1/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -216,11 +235,13 @@ export async function resendVerification(userId) {
     return data
 }
 
-export async function loginUser(username, password) {
+export async function loginUser(username, password, stationSlug) {
+    const body = { username, password }
+    if (stationSlug) body.station_slug = stationSlug
     const res = await fetch(`${PROXY_BASE}/v1/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password })
+        body: JSON.stringify(body)
     })
     const data = await res.json()
     if (!res.ok) throw new Error(data.detail || 'login failed')
@@ -443,6 +464,15 @@ export async function getStationPayoutBatches() {
     return data
 }
 
+export async function getMyStationContext() {
+    const res = await fetch(`${PROXY_BASE}/v1/stations/me/context`, {
+        headers: authHeaders()
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || 'Failed to fetch station context')
+    return data
+}
+
 export async function updateStationSettlement(payload) {
     const res = await fetch(`${PROXY_BASE}/v1/stations/me/settlement`, {
         method: 'POST',
@@ -451,6 +481,84 @@ export async function updateStationSettlement(payload) {
     })
     const data = await res.json()
     if (!res.ok) throw new Error(data.detail || 'Failed to update station settlement')
+    return data
+}
+
+export async function getPublicStation(slug) {
+    const res = await fetch(`${PROXY_BASE}/v1/stations/public/${encodeURIComponent(slug)}`)
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || 'Failed to fetch station')
+    return data
+}
+
+export async function getStationAliasTargets() {
+    const res = await fetch(`${PROXY_BASE}/v1/stations/me/alias-targets`, {
+        headers: authHeaders()
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || 'Failed to fetch station alias targets')
+    return data
+}
+
+export async function getStationBranding() {
+    const res = await fetch(`${PROXY_BASE}/v1/stations/me/branding`, {
+        headers: authHeaders()
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || 'Failed to fetch station branding')
+    return data
+}
+
+export async function updateStationBranding(payload) {
+    const res = await fetch(`${PROXY_BASE}/v1/stations/me/branding`, {
+        method: 'PATCH',
+        headers: authHeaders(),
+        body: JSON.stringify(payload)
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || 'Failed to update station branding')
+    return data
+}
+
+export async function getStationAliases() {
+    const res = await fetch(`${PROXY_BASE}/v1/stations/me/aliases`, {
+        headers: authHeaders()
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || 'Failed to fetch station aliases')
+    return data
+}
+
+export async function updateStationAlias(aliasId, payload) {
+    const res = await fetch(`${PROXY_BASE}/v1/stations/me/aliases/${aliasId}`, {
+        method: 'PATCH',
+        headers: authHeaders(),
+        body: JSON.stringify(payload)
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || 'Failed to update station alias')
+    return data
+}
+
+export async function createStationAlias(payload) {
+    const res = await fetch(`${PROXY_BASE}/v1/stations/me/aliases`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify(payload)
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || 'Failed to create station alias')
+    return data
+}
+
+export async function updateStationPricebook(entryId, payload) {
+    const res = await fetch(`${PROXY_BASE}/v1/stations/me/pricebook/${entryId}`, {
+        method: 'PATCH',
+        headers: authHeaders(),
+        body: JSON.stringify(payload)
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || 'Failed to update station pricebook')
     return data
 }
 
@@ -483,9 +591,13 @@ export const PUBLIC_MODEL_CATALOG_FALLBACK = [
     { id: 'gemini-image', object: 'model', owned_by: 'google', coincoin_capabilities: ['images/generations', 'images/edits'], coincoin_billable_sku: 'gemini-image', coincoin_routing_mode: 'direct', coincoin_default_for: ['image'], coincoin_metadata: { tier: 'stable' }, coincoin_price_input_per_million: 0, coincoin_price_output_per_million: 0, coincoin_price_per_image_cents: 3.9 },
 ]
 
-export async function getPublicModels() {
+export async function getPublicModels(options = {}) {
     try {
-        const res = await fetch(`${PROXY_BASE}/v1/models`)
+        const headers = {}
+        if (options.authenticated && getApiKey()) {
+            headers.Authorization = `Bearer ${getApiKey()}`
+        }
+        const res = await fetch(`${PROXY_BASE}/v1/models`, { headers })
         if (!res.ok) throw new Error('failed to fetch models')
         const data = await res.json()
         if (Array.isArray(data?.data) && data.data.length > 0) {
