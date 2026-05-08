@@ -108,6 +108,12 @@ class RequestLog(Base):
     usage_unit_count: Mapped[int] = mapped_column(BigInteger, default=0)
     billable_sku: Mapped[str] = mapped_column(String(128), default="")
     upstream_request_id: Mapped[str] = mapped_column(String(128), default="")
+    station_id: Mapped[str] = mapped_column(String(32), default="", index=True)
+    station_alias: Mapped[str] = mapped_column(String(128), default="")
+    resolved_public_model: Mapped[str] = mapped_column(String(128), default="")
+    wholesale_cost_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    retail_charge_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    price_version: Mapped[int] = mapped_column(BigInteger, default=0)
     cost_cents: Mapped[int] = mapped_column(BigInteger, default=0)  # 费用（分）
     duration_ms: Mapped[int] = mapped_column(BigInteger, default=0)  # 响应耗时（毫秒）
     status_code: Mapped[int] = mapped_column(BigInteger, default=200)  # 上游响应状态码
@@ -249,6 +255,17 @@ class Station(Base):
     slug: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     display_name: Mapped[str] = mapped_column(String(128), default="")
     status: Mapped[str] = mapped_column(String(16), default="active", index=True)
+    mode: Mapped[str] = mapped_column(String(32), default="commission_station", index=True)
+    balance_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    currency: Mapped[str] = mapped_column(String(16), default="usd_cents")
+    wholesale_tier: Mapped[str] = mapped_column(String(32), default="standard")
+    allowed_catalog_bundle: Mapped[str] = mapped_column(Text, default="")
+    default_text_alias: Mapped[str] = mapped_column(String(128), default="")
+    default_image_alias: Mapped[str] = mapped_column(String(128), default="")
+    request_limit_per_minute: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    daily_spend_limit_cents: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    monthly_spend_limit_cents: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    suspended_reason: Mapped[str] = mapped_column(String(512), default="")
     commission_rate: Mapped[float] = mapped_column(Float, default=0.15)
     settlement_method: Mapped[str] = mapped_column(String(32), default="alipay_manual")
     settlement_payee_name: Mapped[str] = mapped_column(String(128), default="")
@@ -269,6 +286,82 @@ class StationCustomerLink(Base):
     created_by_user_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_users.id"))
     status: Mapped[str] = mapped_column(String(16), default="active", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class StationAlias(Base):
+    __tablename__ = "coincoin_station_aliases"
+    __table_args__ = (
+        Index("ix_station_alias_unique", "station_id", "alias", unique=True),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    station_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_stations.id"), index=True)
+    alias: Mapped[str] = mapped_column(String(128), index=True)
+    target_public_model_id: Mapped[str] = mapped_column(String(128), default="")
+    fallback_target_public_model_id: Mapped[str] = mapped_column(String(128), default="")
+    capability: Mapped[str] = mapped_column(String(64), default="chat/completions")
+    status: Mapped[str] = mapped_column(String(16), default="active", index=True)
+    is_default_text: Mapped[int] = mapped_column(BigInteger, default=0)
+    is_default_image: Mapped[int] = mapped_column(BigInteger, default=0)
+    metadata_json: Mapped[str] = mapped_column(Text, default="")
+    created_by_user_id: Mapped[str] = mapped_column(String(32), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class StationPricebookEntry(Base):
+    __tablename__ = "coincoin_station_pricebook"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    station_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_stations.id"), index=True)
+    station_alias_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_station_aliases.id"), index=True)
+    billable_sku: Mapped[str] = mapped_column(String(128), default="", index=True)
+    usage_unit_type: Mapped[str] = mapped_column(String(32), default="tokens")
+    retail_input_per_million_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    retail_output_per_million_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    retail_price_per_image_cents: Mapped[float] = mapped_column(Float, default=0.0)
+    min_allowed_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    max_allowed_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    price_version: Mapped[int] = mapped_column(BigInteger, default=1)
+    status: Mapped[str] = mapped_column(String(16), default="active", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class StationLedgerEntry(Base):
+    __tablename__ = "coincoin_station_ledger_entries"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    station_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_stations.id"), index=True)
+    entry_type: Mapped[str] = mapped_column(String(32), default="adjustment", index=True)
+    amount_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    balance_after_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    reference_type: Mapped[str] = mapped_column(String(64), default="")
+    reference_id: Mapped[str] = mapped_column(String(128), default="")
+    request_log_id: Mapped[str] = mapped_column(String(32), default="")
+    notes: Mapped[str] = mapped_column(Text, default="")
+    created_by_user_id: Mapped[str] = mapped_column(String(32), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class StationBranding(Base):
+    __tablename__ = "coincoin_station_branding"
+
+    station_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_stations.id"), primary_key=True)
+    display_name: Mapped[str] = mapped_column(String(128), default="")
+    logo_url: Mapped[str] = mapped_column(String(512), default="")
+    favicon_url: Mapped[str] = mapped_column(String(512), default="")
+    support_email: Mapped[str] = mapped_column(String(255), default="")
+    support_link: Mapped[str] = mapped_column(String(512), default="")
+    docs_intro: Mapped[str] = mapped_column(Text, default="")
+    terms_url: Mapped[str] = mapped_column(String(512), default="")
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

@@ -254,6 +254,88 @@
     background: white;
 }
 
+.recharge-live-order {
+    margin-bottom: var(--space-md);
+}
+
+.orders-empty {
+    padding: var(--space-lg);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-glass);
+    color: var(--text-secondary);
+    text-align: center;
+}
+
+.orders-error {
+    color: var(--accent-red);
+    border-color: rgba(239, 68, 68, 0.22);
+    background: rgba(239, 68, 68, 0.08);
+}
+
+.orders-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.order-history-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) minmax(240px, 0.9fr);
+    gap: var(--space-md);
+    align-items: center;
+    padding: 12px 14px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-glass);
+}
+
+.order-history-main,
+.order-history-meta {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+    min-width: 0;
+}
+
+.order-history-main {
+    flex-wrap: wrap;
+}
+
+.order-history-main code {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+}
+
+.order-history-main span,
+.order-history-meta span {
+    color: var(--text-secondary);
+    font-size: 0.86rem;
+}
+
+.order-history-meta {
+    justify-content: flex-end;
+    flex-wrap: wrap;
+}
+
+.order-status {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 8px;
+    border-radius: 999px;
+    font-weight: 700;
+}
+
+.order-status-confirmed {
+    color: var(--accent-emerald) !important;
+    background: rgba(16, 185, 129, 0.1);
+}
+
+.order-status-pending {
+    color: var(--accent-amber) !important;
+    background: rgba(245, 158, 11, 0.1);
+}
+
 .custom-input-row {
     display: flex;
     align-items: center;
@@ -463,6 +545,15 @@
 
     .custom-hint {
         white-space: normal;
+    }
+
+    .order-history-row {
+        grid-template-columns: 1fr;
+        gap: 8px;
+    }
+
+    .order-history-meta {
+        justify-content: flex-start;
     }
 
     .pay-action {

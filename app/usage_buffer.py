@@ -206,6 +206,15 @@ class UsageBuffer:
         image_count: int = 0,
         cost_cents_override: Optional[float] = None,
         price_per_image_cents: float = 0.0,
+        station_id: str = "",
+        station_alias: str = "",
+        resolved_public_model: str = "",
+        wholesale_price_input_per_million: int = 0,
+        wholesale_price_output_per_million: int = 0,
+        wholesale_price_per_image_cents: float = 0.0,
+        wholesale_cost_cents_override: Optional[float] = None,
+        retail_charge_cents_override: Optional[float] = None,
+        price_version: int = 0,
     ) -> None:
         """添加使用量（高性能，不阻塞请求）
         
@@ -249,6 +258,27 @@ class UsageBuffer:
                 )
         else:
             cost_cents = float(cost_cents_override)
+
+        if wholesale_cost_cents_override is not None:
+            wholesale_cost_cents = float(wholesale_cost_cents_override)
+        elif station_id:
+            if (usage_unit_type or "tokens") == "images":
+                wholesale_cost_cents = calculate_image_cost_cents(
+                    image_count=image_count or usage_unit_count,
+                    price_per_image_cents=wholesale_price_per_image_cents,
+                )
+            else:
+                wholesale_cost_cents = calculate_cost_cents(
+                    input_tokens,
+                    output_tokens,
+                    cached_tokens=cache_read_tokens or cached_tokens,
+                    price_input_per_million=wholesale_price_input_per_million,
+                    price_output_per_million=wholesale_price_output_per_million,
+                )
+        else:
+            wholesale_cost_cents = 0.0
+
+        retail_charge_cents = float(retail_charge_cents_override) if retail_charge_cents_override is not None else cost_cents
 
         resolved_usage_unit_type = (usage_unit_type or "tokens").strip() or "tokens"
         resolved_usage_unit_count = int(
@@ -295,6 +325,12 @@ class UsageBuffer:
                 "usage_unit_count": resolved_usage_unit_count,
                 "billable_sku": (billable_sku or model)[:128],
                 "upstream_request_id": (upstream_request_id or "")[:128],
+                "station_id": (station_id or "")[:32],
+                "station_alias": (station_alias or "")[:128],
+                "resolved_public_model": (resolved_public_model or "")[:128],
+                "wholesale_cost_cents": round(wholesale_cost_cents),
+                "retail_charge_cents": round(retail_charge_cents),
+                "price_version": int(price_version or 0),
                 "cost_cents": round(cost_cents),
                 "duration_ms": int(duration_ms),
                 "status_code": int(status_code),
@@ -474,6 +510,12 @@ async def flush_once() -> None:
                         usage_unit_count=log.get("usage_unit_count", 0),
                         billable_sku=log.get("billable_sku", ""),
                         upstream_request_id=log.get("upstream_request_id", ""),
+                        station_id=log.get("station_id", ""),
+                        station_alias=log.get("station_alias", ""),
+                        resolved_public_model=log.get("resolved_public_model", ""),
+                        wholesale_cost_cents=log.get("wholesale_cost_cents", 0),
+                        retail_charge_cents=log.get("retail_charge_cents", log["cost_cents"]),
+                        price_version=log.get("price_version", 0),
                         cost_cents=log["cost_cents"],
                         duration_ms=log["duration_ms"],
                         status_code=log["status_code"],

@@ -231,6 +231,88 @@ class EmailVerificationAuthTests(unittest.IsolatedAsyncioTestCase):
         signup_rewards.assert_awaited_once()
         self.assertIs(signup_rewards.await_args.args[0], user)
 
+    async def test_register_with_station_slug_links_user_to_station(self):
+        now = datetime.utcnow()
+        verification = SimpleNamespace(
+            user_id="regv_123",
+            email="alice@gmail.com",
+            purpose="register",
+            consumed_at=None,
+            attempts=0,
+            code_hash=auth_module._hash_email_code("123456"),
+            expires_at=now + timedelta(minutes=10),
+        )
+        station = SimpleNamespace(id="st_1", owner_user_id="u_owner", slug="stone", status="active")
+        db = _FakeDB(
+            execute_results=[
+                _ScalarOneOrNoneResult(verification),
+                _ScalarOneOrNoneResult(station),
+                _ScalarOneOrNoneResult(None),
+                _ScalarOneOrNoneResult(None),
+                _ScalarOneOrNoneResult(None),
+                _ScalarOneOrNoneResult(None),
+                _ScalarOneOrNoneResult(None),
+            ]
+        )
+        payload = auth_module.AuthRegisterRequest(
+            username="alice",
+            email="Alice@Gmail.com",
+            password="secret123",
+            referral_code=None,
+            station_slug="stone",
+            verification_id="regv_123",
+            verification_code="123456",
+        )
+
+        with patch.object(auth_module.rate_limiter, "allow", AsyncMock(return_value=True)), patch.object(
+            auth_module, "ensure_finance_summary_initialized", AsyncMock()
+        ), patch.object(auth_module, "process_signup_referral_rewards", AsyncMock()), patch.object(
+            auth_module, "generate_api_key", return_value="sk_cc_session_test"
+        ), patch.object(auth_module, "hash_key", return_value="hashed-session"), patch.object(
+            auth_module, "encrypt_api_key", return_value="encrypted-session"
+        ):
+            result = await auth_module.register(payload, _request(), db)
+
+        self.assertEqual(result.user_id, next(obj.id for obj in db.added if obj.__class__.__name__ == "User"))
+        link = next(obj for obj in db.added if obj.__class__.__name__ == "StationCustomerLink")
+        self.assertEqual(link.station_id, "st_1")
+        self.assertEqual(link.created_by_user_id, "u_owner")
+        self.assertEqual(link.status, "active")
+
+    async def test_login_with_station_slug_links_existing_user_to_station(self):
+        account = SimpleNamespace(
+            username="alice",
+            linked_user_id="u_1",
+            password_hash="stored",
+            failed_attempts=0,
+            locked_until=None,
+            last_login_at=None,
+            status="active",
+        )
+        user = SimpleNamespace(id="u_1", username="alice", email="alice@gmail.com", email_verified_at=datetime.utcnow())
+        station = SimpleNamespace(id="st_1", owner_user_id="u_owner", slug="stone", status="active")
+        db = _FakeDB(
+            execute_results=[
+                _ScalarOneOrNoneResult(account),
+                _ScalarOneOrNoneResult(user),
+                _ScalarOneOrNoneResult(station),
+                _ScalarOneOrNoneResult(None),
+            ]
+        )
+        payload = auth_module.AuthLoginRequest(username="alice", password="secret123", station_slug="stone")
+
+        with patch.object(auth_module.rate_limiter, "allow", AsyncMock(return_value=True)), patch.object(
+            auth_module, "verify_password", AsyncMock(return_value=True)
+        ), patch.object(auth_module, "generate_api_key", return_value="sk_cc_session"), patch.object(
+            auth_module, "hash_key", return_value="hashed-session"
+        ), patch.object(auth_module, "encrypt_api_key", return_value="encrypted-session"):
+            result = await auth_module.login(payload, _request(), db)
+
+        self.assertEqual(result.user_id, "u_1")
+        link = next(obj for obj in db.added if obj.__class__.__name__ == "StationCustomerLink")
+        self.assertEqual(link.station_id, "st_1")
+        self.assertEqual(link.user_id, "u_1")
+
     async def test_register_with_code_accepts_dot_in_username(self):
         now = datetime.utcnow()
         verification = SimpleNamespace(

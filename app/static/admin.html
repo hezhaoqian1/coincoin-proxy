@@ -400,6 +400,12 @@
       gap: 16px;
     }
 
+    .form-help {
+      font-size: 12px;
+      color: var(--text-tertiary);
+      margin-top: 6px;
+    }
+
     /* Buttons */
     .btn {
       display: inline-flex;
@@ -1145,6 +1151,10 @@
             <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h10M4 17h10M18 5l3 2-3 2M18 15l3 2-3 2"/></svg>
             模型路由
           </div>
+          <div class="nav-item" data-page="stations">
+            <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 21h18M5 21V7l8-4 6 3v15M9 10h1m3 0h1M9 14h1m3 0h1M9 18h1m3 0h1"/></svg>
+            站长管理
+          </div>
           <div class="nav-item" data-page="station-applications">
             <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6l4 2"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 22a10 10 0 110-20 10 10 0 010 20z"/></svg>
             站长申请
@@ -1676,6 +1686,49 @@
         </div>
       </div>
 
+      <!-- =============== Stations =============== -->
+      <div id="page-stations" class="page">
+        <div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;">
+          <div>
+            <h1 class="page-title">站长管理</h1>
+            <p class="page-desc">平台管理员手动开通站长，站长用户继续使用统一 API 域名和自己的 Key。</p>
+          </div>
+          <button class="btn btn-primary" onclick="openStationCreateModal()">+ 创建站长</button>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <div class="filter-bar">
+              <input type="text" id="stationSearch" class="form-input" style="width:300px" placeholder="搜索站点名、slug、用户 ID、用户名、邮箱..." oninput="debounceStationSearch()" />
+              <select id="stationStatusFilter" class="form-select" onchange="loadStations()">
+                <option value="">全部状态</option>
+                <option value="active">正常</option>
+                <option value="suspended">已暂停</option>
+                <option value="disabled">已禁用</option>
+              </select>
+            </div>
+            <button class="btn btn-secondary" onclick="loadStations()">刷新</button>
+          </div>
+          <div class="card-body flush">
+            <div class="table-wrapper">
+              <table>
+                <thead>
+                  <tr>
+                    <th>站点</th>
+                    <th>站长用户</th>
+                    <th>模式 / 分润</th>
+                    <th>入口</th>
+                    <th>客户数</th>
+                    <th>状态</th>
+                    <th>创建时间</th>
+                  </tr>
+                </thead>
+                <tbody id="stationsBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- =============== Station Applications =============== -->
       <div id="page-station-applications" class="page">
         <div class="page-header">
@@ -2028,6 +2081,106 @@
     </div>
   </div>
 
+  <!-- Station Create Modal -->
+  <div id="stationCreateModal" class="modal-overlay">
+    <div class="modal" style="max-width:760px">
+      <div class="modal-header">
+        <span class="modal-title">创建站长</span>
+        <button class="modal-close" onclick="closeModal('stationCreateModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">站长用户 ID</label>
+            <input type="text" id="stationCreateOwnerUserId" class="form-input" placeholder="优先填写 u_..." />
+          </div>
+          <div class="form-group">
+            <label class="form-label">用户名 / 邮箱</label>
+            <input type="text" id="stationCreateOwnerLookup" class="form-input" placeholder="可填用户名或邮箱二选一" />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">站点展示名</label>
+            <input type="text" id="stationCreateDisplayName" class="form-input" placeholder="例如 Stone API" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Slug</label>
+            <input type="text" id="stationCreateSlug" class="form-input" placeholder="例如 stone，会生成 /s/stone" />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">站长模式</label>
+            <select id="stationCreateMode" class="form-select">
+              <option value="commission_station">分润站长</option>
+              <option value="wholesale_station">批发站长</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">分润比例</label>
+            <input type="number" id="stationCreateCommissionRate" class="form-input" value="0.15" min="0" max="1" step="0.01" />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">站长余额（美分）</label>
+            <input type="number" id="stationCreateBalanceCents" class="form-input" value="0" min="0" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">批发档位</label>
+            <input type="text" id="stationCreateWholesaleTier" class="form-input" value="standard" />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">收款姓名</label>
+            <input type="text" id="stationCreatePayeeName" class="form-input" placeholder="可选" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">收款账号</label>
+            <input type="text" id="stationCreatePayeeAccount" class="form-input" placeholder="可选" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">创建默认模型别名</label>
+          <select id="stationCreateDefaultAliasEnabled" class="form-select" onchange="toggleStationCreateAliasFields()">
+            <option value="false">暂不创建，站长自己配置</option>
+            <option value="true">同时创建一个默认 alias</option>
+          </select>
+          <div class="form-help">默认 alias 只映射到平台公开模型，不会暴露上游地址或上游 Key。</div>
+        </div>
+        <div id="stationCreateAliasFields" style="display:none">
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">默认 Alias</label>
+              <input type="text" id="stationCreateDefaultAlias" class="form-input" value="fast" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">目标公开模型</label>
+              <input type="text" id="stationCreateDefaultTarget" class="form-input" placeholder="例如 gpt-5.4-mini" />
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">输入价 / 百万 tokens（美分）</label>
+              <input type="number" id="stationCreateRetailInput" class="form-input" value="0" min="0" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">输出价 / 百万 tokens（美分）</label>
+              <input type="number" id="stationCreateRetailOutput" class="form-input" value="0" min="0" />
+            </div>
+          </div>
+        </div>
+        <div id="stationCreateResult" class="form-help" style="display:none"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('stationCreateModal')">取消</button>
+        <button class="btn btn-primary" onclick="submitStationCreate()">创建站长</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Station Payout Batch Modal -->
   <div id="stationPayoutBatchModal" class="modal-overlay">
     <div class="modal" style="max-width:560px">
@@ -2103,6 +2256,7 @@
     let currentUserId = null;
     let usersCache = [];
     let searchTimeout = null;
+    let stationSearchTimeout = null;
     let userSortAsc = false;
     let stationPayoutBatchCache = [];
     let modelAliasCache = [];
@@ -2117,6 +2271,27 @@
     const saved = localStorage.getItem('cc_admin_token');
     if (saved) tokenInput.value = saved;
 
+    function getPageLoader(page) {
+      const loaders = {
+        dashboard: loadDashboard,
+        users: loadUsers,
+        'finance-summary': loadFinanceSummary,
+        keys: loadAllKeys,
+        'model-aliases': loadModelAliases,
+        stations: loadStations,
+        'station-applications': loadStationApplications,
+        'station-commission': loadStationCommissionLedger,
+        'station-payouts': loadStationPayoutBatches,
+        recharge: loadRecharges,
+        usage: loadFullUsage,
+        monitoring: loadMonitoringSummary,
+        orders: loadPaymentOrders,
+        codes: loadRedemptionCodes,
+        announcements: loadAnnouncements,
+      };
+      return loaders[page] || null;
+    }
+
     // Navigation
     document.querySelectorAll('.nav-item[data-page]').forEach(item => {
       item.addEventListener('click', () => {
@@ -2129,22 +2304,8 @@
         document.getElementById('sidebar').classList.remove('open');
         document.getElementById('sidebarBackdrop').classList.remove('active');
 
-        const loaders = {
-          users: loadUsers,
-          'finance-summary': loadFinanceSummary,
-          keys: loadAllKeys,
-          'model-aliases': loadModelAliases,
-          'station-applications': loadStationApplications,
-          'station-commission': loadStationCommissionLedger,
-          'station-payouts': loadStationPayoutBatches,
-          recharge: loadRecharges,
-          usage: loadFullUsage,
-          monitoring: loadMonitoringSummary,
-          orders: loadPaymentOrders,
-          codes: loadRedemptionCodes,
-          announcements: loadAnnouncements,
-        };
-        if (loaders[page]) loaders[page]();
+        const loader = getPageLoader(page);
+        if (loader) loader();
       });
     });
 
@@ -2259,6 +2420,11 @@
           <td>${formatNum(r.images_total || 0)}</td>
         </tr>`).join('') : '<tr><td colspan="4" class="text-muted" style="text-align:center;padding:20px">暂无数据</td></tr>';
       } catch (e) { console.error(e); }
+    }
+
+    function loadDashboard() {
+      loadSummary();
+      loadUsage();
     }
 
     // ==================== Users ====================
@@ -3078,6 +3244,130 @@
       } catch (e) { toast('操作失败', 'error'); }
     }
 
+    // ==================== Stations ====================
+    function debounceStationSearch() {
+      clearTimeout(stationSearchTimeout);
+      stationSearchTimeout = setTimeout(loadStations, 300);
+    }
+
+    function stationModeLabel(mode) {
+      if (mode === 'wholesale_station') return '批发站长';
+      return '分润站长';
+    }
+
+    async function loadStations() {
+      try {
+        const params = new URLSearchParams();
+        const search = document.getElementById('stationSearch')?.value.trim() || '';
+        const sf = document.getElementById('stationStatusFilter')?.value || '';
+        if (search) params.set('search', search);
+        if (sf) params.set('status_filter', sf);
+        const suffix = params.toString() ? `?${params.toString()}` : '';
+        const r = await fetch(`/admin/stations${suffix}`, { headers: adminHeaders() });
+        if (!r.ok) return toast('加载失败', 'error');
+        const data = await r.json();
+        const body = document.getElementById('stationsBody');
+        if (!data.length) {
+          body.innerHTML = '<tr><td colspan="7"><div class="empty-state"><div class="empty-state-icon">🏢</div><h3>暂无站长</h3><p>可以手动创建，或先审核站长申请。</p></div></td></tr>';
+          return;
+        }
+        body.innerHTML = data.map(station => {
+          const owner = station.owner || {};
+          const statusBadge = station.status === 'active' ? 'badge-success' : station.status === 'suspended' ? 'badge-warning' : 'badge-error';
+          const portalUrl = station.portal_url || '';
+          const apiBaseUrl = station.api_base_url || '';
+          return `<tr>
+            <td><div><strong>${escapeHtml(station.display_name || station.slug)}</strong><div class="text-sm text-muted">${escapeHtml(station.id)} · ${escapeHtml(station.slug)}</div></div></td>
+            <td><div><strong>${escapeHtml(owner.username || owner.email || station.owner_user_id)}</strong><div class="text-sm text-muted">${escapeHtml(owner.email || station.owner_user_id || '')}</div></div></td>
+            <td><div>${escapeHtml(stationModeLabel(station.mode))}</div><div class="text-sm text-muted">分润 ${(Number(station.commission_rate || 0) * 100).toFixed(0)}% · 余额 ${formatMoney(station.balance_cents || 0)}</div></td>
+            <td><div>${portalUrl ? `<a href="${escapeHtml(portalUrl)}" target="_blank" rel="noreferrer">${escapeHtml(portalUrl)}</a>` : '-'}</div><div class="text-sm text-muted">${escapeHtml(apiBaseUrl || '-')}</div></td>
+            <td>${formatNum(station.customer_count || 0)}</td>
+            <td><span class="badge ${statusBadge}">${escapeHtml(station.status || '-')}</span></td>
+            <td class="text-sm text-muted">${formatDateFull(station.created_at)}</td>
+          </tr>`;
+        }).join('');
+      } catch (e) {
+        console.error(e);
+        toast('加载失败', 'error');
+      }
+    }
+
+    function openStationCreateModal() {
+      document.getElementById('stationCreateOwnerUserId').value = '';
+      document.getElementById('stationCreateOwnerLookup').value = '';
+      document.getElementById('stationCreateDisplayName').value = '';
+      document.getElementById('stationCreateSlug').value = '';
+      document.getElementById('stationCreateMode').value = 'commission_station';
+      document.getElementById('stationCreateCommissionRate').value = '0.15';
+      document.getElementById('stationCreateBalanceCents').value = '0';
+      document.getElementById('stationCreateWholesaleTier').value = 'standard';
+      document.getElementById('stationCreatePayeeName').value = '';
+      document.getElementById('stationCreatePayeeAccount').value = '';
+      document.getElementById('stationCreateDefaultAliasEnabled').value = 'false';
+      document.getElementById('stationCreateDefaultAlias').value = 'fast';
+      document.getElementById('stationCreateDefaultTarget').value = '';
+      document.getElementById('stationCreateRetailInput').value = '0';
+      document.getElementById('stationCreateRetailOutput').value = '0';
+      document.getElementById('stationCreateResult').style.display = 'none';
+      toggleStationCreateAliasFields();
+      openModal('stationCreateModal');
+    }
+
+    function toggleStationCreateAliasFields() {
+      const enabled = document.getElementById('stationCreateDefaultAliasEnabled').value === 'true';
+      document.getElementById('stationCreateAliasFields').style.display = enabled ? 'block' : 'none';
+    }
+
+    async function submitStationCreate() {
+      const owner_user_id = document.getElementById('stationCreateOwnerUserId').value.trim();
+      const ownerLookup = document.getElementById('stationCreateOwnerLookup').value.trim();
+      const display_name = document.getElementById('stationCreateDisplayName').value.trim();
+      const slug = document.getElementById('stationCreateSlug').value.trim();
+      const create_default_alias = document.getElementById('stationCreateDefaultAliasEnabled').value === 'true';
+      if (!owner_user_id && !ownerLookup) return toast('请填写站长用户 ID、用户名或邮箱', 'error');
+      if (!display_name) return toast('请填写站点展示名', 'error');
+
+      const payload = {
+        owner_user_id,
+        display_name,
+        slug,
+        mode: document.getElementById('stationCreateMode').value,
+        commission_rate: Number(document.getElementById('stationCreateCommissionRate').value || 0.15),
+        balance_cents: Number(document.getElementById('stationCreateBalanceCents').value || 0),
+        wholesale_tier: document.getElementById('stationCreateWholesaleTier').value.trim() || 'standard',
+        settlement_payee_name: document.getElementById('stationCreatePayeeName').value.trim(),
+        settlement_payee_account: document.getElementById('stationCreatePayeeAccount').value.trim(),
+        create_default_alias,
+      };
+      if (!owner_user_id && ownerLookup) {
+        if (ownerLookup.includes('@')) payload.owner_email = ownerLookup;
+        else payload.owner_username = ownerLookup;
+      }
+      if (create_default_alias) {
+        payload.default_alias = document.getElementById('stationCreateDefaultAlias').value.trim() || 'fast';
+        payload.default_target_public_model_id = document.getElementById('stationCreateDefaultTarget').value.trim();
+        payload.retail_input_per_million_cents = Number(document.getElementById('stationCreateRetailInput').value || 0);
+        payload.retail_output_per_million_cents = Number(document.getElementById('stationCreateRetailOutput').value || 0);
+      }
+      try {
+        const r = await fetch('/admin/stations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+          body: JSON.stringify(payload)
+        });
+        const d = await r.json();
+        if (!r.ok) return toast(d.detail || '创建失败', 'error');
+        const station = d.station || {};
+        const resultNode = document.getElementById('stationCreateResult');
+        resultNode.style.display = 'block';
+        resultNode.innerHTML = `已创建。站长后台：<a href="/station" target="_blank" rel="noreferrer">/station</a>；站点入口：${station.portal_url ? `<a href="${escapeHtml(station.portal_url)}" target="_blank" rel="noreferrer">${escapeHtml(station.portal_url)}</a>` : '-'}；API：${escapeHtml(station.api_base_url || '-')}`;
+        toast('站长已创建', 'success');
+        loadStations();
+      } catch (e) {
+        toast('创建失败', 'error');
+      }
+    }
+
     // ==================== Station Applications ====================
     async function loadStationApplications() {
       try {
@@ -3575,17 +3865,21 @@
     }
 
     // ==================== Init ====================
-    function loadAll() {
-      loadSummary();
-      loadUsers();
-      loadUsage();
-      loadFinanceSummary();
-      loadModelAliases();
-      loadMonitoringSummary();
-      loadOpsHealth();
+    function getActivePage() {
+      const active = document.querySelector('.page.active');
+      return active?.id?.replace(/^page-/, '') || 'dashboard';
     }
 
-    loadAll();
+    function loadCurrentPage() {
+      const loader = getPageLoader(getActivePage());
+      if (loader) loader();
+    }
+
+    function loadAll() {
+      loadCurrentPage();
+    }
+
+    loadCurrentPage();
   </script>
 </body>
 </html>

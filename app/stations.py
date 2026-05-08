@@ -4,23 +4,42 @@ from datetime import datetime
 import re
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import settings
 from .db import get_db
-from .models import ApiKey, Station, StationApplication, StationCommissionLedgerEntry, StationCustomerLink, StationPayoutBatch, User
+from .models import ApiKey, RequestLog, Station, StationAlias, StationApplication, StationBranding, StationCommissionLedgerEntry, StationCustomerLink, StationPayoutBatch, StationPricebookEntry, User
 from .proxy import authenticate_user
-from .schemas import StationApplicationCreateRequest, StationApplicationReviewRequest, StationCustomerCreateRequest, StationPayoutBatchCreateRequest, StationPayoutBatchMarkPaidRequest, StationSettlementUpdateRequest
+from .router import IMAGE_ENDPOINTS, TEXT_ENDPOINTS, registry as model_registry
+from .schemas import AdminStationCreateRequest, StationAliasCreateRequest, StationAliasUpdateRequest, StationApplicationCreateRequest, StationApplicationReviewRequest, StationBrandingUpdateRequest, StationCustomerCreateRequest, StationPayoutBatchCreateRequest, StationPayoutBatchMarkPaidRequest, StationPricebookUpdateRequest, StationSettlementUpdateRequest
 from .security import encrypt_api_key, generate_api_key, generate_id, generate_referral_code, hash_key, require_admin
 
 
 router = APIRouter(prefix="/v1/stations", tags=["stations"])
 
 
+async def get_station_public_models_by_id(station_id: str, db: AsyncSession) -> list[dict]:
+    station_id = (station_id or "").strip()
+    if not station_id:
+        return []
+    return await _list_active_alias_models(station_id, db)
+
+
 def _slugify_station_name(name: str) -> str:
     base = re.sub(r"[^a-zA-Z0-9]+", "-", (name or "").strip().lower()).strip("-")
     return base[:48] or "station"
+
+
+def _normalize_station_slug(value: str) -> str:
+    slug = _slugify_station_name(value)
+    if len(slug) > 64:
+        slug = slug[:64].strip("-")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}[a-z0-9]", slug) and len(slug) > 1:
+        slug = re.sub(r"[^a-z0-9-]", "-", slug).strip("-")[:64]
+    if not slug:
+        slug = "station"
+    return slug
 
 
 async def _get_current_user(request: Request, db: AsyncSession) -> User:
@@ -49,18 +68,325 @@ def _iso(value: datetime | None) -> str | None:
     return value.isoformat() + "Z" if value else None
 
 
+def _normalize_base_url(value: str | None) -> str:
+    return (value or "").strip().rstrip("/")
+
+
+def _normalize_domain(value: str | None) -> str:
+    domain = (value or "").strip().strip("/")
+    domain = re.sub(r"^https?://", "", domain)
+    return domain.split("/", 1)[0].strip("/")
+
+
+def _join_path(base_url: str, *parts: str) -> str:
+    path_parts = [str(part).strip("/") for part in parts if str(part or "").strip("/")]
+    return "/".join([base_url, *path_parts]) if path_parts else base_url
+
+
+def _build_station_urls(slug: str) -> dict:
+    public_base_url = _normalize_base_url(settings.station_public_base_url or settings.self_base_url)
+    portal_domain = _normalize_domain(settings.station_portal_domain)
+    api_domain = _normalize_domain(settings.station_api_domain)
+    api_base_url = _normalize_base_url(settings.station_api_base_url)
+    portal_path_prefix = settings.station_portal_path_prefix or "/s"
+    api_path_prefix = settings.station_api_path_prefix or "/v1"
+
+    if portal_domain:
+        portal_url = f"https://{slug}.{portal_domain}"
+        portal_url_mode = "wildcard"
+    elif public_base_url:
+        portal_url = _join_path(public_base_url, portal_path_prefix, slug)
+        portal_url_mode = "path"
+    else:
+        portal_url = ""
+        portal_url_mode = "unconfigured"
+
+    if api_domain:
+        api_base_url = _join_path(f"https://{slug}.{api_domain}", api_path_prefix)
+        api_url_mode = "wildcard"
+    elif api_base_url:
+        api_url_mode = "shared"
+    elif public_base_url:
+        api_base_url = _join_path(public_base_url, api_path_prefix)
+        api_url_mode = "shared"
+    else:
+        api_base_url = ""
+        api_url_mode = "unconfigured"
+
+    return {
+        "portal_url": portal_url,
+        "api_base_url": api_base_url,
+        "portal_url_mode": portal_url_mode,
+        "api_url_mode": api_url_mode,
+    }
+
+
 def _station_public_payload(station: Station) -> dict:
+    url_payload = _build_station_urls(station.slug)
     return {
         "id": station.id,
         "slug": station.slug,
         "display_name": station.display_name,
         "status": station.status,
+        "mode": getattr(station, "mode", "commission_station") or "commission_station",
+        "balance_cents": int(getattr(station, "balance_cents", 0) or 0),
+        "currency": getattr(station, "currency", "usd_cents") or "usd_cents",
+        "wholesale_tier": getattr(station, "wholesale_tier", "standard") or "standard",
+        "default_text_alias": getattr(station, "default_text_alias", "") or "",
+        "default_image_alias": getattr(station, "default_image_alias", "") or "",
         "commission_rate": station.commission_rate,
         "settlement_method": station.settlement_method,
         "settlement_payee_name": station.settlement_payee_name,
         "settlement_payee_account": station.settlement_payee_account,
         "settlement_qr_url": station.settlement_qr_url,
         "created_at": _iso(station.created_at),
+        **url_payload,
+    }
+
+
+def _admin_station_payload(station: Station, owner: User | None = None, *, customer_count: int | None = None) -> dict:
+    owner_payload = None
+    if owner is not None:
+        owner_payload = {
+            "id": owner.id,
+            "username": owner.username,
+            "email": getattr(owner, "email", None),
+            "status": owner.status,
+        }
+    return {
+        **_station_public_payload(station),
+        "owner_user_id": station.owner_user_id,
+        "owner": owner_payload,
+        "customer_count": customer_count,
+        "request_limit_per_minute": getattr(station, "request_limit_per_minute", None),
+        "daily_spend_limit_cents": getattr(station, "daily_spend_limit_cents", None),
+        "monthly_spend_limit_cents": getattr(station, "monthly_spend_limit_cents", None),
+        "suspended_reason": getattr(station, "suspended_reason", "") or "",
+        "updated_at": _iso(getattr(station, "updated_at", None)),
+    }
+
+
+def _capability_group(capability: str) -> str:
+    cap = (capability or "").strip()
+    if cap in IMAGE_ENDPOINTS:
+        return "image"
+    if cap in TEXT_ENDPOINTS:
+        return "text"
+    if cap == "embeddings":
+        return "embedding"
+    return "text"
+
+
+def _target_supports_capability(public_model, capability: str) -> bool:
+    target_caps = set(getattr(public_model, "capabilities", ()) or ())
+    if capability in target_caps:
+        return True
+    if capability in TEXT_ENDPOINTS and target_caps.intersection(TEXT_ENDPOINTS):
+        return True
+    return False
+
+
+def _validate_alias_target(target_public_model_id: str, capability: str):
+    model_registry.ensure_initialized()
+    target = model_registry.get_public_model((target_public_model_id or "").strip())
+    if not target:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="target model not available")
+    if not _target_supports_capability(target, capability):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="target capability mismatch")
+    return target
+
+
+def _price_or_default(raw_value, default_value):
+    value = raw_value if raw_value not in (None, 0, 0.0) else default_value
+    return value or 0
+
+
+def _validate_retail_price(public_model, *, input_price: int = 0, output_price: int = 0, image_price: float = 0.0) -> None:
+    if int(input_price or 0) < int(getattr(public_model, "price_input_per_million", 0) or 0):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="retail price below platform cost")
+    if int(output_price or 0) < int(getattr(public_model, "price_output_per_million", 0) or 0):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="retail price below platform cost")
+    if float(image_price or 0.0) < float(getattr(public_model, "price_per_image_cents", 0.0) or 0.0):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="retail price below platform cost")
+
+
+def _alias_payload(alias: StationAlias) -> dict:
+    return {
+        "id": alias.id,
+        "station_id": alias.station_id,
+        "alias": alias.alias,
+        "target_public_model_id": alias.target_public_model_id,
+        "fallback_target_public_model_id": alias.fallback_target_public_model_id,
+        "capability": alias.capability,
+        "status": alias.status,
+        "is_default_text": bool(alias.is_default_text),
+        "is_default_image": bool(alias.is_default_image),
+        "created_at": _iso(alias.created_at),
+        "updated_at": _iso(alias.updated_at),
+    }
+
+
+def _pricebook_payload(entry: StationPricebookEntry) -> dict:
+    return {
+        "id": entry.id,
+        "station_id": entry.station_id,
+        "station_alias_id": entry.station_alias_id,
+        "billable_sku": entry.billable_sku,
+        "usage_unit_type": entry.usage_unit_type,
+        "retail_input_per_million_cents": entry.retail_input_per_million_cents,
+        "retail_output_per_million_cents": entry.retail_output_per_million_cents,
+        "retail_price_per_image_cents": entry.retail_price_per_image_cents,
+        "min_allowed_cents": entry.min_allowed_cents,
+        "max_allowed_cents": entry.max_allowed_cents,
+        "price_version": entry.price_version,
+        "status": entry.status,
+        "created_at": _iso(entry.created_at),
+        "updated_at": _iso(entry.updated_at),
+    }
+
+
+def _branding_payload(branding: StationBranding | None, station: Station | None = None) -> dict:
+    station_display = getattr(station, "display_name", "") if station is not None else ""
+    return {
+        "display_name": (getattr(branding, "display_name", "") or station_display or "").strip(),
+        "logo_url": getattr(branding, "logo_url", "") if branding is not None else "",
+        "favicon_url": getattr(branding, "favicon_url", "") if branding is not None else "",
+        "support_email": getattr(branding, "support_email", "") if branding is not None else "",
+        "support_link": getattr(branding, "support_link", "") if branding is not None else "",
+        "docs_intro": getattr(branding, "docs_intro", "") if branding is not None else "",
+        "terms_url": getattr(branding, "terms_url", "") if branding is not None else "",
+        "updated_at": _iso(getattr(branding, "updated_at", None)) if branding is not None else None,
+    }
+
+
+def _serialize_station_model_alias(alias: StationAlias, price: StationPricebookEntry | None = None) -> dict:
+    target = model_registry.get_public_model(alias.target_public_model_id)
+    capabilities = list(getattr(target, "capabilities", ()) or [alias.capability])
+    cached_input_price = 0
+    if price:
+        try:
+            cached_input_price = round(
+                float(price.retail_input_per_million_cents or 0) * float(settings.cache_discount_rate or 0),
+                4,
+            )
+        except Exception:
+            cached_input_price = 0
+    return {
+        "id": alias.alias,
+        "object": "model",
+        "created": int(alias.created_at.timestamp()) if alias.created_at else 1700000000,
+        "owned_by": "station",
+        "coincoin_station_id": alias.station_id,
+        "coincoin_station_alias": alias.alias,
+        "coincoin_resolved_public_model": alias.target_public_model_id,
+        "coincoin_capabilities": capabilities,
+        "coincoin_billable_sku": price.billable_sku if price else (getattr(target, "billable_sku", "") or alias.alias),
+        "coincoin_routing_mode": "station_alias",
+        "coincoin_default_for": [
+            label
+            for label, enabled in (
+                ("text", bool(alias.is_default_text)),
+                ("image", bool(alias.is_default_image)),
+            )
+            if enabled
+        ],
+        "coincoin_price_input_per_million": price.retail_input_per_million_cents if price else 0,
+        "coincoin_price_cached_input_per_million": cached_input_price,
+        "coincoin_price_output_per_million": price.retail_output_per_million_cents if price else 0,
+        "coincoin_price_per_image_cents": price.retail_price_per_image_cents if price else 0,
+    }
+
+
+async def _list_active_alias_models(station_id: str, db: AsyncSession) -> list[dict]:
+    rows = (
+        await db.execute(
+            select(StationAlias, StationPricebookEntry)
+            .outerjoin(StationPricebookEntry, StationPricebookEntry.station_alias_id == StationAlias.id)
+            .where(StationAlias.station_id == station_id, StationAlias.status == "active")
+            .order_by(StationAlias.alias.asc())
+        )
+    ).all()
+    return [_serialize_station_model_alias(alias, price) for alias, price in rows]
+
+
+async def list_station_public_models_for_user(user: User, db: AsyncSession) -> list[dict] | None:
+    station_id = ""
+    context = getattr(user, "_station_context", None)
+    if isinstance(context, dict):
+        if (context.get("status") or "active") != "active":
+            return []
+        station_id = str(context.get("station_id") or "").strip()
+    if not station_id:
+        station = (
+            await db.execute(
+                select(Station)
+                .where(Station.owner_user_id == user.id, Station.status == "active")
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if station:
+            station_id = station.id
+    if not station_id:
+        return None
+
+    return await _list_active_alias_models(station_id, db)
+
+
+@router.get("/me/context")
+async def get_my_station_context(request: Request, db: AsyncSession = Depends(get_db)):
+    user = await _get_current_user(request, db)
+    link_row = (
+        await db.execute(
+            select(StationCustomerLink, Station)
+            .join(Station, StationCustomerLink.station_id == Station.id)
+            .where(StationCustomerLink.user_id == user.id)
+            .limit(1)
+        )
+    ).first()
+    if not link_row:
+        return {"station": None, "branding": None, "aliases": []}
+
+    link, station = link_row
+    branding = (
+        await db.execute(
+            select(StationBranding).where(StationBranding.station_id == station.id).limit(1)
+        )
+    ).scalar_one_or_none()
+    aliases = await _list_active_alias_models(station.id, db) if link.status == "active" and station.status == "active" else []
+    return {
+        "station": _station_public_payload(station),
+        "branding": _branding_payload(branding, station),
+        "customer_link": {
+            "id": link.id,
+            "status": link.status,
+            "created_at": _iso(link.created_at),
+        },
+        "aliases": aliases,
+    }
+
+
+@router.get("/public/{slug}")
+async def get_public_station(slug: str, db: AsyncSession = Depends(get_db)):
+    station = (
+        await db.execute(
+            select(Station)
+            .where(Station.slug == slug, Station.status == "active")
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if not station:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="station not found")
+
+    branding = (
+        await db.execute(
+            select(StationBranding).where(StationBranding.station_id == station.id).limit(1)
+        )
+    ).scalar_one_or_none()
+    aliases = await _list_active_alias_models(station.id, db)
+    return {
+        "station": _station_public_payload(station),
+        "branding": _branding_payload(branding, station),
+        "aliases": aliases,
     }
 
 
@@ -282,6 +608,305 @@ async def update_station_settlement(
     return {"success": True, "station": _station_public_payload(station)}
 
 
+@router.get("/me/branding")
+async def get_station_branding(request: Request, db: AsyncSession = Depends(get_db)):
+    owner = await _get_current_user(request, db)
+    station = await _get_owned_station(owner.id, db)
+    branding = (
+        await db.execute(
+            select(StationBranding).where(StationBranding.station_id == station.id).limit(1)
+        )
+    ).scalar_one_or_none()
+    return {
+        "station_id": station.id,
+        "branding": _branding_payload(branding, station),
+    }
+
+
+@router.patch("/me/branding")
+async def update_station_branding(
+    payload: StationBrandingUpdateRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    owner = await _get_current_user(request, db)
+    station = await _get_owned_station(owner.id, db)
+    branding = (
+        await db.execute(
+            select(StationBranding).where(StationBranding.station_id == station.id).limit(1)
+        )
+    ).scalar_one_or_none()
+    if not branding:
+        branding = StationBranding(station_id=station.id)
+        db.add(branding)
+
+    for field_name in (
+        "display_name",
+        "logo_url",
+        "favicon_url",
+        "support_email",
+        "support_link",
+        "docs_intro",
+        "terms_url",
+    ):
+        next_value = getattr(payload, field_name)
+        if next_value is not None:
+            setattr(branding, field_name, next_value.strip())
+
+    if payload.display_name is not None and payload.display_name.strip():
+        station.display_name = payload.display_name.strip()
+
+    await db.commit()
+    return {
+        "success": True,
+        "station_id": station.id,
+        "branding": _branding_payload(branding, station),
+        "station": _station_public_payload(station),
+    }
+
+
+@router.get("/me/alias-targets")
+async def list_station_alias_targets(request: Request, db: AsyncSession = Depends(get_db)):
+    owner = await _get_current_user(request, db)
+    await _get_owned_station(owner.id, db)
+    return {
+        "data": [
+            {
+                "id": model.public_id,
+                "owned_by": model.owned_by,
+                "capabilities": list(model.capabilities),
+                "billable_sku": model.billable_sku,
+                "price_input_per_million": model.price_input_per_million,
+                "price_output_per_million": model.price_output_per_million,
+                "price_per_image_cents": model.price_per_image_cents,
+            }
+            for model in model_registry.list_public_models()
+        ]
+    }
+
+
+@router.get("/me/aliases")
+async def list_station_aliases(request: Request, db: AsyncSession = Depends(get_db)):
+    owner = await _get_current_user(request, db)
+    station = await _get_owned_station(owner.id, db)
+    rows = (
+        await db.execute(
+            select(StationAlias, StationPricebookEntry)
+            .outerjoin(StationPricebookEntry, StationPricebookEntry.station_alias_id == StationAlias.id)
+            .where(StationAlias.station_id == station.id)
+            .order_by(StationAlias.created_at.desc())
+        )
+    ).all()
+    return {
+        "station_id": station.id,
+        "data": [
+            {
+                **_alias_payload(alias),
+                "pricebook": None if price is None else _pricebook_payload(price),
+            }
+            for alias, price in rows
+        ],
+    }
+
+
+@router.post("/me/aliases")
+async def create_station_alias(
+    payload: StationAliasCreateRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    owner = await _get_current_user(request, db)
+    station = await _get_owned_station(owner.id, db)
+    alias_name = payload.alias.strip()
+    capability = (payload.capability or "chat/completions").strip() or "chat/completions"
+    target = _validate_alias_target(payload.target_public_model_id, capability)
+    existing = (
+        await db.execute(
+            select(StationAlias)
+            .where(StationAlias.station_id == station.id, StationAlias.alias == alias_name)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if existing:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="station alias already exists")
+
+    retail_input = int(_price_or_default(payload.retail_input_per_million_cents, target.price_input_per_million))
+    retail_output = int(_price_or_default(payload.retail_output_per_million_cents, target.price_output_per_million))
+    retail_image = float(_price_or_default(payload.retail_price_per_image_cents, target.price_per_image_cents))
+    _validate_retail_price(target, input_price=retail_input, output_price=retail_output, image_price=retail_image)
+
+    alias = StationAlias(
+        id=generate_id("sa_"),
+        station_id=station.id,
+        alias=alias_name,
+        target_public_model_id=target.public_id,
+        fallback_target_public_model_id=(payload.fallback_target_public_model_id or "").strip(),
+        capability=capability,
+        status="active",
+        is_default_text=1 if payload.is_default_text else 0,
+        is_default_image=1 if payload.is_default_image else 0,
+        created_by_user_id=owner.id,
+    )
+    db.add(alias)
+    await db.flush()
+
+    pricebook = StationPricebookEntry(
+        id=generate_id("sp_"),
+        station_id=station.id,
+        station_alias_id=alias.id,
+        billable_sku=target.billable_sku or target.public_id,
+        usage_unit_type="images" if _capability_group(capability) == "image" else "tokens",
+        retail_input_per_million_cents=retail_input,
+        retail_output_per_million_cents=retail_output,
+        retail_price_per_image_cents=retail_image,
+        min_allowed_cents=max(int(target.price_input_per_million or 0), int(target.price_output_per_million or 0)),
+        max_allowed_cents=0,
+        price_version=1,
+        status="active",
+    )
+    db.add(pricebook)
+
+    if payload.is_default_text:
+        await db.execute(
+            update(StationAlias)
+            .where(StationAlias.station_id == station.id)
+            .values(is_default_text=0)
+        )
+        station.default_text_alias = alias.alias
+    if payload.is_default_image:
+        await db.execute(
+            update(StationAlias)
+            .where(StationAlias.station_id == station.id)
+            .values(is_default_image=0)
+        )
+        station.default_image_alias = alias.alias
+
+    await db.commit()
+    return {
+        "success": True,
+        "alias": _alias_payload(alias),
+        "pricebook": _pricebook_payload(pricebook),
+    }
+
+
+@router.patch("/me/aliases/{alias_id}")
+async def update_station_alias(
+    alias_id: str,
+    payload: StationAliasUpdateRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    owner = await _get_current_user(request, db)
+    station = await _get_owned_station(owner.id, db)
+    alias = (
+        await db.execute(
+            select(StationAlias)
+            .where(StationAlias.id == alias_id, StationAlias.station_id == station.id)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if not alias:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="station alias not found")
+
+    if payload.target_public_model_id is not None:
+        target = _validate_alias_target(payload.target_public_model_id, alias.capability)
+        alias.target_public_model_id = target.public_id
+    if payload.fallback_target_public_model_id is not None:
+        alias.fallback_target_public_model_id = payload.fallback_target_public_model_id.strip()
+    if payload.status is not None:
+        alias.status = payload.status
+    if payload.is_default_text is not None:
+        alias.is_default_text = 1 if payload.is_default_text else 0
+        if payload.is_default_text:
+            await db.execute(
+                update(StationAlias)
+                .where(StationAlias.station_id == station.id, StationAlias.id != alias.id)
+                .values(is_default_text=0)
+            )
+            station.default_text_alias = alias.alias
+    if payload.is_default_image is not None:
+        alias.is_default_image = 1 if payload.is_default_image else 0
+        if payload.is_default_image:
+            await db.execute(
+                update(StationAlias)
+                .where(StationAlias.station_id == station.id, StationAlias.id != alias.id)
+                .values(is_default_image=0)
+            )
+            station.default_image_alias = alias.alias
+
+    await db.commit()
+    return {"success": True, "alias": _alias_payload(alias)}
+
+
+@router.get("/me/pricebook")
+async def list_station_pricebook(request: Request, db: AsyncSession = Depends(get_db)):
+    owner = await _get_current_user(request, db)
+    station = await _get_owned_station(owner.id, db)
+    rows = (
+        await db.execute(
+            select(StationPricebookEntry, StationAlias)
+            .join(StationAlias, StationPricebookEntry.station_alias_id == StationAlias.id)
+            .where(StationPricebookEntry.station_id == station.id)
+            .order_by(StationAlias.alias.asc())
+        )
+    ).all()
+    return {
+        "station_id": station.id,
+        "data": [
+            {
+                **_pricebook_payload(price),
+                "alias": _alias_payload(alias),
+            }
+            for price, alias in rows
+        ],
+    }
+
+
+@router.patch("/me/pricebook/{entry_id}")
+async def update_station_pricebook_entry(
+    entry_id: str,
+    payload: StationPricebookUpdateRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    owner = await _get_current_user(request, db)
+    station = await _get_owned_station(owner.id, db)
+    entry = (
+        await db.execute(
+            select(StationPricebookEntry)
+            .where(StationPricebookEntry.id == entry_id, StationPricebookEntry.station_id == station.id)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if not entry:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="pricebook entry not found")
+    alias = (
+        await db.execute(
+            select(StationAlias)
+            .where(StationAlias.id == entry.station_alias_id, StationAlias.station_id == station.id)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if not alias:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="station alias not found")
+    target = _validate_alias_target(alias.target_public_model_id, getattr(alias, "capability", "chat/completions"))
+
+    next_input = entry.retail_input_per_million_cents if payload.retail_input_per_million_cents is None else payload.retail_input_per_million_cents
+    next_output = entry.retail_output_per_million_cents if payload.retail_output_per_million_cents is None else payload.retail_output_per_million_cents
+    next_image = entry.retail_price_per_image_cents if payload.retail_price_per_image_cents is None else payload.retail_price_per_image_cents
+    _validate_retail_price(target, input_price=next_input, output_price=next_output, image_price=next_image)
+
+    entry.retail_input_per_million_cents = int(next_input or 0)
+    entry.retail_output_per_million_cents = int(next_output or 0)
+    entry.retail_price_per_image_cents = float(next_image or 0.0)
+    entry.price_version = int(entry.price_version or 0) + 1
+    if payload.status is not None:
+        entry.status = payload.status
+
+    await db.commit()
+    return {"success": True, "pricebook": _pricebook_payload(entry)}
+
+
 @router.post("/apply")
 async def create_station_application(
     payload: StationApplicationCreateRequest,
@@ -438,6 +1063,160 @@ admin_router = APIRouter(prefix="/admin/stations", tags=["admin-stations"])
 
 def _admin_guard(request: Request) -> None:
     require_admin(request)
+
+
+@admin_router.get("", dependencies=[Depends(_admin_guard)])
+async def list_admin_stations(
+    db: AsyncSession = Depends(get_db),
+    search: str | None = None,
+    status_filter: str | None = None,
+):
+    customer_count = (
+        select(func.count(StationCustomerLink.id))
+        .where(StationCustomerLink.station_id == Station.id)
+        .correlate(Station)
+        .scalar_subquery()
+    )
+    query = (
+        select(Station, User, customer_count)
+        .join(User, Station.owner_user_id == User.id)
+        .order_by(Station.created_at.desc())
+    )
+    if status_filter:
+        query = query.where(Station.status == status_filter)
+    if search:
+        pat = f"%{search.strip()}%"
+        query = query.where(
+            Station.id.ilike(pat)
+            | Station.slug.ilike(pat)
+            | Station.display_name.ilike(pat)
+            | User.id.ilike(pat)
+            | User.username.ilike(pat)
+            | User.email.ilike(pat)
+        )
+    rows = (await db.execute(query.limit(200))).all()
+    return [_admin_station_payload(station, owner, customer_count=int(customer_count or 0)) for station, owner, customer_count in rows]
+
+
+@admin_router.post("", dependencies=[Depends(_admin_guard)])
+async def create_admin_station(payload: AdminStationCreateRequest, db: AsyncSession = Depends(get_db)):
+    owner_filters = []
+    if (payload.owner_user_id or "").strip():
+        owner_filters.append(User.id == payload.owner_user_id.strip())
+    if (payload.owner_username or "").strip():
+        owner_filters.append(User.username == payload.owner_username.strip())
+    if (payload.owner_email or "").strip():
+        owner_filters.append(User.email == payload.owner_email.strip())
+    if not owner_filters:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="owner user is required")
+    owner = (await db.execute(select(User).where(*owner_filters).limit(1))).scalar_one_or_none()
+    if not owner:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="owner user not found")
+
+    existing_station = (
+        await db.execute(select(Station).where(Station.owner_user_id == owner.id).limit(1))
+    ).scalar_one_or_none()
+    if existing_station:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="owner already has station")
+    existing_link = (
+        await db.execute(select(StationCustomerLink).where(StationCustomerLink.user_id == owner.id).limit(1))
+    ).scalar_one_or_none()
+    if existing_link:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="owner already belongs to a station")
+
+    slug = _normalize_station_slug(payload.slug or payload.display_name)
+    slug_exists = (await db.execute(select(Station.id).where(Station.slug == slug).limit(1))).scalar_one_or_none()
+    if slug_exists:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="station slug already exists")
+
+    mode = (payload.mode or "commission_station").strip() or "commission_station"
+    if mode not in {"commission_station", "wholesale_station"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid station mode")
+
+    station = Station(
+        id=generate_id("st_"),
+        owner_user_id=owner.id,
+        application_id=None,
+        slug=slug,
+        display_name=payload.display_name.strip(),
+        status="active",
+        mode=mode,
+        balance_cents=int(payload.balance_cents or 0),
+        currency="usd_cents",
+        wholesale_tier=(payload.wholesale_tier or "standard").strip() or "standard",
+        commission_rate=float(payload.commission_rate),
+        settlement_method=(payload.settlement_method or "alipay_manual").strip() or "alipay_manual",
+        settlement_payee_name=(payload.settlement_payee_name or "").strip(),
+        settlement_payee_account=(payload.settlement_payee_account or "").strip(),
+        settlement_qr_url=(payload.settlement_qr_url or "").strip(),
+    )
+    db.add(station)
+    db.add(
+        StationCustomerLink(
+            id=generate_id("sclink_"),
+            station_id=station.id,
+            user_id=owner.id,
+            created_by_user_id=owner.id,
+            status="active",
+        )
+    )
+    db.add(StationBranding(station_id=station.id, display_name=station.display_name))
+
+    created_alias = None
+    created_pricebook = None
+    if payload.create_default_alias:
+        target_model_id = (payload.default_target_public_model_id or "").strip()
+        if not target_model_id:
+            target_model_id = model_registry.default_text_model_id or settings.fixed_model
+        capability = (payload.default_capability or "chat/completions").strip() or "chat/completions"
+        target = _validate_alias_target(target_model_id, capability)
+        alias_name = payload.default_alias.strip()
+        retail_input = int(_price_or_default(payload.retail_input_per_million_cents, target.price_input_per_million))
+        retail_output = int(_price_or_default(payload.retail_output_per_million_cents, target.price_output_per_million))
+        retail_image = float(_price_or_default(payload.retail_price_per_image_cents, target.price_per_image_cents))
+        _validate_retail_price(target, input_price=retail_input, output_price=retail_output, image_price=retail_image)
+
+        created_alias = StationAlias(
+            id=generate_id("sa_"),
+            station_id=station.id,
+            alias=alias_name,
+            target_public_model_id=target.public_id,
+            fallback_target_public_model_id="",
+            capability=capability,
+            status="active",
+            is_default_text=1 if _capability_group(capability) != "image" else 0,
+            is_default_image=1 if _capability_group(capability) == "image" else 0,
+            created_by_user_id=owner.id,
+        )
+        db.add(created_alias)
+        await db.flush()
+        created_pricebook = StationPricebookEntry(
+            id=generate_id("sp_"),
+            station_id=station.id,
+            station_alias_id=created_alias.id,
+            billable_sku=target.billable_sku or target.public_id,
+            usage_unit_type="images" if _capability_group(capability) == "image" else "tokens",
+            retail_input_per_million_cents=retail_input,
+            retail_output_per_million_cents=retail_output,
+            retail_price_per_image_cents=retail_image,
+            min_allowed_cents=max(int(target.price_input_per_million or 0), int(target.price_output_per_million or 0)),
+            max_allowed_cents=0,
+            price_version=1,
+            status="active",
+        )
+        db.add(created_pricebook)
+        if created_alias.is_default_image:
+            station.default_image_alias = created_alias.alias
+        else:
+            station.default_text_alias = created_alias.alias
+
+    await db.commit()
+    return {
+        "success": True,
+        "station": _admin_station_payload(station, owner, customer_count=1),
+        "alias": None if created_alias is None else _alias_payload(created_alias),
+        "pricebook": None if created_pricebook is None else _pricebook_payload(created_pricebook),
+    }
 
 
 @admin_router.get("/applications", dependencies=[Depends(_admin_guard)])

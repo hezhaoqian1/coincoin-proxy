@@ -16,6 +16,7 @@ import ApiKeys from './pages/ApiKeys'
 import Playground from './pages/Playground'
 import PayReturn from './pages/PayReturn'
 import Station from './pages/Station'
+import StationPortal from './pages/StationPortal'
 import Referrals from './pages/Referrals'
 
 function PublicShell({ children }) {
@@ -108,6 +109,7 @@ export default function App() {
                 <Route path="/station" element={
                     <ProtectedRoute><Station /></ProtectedRoute>
                 } />
+                <Route path="/s/:slug" element={<StationPortal />} />
                 <Route path="/pay/return" element={<PublicShell><PayReturn /></PublicShell>} />
                 <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>

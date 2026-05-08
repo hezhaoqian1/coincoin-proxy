@@ -28,6 +28,7 @@ from .router import (
     build_model_cloak,
     registry as model_registry,
 )
+from .station_runtime import resolve_station_model_for_user, station_usage_kwargs
 from .usage_buffer import (
     extract_cache_creation_tokens,
     extract_cache_read_tokens,
@@ -662,7 +663,7 @@ async def anthropic_models(request: Request):
 @router.post("/messages/count_tokens")
 async def anthropic_count_tokens(request: Request, db: AsyncSession = Depends(get_db)):
     try:
-        await authenticate_user(request, db)
+        user = await authenticate_user(request, db)
     except HTTPException as exc:
         if exc.status_code == 401:
             return anthropic_error("Invalid API key", error_type="authentication_error", status_code=401)
@@ -682,7 +683,16 @@ async def anthropic_count_tokens(request: Request, db: AsyncSession = Depends(ge
     messages = _anthropic_messages_to_openai_messages(payload)
     tools = _anthropic_tools_to_openai_tools(payload)
     try:
-        resolved_model = model_registry.resolve_public_model(requested_model, "chat/completions", messages, tools)
+        station_model = await resolve_station_model_for_user(
+            db,
+            user,
+            requested_model,
+            "chat/completions",
+            messages,
+            tools,
+        )
+        if not station_model:
+            model_registry.resolve_public_model(requested_model, "chat/completions", messages, tools)
     except Exception as exc:
         return _model_resolution_to_anthropic_error(exc)
 
@@ -709,14 +719,24 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
     messages = _anthropic_messages_to_openai_messages(payload)
     tools = _anthropic_tools_to_openai_tools(payload)
     try:
-        resolved_model = model_registry.resolve_public_model(requested_model, "chat/completions", messages, tools)
+        station_model = await resolve_station_model_for_user(
+            db,
+            user,
+            requested_model,
+            "chat/completions",
+            messages,
+            tools,
+        )
+        resolved_model = station_model.resolved_model if station_model else model_registry.resolve_public_model(requested_model, "chat/completions", messages, tools)
     except Exception as exc:
         return _model_resolution_to_anthropic_error(exc)
 
     public_model = resolved_model.public_model
-    display_model = public_model.public_id
+    display_model = station_model.display_model if station_model else public_model.public_id
     used_cfg = resolved_model.backend
     used_route_reason = resolved_model.route_reason
+    price_input_per_million = station_model.retail_input_per_million if station_model else public_model.price_input_per_million
+    price_output_per_million = station_model.retail_output_per_million if station_model else public_model.price_output_per_million
 
     openai_payload: Dict[str, Any] = {
         "model": used_cfg.model_id,
@@ -789,11 +809,12 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                         route_reason=used_route_reason,
                         duration_ms=duration_ms,
                         status_code=upstream.status_code,
-                        price_input_per_million=public_model.price_input_per_million,
-                        price_output_per_million=public_model.price_output_per_million,
+                        price_input_per_million=price_input_per_million,
+                        price_output_per_million=price_output_per_million,
                         usage_unit_type="tokens",
                         billable_sku=public_model.billable_sku or display_model,
                         upstream_request_id=upstream_request_id,
+                        **station_usage_kwargs(station_model),
                     )
                 await upstream.aclose()
 
@@ -848,11 +869,12 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
         route_reason=used_route_reason,
         duration_ms=duration_ms,
         status_code=upstream.status_code,
-        price_input_per_million=public_model.price_input_per_million,
-        price_output_per_million=public_model.price_output_per_million,
+        price_input_per_million=price_input_per_million,
+        price_output_per_million=price_output_per_million,
         usage_unit_type="tokens",
         billable_sku=public_model.billable_sku or display_model,
         upstream_request_id=upstream_request_id,
+        **station_usage_kwargs(station_model),
     )
 
     response_body = _build_anthropic_response(

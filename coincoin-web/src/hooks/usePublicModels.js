@@ -4,6 +4,7 @@ import {
     getDefaultImageModel,
     getDefaultTextModel,
     getPublicModels,
+    getApiKey,
     isImageCapableModel,
     isTextCapableModel,
 } from '../api/client'
@@ -17,7 +18,7 @@ export function usePublicModels() {
 
         async function load() {
             setLoading(true)
-            const next = await getPublicModels()
+            const next = await getPublicModels({ authenticated: Boolean(getApiKey()) })
             if (!cancelled) {
                 setModels(next)
                 setLoading(false)

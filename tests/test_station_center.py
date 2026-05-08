@@ -84,6 +84,381 @@ class _FakeDB:
 
 
 class StationCenterTests(unittest.IsolatedAsyncioTestCase):
+    def _station_url_settings_snapshot(self):
+        return {
+            "station_public_base_url": stations_module.settings.station_public_base_url,
+            "station_portal_domain": stations_module.settings.station_portal_domain,
+            "station_api_domain": stations_module.settings.station_api_domain,
+            "station_api_base_url": stations_module.settings.station_api_base_url,
+            "station_portal_path_prefix": stations_module.settings.station_portal_path_prefix,
+            "station_api_path_prefix": stations_module.settings.station_api_path_prefix,
+        }
+
+    def _restore_station_url_settings(self, snapshot):
+        for name, value in snapshot.items():
+            setattr(stations_module.settings, name, value)
+
+    def _station_row_for_url_tests(self):
+        return SimpleNamespace(
+            id="st_1",
+            slug="stone",
+            display_name="Stone Station",
+            status="active",
+            commission_rate=0.15,
+            settlement_method="alipay_manual",
+            settlement_payee_name="Alice",
+            settlement_payee_account="alice@alipay",
+            settlement_qr_url="https://example.com/qr.png",
+            created_at=datetime.utcnow(),
+        )
+
+    async def test_get_public_station_returns_branding_and_active_aliases(self):
+        station = SimpleNamespace(
+            id="st_1",
+            slug="stone",
+            display_name="Stone Station",
+            status="active",
+            mode="commission_station",
+            balance_cents=0,
+            currency="usd_cents",
+            wholesale_tier="standard",
+            default_text_alias="fast",
+            default_image_alias="image",
+            commission_rate=0.15,
+            settlement_method="alipay_manual",
+            settlement_payee_name="",
+            settlement_payee_account="",
+            settlement_qr_url="",
+            created_at=datetime.utcnow(),
+        )
+        branding = SimpleNamespace(
+            station_id="st_1",
+            display_name="Stone AI",
+            logo_url="https://cdn.example/logo.png",
+            favicon_url="https://cdn.example/favicon.png",
+            support_email="support@stone.example",
+            support_link="https://stone.example/help",
+            docs_intro="Stone docs",
+            terms_url="https://stone.example/terms",
+            updated_at=datetime.utcnow(),
+        )
+        alias = SimpleNamespace(
+            id="sa_1",
+            station_id="st_1",
+            alias="fast",
+            target_public_model_id="gpt-5.4-mini",
+            fallback_target_public_model_id="",
+            capability="chat/completions",
+            status="active",
+            is_default_text=1,
+            is_default_image=0,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        price = SimpleNamespace(
+            id="sp_1",
+            station_id="st_1",
+            station_alias_id="sa_1",
+            billable_sku="legacy-gpt-5.4-mini-text",
+            usage_unit_type="tokens",
+            retail_input_per_million_cents=120,
+            retail_output_per_million_cents=720,
+            retail_price_per_image_cents=0.0,
+            min_allowed_cents=450,
+            max_allowed_cents=0,
+            price_version=2,
+            status="active",
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        target = SimpleNamespace(
+            public_id="gpt-5.4-mini",
+            capabilities=("chat/completions", "responses"),
+            billable_sku="legacy-gpt-5.4-mini-text",
+            price_input_per_million=75,
+            price_output_per_million=450,
+            price_per_image_cents=0.0,
+        )
+        fake_db = _FakeDB(
+            execute_results=[
+                _ScalarOneOrNoneResult(station),
+                _ScalarOneOrNoneResult(branding),
+                _AllResult([(alias, price)]),
+            ]
+        )
+
+        with patch.object(stations_module.model_registry, "get_public_model", return_value=target):
+            result = await stations_module.get_public_station("stone", db=fake_db)
+
+        self.assertEqual(result["station"]["slug"], "stone")
+        self.assertEqual(result["branding"]["display_name"], "Stone AI")
+        self.assertEqual(result["aliases"][0]["id"], "fast")
+        self.assertEqual(result["aliases"][0]["coincoin_price_input_per_million"], 120)
+        self.assertEqual(result["aliases"][0]["coincoin_resolved_public_model"], "gpt-5.4-mini")
+
+    async def test_update_station_branding_upserts_owner_branding(self):
+        owner = SimpleNamespace(id="u_owner")
+        station = SimpleNamespace(
+            id="st_1",
+            slug="stone",
+            display_name="Stone Station",
+            status="active",
+            commission_rate=0.15,
+            settlement_method="alipay_manual",
+            settlement_payee_name="",
+            settlement_payee_account="",
+            settlement_qr_url="",
+            created_at=datetime.utcnow(),
+        )
+        fake_db = _FakeDB(execute_results=[
+            _ScalarOneOrNoneResult(None),
+            _ScalarOneOrNoneResult(None),
+        ])
+
+        with patch.object(stations_module, "_get_current_user", AsyncMock(return_value=owner)), patch.object(
+            stations_module, "_get_owned_station", AsyncMock(return_value=station)
+        ):
+            payload = stations_module.StationBrandingUpdateRequest(
+                display_name="Stone AI",
+                logo_url="https://cdn.example/logo.png",
+                support_email="support@stone.example",
+                docs_intro="Stone docs",
+            )
+            result = await stations_module.update_station_branding(payload, request=None, db=fake_db)
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["branding"]["display_name"], "Stone AI")
+        self.assertEqual(result["branding"]["support_email"], "support@stone.example")
+        self.assertEqual(station.display_name, "Stone AI")
+        self.assertEqual(len(fake_db.added), 1)
+        self.assertEqual(fake_db.commits, 1)
+
+    async def test_create_station_alias_creates_alias_and_pricebook(self):
+        owner = SimpleNamespace(id="u_owner")
+        station = SimpleNamespace(
+            id="st_1",
+            default_text_alias="",
+            default_image_alias="",
+        )
+        fake_db = _FakeDB(execute_results=[
+            _ScalarOneOrNoneResult(None),
+            _ScalarOneOrNoneResult(None),
+        ])
+        target = SimpleNamespace(
+            public_id="gpt-5.4-mini",
+            capabilities=("chat/completions", "responses"),
+            billable_sku="legacy-gpt-5.4-mini-text",
+            price_input_per_million=75,
+            price_output_per_million=450,
+            price_per_image_cents=0.0,
+        )
+
+        with patch.object(stations_module, "_get_current_user", AsyncMock(return_value=owner)), patch.object(
+            stations_module, "_get_owned_station", AsyncMock(return_value=station)
+        ), patch.object(stations_module.model_registry, "get_public_model", return_value=target):
+            payload = stations_module.StationAliasCreateRequest(
+                alias="fast",
+                target_public_model_id="gpt-5.4-mini",
+                capability="chat/completions",
+                retail_input_per_million_cents=120,
+                retail_output_per_million_cents=720,
+                is_default_text=True,
+            )
+            result = await stations_module.create_station_alias(payload, request=None, db=fake_db)
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["alias"]["alias"], "fast")
+        self.assertEqual(result["alias"]["target_public_model_id"], "gpt-5.4-mini")
+        self.assertEqual(result["pricebook"]["retail_input_per_million_cents"], 120)
+        self.assertEqual(result["pricebook"]["retail_output_per_million_cents"], 720)
+        self.assertEqual(station.default_text_alias, "fast")
+        self.assertEqual(len(fake_db.added), 2)
+        self.assertEqual(fake_db.flushes, 1)
+        self.assertEqual(fake_db.commits, 1)
+
+    async def test_admin_create_station_creates_owner_link_branding_and_default_alias(self):
+        snapshot = self._station_url_settings_snapshot()
+        owner = SimpleNamespace(id="u_owner", username="owner", email="owner@example.com", status="active")
+        target = SimpleNamespace(
+            public_id="gpt-5.4-mini",
+            capabilities=("chat/completions", "responses"),
+            billable_sku="legacy-gpt-5.4-mini-text",
+            price_input_per_million=75,
+            price_output_per_million=450,
+            price_per_image_cents=0.0,
+        )
+        fake_db = _FakeDB(
+            execute_results=[
+                _ScalarOneOrNoneResult(owner),
+                _ScalarOneOrNoneResult(None),
+                _ScalarOneOrNoneResult(None),
+                _ScalarOneOrNoneResult(None),
+            ]
+        )
+
+        try:
+            stations_module.settings.station_public_base_url = "https://coincoin.ai"
+            stations_module.settings.station_portal_domain = ""
+            stations_module.settings.station_api_domain = ""
+            stations_module.settings.station_api_base_url = ""
+            stations_module.settings.station_portal_path_prefix = "/s"
+            stations_module.settings.station_api_path_prefix = "/v1"
+
+            with patch.object(stations_module.model_registry, "get_public_model", return_value=target):
+                payload = stations_module.AdminStationCreateRequest(
+                    owner_user_id="u_owner",
+                    display_name="Stone Station",
+                    slug="stone",
+                    create_default_alias=True,
+                    default_alias="fast",
+                    default_target_public_model_id="gpt-5.4-mini",
+                    retail_input_per_million_cents=120,
+                    retail_output_per_million_cents=720,
+                )
+                result = await stations_module.create_admin_station(payload, db=fake_db)
+        finally:
+            self._restore_station_url_settings(snapshot)
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["station"]["slug"], "stone")
+        self.assertEqual(result["station"]["owner_user_id"], "u_owner")
+        self.assertEqual(result["station"]["portal_url_mode"], "path")
+        self.assertEqual(result["alias"]["alias"], "fast")
+        self.assertEqual(result["pricebook"]["retail_input_per_million_cents"], 120)
+        self.assertEqual(fake_db.flushes, 1)
+        self.assertEqual(fake_db.commits, 1)
+        self.assertEqual(len(fake_db.added), 5)
+        station = fake_db.added[0]
+        owner_link = fake_db.added[1]
+        branding = fake_db.added[2]
+        self.assertEqual(station.owner_user_id, "u_owner")
+        self.assertEqual(station.default_text_alias, "fast")
+        self.assertEqual(owner_link.user_id, "u_owner")
+        self.assertEqual(branding.display_name, "Stone Station")
+
+    async def test_admin_create_station_rejects_duplicate_slug(self):
+        owner = SimpleNamespace(id="u_owner", username="owner", email="owner@example.com", status="active")
+        fake_db = _FakeDB(
+            execute_results=[
+                _ScalarOneOrNoneResult(owner),
+                _ScalarOneOrNoneResult(None),
+                _ScalarOneOrNoneResult(None),
+                _ScalarOneOrNoneResult("st_existing"),
+            ]
+        )
+
+        payload = stations_module.AdminStationCreateRequest(
+            owner_user_id="u_owner",
+            display_name="Stone Station",
+            slug="stone",
+        )
+        with self.assertRaises(stations_module.HTTPException) as ctx:
+            await stations_module.create_admin_station(payload, db=fake_db)
+
+        self.assertEqual(ctx.exception.status_code, 409)
+        self.assertEqual(ctx.exception.detail, "station slug already exists")
+        self.assertEqual(fake_db.commits, 0)
+        self.assertEqual(fake_db.added, [])
+
+    async def test_admin_create_station_rejects_owner_already_linked_to_station(self):
+        owner = SimpleNamespace(id="u_owner", username="owner", email="owner@example.com", status="active")
+        existing_link = SimpleNamespace(id="sclink_existing", station_id="st_other")
+        fake_db = _FakeDB(
+            execute_results=[
+                _ScalarOneOrNoneResult(owner),
+                _ScalarOneOrNoneResult(None),
+                _ScalarOneOrNoneResult(existing_link),
+            ]
+        )
+
+        payload = stations_module.AdminStationCreateRequest(
+            owner_user_id="u_owner",
+            display_name="Stone Station",
+        )
+        with self.assertRaises(stations_module.HTTPException) as ctx:
+            await stations_module.create_admin_station(payload, db=fake_db)
+
+        self.assertEqual(ctx.exception.status_code, 409)
+        self.assertEqual(ctx.exception.detail, "owner already belongs to a station")
+        self.assertEqual(fake_db.commits, 0)
+        self.assertEqual(fake_db.added, [])
+
+    async def test_update_station_pricebook_rejects_price_below_target_cost(self):
+        owner = SimpleNamespace(id="u_owner")
+        station = SimpleNamespace(id="st_1")
+        alias = SimpleNamespace(
+            id="sa_1",
+            station_id="st_1",
+            target_public_model_id="gpt-5.4-mini",
+            status="active",
+        )
+        price = SimpleNamespace(
+            id="sp_1",
+            station_id="st_1",
+            station_alias_id="sa_1",
+            retail_input_per_million_cents=120,
+            retail_output_per_million_cents=720,
+            retail_price_per_image_cents=0.0,
+            price_version=1,
+            status="active",
+        )
+        fake_db = _FakeDB(execute_results=[_ScalarOneOrNoneResult(price), _ScalarOneOrNoneResult(alias)])
+        target = SimpleNamespace(
+            public_id="gpt-5.4-mini",
+            capabilities=("chat/completions", "responses"),
+            price_input_per_million=75,
+            price_output_per_million=450,
+            price_per_image_cents=0.0,
+        )
+
+        with patch.object(stations_module, "_get_current_user", AsyncMock(return_value=owner)), patch.object(
+            stations_module, "_get_owned_station", AsyncMock(return_value=station)
+        ), patch.object(stations_module.model_registry, "get_public_model", return_value=target):
+            payload = stations_module.StationPricebookUpdateRequest(retail_input_per_million_cents=40)
+            with self.assertRaises(stations_module.HTTPException) as ctx:
+                await stations_module.update_station_pricebook_entry("sp_1", payload, request=None, db=fake_db)
+
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertEqual(ctx.exception.detail, "retail price below platform cost")
+
+    def test_station_public_payload_includes_wildcard_station_urls(self):
+        snapshot = self._station_url_settings_snapshot()
+        try:
+            stations_module.settings.station_public_base_url = "https://coincoin.ai"
+            stations_module.settings.station_portal_domain = "station.coincoin.ai"
+            stations_module.settings.station_api_domain = "api.coincoin.ai"
+            stations_module.settings.station_api_base_url = ""
+            stations_module.settings.station_portal_path_prefix = "/s"
+            stations_module.settings.station_api_path_prefix = "/v1"
+
+            payload = stations_module._station_public_payload(self._station_row_for_url_tests())
+        finally:
+            self._restore_station_url_settings(snapshot)
+
+        self.assertEqual(payload["portal_url"], "https://stone.station.coincoin.ai")
+        self.assertEqual(payload["api_base_url"], "https://stone.api.coincoin.ai/v1")
+        self.assertEqual(payload["portal_url_mode"], "wildcard")
+        self.assertEqual(payload["api_url_mode"], "wildcard")
+
+    def test_station_public_payload_falls_back_to_shared_coincoin_domain(self):
+        snapshot = self._station_url_settings_snapshot()
+        try:
+            stations_module.settings.station_public_base_url = "https://coincoin.ai/"
+            stations_module.settings.station_portal_domain = ""
+            stations_module.settings.station_api_domain = ""
+            stations_module.settings.station_api_base_url = ""
+            stations_module.settings.station_portal_path_prefix = "s"
+            stations_module.settings.station_api_path_prefix = "v1"
+
+            payload = stations_module._station_public_payload(self._station_row_for_url_tests())
+        finally:
+            self._restore_station_url_settings(snapshot)
+
+        self.assertEqual(payload["portal_url"], "https://coincoin.ai/s/stone")
+        self.assertEqual(payload["api_base_url"], "https://coincoin.ai/v1")
+        self.assertEqual(payload["portal_url_mode"], "path")
+        self.assertEqual(payload["api_url_mode"], "shared")
+
     async def test_create_station_customer_creates_user_link_and_api_key(self):
         owner = SimpleNamespace(id="u_owner")
         station = SimpleNamespace(id="st_1", owner_user_id="u_owner", status="active")

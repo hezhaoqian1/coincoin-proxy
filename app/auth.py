@@ -18,7 +18,7 @@ from .config import settings
 from .db import get_db
 from .emailer import send_verification_email
 from .finance_summary import ensure_finance_summary_initialized, increment_finance_summary
-from .models import Account, ApiKey, EmailVerificationCode, User
+from .models import Account, ApiKey, EmailVerificationCode, Station, StationCustomerLink, User
 from .rate_limiter import rate_limiter
 from .referral import process_signup_referral_rewards
 from .schemas import (
@@ -55,6 +55,7 @@ AUTH_RATE_LIMIT = 10  # per IP per minute
 MAX_FAILED_ATTEMPTS = 5
 LOCKOUT_MINUTES = 15
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+STATION_SLUG_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9-]{0,63}$")
 
 
 def _client_ip(request: Request) -> str:
@@ -189,6 +190,56 @@ async def _lookup_login_account(db: AsyncSession, identifier: str) -> Account | 
     return (
         await db.execute(select(Account).where(Account.username == login_id))
     ).scalar_one_or_none()
+
+
+def _normalize_station_slug(raw: str | None) -> str:
+    slug = (raw or "").strip().lower()
+    if not slug:
+        return ""
+    if not STATION_SLUG_RE.match(slug):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid station")
+    return slug
+
+
+async def _resolve_signup_station(db: AsyncSession, raw_slug: str | None) -> Station | None:
+    slug = _normalize_station_slug(raw_slug)
+    if not slug:
+        return None
+    station = (
+        await db.execute(
+            select(Station)
+            .where(Station.slug == slug, Station.status == "active")
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if not station:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "station not found")
+    return station
+
+
+async def _link_user_to_station_if_open(db: AsyncSession, user: User, station: Station | None) -> None:
+    if not station:
+        return
+    existing = (
+        await db.execute(
+            select(StationCustomerLink)
+            .where(StationCustomerLink.user_id == user.id)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if existing:
+        if existing.station_id == station.id and existing.status != "active":
+            existing.status = "active"
+        return
+    db.add(
+        StationCustomerLink(
+            id=generate_id("sclink_"),
+            station_id=station.id,
+            user_id=user.id,
+            created_by_user_id=station.owner_user_id,
+            status="active",
+        )
+    )
 
 
 async def _queue_email_code(db: AsyncSession, *, user_id: str, email: str, ip: str) -> str:
@@ -412,6 +463,8 @@ async def register(
 
     verification.consumed_at = now
 
+    signup_station = await _resolve_signup_station(db, payload.station_slug)
+
     existing_account = (
         await db.execute(select(Account).where(Account.username == username))
     ).scalar_one_or_none()
@@ -487,6 +540,7 @@ async def register(
     account.failed_attempts = 0
     account.locked_until = None
     account.last_login_at = now
+    await _link_user_to_station_if_open(db, user, signup_station)
 
     raw_key, session_key = _create_session_key(user.id)
     db.add(session_key)
@@ -736,6 +790,8 @@ async def login(
     if not user:
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "linked user not found")
 
+    login_station = await _resolve_signup_station(db, payload.station_slug)
+
     if getattr(account, "status", "active") in {"pending_email", "email_send_failed"}:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "请先验证邮箱")
 
@@ -745,6 +801,7 @@ async def login(
 
     raw_key, session_key = _create_session_key(user.id)
     db.add(session_key)
+    await _link_user_to_station_if_open(db, user, login_station)
 
     await db.commit()
     logger.info("User logged in: %s", account.username)

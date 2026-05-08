@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useSearchParams } from 'react-router-dom'
-import { PRICING_PLANS, redeemCode, getApiKey, confirmOrder } from '../api/client'
+import { PRICING_PLANS, redeemCode, getApiKey, confirmOrder, listOrders } from '../api/client'
 import useOrderConfirm from '../hooks/useOrderConfirm'
 import { useAuth } from '../hooks/useAuth'
 import AppShell from '../components/AppShell'
@@ -9,6 +9,18 @@ import './Recharge.css'
 
 const POLL_INTERVAL = 3000
 const MAX_POLL_ATTEMPTS = 200
+
+function formatOrderTime(value) {
+    if (!value) return '-'
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) return '-'
+    return date.toLocaleString('zh-CN', {
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+    })
+}
 
 export default function Recharge() {
     const [searchParams, setSearchParams] = useSearchParams()
@@ -26,15 +38,40 @@ export default function Recharge() {
     const [polling, setPolling] = useState(false)
     const [pollInfo, setPollInfo] = useState(null)
     const [payResult, setPayResult] = useState(null)
+    const [orders, setOrders] = useState([])
+    const [ordersLoading, setOrdersLoading] = useState(false)
+    const [ordersError, setOrdersError] = useState('')
     const pollingRef = useRef(false)
     const [autoRedirect, setAutoRedirect] = useState(5)
     const [popupBlocked, setPopupBlocked] = useState(false)
     const navigate = useNavigate()
     const activeSection = searchParams.get('section') || 'recharge'
 
+    const loadOrders = useCallback(async () => {
+        if (!isLoggedIn) return
+        setOrdersLoading(true)
+        setOrdersError('')
+        try {
+            const data = await listOrders(20)
+            setOrders(Array.isArray(data) ? data : [])
+        } catch {
+            setOrdersError('订单记录加载失败，请稍后刷新。')
+        } finally {
+            setOrdersLoading(false)
+        }
+    }, [isLoggedIn])
+
     useEffect(() => {
         return () => { pollingRef.current = false }
     }, [])
+
+    useEffect(() => {
+        if (orderConfirmed) loadOrders()
+    }, [orderConfirmed, loadOrders])
+
+    useEffect(() => {
+        loadOrders()
+    }, [loadOrders])
 
     useEffect(() => {
         if (!payResult) return
@@ -59,6 +96,7 @@ export default function Recharge() {
                     setPolling(false)
                     setPayResult(result)
                     localStorage.removeItem('coincoin_last_order')
+                    loadOrders()
                     document.title = '\u2705 \u5145\u503c\u6210\u529f\uff01'
                     setTimeout(() => { document.title = 'ClawFather' }, 8000)
                     return
@@ -74,7 +112,7 @@ export default function Recharge() {
             }
         }
         poll()
-    }, [])
+    }, [loadOrders])
 
     const handlePay = async () => {
         if (!isLoggedIn) {
@@ -135,6 +173,7 @@ export default function Recharge() {
                     setPopupBlocked(true)
                 }
                 startPolling(res.order_no, planName, planMoney, res.pay_url)
+                loadOrders()
             } else {
                 alert(res.detail || '创建订单失败，请重试')
                 if (payWin) payWin.close()
@@ -413,28 +452,58 @@ export default function Recharge() {
                 <div className="glass-card animate-fade-in-up" style={{ animationDelay: '460ms', padding: 'var(--space-lg)', marginBottom: 'var(--space-lg)' }}>
                     <div className="settings-section-head" style={{ marginBottom: 'var(--space-md)' }}>
                         <div>
-                            <h3>最近订单</h3>
-                            <p className="settings-subtitle">当前支付状态会显示在这里。</p>
+                            <h3>我的订单</h3>
+                            <p className="settings-subtitle">最近支付订单和到账状态会显示在这里。</p>
                         </div>
+                        {isLoggedIn && <button className="btn btn-secondary btn-sm" onClick={loadOrders} disabled={ordersLoading}>刷新</button>}
                     </div>
-                    <div className="config-table">
-                        <div className="config-row">
-                            <span className="config-label">当前状态</span>
-                            <code>{payResult ? '已到账' : polling ? '等待支付' : pollInfo?.orderNo ? '待确认' : '暂无订单'}</code>
+                    {pollInfo?.orderNo && (
+                        <div className="config-table recharge-live-order">
+                            <div className="config-row">
+                                <span className="config-label">当前状态</span>
+                                <code>{payResult ? '已到账' : polling ? '等待支付' : '待确认'}</code>
+                            </div>
+                            <div className="config-row">
+                                <span className="config-label">订单号</span>
+                                <code>{pollInfo.orderNo}</code>
+                            </div>
+                            <div className="config-row">
+                                <span className="config-label">充值项目</span>
+                                <code>{pollInfo.planName || '-'}</code>
+                            </div>
+                            <div className="config-row">
+                                <span className="config-label">金额</span>
+                                <code>{pollInfo.money ? `¥${pollInfo.money}` : '-'}</code>
+                            </div>
                         </div>
-                        <div className="config-row">
-                            <span className="config-label">订单号</span>
-                            <code>{pollInfo?.orderNo || '-'}</code>
+                    )}
+                    {!isLoggedIn ? (
+                        <div className="orders-empty">登录后可以查看自己的支付订单。</div>
+                    ) : ordersLoading && orders.length === 0 ? (
+                        <div className="orders-empty">正在加载订单...</div>
+                    ) : ordersError ? (
+                        <div className="orders-empty orders-error">{ordersError}</div>
+                    ) : orders.length === 0 ? (
+                        <div className="orders-empty">暂无支付订单</div>
+                    ) : (
+                        <div className="orders-list">
+                            {orders.map(order => (
+                                <div className="order-history-row" key={order.order_no}>
+                                    <div className="order-history-main">
+                                        <code>{order.order_no}</code>
+                                        <span>{formatOrderTime(order.confirmed_at || order.created_at)}</span>
+                                    </div>
+                                    <div className="order-history-meta">
+                                        <span>¥{order.amount_rmb}</span>
+                                        <span>+${((order.add_balance_cents || 0) / 100).toFixed(2)}</span>
+                                        <span className={`order-status order-status-${order.status}`}>
+                                            {order.status === 'confirmed' ? '已到账' : '待确认'}
+                                        </span>
+                                    </div>
+                                </div>
+                            ))}
                         </div>
-                        <div className="config-row">
-                            <span className="config-label">充值项目</span>
-                            <code>{pollInfo?.planName || '-'}</code>
-                        </div>
-                        <div className="config-row">
-                            <span className="config-label">金额</span>
-                            <code>{pollInfo?.money ? `¥${pollInfo.money}` : '-'}</code>
-                        </div>
-                    </div>
+                    )}
                 </div>
 
                 <div id="recharge-section-redeem" className="recharge-anchor"></div>

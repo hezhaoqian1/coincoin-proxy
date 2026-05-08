@@ -6,7 +6,7 @@
 import logging
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -112,6 +112,36 @@ def _response_from_confirm_result(result: dict, message: str) -> OrderConfirmRes
         new_balance_usd=user.balance / 100,
         message=message,
     )
+
+
+def _payment_order_payload(order: PaymentOrder) -> dict:
+    return {
+        "id": order.id,
+        "order_no": order.order_no,
+        "amount_rmb": order.amount_rmb,
+        "add_balance_cents": order.add_balance_cents,
+        "add_balance_usd": order.add_balance_cents / 100,
+        "status": order.status,
+        "trade_no": order.trade_no,
+        "created_at": order.created_at,
+        "confirmed_at": order.confirmed_at,
+    }
+
+
+@router.get("/orders")
+async def list_orders(
+    request: Request,
+    limit: int = Query(default=20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+):
+    cached = await authenticate_user(request, db)
+    result = await db.execute(
+        select(PaymentOrder)
+        .where(PaymentOrder.user_id == cached.id)
+        .order_by(PaymentOrder.created_at.desc())
+        .limit(limit)
+    )
+    return [_payment_order_payload(order) for order in result.scalars().all()]
 
 
 @router.post("/orders/create", response_model=OrderCreateResponse)
