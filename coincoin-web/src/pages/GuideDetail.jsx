@@ -101,7 +101,7 @@ function OtherGuideGrid({ items }) {
 export default function GuideDetail() {
     const { guideId } = useParams()
     const { effectiveApiKey, hasDeveloperKey, hasLocalDeveloperKey, latestDeveloperKey } = useAuth()
-    const { models, textModels, defaultTextModel } = usePublicModels()
+    const { models, textModels, imageModels, defaultTextModel, defaultImageModel } = usePublicModels()
 
     const key = effectiveApiKey || ''
     const codingModel = textModels.find((model) => model.id === 'opus')
@@ -354,12 +354,23 @@ aider --model openai/${codingModel?.id || 'gpt-5.3-codex'}`
   }
 }`
 
+        const imageModelId = defaultImageModel?.id || imageModels[0]?.id || 'gpt-image-2'
+
         const imageGenerationCommand = `curl ${OPENAI_BASE_URL}/images/generations \\
   -H "Authorization: Bearer ${snippetKey}" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "gemini-image",
+    "model": "${imageModelId}",
     "prompt": "A clean product poster for an AI gateway",
+    "size": "1024x1024"
+  }'`
+
+        const geminiImageGenerationCommand = `curl ${OPENAI_BASE_URL}/images/generations \\
+  -H "Authorization: Bearer ${snippetKey}" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "gemini-image",
+    "prompt": "A clean product poster in Gemini image style",
     "size": "1024x1024"
   }'`
 
@@ -461,9 +472,14 @@ aider --model openai/${codingModel?.id || 'gpt-5.3-codex'}`
                 description: '文生图和图片编辑走同一个公开 `/v1` 入口，成功产出图片后按张计费。',
                 commandGroup: [
                     {
-                        title: '文生图',
-                        summary: '返回图片后，使用记录里会显示 `usage_unit_type=images`。',
+                        title: '默认文生图',
+                        summary: '不传模型时也会自动走默认图片模型；当前默认是 `gpt-image-2`。',
                         code: imageGenerationCommand,
+                    },
+                    {
+                        title: 'Gemini 文生图',
+                        summary: '需要 Gemini 生图时显式传 `model: "gemini-image"`。',
+                        code: geminiImageGenerationCommand,
                     },
                     {
                         title: '查看最近用量',
@@ -478,7 +494,7 @@ aider --model openai/${codingModel?.id || 'gpt-5.3-codex'}`
                 integrations: otherGuides,
             },
         }
-    }, [codingModel?.id, key])
+    }, [codingModel?.id, defaultImageModel?.id, imageModels, key])
 
     const guide = guideId ? guides[guideId] : null
     if (!guide) {
