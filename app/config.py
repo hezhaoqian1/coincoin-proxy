@@ -39,13 +39,21 @@ class Settings(BaseSettings):
     model_alias_overrides_path: str = "config/model_alias_overrides.json"
     model_alias_overrides_refresh_interval: int = 10
 
-    # Gateway-backed public models (LiteLLM / internal OpenAI-compatible gateway)
+    # Gateway-backed public models (legacy/internal OpenAI-compatible gateway)
     gateway_base_url: str = ""
     gateway_api_key: str = ""
     gateway_auth_style: str = "bearer"
 
+    # Native Gemini CPA data plane. This is intentionally separate from the
+    # Codex/OpenAI CPA upstreams and from the optional LiteLLM gateway.
+    gemini_cpa_base_url: str = ""
+    gemini_cpa_api_key: str = ""
+    gemini_cpa_auth_style: str = "bearer"
+    gemini_cpa_default_allowed_fails: int = 3
+    gemini_cpa_default_cooldown_seconds: float = 30.0
+
     # Optional direct Vertex lane for explicit ops/debug fallback.
-    # Long-term production Gemini traffic should prefer the internal gateway.
+    # Long-term production Gemini traffic should prefer the native Gemini CPA lane.
     vertex_api_key: str = ""
     vertex_gemini_api_base: str = "https://aiplatform.googleapis.com/v1/publishers/google"
 

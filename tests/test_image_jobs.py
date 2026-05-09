@@ -161,11 +161,12 @@ class ImageJobsTests(unittest.IsolatedAsyncioTestCase):
                         "provider_model": "gemini-3.1-flash-image",
                         "capabilities": ["images/generations", "images/edits"],
                         "routing_mode": "direct",
-                        "delivery_lane": "gateway",
-                        "upstream_model": "gemini-image",
-                        "upstream_url": "https://gateway.example/v1",
-                        "api_key": "gateway-key",
+                        "delivery_lane": "cpa_gemini",
+                        "upstream_model": "gemini-3.1-flash-image",
+                        "upstream_url": "https://gemini-cpa.example/v1",
+                        "api_key": "gemini-cpa-key",
                         "auth_style": "bearer",
+                        "metadata": {"provider_platform": "cpa_gemini"},
                     },
                 ],
             }
@@ -308,8 +309,19 @@ class ImageJobsTests(unittest.IsolatedAsyncioTestCase):
             [
                 _FakeUpstreamResponse(
                     {
-                        "created": 1774449999,
-                        "data": [{"b64_json": "edited-result"}],
+                        "choices": [
+                            {
+                                "message": {
+                                    "images": [
+                                        {
+                                            "image_url": {
+                                                "url": "data:image/png;base64,edited-result"
+                                            }
+                                        }
+                                    ]
+                                }
+                            }
+                        ]
                     },
                     headers={"x-request-id": "req_image_job_1"},
                 )
@@ -329,11 +341,12 @@ class ImageJobsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result_payload["data"][0]["b64_json"], "edited-result")
         self.assertEqual(updated.upstream_request_id, "req_image_job_1")
         self.assertEqual(len(upstream_client.calls), 1)
-        self.assertEqual(upstream_client.calls[0]["url"], "https://gateway.example/v1/images/edits")
-        self.assertIn("multipart/form-data; boundary=", upstream_client.calls[0]["headers"]["content-type"])
-        posted_body = upstream_client.calls[0]["content"].decode("utf-8", errors="replace")
-        self.assertIn('name="model"', posted_body)
-        self.assertIn("gemini-image", posted_body)
+        self.assertEqual(upstream_client.calls[0]["url"], "https://gemini-cpa.example/v1/chat/completions")
+        self.assertEqual(upstream_client.calls[0]["headers"]["authorization"], "Bearer gemini-cpa-key")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gemini-3.1-flash-image")
+        self.assertEqual(upstream_client.calls[0]["json"]["modalities"], ["image", "text"])
+        content_parts = upstream_client.calls[0]["json"]["messages"][0]["content"]
+        self.assertEqual(content_parts[-1], {"type": "text", "text": "Blend these images"})
         add_usage.assert_awaited_once()
         self.assertEqual(add_usage.await_args.kwargs["api_key_id"], "k_image_job")
         self.assertEqual(add_usage.await_args.kwargs["endpoint"], "image-jobs/edits")

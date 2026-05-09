@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import settings
 from .db import SessionLocal, get_db
+from . import gemini_cpa
 from .models import ImageJob
 from .router import registry as model_registry
 from .usage_buffer import usage_buffer
@@ -148,6 +149,11 @@ def _cleanup_job_storage(storage_dir: str) -> None:
     shutil.rmtree(storage_dir, ignore_errors=True)
 
 
+def _supports_async_gemini_job(public_model) -> bool:
+    delivery_lane = (public_model.delivery_lane or "").strip().lower()
+    return public_model.provider_name.strip().lower() == "google" and delivery_lane in {"gateway", gemini_cpa.DELIVERY_LANE}
+
+
 async def _mark_job_failed(
     job_id: str,
     *,
@@ -204,11 +210,11 @@ async def _process_image_edit_job(job_id: str) -> None:
     used_cfg = resolved.backend
     used_route_reason = resolved.route_reason
     delivery_lane = (public_model.delivery_lane or "").strip().lower()
-    if public_model.provider_name.strip().lower() != "google" or delivery_lane != "gateway":
+    if not _supports_async_gemini_job(public_model):
         await _mark_job_failed(
             job_id,
             code="unsupported_image_job_lane",
-            message="Async image jobs currently support only gateway-backed Gemini image models.",
+            message="Async image jobs currently support only Gemini image models on gateway or native CPA lanes.",
         )
         return
 
@@ -219,28 +225,47 @@ async def _process_image_edit_job(job_id: str) -> None:
         return
 
     form_fields = [(str(key), str(value)) for key, value in (manifest.get("form_fields") or [])]
-    upstream_form_fields = [(key, value) for key, value in form_fields if key != "model"]
-    upstream_form_fields.append(("model", used_cfg.model_id))
-    headers = _build_upstream_headers(used_cfg)
-    upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/images/edits"
-    multipart_body, multipart_content_type = _encode_multipart_form_data(upstream_form_fields, file_fields)
-    headers["content-type"] = multipart_content_type
-
-    stream_client = await get_image_stream_client()
     started = time.monotonic()
     try:
-        upstream = await _send_stream_request(
-            stream_client,
-            "POST",
-            upstream_url,
-            content=multipart_body,
-            headers=headers,
-        )
-        try:
-            upstream_body = await upstream.aread()
-        finally:
-            await upstream.aclose()
+        if delivery_lane == gemini_cpa.DELIVERY_LANE:
+            channel = gemini_cpa.select_channel(public_model, used_cfg)
+            payload = gemini_cpa.build_image_edit_payload(form_fields, file_fields, channel.provider_model)
+            client = await get_image_stream_client()
+            upstream = await _send_stream_request(
+                client,
+                "POST",
+                gemini_cpa.chat_completions_url(channel),
+                json=payload,
+                headers=gemini_cpa.build_headers(channel),
+            )
+            try:
+                upstream_body = await upstream.aread()
+            finally:
+                await upstream.aclose()
+        else:
+            channel = None
+            upstream_form_fields = [(key, value) for key, value in form_fields if key != "model"]
+            upstream_form_fields.append(("model", used_cfg.model_id))
+            headers = _build_upstream_headers(used_cfg)
+            upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/images/edits"
+            multipart_body, multipart_content_type = _encode_multipart_form_data(upstream_form_fields, file_fields)
+            headers["content-type"] = multipart_content_type
+
+            stream_client = await get_image_stream_client()
+            upstream = await _send_stream_request(
+                stream_client,
+                "POST",
+                upstream_url,
+                content=multipart_body,
+                headers=headers,
+            )
+            try:
+                upstream_body = await upstream.aread()
+            finally:
+                await upstream.aclose()
     except Exception as exc:
+        if delivery_lane == gemini_cpa.DELIVERY_LANE and "channel" in locals() and channel is not None:
+            gemini_cpa.record_failure(channel)
         await _mark_job_failed(job_id, code="upstream_transport_error", message=str(exc))
         return
     duration_ms = int((time.monotonic() - started) * 1000)
@@ -253,10 +278,17 @@ async def _process_image_edit_job(job_id: str) -> None:
         return
 
     if upstream.status_code >= 400:
+        if delivery_lane == gemini_cpa.DELIVERY_LANE and "channel" in locals() and channel is not None and gemini_cpa.should_record_failure(upstream.status_code):
+            gemini_cpa.record_failure(channel)
         err = payload.get("error") if isinstance(payload, dict) else None
         message = str(err.get("message") or err) if isinstance(err, dict) else str(payload)
         await _mark_job_failed(job_id, code="upstream_error", message=message, duration_ms=duration_ms)
         return
+
+    if delivery_lane == gemini_cpa.DELIVERY_LANE:
+        payload = gemini_cpa.translate_image_response(payload if isinstance(payload, dict) else {})
+        if "channel" in locals() and channel is not None:
+            gemini_cpa.record_success(channel)
 
     data_items = payload.get("data") if isinstance(payload, dict) else None
     if not isinstance(data_items, list) or not data_items:
@@ -368,9 +400,9 @@ async def _create_image_edit_job(request: Request, db: AsyncSession) -> JSONResp
 
     public_model = resolved.public_model
     delivery_lane = (public_model.delivery_lane or "").strip().lower()
-    if public_model.provider_name.strip().lower() != "google" or delivery_lane != "gateway":
+    if not _supports_async_gemini_job(public_model):
         return _openai_error_response(
-            "Async image jobs currently support only gateway-backed Gemini image models.",
+            "Async image jobs currently support only Gemini image models on gateway or native CPA lanes.",
             code="unsupported_image_job_lane",
             status_code=400,
         )

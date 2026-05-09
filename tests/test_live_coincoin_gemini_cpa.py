@@ -12,17 +12,17 @@ def _env_flag(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-class CoinCoinVertexGatewayLiveTests(unittest.TestCase):
+class CoinCoinGeminiCpaLiveTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        if not _env_flag("COINCOIN_RUN_LIVE_VERTEX_TESTS"):
-            raise unittest.SkipTest("set COINCOIN_RUN_LIVE_VERTEX_TESTS=1 to run live Vertex gateway tests")
+        if not _env_flag("COINCOIN_RUN_LIVE_GEMINI_CPA_TESTS"):
+            raise unittest.SkipTest("set COINCOIN_RUN_LIVE_GEMINI_CPA_TESTS=1 to run live Gemini CPA tests")
 
-        gateway_url = os.getenv("COINCOIN_LIVE_GATEWAY_URL", "").strip()
-        gateway_key = os.getenv("COINCOIN_LIVE_GATEWAY_KEY", "").strip()
-        if not gateway_url or not gateway_key:
+        gemini_cpa_url = os.getenv("COINCOIN_GEMINI_CPA_BASE_URL", "").strip()
+        gemini_cpa_key = os.getenv("COINCOIN_GEMINI_CPA_API_KEY", "").strip()
+        if not gemini_cpa_url or not gemini_cpa_key:
             raise unittest.SkipTest(
-                "set COINCOIN_LIVE_GATEWAY_URL and COINCOIN_LIVE_GATEWAY_KEY to run live Vertex gateway tests"
+                "set COINCOIN_GEMINI_CPA_BASE_URL and COINCOIN_GEMINI_CPA_API_KEY to run live Gemini CPA tests"
             )
 
         os.environ.setdefault("COINCOIN_DB_HOST", "localhost")
@@ -42,7 +42,7 @@ class CoinCoinVertexGatewayLiveTests(unittest.TestCase):
         cls.proxy_module = proxy_module
         cls.openai_module = openai_module
         cls.headers = {"Authorization": "Bearer sk_cc_live_test"}
-        cls.fake_user = SimpleNamespace(id="u_live_vertex")
+        cls.fake_user = SimpleNamespace(id="u_live_gemini_cpa")
         cls._original_settings = {
             "fixed_model": settings.fixed_model,
             "router_enabled": settings.router_enabled,
@@ -61,6 +61,9 @@ class CoinCoinVertexGatewayLiveTests(unittest.TestCase):
             "gateway_base_url": settings.gateway_base_url,
             "gateway_api_key": settings.gateway_api_key,
             "gateway_auth_style": settings.gateway_auth_style,
+            "gemini_cpa_base_url": settings.gemini_cpa_base_url,
+            "gemini_cpa_api_key": settings.gemini_cpa_api_key,
+            "gemini_cpa_auth_style": settings.gemini_cpa_auth_style,
             "model_catalog_path": settings.model_catalog_path,
             "model_catalog_json": settings.model_catalog_json,
         }
@@ -79,9 +82,12 @@ class CoinCoinVertexGatewayLiveTests(unittest.TestCase):
         settings.fallback_upstream_url = ""
         settings.fallback_api_key = ""
         settings.fallback_auth_style = ""
-        settings.gateway_base_url = gateway_url.rstrip("/")
-        settings.gateway_api_key = gateway_key
+        settings.gateway_base_url = ""
+        settings.gateway_api_key = ""
         settings.gateway_auth_style = "bearer"
+        settings.gemini_cpa_base_url = gemini_cpa_url.rstrip("/")
+        settings.gemini_cpa_api_key = gemini_cpa_key
+        settings.gemini_cpa_auth_style = os.getenv("COINCOIN_GEMINI_CPA_AUTH_STYLE", "bearer").strip() or "bearer"
         settings.model_catalog_path = "config/model_catalog.json"
         settings.model_catalog_json = ""
 
@@ -193,7 +199,7 @@ class CoinCoinVertexGatewayLiveTests(unittest.TestCase):
                         json={
                             "model": model_id,
                             "input": "Reply with only: OK",
-                            "max_output_tokens": 8,
+                            "max_output_tokens": 64,
                         },
                     )
                     self.assertEqual(response.status_code, 200, response.text)

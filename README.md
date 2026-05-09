@@ -1,6 +1,6 @@
 # CoinCoin Proxy
 
-OpenAI 兼容的 API 控制平面，负责客户密钥、余额与用量控制，并把公开模型目录路由到旧 GPT 链路或内部 LiteLLM gateway。当前长期架构里，Gemini 文本和 Gemini 图片都统一走 gateway，CoinCoin 只保留控制面职责。
+OpenAI 兼容的 API 控制平面，负责客户密钥、余额、用量控制和公开模型目录。当前长期架构里，旧 GPT/Codex 继续走 legacy lane，Gemini 文本和图片走 CoinCoin 内置的 native Gemini CPA lane，不再把 LiteLLM 作为正式 Gemini 数据面。
 
 ## 功能特性
 
@@ -67,14 +67,16 @@ COINCOIN_FIXED_MODEL=gpt-5.2-codex
 COINCOIN_EMBEDDING_MODEL=text-embedding-3-small
 COINCOIN_MODEL_CATALOG_PATH=config/model_catalog.json
 
-# 内部 LiteLLM gateway（Gemini text + Gemini images）
-# 注意：这里填 gateway 根地址，不要带结尾斜杠；catalog 会自动补 /v1
-COINCOIN_GATEWAY_BASE_URL=https://transfer-station-litellm-gateway-production.up.railway.app
-COINCOIN_GATEWAY_API_KEY=your-internal-gateway-key
-COINCOIN_GATEWAY_AUTH_STYLE=bearer
+# Native Gemini CPA lane（Gemini text + Gemini images）
+# 注意：这是 Gemini CPA 项目，不是 Codex/GPT CPA 项目；catalog 会自动补 /v1
+COINCOIN_GEMINI_CPA_BASE_URL=https://gemini-c.up.railway.app
+COINCOIN_GEMINI_CPA_API_KEY=your-gemini-cpa-key
+COINCOIN_GEMINI_CPA_AUTH_STYLE=bearer
+COINCOIN_GEMINI_CPA_ALLOWED_FAILS=3
+COINCOIN_GEMINI_CPA_COOLDOWN_SECONDS=30
 
 # 可选：直连 Vertex 调试 / fallback
-# 不是公网 Gemini 图片主链路的必需项
+# 不是公网 Gemini 主链路的必需项
 COINCOIN_VERTEX_API_KEY=your-vertex-api-key
 COINCOIN_VERTEX_GEMINI_API_BASE=https://aiplatform.googleapis.com/v1/publishers/google
 
@@ -96,14 +98,14 @@ COINCOIN_PRICE_INPUT_PER_MILLION=99     # Input 价格: 99 分/百万tokens = $0
 COINCOIN_PRICE_OUTPUT_PER_MILLION=699   # Output 价格: 699 分/百万tokens = $6.99/M
 COINCOIN_BILLING_MODE=balance           # 计费模式: balance(余额) / token_limit(额度) / none(不限制)
 
-# Gemini 计费（可选；不填时默认 0）
-COINCOIN_GEMINI_BALANCED_INPUT_PRICE=0
-COINCOIN_GEMINI_BALANCED_OUTPUT_PRICE=0
-COINCOIN_GEMINI_FAST_INPUT_PRICE=0
-COINCOIN_GEMINI_FAST_OUTPUT_PRICE=0
-COINCOIN_GEMINI_REASONING_INPUT_PRICE=0
-COINCOIN_GEMINI_REASONING_OUTPUT_PRICE=0
-COINCOIN_GEMINI_IMAGE_PRICE=0
+# Gemini 计费（可选；不填时使用 config/model_catalog.json 里的默认价格）
+COINCOIN_GEMINI_BALANCED_INPUT_PRICE=10
+COINCOIN_GEMINI_BALANCED_OUTPUT_PRICE=40
+COINCOIN_GEMINI_FAST_INPUT_PRICE=30
+COINCOIN_GEMINI_FAST_OUTPUT_PRICE=250
+COINCOIN_GEMINI_REASONING_INPUT_PRICE=125
+COINCOIN_GEMINI_REASONING_OUTPUT_PRICE=1000
+COINCOIN_GEMINI_IMAGE_PRICE=3.9
 
 # Webhook 密钥（用于充值接口）
 COINCOIN_WEBHOOK_SECRET=your-webhook-secret
@@ -123,17 +125,17 @@ uvicorn app.main:app --reload --port 8000
 
 ## 模型兼容规则
 
-- 终端客户只看 CoinCoin 的公开模型目录，不直接感知 LiteLLM 或 Vertex 的内部模型名
+- 终端客户只看 CoinCoin 的公开模型目录，不直接感知 Gemini CPA、LiteLLM 或 Vertex 的内部模型名
 - 老用户如果不传 `model`，仍然走默认 GPT 公共模型
 - 旧 GPT lane 当前公开 alias 包括 `gpt-5`、`gpt-5.1`、`gpt-5.1-codex`、`gpt-5.1-codex-mini`、`gpt-5.1-codex-max`、`gpt-5.2`、`gpt-5.2-codex`、`gpt-5.3-codex`、`gpt-5.4-mini`、`gpt-5-codex`、`gpt-5-codex-mini`，以及由 `COINCOIN_FIXED_MODEL` 指定的默认 GPT alias
 - embedding 请求不再复用旧 GPT / CPA lane；`/v1/embeddings` 默认和显式 `text-embedding-3-small` 都直连 Azure
-- 新增 Gemini 文本能力是增量暴露；显式传入 Gemini 文本 alias 时，会真实路由到内部 LiteLLM gateway
-- Gemini 图片 alias 的公网生产链路默认也走内部 LiteLLM gateway
+- Gemini 文本能力是增量暴露；显式传入 Gemini 文本 alias 时，会路由到 native Gemini CPA lane
+- Gemini 图片 alias 的公网生产链路默认也走 native Gemini CPA lane，并在 CoinCoin 内转换成 OpenAI-compatible 图片响应
 - 图片模型支持 `/v1/images/generations` 与 `/v1/images/edits`，不会伪装成文本模型
 - `<=2` 张输入图继续走同步 `/v1/images/edits`
 - `>=3` 张输入图使用显式异步 job 端点，避免把大图任务强塞进同步公开契约
 - 公开目录的 source of truth 是 `config/model_catalog.json`
-- 后续扩模型时，按 [Add Public Model Runbook](/Users/hezhaoqian/Desktop/codex_transfer_station/docs/operations/add-public-model-runbook.md) 同步修改 LiteLLM、CoinCoin、测试与文档
+- 后续扩模型时，按 [Add Public Model Runbook](/Users/hezhaoqian/Desktop/codex_transfer_station/docs/operations/add-public-model-runbook.md) 同步修改 CoinCoin catalog、native Gemini CPA channel metadata、测试与文档
 - 每次发布后的统一验收，按 [Release Verification Checklist](/Users/hezhaoqian/Desktop/codex_transfer_station/docs/operations/release-verification-checklist.md) 执行
 
 ---
@@ -423,8 +425,8 @@ Content-Type: application/json
 - 老用户如果不传 `model`，仍然走默认 GPT 公共模型
 - 新用户可以通过修改 `model` 在公开目录中切换
 - 公开目录的 source of truth 是 `config/model_catalog.json`
-- Gemini text 通过内部 LiteLLM gateway 提供
-- Gemini 图片公网生产链路通过 CoinCoin 控制面直连 Vertex，不直接暴露 gateway master key 给终端客户
+- Gemini text 通过 native Gemini CPA lane 提供
+- Gemini 图片公网生产链路通过 native Gemini CPA lane 提供；CoinCoin 负责 OpenAI 图片 API 兼容层和用量计费
 
 ### 余额查询
 
@@ -681,9 +683,14 @@ Content-Type: application/json
 | `COINCOIN_UPSTREAM_API_KEY` | - | Azure OpenAI API Key |
 | `COINCOIN_FIXED_MODEL` | `gpt-5.2-codex` | 固定使用的模型名 |
 | `COINCOIN_MODEL_CATALOG_PATH` | `config/model_catalog.json` | 公开模型目录配置文件 |
-| `COINCOIN_GATEWAY_BASE_URL` | - | 内部 LiteLLM gateway 根地址 |
-| `COINCOIN_GATEWAY_API_KEY` | - | 内部 LiteLLM gateway 访问密钥 |
-| `COINCOIN_GATEWAY_AUTH_STYLE` | `bearer` | 访问内部 gateway 的认证方式 |
+| `COINCOIN_GEMINI_CPA_BASE_URL` | - | Gemini CPA 根地址，不能填 Codex/GPT CPA 地址 |
+| `COINCOIN_GEMINI_CPA_API_KEY` | - | Gemini CPA 访问密钥 |
+| `COINCOIN_GEMINI_CPA_AUTH_STYLE` | `bearer` | 访问 Gemini CPA 的认证方式 |
+| `COINCOIN_GEMINI_CPA_ALLOWED_FAILS` | `3` | 单 channel 进入 cooldown 前允许的连续失败数 |
+| `COINCOIN_GEMINI_CPA_COOLDOWN_SECONDS` | `30` | Gemini CPA channel cooldown 秒数 |
+| `COINCOIN_GATEWAY_BASE_URL` | - | 可选 legacy/internal OpenAI-compatible gateway 根地址 |
+| `COINCOIN_GATEWAY_API_KEY` | - | 可选 legacy/internal gateway 访问密钥 |
+| `COINCOIN_GATEWAY_AUTH_STYLE` | `bearer` | 可选 legacy/internal gateway 认证方式 |
 | `COINCOIN_DB_HOST` | - | 数据库主机 |
 | `COINCOIN_DB_PORT` | `3306` | 数据库端口 |
 | `COINCOIN_DB_NAME` | - | 数据库名 |
@@ -717,9 +724,9 @@ env \
   python3 -m unittest discover -s coincoin-proxy/tests -p 'test_*.py'
 ```
 
-### Live Vertex E2E
+### Live Gemini CPA E2E
 
-先启动本地 LiteLLM gateway，再运行可选 live 测试：
+配置 Gemini CPA env 后运行可选 live 测试。不要把真实 key 写进仓库文件：
 
 ```bash
 cd /Users/hezhaoqian/Desktop/codex_transfer_station
@@ -727,17 +734,16 @@ cd /Users/hezhaoqian/Desktop/codex_transfer_station
 env \
   PYTHONPATH=coincoin-proxy \
   PYTHONPYCACHEPREFIX=/tmp/pycache \
-  COINCOIN_RUN_LIVE_VERTEX_TESTS=1 \
-  COINCOIN_LIVE_GATEWAY_URL='http://127.0.0.1:4010' \
-  COINCOIN_LIVE_GATEWAY_KEY='replace-with-internal-gateway-key' \
-  python3 -m unittest discover -s coincoin-proxy/tests -p 'test_live_coincoin_vertex_gateway.py'
+  COINCOIN_GEMINI_CPA_BASE_URL='https://gemini-c.up.railway.app' \
+  COINCOIN_GEMINI_CPA_API_KEY='replace-with-gemini-cpa-key' \
+  python3 coincoin-proxy/scripts/smoke_gemini_cpa.py
 ```
 
 这组 live 测试会：
 
-- 真实请求 `coincoin-proxy -> local LiteLLM -> Vertex`
+- 真实请求 `CoinCoin-compatible payload -> Gemini CPA`
 - 使用 checked-in `config/model_catalog.json`
-- mock 掉 CoinCoin 的 DB/auth 依赖，因此不要求本地 MySQL
+- 验证 Gemini chat 和图片响应能被转换为 OpenAI-compatible 形态
 
 ---
 

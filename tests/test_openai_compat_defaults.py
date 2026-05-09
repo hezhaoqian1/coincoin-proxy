@@ -203,6 +203,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             "gateway_base_url": settings.gateway_base_url,
             "gateway_api_key": settings.gateway_api_key,
             "gateway_auth_style": settings.gateway_auth_style,
+            "gemini_cpa_auth_style": settings.gemini_cpa_auth_style,
             "image_edit_sync_gateway_timeout_seconds": settings.image_edit_sync_gateway_timeout_seconds,
             "vertex_api_key": settings.vertex_api_key,
             "vertex_gemini_api_base": settings.vertex_gemini_api_base,
@@ -237,6 +238,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         settings.gateway_base_url = ""
         settings.gateway_api_key = ""
         settings.gateway_auth_style = "bearer"
+        settings.gemini_cpa_auth_style = "bearer"
         settings.image_edit_sync_gateway_timeout_seconds = 60
         settings.vertex_api_key = ""
         settings.vertex_gemini_api_base = "https://aiplatform.googleapis.com/v1/publishers/google"
@@ -270,11 +272,12 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                         "provider_model": "gemini-2.5-flash",
                         "capabilities": ["chat/completions", "responses"],
                         "routing_mode": "direct",
-                        "delivery_lane": "gateway",
-                        "upstream_model": "gemini-fast",
-                        "upstream_url": "https://gateway.example/v1",
-                        "api_key": "gateway-key",
+                        "delivery_lane": "cpa_gemini",
+                        "upstream_model": "gemini-2.5-flash",
+                        "upstream_url": "https://gemini-cpa.example/v1",
+                        "api_key": "gemini-cpa-key",
                         "auth_style": "bearer",
+                        "metadata": {"provider_platform": "cpa_gemini"},
                     },
                     {
                         "id": "gemini-image",
@@ -283,11 +286,12 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                         "provider_model": "gemini-3.1-flash-image",
                         "capabilities": ["images/generations", "images/edits"],
                         "routing_mode": "direct",
-                        "delivery_lane": "gateway",
-                        "upstream_model": "gemini-image",
-                        "upstream_url": "https://gateway.example/v1",
-                        "api_key": "gateway-key",
+                        "delivery_lane": "cpa_gemini",
+                        "upstream_model": "gemini-3.1-flash-image",
+                        "upstream_url": "https://gemini-cpa.example/v1",
+                        "api_key": "gemini-cpa-key",
                         "auth_style": "bearer",
+                        "metadata": {"provider_platform": "cpa_gemini"},
                     },
                 ],
             }
@@ -308,6 +312,19 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             if model.get("id") == model_id:
                 model["delivery_lane"] = delivery_lane
                 break
+        settings.model_catalog_json = json.dumps(catalog)
+        registry._initialized = False
+        registry.init_from_settings()
+
+    def _set_gemini_image_gateway_lane(self) -> None:
+        catalog = json.loads(settings.model_catalog_json)
+        for model in catalog.get("models") or []:
+            if model.get("id") == "gemini-image":
+                model["delivery_lane"] = "gateway"
+                model["upstream_model"] = "gemini-image"
+                model["upstream_url"] = "https://gateway.example/v1"
+                model["api_key"] = "gateway-key"
+                model["auth_style"] = "bearer"
         settings.model_catalog_json = json.dumps(catalog)
         registry._initialized = False
         registry.init_from_settings()
@@ -1191,14 +1208,26 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs["output_tokens"], 2)
         self.assertEqual(kwargs["endpoint"], "chat/completions:stream")
 
-    async def test_image_generation_uses_gateway_lane_without_vertex_key(self) -> None:
-        upstream_client = _RecordingStreamClient(
+    async def test_image_generation_uses_native_cpa_gemini_lane_without_vertex_key(self) -> None:
+        upstream_client = _RecordingClient(
             [
                 _FakeUpstreamResponse(
                     {
-                        "created": 1774449999,
-                        "data": [{"b64_json": "from-gateway"}],
-                    }
+                        "choices": [
+                            {
+                                "message": {
+                                    "images": [
+                                        {
+                                            "image_url": {
+                                                "url": "data:image/png;base64,from-cpa-gemini"
+                                            }
+                                        }
+                                    ]
+                                }
+                            }
+                        ]
+                    },
+                    headers={"x-request-id": "req_cpa_image_1"},
                 )
             ]
         )
@@ -1207,7 +1236,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
             with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
                 proxy_module,
-                "get_image_stream_client",
+                "get_http_client",
                 AsyncMock(return_value=upstream_client),
             ):
                 response = await client.post(
@@ -1217,11 +1246,16 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                 )
 
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.json()["data"][0]["b64_json"], "from-gateway")
+        self.assertEqual(response.json()["data"][0]["b64_json"], "from-cpa-gemini")
         self.assertEqual(len(upstream_client.calls), 1)
-        self.assertEqual(upstream_client.calls[0]["url"], "https://gateway.example/v1/images/generations")
+        self.assertEqual(upstream_client.calls[0]["url"], "https://gemini-cpa.example/v1/chat/completions")
+        self.assertEqual(upstream_client.calls[0]["headers"]["authorization"], "Bearer gemini-cpa-key")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gemini-3.1-flash-image")
+        self.assertEqual(upstream_client.calls[0]["json"]["modalities"], ["image", "text"])
+        self.assertEqual(upstream_client.calls[0]["json"]["messages"][0]["content"], "A blue coin mascot")
 
-    async def test_image_generation_prefers_gateway_lane_when_gateway_is_configured(self) -> None:
+    async def test_image_generation_gateway_lane_still_supported_when_explicitly_configured(self) -> None:
+        self._set_gemini_image_gateway_lane()
         settings.gateway_base_url = "https://gateway.example"
         settings.gateway_api_key = "gateway-key"
 
@@ -1581,6 +1615,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(upstream_client.calls), 3)
 
     async def test_image_edit_uses_gateway_lane_without_vertex_key(self) -> None:
+        self._set_gemini_image_gateway_lane()
         upstream_client = _RecordingStreamClient(
             [
                 _FakeUpstreamResponse(
@@ -1612,6 +1647,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(upstream_client.calls[0]["url"], "https://gateway.example/v1/images/edits")
 
     async def test_image_edit_prefers_gateway_lane_when_gateway_is_configured(self) -> None:
+        self._set_gemini_image_gateway_lane()
         settings.gateway_base_url = "https://gateway.example"
         settings.gateway_api_key = "gateway-key"
 
@@ -1655,6 +1691,55 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             upstream_client.calls[0]["headers"]["authorization"],
             "Bearer gateway-key",
         )
+
+    async def test_image_edit_uses_native_cpa_gemini_lane_by_default(self) -> None:
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "choices": [
+                            {
+                                "message": {
+                                    "images": [
+                                        {
+                                            "image_url": {
+                                                "url": "data:image/png;base64,edited-by-cpa-gemini"
+                                            }
+                                        }
+                                    ]
+                                }
+                            }
+                        ]
+                    }
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ):
+                response = await client.post(
+                    "/v1/images/edits",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    data={"model": "gemini-image", "prompt": "Turn this into pixel art", "n": "1", "size": "1024x1024"},
+                    files={"image": ("input.png", b"fake_image_data", "image/png")},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["data"][0]["b64_json"], "edited-by-cpa-gemini")
+        self.assertEqual(len(upstream_client.calls), 1)
+        self.assertEqual(upstream_client.calls[0]["url"], "https://gemini-cpa.example/v1/chat/completions")
+        self.assertEqual(upstream_client.calls[0]["headers"]["authorization"], "Bearer gemini-cpa-key")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gemini-3.1-flash-image")
+        self.assertEqual(upstream_client.calls[0]["json"]["modalities"], ["image", "text"])
+        content_parts = upstream_client.calls[0]["json"]["messages"][0]["content"]
+        self.assertEqual(content_parts[0]["type"], "image_url")
+        self.assertTrue(content_parts[0]["image_url"]["url"].startswith("data:image/png;base64,"))
+        self.assertEqual(content_parts[-1], {"type": "text", "text": "Turn this into pixel art"})
 
     async def test_image_edit_without_model_uses_default_image_alias_on_direct_vertex_lane(self) -> None:
         self._set_model_delivery_lane("gemini-image", "vertex_direct")
@@ -1831,6 +1916,8 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(upstream_client.calls), 0)
 
     async def test_image_edit_requires_async_job_when_gateway_sync_budget_exceeded(self) -> None:
+        self._set_gemini_image_gateway_lane()
+
         async def _hang(*args, **kwargs):
             await asyncio.sleep(2)
             raise AssertionError("sync image edit should have timed out first")
@@ -1967,8 +2054,8 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 500, response.text)
         self.assertEqual(len(upstream_client.calls), 1)
-        self.assertEqual(upstream_client.calls[0]["url"], "https://gateway.example/v1/responses")
-        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gemini-fast")
+        self.assertEqual(upstream_client.calls[0]["url"], "https://gemini-cpa.example/v1/chat/completions")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gemini-2.5-flash")
 
     async def test_embeddings_endpoint_uses_dedicated_azure_embedding_model(self) -> None:
         upstream_client = _RecordingClient(
@@ -2090,10 +2177,10 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["data"][13]["coincoin_delivery_lane"], "upstream_direct")
         self.assertEqual(payload["data"][14]["coincoin_capabilities"], ["chat/completions", "responses"])
         self.assertEqual(payload["data"][14]["coincoin_billable_sku"], "gemini-fast")
-        self.assertEqual(payload["data"][14]["coincoin_delivery_lane"], "gateway")
+        self.assertEqual(payload["data"][14]["coincoin_delivery_lane"], "cpa_gemini")
         self.assertEqual(payload["data"][15]["coincoin_capabilities"], ["images/generations", "images/edits"])
         self.assertEqual(payload["data"][15]["coincoin_default_for"], ["image"])
-        self.assertEqual(payload["data"][15]["coincoin_delivery_lane"], "gateway")
+        self.assertEqual(payload["data"][15]["coincoin_delivery_lane"], "cpa_gemini")
 
     async def test_models_endpoint_returns_station_scoped_aliases_for_station_key(self) -> None:
         station_models = [
@@ -2210,7 +2297,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["coincoin_capabilities"], ["chat/completions", "responses"])
         self.assertEqual(payload["coincoin_billable_sku"], "gemini-fast")
         self.assertEqual(payload["coincoin_routing_mode"], "direct")
-        self.assertEqual(payload["coincoin_delivery_lane"], "gateway")
+        self.assertEqual(payload["coincoin_delivery_lane"], "cpa_gemini")
         self.assertEqual(payload["coincoin_price_cached_input_per_million"], 0.0)
         self.assertNotIn("coincoin_provider_model", payload)
         self.assertNotIn("coincoin_provider", payload)

@@ -22,6 +22,7 @@ from sqlalchemy.orm import selectinload
 
 from .config import settings
 from .db import get_db
+from . import gemini_cpa
 from .models import ApiKey, RequestLog, UsageDaily, User
 from .prompt_cache import build_claude_code_prompt_cache_key
 from .rate_limiter import rate_limiter
@@ -1106,6 +1107,19 @@ def _translate_vertex_image_response(data: Dict[str, object]) -> Dict[str, objec
     }
 
 
+def _is_cpa_gemini_lane(public_model) -> bool:
+    return (getattr(public_model, "delivery_lane", "") or "").strip().lower() == gemini_cpa.DELIVERY_LANE
+
+
+def _gemini_cpa_empty_image_error() -> JSONResponse:
+    return _openai_error_response(
+        "Gemini CPA returned no output images.",
+        error_type="server_error",
+        code="empty_image_result",
+        status_code=502,
+    )
+
+
 def _openai_error_response(
     message: str,
     *,
@@ -1446,6 +1460,20 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
     base_payload = dict(payload)
 
     upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/responses"
+    cpa_channel = None
+
+    if public_model.delivery_lane == gemini_cpa.DELIVERY_LANE:
+        try:
+            cpa_channel = gemini_cpa.select_channel(public_model, used_cfg)
+        except gemini_cpa.GeminiCpaChannelUnavailable as exc:
+            return _openai_error_response(
+                str(exc),
+                error_type="server_error",
+                code="gemini_cpa_channel_cooling_down",
+                status_code=503,
+            )
+        base_payload["model"] = cpa_channel.provider_model
+        upstream_url = gemini_cpa.responses_url(cpa_channel)
 
     _STRIP_PARAMS = ("temperature", "top_p", "presence_penalty", "frequency_penalty",
                      "max_output_tokens", "n", "logprobs", "top_logprobs", "seed")
@@ -1465,7 +1493,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
 
         async def _send_stream(cfg, *, is_fallback=False):
             send_payload = dict(base_payload)
-            send_payload["model"] = cfg.model_id
+            send_payload["model"] = cpa_channel.provider_model if cpa_channel is not None else cfg.model_id
             if is_fallback:
                 send_payload.pop("previous_response_id", None)
             send_payload["store"] = True
@@ -1475,8 +1503,8 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             if cfg.strip_unsupported:
                 for param in _STRIP_PARAMS:
                     send_payload.pop(param, None)
-            req_url = f"{cfg.upstream_url.rstrip('/')}/responses"
-            req_headers = _build_upstream_headers(cfg)
+            req_url = gemini_cpa.responses_url(cpa_channel) if cpa_channel is not None else f"{cfg.upstream_url.rstrip('/')}/responses"
+            req_headers = gemini_cpa.build_headers(cpa_channel) if cpa_channel is not None else _build_upstream_headers(cfg)
             logger.info("stream → %s  model=%s  store=%s  has_prev_resp=%s  input_types=%s",
                         req_url, send_payload.get("model"), send_payload.get("store"),
                         "previous_response_id" in send_payload,
@@ -1487,6 +1515,8 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         try:
             upstream = await _send_stream(used_cfg)
         except (httpx.TimeoutException, httpx.RequestError) as exc:
+            if cpa_channel is not None:
+                gemini_cpa.record_failure(cpa_channel)
             if can_fallback:
                 _fb = "cheap" if is_cheap else "premium"
                 logger.warning("primary %s failed (%s: %s), falling back", _fb, type(exc).__name__, exc)
@@ -1520,6 +1550,12 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             can_fallback = False
             is_cheap = False
             upstream = await _send_stream(used_cfg, is_fallback=True)
+
+        if cpa_channel is not None:
+            if upstream.status_code < 400:
+                gemini_cpa.record_success(cpa_channel)
+            elif gemini_cpa.should_record_failure(upstream.status_code):
+                gemini_cpa.record_failure(cpa_channel)
 
         content_type = upstream.headers.get("content-type", "")
         upstream_request_id = extract_upstream_request_id(upstream.headers)
@@ -1653,7 +1689,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
 
     async def _post_json(cfg, *, is_fallback=False):
         send_payload = dict(base_payload)
-        send_payload["model"] = cfg.model_id
+        send_payload["model"] = cpa_channel.provider_model if cpa_channel is not None else cfg.model_id
         if is_fallback:
             send_payload.pop("previous_response_id", None)
         send_payload["store"] = True
@@ -1663,8 +1699,8 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         if cfg.strip_unsupported:
             for param in _STRIP_PARAMS:
                 send_payload.pop(param, None)
-        req_url = f"{cfg.upstream_url.rstrip('/')}/responses"
-        req_headers = _build_upstream_headers(cfg)
+        req_url = gemini_cpa.responses_url(cpa_channel) if cpa_channel is not None else f"{cfg.upstream_url.rstrip('/')}/responses"
+        req_headers = gemini_cpa.build_headers(cpa_channel) if cpa_channel is not None else _build_upstream_headers(cfg)
         logger.info("json → %s  model=%s  store=%s  has_prev_resp=%s",
                     req_url, send_payload.get("model"), send_payload.get("store"),
                     "previous_response_id" in send_payload)
@@ -1676,6 +1712,8 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
     try:
         upstream, duration_ms = await _post_json(used_cfg)
     except (httpx.TimeoutException, httpx.RequestError) as exc:
+        if cpa_channel is not None:
+            gemini_cpa.record_failure(cpa_channel)
         if can_fallback:
             _fb = "cheap" if is_cheap else "premium"
             logger.warning("primary %s failed (%s: %s), falling back", _fb, type(exc).__name__, exc)
@@ -1700,6 +1738,11 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         can_fallback = False
         is_cheap = False
         upstream, duration_ms = await _post_json(used_cfg, is_fallback=True)
+    if cpa_channel is not None:
+        if upstream.status_code < 400:
+            gemini_cpa.record_success(cpa_channel)
+        elif gemini_cpa.should_record_failure(upstream.status_code):
+            gemini_cpa.record_failure(cpa_channel)
     response_headers = filter_headers(dict(upstream.headers))
     response_headers.pop("content-length", None)
 
@@ -1844,10 +1887,16 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
     is_google_image_generation = public_model.provider_name.strip().lower() == "google"
     delivery_lane = (public_model.delivery_lane or "").strip().lower()
     should_use_gateway_image_generation = is_google_image_generation and delivery_lane == "gateway"
+    should_use_cpa_gemini_image_generation = is_google_image_generation and delivery_lane == gemini_cpa.DELIVERY_LANE
     should_use_direct_vertex = is_google_image_generation and delivery_lane == "vertex_direct"
     client = None
 
-    if is_google_image_generation and not should_use_gateway_image_generation and not should_use_direct_vertex:
+    if (
+        is_google_image_generation
+        and not should_use_gateway_image_generation
+        and not should_use_cpa_gemini_image_generation
+        and not should_use_direct_vertex
+    ):
         return _unsupported_google_image_lane_error(delivery_lane)
 
     if should_use_direct_vertex and not settings.vertex_api_key:
@@ -1875,6 +1924,32 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
             json=payload,
             headers=headers,
         )
+        duration_ms = int((time.monotonic() - t0) * 1000)
+    elif should_use_cpa_gemini_image_generation:
+        client = await get_http_client()
+        try:
+            cpa_channel = gemini_cpa.select_channel(public_model, used_cfg)
+        except gemini_cpa.GeminiCpaChannelUnavailable as exc:
+            return _openai_error_response(
+                str(exc),
+                error_type="server_error",
+                code="gemini_cpa_channel_cooling_down",
+                status_code=503,
+            )
+        upstream_payload = gemini_cpa.build_image_generation_payload(payload, cpa_channel.provider_model)
+        upstream_url = gemini_cpa.chat_completions_url(cpa_channel)
+        headers = gemini_cpa.build_headers(cpa_channel)
+        t0 = time.monotonic()
+        try:
+            upstream = await _post_with_retries(client, upstream_url, json_body=upstream_payload, headers=headers)
+        except httpx.TransportError as exc:
+            gemini_cpa.record_failure(cpa_channel)
+            return _openai_error_response(
+                f"Gemini CPA image generation transport error: {exc}",
+                error_type="server_error",
+                code="cpa_gemini_image_generation_transport_error",
+                status_code=502,
+            )
         duration_ms = int((time.monotonic() - t0) * 1000)
     elif should_use_direct_vertex:
         client = await get_http_client()
@@ -1964,12 +2039,24 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
         try:
             upstream_json = upstream.json()
         except Exception:
+            if should_use_cpa_gemini_image_generation:
+                gemini_cpa.record_failure(cpa_channel)
             return JSONResponse(
                 content={"error": {"message": "Upstream returned invalid JSON", "type": "server_error", "code": "upstream_invalid_json"}},
                 status_code=502,
                 headers=response_headers,
             )
-        if is_google_image_generation and not should_use_gateway_image_generation and upstream.status_code < 400:
+        if should_use_cpa_gemini_image_generation and upstream.status_code < 400:
+            data = gemini_cpa.translate_image_response(upstream_json if isinstance(upstream_json, dict) else {})
+            if not data.get("data"):
+                gemini_cpa.record_failure(cpa_channel)
+                return _gemini_cpa_empty_image_error()
+            gemini_cpa.record_success(cpa_channel)
+        elif should_use_cpa_gemini_image_generation and upstream.status_code >= 400:
+            data = upstream_json
+            if gemini_cpa.should_record_failure(upstream.status_code):
+                gemini_cpa.record_failure(cpa_channel)
+        elif should_use_direct_vertex and upstream.status_code < 400:
             data = _translate_vertex_image_response(upstream_json if isinstance(upstream_json, dict) else {})
         else:
             data = upstream_json
@@ -2041,12 +2128,18 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
     is_google_image_edit = public_model.provider_name.strip().lower() == "google"
     delivery_lane = (public_model.delivery_lane or "").strip().lower()
     should_use_gateway_image_edit = is_google_image_edit and delivery_lane == "gateway"
+    should_use_cpa_gemini_image_edit = is_google_image_edit and delivery_lane == gemini_cpa.DELIVERY_LANE
     should_use_direct_vertex = is_google_image_edit and delivery_lane == "vertex_direct"
     client = None
     input_image_count = sum(1 for key, _ in file_fields if key in {"image", "image[]"})
     total_upload_bytes = sum(len(content) for key, (_, content, _) in file_fields if key in {"image", "image[]"})
 
-    if is_google_image_edit and not should_use_gateway_image_edit and not should_use_direct_vertex:
+    if (
+        is_google_image_edit
+        and not should_use_gateway_image_edit
+        and not should_use_cpa_gemini_image_edit
+        and not should_use_direct_vertex
+    ):
         return _unsupported_google_image_lane_error(delivery_lane)
 
     if should_use_direct_vertex and not settings.vertex_api_key:
@@ -2179,6 +2272,66 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
                 )
         else:
             data = upstream_body.decode("utf-8", errors="replace")
+    elif should_use_cpa_gemini_image_edit:
+        client = await get_http_client()
+        if any(key in {"mask", "mask[]"} for key, _ in file_fields):
+            return _openai_error_response(
+                "Gemini image edits via the Gemini CPA lane do not support mask uploads.",
+                code="mask_not_supported",
+                param="mask",
+                status_code=400,
+            )
+
+        try:
+            cpa_channel = gemini_cpa.select_channel(public_model, used_cfg)
+        except gemini_cpa.GeminiCpaChannelUnavailable as exc:
+            return _openai_error_response(
+                str(exc),
+                error_type="server_error",
+                code="gemini_cpa_channel_cooling_down",
+                status_code=503,
+            )
+        try:
+            payload = gemini_cpa.build_image_edit_payload(form_fields, file_fields, cpa_channel.provider_model)
+        except ValueError as exc:
+            return _openai_error_response(str(exc), code="invalid_image_request", status_code=400)
+        upstream_url = gemini_cpa.chat_completions_url(cpa_channel)
+        headers = gemini_cpa.build_headers(cpa_channel)
+        t0 = time.monotonic()
+        try:
+            upstream = await _post_with_retries(client, upstream_url, json_body=payload, headers=headers)
+        except httpx.TransportError as exc:
+            gemini_cpa.record_failure(cpa_channel)
+            return _openai_error_response(
+                f"Gemini CPA image edit transport error: {exc}",
+                error_type="server_error",
+                code="cpa_gemini_image_edit_transport_error",
+                status_code=502,
+            )
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        response_headers = filter_headers(dict(upstream.headers))
+        response_headers.pop("content-length", None)
+        upstream_request_id = extract_upstream_request_id(upstream.headers)
+        try:
+            upstream_data = upstream.json()
+        except Exception:
+            gemini_cpa.record_failure(cpa_channel)
+            return JSONResponse(
+                content={"error": {"message": "Gemini CPA returned invalid JSON", "type": "server_error", "code": "upstream_invalid_json"}},
+                status_code=502,
+                headers=response_headers,
+            )
+
+        if upstream.status_code < 400:
+            data = gemini_cpa.translate_image_response(upstream_data if isinstance(upstream_data, dict) else {})
+            if not data.get("data"):
+                gemini_cpa.record_failure(cpa_channel)
+                return _gemini_cpa_empty_image_error()
+            gemini_cpa.record_success(cpa_channel)
+        else:
+            data = upstream_data
+            if gemini_cpa.should_record_failure(upstream.status_code):
+                gemini_cpa.record_failure(cpa_channel)
     elif should_use_direct_vertex:
         client = await get_http_client()
         if any(key in {"mask", "mask[]"} for key, _ in file_fields):
