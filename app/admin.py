@@ -297,7 +297,7 @@ async def update_user(user_id: str, payload: AdminUserUpdate, db: AsyncSession =
         user.balance = payload.balance
     else:
         balance_delta = 0
-    if payload.token_limit is not None:
+    if "token_limit" in payload.model_fields_set:
         user.token_limit = payload.token_limit
     if payload.token_used is not None:
         user.token_used = payload.token_used
@@ -305,9 +305,9 @@ async def update_user(user_id: str, payload: AdminUserUpdate, db: AsyncSession =
         user.input_tokens_used = payload.input_tokens_used
     if payload.output_tokens_used is not None:
         user.output_tokens_used = payload.output_tokens_used
-    if payload.request_limit_per_minute is not None:
+    if "request_limit_per_minute" in payload.model_fields_set:
         user.request_limit_per_minute = payload.request_limit_per_minute
-    if payload.request_limit_per_day is not None:
+    if "request_limit_per_day" in payload.model_fields_set:
         user.request_limit_per_day = payload.request_limit_per_day
 
     if balance_delta > 0:
