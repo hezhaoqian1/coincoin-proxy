@@ -160,7 +160,7 @@ class UsageBufferUnitsTests(unittest.TestCase):
                 endpoint="images/generations",
                 model="gemini-image",
                 customer_model_alias="gemini-image",
-                provider_model="gemini-3.1-flash-image-preview",
+                provider_model="gemini-3.1-flash-image",
                 usage_unit_type="images",
                 usage_unit_count=2,
                 image_count=2,
@@ -179,7 +179,7 @@ class UsageBufferUnitsTests(unittest.TestCase):
         self.assertEqual(round(usage_by_user["u_image"]["cost_cents_f"]), 14)
         self.assertEqual(request_logs[0]["usage_unit_type"], "images")
         self.assertEqual(request_logs[0]["usage_unit_count"], 2)
-        self.assertEqual(request_logs[0]["provider_model"], "gemini-3.1-flash-image-preview")
+        self.assertEqual(request_logs[0]["provider_model"], "gemini-3.1-flash-image")
 
     def test_image_cost_keeps_sub_cent_official_prices_until_flush_rounding(self) -> None:
         loop = asyncio.new_event_loop()
@@ -193,7 +193,7 @@ class UsageBufferUnitsTests(unittest.TestCase):
                 endpoint="images/generations",
                 model="gemini-image",
                 customer_model_alias="gemini-image",
-                provider_model="gemini-3.1-flash-image-preview",
+                provider_model="gemini-3.1-flash-image",
                 usage_unit_type="images",
                 usage_unit_count=3,
                 image_count=3,

@@ -79,6 +79,7 @@ OFFICIAL_DEFAULT_TEXT_PRICES = {
 OFFICIAL_DEFAULT_IMAGE_PRICES = {
     "${COINCOIN_IMAGE_MODEL:-gpt-image-1}": 4.0,
     "gemini-image": 3.9,
+    "gemini-3.1-flash-image": 3.9,
     "vertex-gemini-2.5-flash-image": 3.9,
     "vertex-gemini-3.1-flash-image-preview": 3.9,
 }
@@ -203,7 +204,23 @@ class GatewayCatalogSyncTests(unittest.TestCase):
                 self.assertEqual(model.get("price_input_per_million"), CLAUDE_HAIKU_INPUT_PRICE_PLACEHOLDER)
                 self.assertEqual(model.get("price_output_per_million"), CLAUDE_HAIKU_OUTPUT_PRICE_PLACEHOLDER)
 
-    def test_text_models_match_gemini_gateway_shape(self) -> None:
+    def test_legacy_codex_models_stay_off_gateway_lane(self) -> None:
+        public_models = {
+            item["id"]: item
+            for item in (self.catalog.get("models") or [])
+            if isinstance(item, dict) and item.get("id")
+        }
+
+        for model_id in ("gpt-5.2-codex", "gpt-5.3-codex"):
+            with self.subTest(model=model_id):
+                model = public_models[model_id]
+                metadata = model.get("metadata") or {}
+                self.assertEqual(model.get("routing_mode"), "legacy_auto")
+                self.assertEqual(model.get("delivery_lane"), "legacy")
+                self.assertEqual(metadata.get("execution_profile"), "legacy_coding")
+                self.assertEqual(metadata.get("execution_pool"), "cpa_coding_pool")
+
+    def test_text_models_match_cpa_gemini_gateway_shape(self) -> None:
         for model in self.gateway_models:
             capabilities = set(model.get("capabilities") or [])
             if capabilities.intersection(IMAGE_CAPABILITIES):
@@ -215,18 +232,18 @@ class GatewayCatalogSyncTests(unittest.TestCase):
             with self.subTest(model=model["id"]):
                 self.assertEqual(
                     litellm_params.get("model"),
-                    f"gemini/{model['provider_model']}",
+                    f"openai/{model['provider_model']}",
                 )
                 self.assertEqual(
                     litellm_params.get("api_base"),
-                    "os.environ/VERTEX_GEMINI_API_BASE",
+                    "os.environ/COINCOIN_GEMINI_CPA_BASE_URL",
                 )
                 self.assertEqual(
                     litellm_params.get("api_key"),
-                    "os.environ/VERTEX_API_KEY",
+                    "os.environ/COINCOIN_GEMINI_CPA_API_KEY",
                 )
 
-    def test_image_models_match_vertex_image_gateway_shape(self) -> None:
+    def test_image_models_match_cpa_gemini_gateway_shape(self) -> None:
         for model in self.gateway_models:
             capabilities = set(model.get("capabilities") or [])
             if not capabilities.intersection(IMAGE_CAPABILITIES):
@@ -238,16 +255,18 @@ class GatewayCatalogSyncTests(unittest.TestCase):
             with self.subTest(model=model["id"]):
                 self.assertEqual(
                     litellm_params.get("model"),
-                    f"gemini/{model['provider_model']}",
+                    f"openai/{model['provider_model']}",
                 )
                 self.assertEqual(
                     litellm_params.get("api_base"),
-                    "os.environ/VERTEX_GEMINI_API_BASE",
+                    "os.environ/COINCOIN_GEMINI_CPA_BASE_URL",
                 )
                 self.assertEqual(
                     litellm_params.get("api_key"),
-                    "os.environ/VERTEX_API_KEY",
+                    "os.environ/COINCOIN_GEMINI_CPA_API_KEY",
                 )
+                metadata = model.get("metadata") or {}
+                self.assertEqual(metadata.get("provider_platform"), "cpa_gemini")
 
     def test_upstream_direct_models_use_azure_openai_shape(self) -> None:
         for model in self.upstream_direct_models:
