@@ -76,10 +76,10 @@ OFFICIAL_DEFAULT_TEXT_PRICES = {
 }
 OFFICIAL_DEFAULT_IMAGE_PRICES = {
     "${COINCOIN_IMAGE_MODEL:-gpt-image-1}": 4.0,
-    "gemini-image": 3.9,
-    "gemini-3.1-flash-image": 3.9,
-    "vertex-gemini-2.5-flash-image": 3.9,
-    "vertex-gemini-3.1-flash-image-preview": 3.9,
+    "gemini-image": 6.7,
+    "gemini-3.1-flash-image": 6.7,
+    "vertex-gemini-2.5-flash-image": 6.7,
+    "vertex-gemini-3.1-flash-image-preview": 6.7,
 }
 
 
