@@ -58,7 +58,7 @@ const HERO_LANES = [
     {
         client: 'Images',
         endpoint: '/v1/images',
-        model: 'gemini-image',
+        model: 'gpt-image-2 · gemini-image',
         tone: 'amber',
     },
 ]

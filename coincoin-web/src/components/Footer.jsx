@@ -46,7 +46,7 @@ export default function Footer() {
 
                     <div className="footer-col">
                         <h4>模型</h4>
-                        <span className="footer-model">opus / sonnet / haiku / gemini-image</span>
+                        <span className="footer-model">opus / sonnet / haiku / gpt-image-2 / gemini-image</span>
                         <span className="footer-model-note">文本与图片统一接入</span>
                     </div>
                 </div>

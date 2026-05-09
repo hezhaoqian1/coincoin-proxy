@@ -137,7 +137,7 @@ class ModelCatalogTests(unittest.TestCase):
             {
                 "default_text_model": "gpt-5.4",
                 "default_embedding_model": "text-embedding-3-small",
-                "default_image_model": "gemini-image",
+                "default_image_model": "gpt-image-2",
                 "models": [
                     *[_legacy_text_model(model_id) for model_id in LEGACY_PUBLIC_TEXT_MODELS],
                     {
@@ -155,6 +155,21 @@ class ModelCatalogTests(unittest.TestCase):
                         "price_input_per_million": 2,
                         "price_output_per_million": 0,
                         "billable_sku": "azure-text-embedding-3-small",
+                    },
+                    {
+                        "id": "gpt-image-2",
+                        "owned_by": "openai",
+                        "provider_name": "OpenAI",
+                        "provider_model": "gpt-image-2",
+                        "capabilities": ["images/generations", "images/edits"],
+                        "routing_mode": "direct",
+                        "delivery_lane": "upstream_direct",
+                        "upstream_model": "gpt-image-2",
+                        "upstream_url": "https://fallback.example/v1",
+                        "api_key": "fallback-key",
+                        "auth_style": "azure",
+                        "price_per_image_cents": 5.3,
+                        "billable_sku": "openai-image",
                     },
                     {
                         "id": "gemini-fast",
@@ -427,16 +442,27 @@ class ModelCatalogTests(unittest.TestCase):
     def test_default_image_model_is_used_when_model_is_omitted(self) -> None:
         resolved = registry.resolve_public_model(None, "images/generations")
 
-        self.assertEqual(resolved.public_model.public_id, "gemini-image")
-        self.assertEqual(resolved.public_model.delivery_lane, "cpa_gemini")
-        self.assertEqual(resolved.backend.model_id, "gemini-3.1-flash-image")
-        self.assertEqual(resolved.backend.upstream_url, "https://gemini-cpa.example/v1")
-        self.assertEqual(resolved.execution_profile, "cpa_gemini_direct")
-        self.assertEqual(resolved.execution_pool, "cpa_gemini_direct_pool")
-        self.assertEqual(resolved.route_reason, "catalog:gemini-image:cpa_gemini")
+        self.assertEqual(resolved.public_model.public_id, "gpt-image-2")
+        self.assertEqual(resolved.public_model.delivery_lane, "upstream_direct")
+        self.assertEqual(resolved.backend.model_id, "gpt-image-2")
+        self.assertEqual(resolved.backend.upstream_url, "https://fallback.example/v1")
+        self.assertEqual(resolved.execution_profile, "upstream_direct_direct")
+        self.assertEqual(resolved.execution_pool, "upstream_direct_direct_pool")
+        self.assertEqual(resolved.route_reason, "catalog:gpt-image-2:upstream_direct")
 
     def test_default_image_model_supports_image_edits(self) -> None:
         resolved = registry.resolve_public_model(None, "images/edits")
+
+        self.assertEqual(resolved.public_model.public_id, "gpt-image-2")
+        self.assertEqual(resolved.public_model.delivery_lane, "upstream_direct")
+        self.assertEqual(resolved.backend.model_id, "gpt-image-2")
+        self.assertEqual(resolved.backend.upstream_url, "https://fallback.example/v1")
+        self.assertEqual(resolved.execution_profile, "upstream_direct_direct")
+        self.assertEqual(resolved.execution_pool, "upstream_direct_direct_pool")
+        self.assertEqual(resolved.route_reason, "catalog:gpt-image-2:upstream_direct")
+
+    def test_explicit_gemini_image_model_uses_native_cpa_route(self) -> None:
+        resolved = registry.resolve_public_model("gemini-image", "images/generations")
 
         self.assertEqual(resolved.public_model.public_id, "gemini-image")
         self.assertEqual(resolved.public_model.delivery_lane, "cpa_gemini")
@@ -459,47 +485,28 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertNotIn("gemini-fast", public_ids)
         self.assertNotIn("gemini-image", public_ids)
 
-        with self.assertRaises(ModelCapabilityError):
-            registry.resolve_public_model(None, "images/generations")
+        resolved = registry.resolve_public_model(None, "images/generations")
+        self.assertEqual(resolved.public_model.public_id, "gpt-image-2")
 
     def test_openai_image_lane_can_become_default_when_gemini_is_disabled(self) -> None:
         catalog = json.loads(settings.model_catalog_json)
         for model in catalog["models"]:
             if model.get("owned_by") == "google":
                 model["enabled"] = "false"
-        catalog["models"].insert(
-            len(LEGACY_PUBLIC_TEXT_MODELS) + 1,
-            {
-                "id": "gpt-image-1",
-                "enabled": "true",
-                "owned_by": "openai",
-                "provider_name": "OpenAI",
-                "provider_model": "gpt-image-1",
-                "capabilities": ["images/generations", "images/edits"],
-                "routing_mode": "direct",
-                "delivery_lane": "upstream_direct",
-                "upstream_model": "gpt-image-1",
-                "upstream_url": "https://fallback.example/v1",
-                "api_key": "fallback-key",
-                "auth_style": "azure",
-                "price_per_image_cents": 12,
-                "billable_sku": "openai-image",
-            },
-        )
         settings.model_catalog_json = json.dumps(catalog)
         registry._initialized = False
         registry.init_from_settings()
 
         resolved = registry.resolve_public_model(None, "images/generations")
 
-        self.assertEqual(resolved.public_model.public_id, "gpt-image-1")
+        self.assertEqual(resolved.public_model.public_id, "gpt-image-2")
         self.assertEqual(resolved.public_model.delivery_lane, "upstream_direct")
-        self.assertEqual(resolved.backend.model_id, "gpt-image-1")
+        self.assertEqual(resolved.backend.model_id, "gpt-image-2")
         self.assertEqual(resolved.backend.upstream_url, "https://fallback.example/v1")
         self.assertEqual(resolved.backend.auth_style, "azure")
         self.assertEqual(resolved.execution_profile, "upstream_direct_direct")
         self.assertEqual(resolved.execution_pool, "upstream_direct_direct_pool")
-        self.assertEqual(resolved.route_reason, "catalog:gpt-image-1:upstream_direct")
+        self.assertEqual(resolved.route_reason, "catalog:gpt-image-2:upstream_direct")
 
     def test_default_embedding_model_uses_dedicated_azure_lane(self) -> None:
         resolved = registry.resolve_public_model(None, "embeddings")

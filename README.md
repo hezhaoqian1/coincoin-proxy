@@ -130,7 +130,8 @@ uvicorn app.main:app --reload --port 8000
 - 旧 GPT lane 当前公开 alias 包括 `gpt-5`、`gpt-5.1`、`gpt-5.1-codex`、`gpt-5.1-codex-mini`、`gpt-5.1-codex-max`、`gpt-5.2`、`gpt-5.2-codex`、`gpt-5.3-codex`、`gpt-5.4-mini`、`gpt-5-codex`、`gpt-5-codex-mini`，以及由 `COINCOIN_FIXED_MODEL` 指定的默认 GPT alias
 - embedding 请求不再复用旧 GPT / CPA lane；`/v1/embeddings` 默认和显式 `text-embedding-3-small` 都直连 Azure
 - Gemini 文本能力是增量暴露；显式传入 Gemini 文本 alias 时，会路由到 native Gemini CPA lane
-- Gemini 图片 alias 的公网生产链路默认也走 native Gemini CPA lane，并在 CoinCoin 内转换成 OpenAI-compatible 图片响应
+- 图片请求如果省略 `model`，默认走 `gpt-image-2` 的 OpenAI/Azure 图片直连 lane
+- Gemini 图片 alias 保留为显式模型；传入 `model=gemini-image` 时，会路由到 native Gemini CPA lane，并在 CoinCoin 内转换成 OpenAI-compatible 图片响应
 - 图片模型支持 `/v1/images/generations` 与 `/v1/images/edits`，不会伪装成文本模型
 - `<=2` 张输入图继续走同步 `/v1/images/edits`
 - `>=3` 张输入图使用显式异步 job 端点，避免把大图任务强塞进同步公开契约
@@ -413,20 +414,23 @@ Authorization: Bearer sk_cc_xxx
 Content-Type: application/json
 
 {
-  "model": "gemini-image",
+  "model": "gpt-image-2",
   "prompt": "A clean product illustration of a blue coin mascot on white background",
   "n": 1,
   "size": "1024x1024"
 }
 ```
 
+如果需要 Gemini 生图，把 `model` 改成 `gemini-image`。
+
 ## 模型目录规则
 
 - 老用户如果不传 `model`，仍然走默认 GPT 公共模型
+- 图片请求不传 `model` 时，默认走 `gpt-image-2`
 - 新用户可以通过修改 `model` 在公开目录中切换
 - 公开目录的 source of truth 是 `config/model_catalog.json`
 - Gemini text 通过 native Gemini CPA lane 提供
-- Gemini 图片公网生产链路通过 native Gemini CPA lane 提供；CoinCoin 负责 OpenAI 图片 API 兼容层和用量计费
+- Gemini 图片通过显式 `gemini-image` alias 走 native Gemini CPA lane；CoinCoin 负责 OpenAI 图片 API 兼容层和用量计费
 
 ### 余额查询
 

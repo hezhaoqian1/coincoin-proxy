@@ -39,38 +39,51 @@ const TAB_INDEX_BY_KEY = {
 
 const TAB_KEY_BY_INDEX = ['quickstart', 'models', 'api', 'snippets']
 
-const OFFICIAL_PRICE_SOURCE = 'Google Gemini API pricing · checked 2026-05-09'
-const GEMINI_OFFICIAL_PRICING = {
+const GEMINI_OFFICIAL_PRICE_SOURCE = 'Google Gemini API pricing · checked 2026-05-09'
+const OPENAI_IMAGE_OFFICIAL_PRICE_SOURCE = 'OpenAI image generation pricing · checked 2026-05-09'
+const OFFICIAL_PRICING = {
+    'gpt-image-2': {
+        providerModel: 'GPT Image 2',
+        image: '$0.053 / image · medium 1024x1024 reference',
+        source: OPENAI_IMAGE_OFFICIAL_PRICE_SOURCE,
+    },
     'gemini-balanced': {
         providerModel: 'Gemini 2.5 Flash-Lite',
         input: '$0.10 / 1M input tokens',
         output: '$0.40 / 1M output tokens',
+        source: GEMINI_OFFICIAL_PRICE_SOURCE,
     },
     'gemini-fast': {
         providerModel: 'Gemini 2.5 Flash',
         input: '$0.30 / 1M input tokens',
         output: '$2.50 / 1M output tokens',
+        source: GEMINI_OFFICIAL_PRICE_SOURCE,
     },
     'gemini-reasoning': {
         providerModel: 'Gemini 2.5 Pro (<=200K prompt)',
         input: '$1.25 / 1M input tokens',
         output: '$10.00 / 1M output tokens',
+        source: GEMINI_OFFICIAL_PRICE_SOURCE,
     },
     'gemini-image': {
         providerModel: 'Gemini 3.1 Flash Image Preview (1K)',
         image: '$0.067 / 1K image',
+        source: GEMINI_OFFICIAL_PRICE_SOURCE,
     },
     'gemini-3.1-flash-image': {
         providerModel: 'Gemini 3.1 Flash Image Preview (1K)',
         image: '$0.067 / 1K image',
+        source: GEMINI_OFFICIAL_PRICE_SOURCE,
     },
     'vertex-gemini-2.5-flash-image': {
         providerModel: 'Gemini 3.1 Flash Image Preview (1K)',
         image: '$0.067 / 1K image',
+        source: GEMINI_OFFICIAL_PRICE_SOURCE,
     },
     'vertex-gemini-3.1-flash-image-preview': {
         providerModel: 'Gemini 3.1 Flash Image Preview (1K)',
         image: '$0.067 / 1K image',
+        source: GEMINI_OFFICIAL_PRICE_SOURCE,
     },
 }
 
@@ -99,7 +112,7 @@ function formatImagePrice(cents) {
 }
 
 function getOfficialPricing(model) {
-    return GEMINI_OFFICIAL_PRICING[model?.id || ''] || null
+    return OFFICIAL_PRICING[model?.id || ''] || null
 }
 
 function getProviderName(model) {
@@ -296,7 +309,7 @@ function AudienceGuide() {
 
 function QuickStart({ primaryTextModel, primaryImageModel }) {
     const textModelId = primaryTextModel?.id || 'opus'
-    const imageModelId = primaryImageModel?.id || 'gemini-image'
+    const imageModelId = primaryImageModel?.id || 'gpt-image-2'
     const quickstartSteps = [
         {
             title: '登录控制台',
@@ -590,7 +603,7 @@ function ModelsAndPricing({ textModels, imageModels, defaultTextModel, defaultIm
                                             <div className="official-price-cell">
                                                 <strong>{official.providerModel}</strong>
                                                 <span>{official.input} · {official.output}</span>
-                                                <em>{OFFICIAL_PRICE_SOURCE}</em>
+                                                <em>{official.source}</em>
                                             </div>
                                         ) : (
                                             <span className="table-subtle">{getProviderName(model)}</span>
@@ -637,7 +650,7 @@ function ModelsAndPricing({ textModels, imageModels, defaultTextModel, defaultIm
                                             <div className="official-price-cell">
                                                 <strong>{official.providerModel}</strong>
                                                 <span>{official.image}</span>
-                                                <em>{OFFICIAL_PRICE_SOURCE}</em>
+                                                <em>{official.source}</em>
                                             </div>
                                         ) : (
                                             <span className="table-subtle">{getProviderName(model)}</span>
@@ -655,25 +668,34 @@ function ModelsAndPricing({ textModels, imageModels, defaultTextModel, defaultIm
                 </table>
             </div>
 
-            <h3>Gemini 生图怎么用</h3>
+            <h3>图片生成怎么用</h3>
             <div className="gemini-usage-grid">
                 <div className="gemini-usage-card">
-                    <span className="inline-badge">Text to Image</span>
-                    <strong><code>{defaultImageModel?.id || imageModels[0]?.id || 'gemini-image'}</code></strong>
-                    <p>文生图走 <code>/v1/images/generations</code>，支持 <code>1024x1024</code> 等常见尺寸，当前一次请求只生成 1 张。</p>
+                    <span className="inline-badge">Default</span>
+                    <strong><code>{defaultImageModel?.id || imageModels[0]?.id || 'gpt-image-2'}</code></strong>
+                    <p>文生图走 <code>/v1/images/generations</code>。不传 <code>model</code> 时自动选择默认图片模型；也可以显式传入这个模型。</p>
                 </div>
                 <div className="gemini-usage-card">
-                    <span className="inline-badge">Image Edit</span>
-                    <strong>同步或异步编辑</strong>
-                    <p><code>1-2</code> 张参考图走 <code>/v1/images/edits</code>；<code>3-8</code> 张参考图走 <code>/v1/image-jobs/edits</code> 后轮询 job。</p>
+                    <span className="inline-badge">Gemini</span>
+                    <strong><code>gemini-image</code></strong>
+                    <p>需要 Gemini 生图或 Gemini 图生图时，在请求里显式传 <code>model: "gemini-image"</code>。多图异步编辑继续用 Gemini 图片模型。</p>
                 </div>
             </div>
             <pre className="code-block">{`curl ${openaiBaseUrl}/images/generations \\
   -H "Authorization: Bearer ${snippetKey}" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "${defaultImageModel?.id || imageModels[0]?.id || 'gemini-image'}",
+    "model": "${defaultImageModel?.id || imageModels[0]?.id || 'gpt-image-2'}",
     "prompt": "A clean product poster for an AI gateway",
+    "size": "1024x1024",
+    "n": 1
+  }'`}</pre>
+            <pre className="code-block">{`curl ${openaiBaseUrl}/images/generations \\
+  -H "Authorization: Bearer ${snippetKey}" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "gemini-image",
+    "prompt": "A clean product poster in Gemini image style",
     "size": "1024x1024",
     "n": 1
   }'`}</pre>
@@ -682,7 +704,8 @@ function ModelsAndPricing({ textModels, imageModels, defaultTextModel, defaultIm
             <ul className="doc-list">
                 <li>文本模型按 Input / Cached Read / Output Token 计费；图片模型按图片张数计费。</li>
                 <li>Cached input 表示缓存读取 token，使用模型目录返回的单独缓存读取价格计费，不要按普通 Input 价格估算。</li>
-                <li>Gemini 默认价格对标 Google Gemini API 官方价格；例如 <code>gemini-image</code> 当前按 Gemini 3.1 Flash Image Preview 的 <code>$0.067 / 1K image</code> 展示。</li>
+                <li><code>gpt-image-2</code> 默认图片价格按 OpenAI 官方 medium <code>1024x1024</code> 参考价展示；实际成本会随质量、尺寸和上游计费策略变化。</li>
+                <li><code>gemini-image</code> 价格对标 Google Gemini API 官方价格，当前按 Gemini 3.1 Flash Image Preview 的 <code>$0.067 / 1K image</code> 展示。</li>
                 <li>Claude Code 走 GPT 上游时，缓存写入只作为用量观测字段记录；实际 GPT 上游不返回独立 cache write 计费项。</li>
                 <li>同一个账户余额同时覆盖文本模型和图片模型，不需要分开充值。</li>
                 <li>老客户端不传 <code>model</code> 时，仍然走默认文本模型，以保证兼容。</li>
@@ -697,7 +720,7 @@ function ModelsAndPricing({ textModels, imageModels, defaultTextModel, defaultIm
 
 function ApiReference({ primaryTextModel, primaryImageModel }) {
     const textModelId = primaryTextModel?.id || 'opus'
-    const imageModelId = primaryImageModel?.id || 'gemini-image'
+    const imageModelId = primaryImageModel?.id || 'gpt-image-2'
 
     return (
         <div className="doc-section animate-fade-in">
@@ -837,7 +860,8 @@ function ApiReference({ primaryTextModel, primaryImageModel }) {
             <h3>默认兼容规则</h3>
             <ul className="doc-list">
                 <li>如果文本请求里省略 <code>model</code>，ClawFather 会保持默认文本模型的兼容行为。</li>
-                <li>如果图片请求里省略 <code>model</code>，ClawFather 会自动选择默认图片模型。</li>
+                <li>如果图片请求里省略 <code>model</code>，ClawFather 会自动选择默认图片模型 <code>gpt-image-2</code>。</li>
+                <li>如果要用 Gemini 生图或 Gemini 图生图，请显式传入 <code>model: "gemini-image"</code>。</li>
                 <li>显式指定某个模型后，如果该模型请求失败，不会偷偷回退到另一个模型。</li>
             </ul>
 
@@ -869,7 +893,7 @@ function ApiReference({ primaryTextModel, primaryImageModel }) {
 
 function CodeExamples({ primaryTextModel, primaryImageModel }) {
     const textModelId = primaryTextModel?.id || 'opus'
-    const imageModelId = primaryImageModel?.id || 'gemini-image'
+    const imageModelId = primaryImageModel?.id || 'gpt-image-2'
 
     return (
         <div className="doc-section animate-fade-in">

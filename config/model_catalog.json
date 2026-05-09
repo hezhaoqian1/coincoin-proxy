@@ -1,7 +1,7 @@
 {
   "default_text_model": "${COINCOIN_FIXED_MODEL}",
   "default_embedding_model": "${COINCOIN_EMBEDDING_MODEL:-text-embedding-3-small}",
-  "default_image_model": "gemini-image",
+  "default_image_model": "gpt-image-2",
   "models": [
     {
       "id": "${COINCOIN_FIXED_MODEL}",
@@ -433,22 +433,25 @@
       }
     },
     {
-      "id": "${COINCOIN_IMAGE_MODEL:-gpt-image-1}",
-      "enabled": "${COINCOIN_PUBLIC_OPENAI_IMAGE_ENABLED:-false}",
+      "id": "${COINCOIN_IMAGE_MODEL:-gpt-image-2}",
+      "enabled": "${COINCOIN_PUBLIC_OPENAI_IMAGE_ENABLED:-true}",
       "owned_by": "openai",
       "provider_name": "OpenAI",
-      "provider_model": "${COINCOIN_IMAGE_MODEL:-gpt-image-1}",
+      "provider_model": "${COINCOIN_IMAGE_MODEL:-gpt-image-2}",
       "capabilities": ["images/generations", "images/edits"],
       "routing_mode": "direct",
       "delivery_lane": "upstream_direct",
-      "upstream_model": "${COINCOIN_IMAGE_MODEL:-gpt-image-1}",
+      "upstream_model": "${COINCOIN_IMAGE_MODEL:-gpt-image-2}",
       "upstream_url": "${COINCOIN_IMAGE_UPSTREAM_URL:-${COINCOIN_FALLBACK_UPSTREAM_URL:-${COINCOIN_UPSTREAM_BASE_URL}}}",
       "api_key": "${COINCOIN_IMAGE_API_KEY:-${COINCOIN_FALLBACK_API_KEY:-${COINCOIN_UPSTREAM_API_KEY}}}",
       "auth_style": "${COINCOIN_IMAGE_AUTH_STYLE:-${COINCOIN_FALLBACK_AUTH_STYLE:-${COINCOIN_PRIMARY_AUTH_STYLE:-azure}}}",
-      "price_per_image_cents": "${COINCOIN_IMAGE_PRICE_PER_IMAGE_CENTS:-4}",
+      "price_per_image_cents": "${COINCOIN_IMAGE_PRICE_PER_IMAGE_CENTS:-5.3}",
       "billable_sku": "openai-image",
       "metadata": {
-        "tier": "stable"
+        "tier": "stable",
+        "official_price_source": "OpenAI image generation pricing",
+        "official_price_checked_at": "2026-05-09",
+        "official_price_basis": "gpt-image-2 medium 1024x1024 reference price"
       }
     },
     {
