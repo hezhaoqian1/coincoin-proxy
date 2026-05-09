@@ -1043,6 +1043,57 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(upstream_client.calls[0]["json"]["tools"][0]["name"], "read_file")
         add_usage.assert_awaited_once()
 
+    async def test_responses_gemini_cpa_lane_uses_chat_endpoint_and_returns_responses_shape(self) -> None:
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "chatcmpl_gemini",
+                        "created": 1774449999,
+                        "choices": [
+                            {
+                                "message": {
+                                    "role": "assistant",
+                                    "content": "GEMINI_OK",
+                                }
+                            }
+                        ],
+                        "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7},
+                    }
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(proxy_module.usage_buffer, "add", AsyncMock()) as add_usage:
+                response = await client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"model": "gemini-fast", "input": "Reply with only: GEMINI_OK", "max_output_tokens": 20},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["model"], "gemini-fast")
+        self.assertEqual(payload["output_text"], "GEMINI_OK")
+        self.assertEqual(payload["output"][0]["content"][0]["text"], "GEMINI_OK")
+        self.assertEqual(payload["usage"]["input_tokens"], 5)
+        self.assertEqual(payload["usage"]["output_tokens"], 2)
+        self.assertEqual(upstream_client.calls[0]["url"], "https://gemini-cpa.example/v1/chat/completions")
+        self.assertEqual(upstream_client.calls[0]["headers"]["authorization"], "Bearer gemini-cpa-key")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gemini-2.5-flash")
+        self.assertEqual(upstream_client.calls[0]["json"]["messages"][0]["role"], "user")
+        self.assertEqual(upstream_client.calls[0]["json"]["max_tokens"], 20)
+        self.assertNotIn("store", upstream_client.calls[0]["json"])
+        add_usage.assert_awaited_once()
+        self.assertEqual(add_usage.await_args.kwargs["endpoint"], "responses")
+        self.assertEqual(add_usage.await_args.kwargs["model"], "gemini-fast")
+
     async def test_chat_nonstream_gpt_5_4_with_tools_collapses_stream_tool_calls(self) -> None:
         settings.router_enabled = False
         settings.primary_auth_style = "bearer"

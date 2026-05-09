@@ -1473,7 +1473,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 status_code=503,
             )
         base_payload["model"] = cpa_channel.provider_model
-        upstream_url = gemini_cpa.responses_url(cpa_channel)
+        upstream_url = gemini_cpa.chat_completions_url(cpa_channel)
 
     _STRIP_PARAMS = ("temperature", "top_p", "presence_penalty", "frequency_penalty",
                      "max_output_tokens", "n", "logprobs", "top_logprobs", "seed")
@@ -1699,7 +1699,11 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         if cfg.strip_unsupported:
             for param in _STRIP_PARAMS:
                 send_payload.pop(param, None)
-        req_url = gemini_cpa.responses_url(cpa_channel) if cpa_channel is not None else f"{cfg.upstream_url.rstrip('/')}/responses"
+        if cpa_channel is not None:
+            send_payload = gemini_cpa.build_responses_chat_payload(send_payload, cpa_channel.provider_model)
+            req_url = gemini_cpa.chat_completions_url(cpa_channel)
+        else:
+            req_url = f"{cfg.upstream_url.rstrip('/')}/responses"
         req_headers = gemini_cpa.build_headers(cpa_channel) if cpa_channel is not None else _build_upstream_headers(cfg)
         logger.info("json → %s  model=%s  store=%s  has_prev_resp=%s",
                     req_url, send_payload.get("model"), send_payload.get("store"),
@@ -1801,8 +1805,12 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             headers=response_headers,
         )
     if upstream.status_code < 400 and isinstance(data, dict):
+        if cpa_channel is not None:
+            data = gemini_cpa.translate_chat_response_to_responses(data, display_model)
         if _responses_payload_is_empty_success(data):
             logger.error("responses upstream returned empty success payload for model=%s", display_model)
+            if cpa_channel is not None:
+                gemini_cpa.record_failure(cpa_channel)
             return JSONResponse(
                 content={
                     "error": {
