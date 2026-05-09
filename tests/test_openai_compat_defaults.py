@@ -246,7 +246,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             {
                 "default_text_model": "gpt-5.4",
                 "default_embedding_model": "text-embedding-3-small",
-                "default_image_model": "gemini-image",
+                "default_image_model": "gpt-image-2",
                 "models": [
                     *[_legacy_text_model(model_id) for model_id in LEGACY_PUBLIC_TEXT_MODELS],
                     {
@@ -264,6 +264,21 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                         "price_input_per_million": 2,
                         "price_output_per_million": 0,
                         "billable_sku": "azure-text-embedding-3-small",
+                    },
+                    {
+                        "id": "gpt-image-2",
+                        "owned_by": "openai",
+                        "provider_name": "OpenAI",
+                        "provider_model": "gpt-image-2",
+                        "capabilities": ["images/generations", "images/edits"],
+                        "routing_mode": "direct",
+                        "delivery_lane": "upstream_direct",
+                        "upstream_model": "gpt-image-2",
+                        "upstream_url": "https://cliproxy.example/v1",
+                        "api_key": "cliproxy-key",
+                        "auth_style": "bearer",
+                        "price_per_image_cents": 5.3,
+                        "billable_sku": "openai-image",
                     },
                     {
                         "id": "gemini-fast",
@@ -1259,7 +1274,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs["output_tokens"], 2)
         self.assertEqual(kwargs["endpoint"], "chat/completions:stream")
 
-    async def test_image_generation_uses_native_cpa_gemini_lane_without_vertex_key(self) -> None:
+    async def test_explicit_image_generation_uses_native_cpa_gemini_lane_without_vertex_key(self) -> None:
         upstream_client = _RecordingClient(
             [
                 _FakeUpstreamResponse(
@@ -1293,7 +1308,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                 response = await client.post(
                     "/v1/images/generations",
                     headers={"Authorization": "Bearer sk_cc_test"},
-                    json={"prompt": "A blue coin mascot", "n": 1, "size": "1024x1024"},
+                    json={"model": "gemini-image", "prompt": "A blue coin mascot", "n": 1, "size": "1024x1024"},
                 )
 
         self.assertEqual(response.status_code, 200, response.text)
@@ -1350,27 +1365,53 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             "Bearer gateway-key",
         )
 
+    async def test_openai_image_generation_without_model_uses_default_gpt_image_lane(self) -> None:
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "created": 1774449999,
+                        "data": [{"b64_json": "from-openai-image"}],
+                    }
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ):
+                response = await client.post(
+                    "/v1/images/generations",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"prompt": "A blue coin mascot", "n": 1, "size": "1024x1024"},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["data"][0]["b64_json"], "from-openai-image")
+        self.assertEqual(len(upstream_client.calls), 1)
+        self.assertEqual(
+            upstream_client.calls[0]["url"],
+            "https://cliproxy.example/v1/images/generations",
+        )
+        self.assertEqual(
+            upstream_client.calls[0]["json"]["model"],
+            "gpt-image-2",
+        )
+        self.assertEqual(
+            upstream_client.calls[0]["headers"]["authorization"],
+            "Bearer cliproxy-key",
+        )
+
     async def test_openai_image_generation_normalizes_root_base_url_to_v1(self) -> None:
         catalog = json.loads(settings.model_catalog_json)
-        catalog["default_image_model"] = "gpt-image-2"
-        catalog["models"] = [
-            model for model in catalog["models"] if model.get("id") != "gemini-image"
-        ]
-        catalog["models"].append(
-            {
-                "id": "gpt-image-2",
-                "owned_by": "openai",
-                "provider_name": "OpenAI",
-                "provider_model": "gpt-image-2",
-                "capabilities": ["images/generations", "images/edits"],
-                "routing_mode": "direct",
-                "delivery_lane": "upstream_direct",
-                "upstream_model": "gpt-image-2",
-                "upstream_url": "https://cliproxy.example",
-                "api_key": "cliproxy-key",
-                "auth_style": "bearer",
-            },
-        )
+        for model in catalog["models"]:
+            if model.get("id") == "gpt-image-2":
+                model["upstream_url"] = "https://cliproxy.example"
+                break
         settings.model_catalog_json = json.dumps(catalog)
         registry._initialized = False
         registry.init_from_settings()
@@ -1406,32 +1447,9 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             upstream_client.calls[0]["url"],
             "https://cliproxy.example/v1/images/generations",
         )
-        self.assertEqual(
-            upstream_client.calls[0]["headers"]["authorization"],
-            "Bearer cliproxy-key",
-        )
 
     async def test_openai_image_edit_streams_direct_upstream_response(self) -> None:
         catalog = json.loads(settings.model_catalog_json)
-        catalog["default_image_model"] = "gpt-image-2"
-        catalog["models"] = [
-            model for model in catalog["models"] if model.get("id") != "gemini-image"
-        ]
-        catalog["models"].append(
-            {
-                "id": "gpt-image-2",
-                "owned_by": "openai",
-                "provider_name": "OpenAI",
-                "provider_model": "gpt-image-2",
-                "capabilities": ["images/generations", "images/edits"],
-                "routing_mode": "direct",
-                "delivery_lane": "upstream_direct",
-                "upstream_model": "gpt-image-2",
-                "upstream_url": "https://cliproxy.example",
-                "api_key": "cliproxy-key",
-                "auth_style": "bearer",
-            },
-        )
         settings.model_catalog_json = json.dumps(catalog)
         registry._initialized = False
         registry.init_from_settings()
@@ -1477,7 +1495,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             "Bearer cliproxy-key",
         )
 
-    async def test_image_generation_without_model_uses_default_image_alias_on_direct_vertex_lane(self) -> None:
+    async def test_explicit_image_generation_can_use_gemini_vertex_direct_lane(self) -> None:
         self._set_model_delivery_lane("gemini-image", "vertex_direct")
         settings.vertex_api_key = "vertex-direct-key"
         settings.vertex_gemini_api_base = "https://aiplatform.googleapis.com/v1/publishers/google"
@@ -1515,7 +1533,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                 response = await client.post(
                     "/v1/images/generations",
                     headers={"Authorization": "Bearer sk_cc_test"},
-                    json={"prompt": "A blue coin mascot", "n": 1, "size": "1024x1024"},
+                    json={"model": "gemini-image", "prompt": "A blue coin mascot", "n": 1, "size": "1024x1024"},
                 )
 
         self.assertEqual(response.status_code, 200, response.text)
@@ -1688,7 +1706,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                 response = await client.post(
                     "/v1/images/edits",
                     headers={"Authorization": "Bearer sk_cc_test"},
-                    data={"prompt": "Turn this into pixel art", "n": "1", "size": "1024x1024"},
+                    data={"model": "gemini-image", "prompt": "Turn this into pixel art", "n": "1", "size": "1024x1024"},
                     files={"image": ("input.png", b"fake_image_data", "image/png")},
                 )
 
@@ -1743,7 +1761,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             "Bearer gateway-key",
         )
 
-    async def test_image_edit_uses_native_cpa_gemini_lane_by_default(self) -> None:
+    async def test_explicit_image_edit_uses_native_cpa_gemini_lane(self) -> None:
         upstream_client = _RecordingClient(
             [
                 _FakeUpstreamResponse(
@@ -1792,29 +1810,13 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(content_parts[0]["image_url"]["url"].startswith("data:image/png;base64,"))
         self.assertEqual(content_parts[-1], {"type": "text", "text": "Turn this into pixel art"})
 
-    async def test_image_edit_without_model_uses_default_image_alias_on_direct_vertex_lane(self) -> None:
-        self._set_model_delivery_lane("gemini-image", "vertex_direct")
-        settings.vertex_api_key = "vertex-direct-key"
-        settings.vertex_gemini_api_base = "https://aiplatform.googleapis.com/v1/publishers/google"
-
-        upstream_client = _RecordingClient(
+    async def test_image_edit_without_model_uses_default_gpt_image_lane(self) -> None:
+        upstream_client = _RecordingStreamClient(
             [
                 _FakeUpstreamResponse(
                     {
-                        "candidates": [
-                            {
-                                "content": {
-                                    "parts": [
-                                        {
-                                            "inlineData": {
-                                                "mimeType": "image/png",
-                                                "data": "edited",
-                                            }
-                                        }
-                                    ]
-                                }
-                            }
-                        ]
+                        "created": 1774449999,
+                        "data": [{"b64_json": "edited-by-openai-image"}],
                     }
                 )
             ]
@@ -1824,7 +1826,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
             with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
                 proxy_module,
-                "get_http_client",
+                "get_image_stream_client",
                 AsyncMock(return_value=upstream_client),
             ):
                 response = await client.post(
@@ -1836,13 +1838,14 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
-        self.assertEqual(payload["data"][0]["b64_json"], "edited")
+        self.assertEqual(payload["data"][0]["b64_json"], "edited-by-openai-image")
         self.assertEqual(len(upstream_client.calls), 1)
         self.assertEqual(
             upstream_client.calls[0]["url"],
-            "https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-3.1-flash-image:generateContent",
+            "https://cliproxy.example/v1/images/edits",
         )
-        self.assertEqual(upstream_client.calls[0]["json"]["contents"][0]["role"], "user")
+        posted_body = upstream_client.calls[0]["content"].decode("utf-8", errors="replace")
+        self.assertIn("gpt-image-2", posted_body)
 
     async def test_image_edit_can_call_vertex_directly_when_vertex_key_is_configured(self) -> None:
         self._set_model_delivery_lane("gemini-image", "vertex_direct")
@@ -2210,6 +2213,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                 "gpt-5-codex",
                 "gpt-5-codex-mini",
                 "text-embedding-3-small",
+                "gpt-image-2",
                 "gemini-fast",
                 "gemini-image",
             ],
@@ -2226,12 +2230,16 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["data"][13]["coincoin_billable_sku"], "azure-text-embedding-3-small")
         self.assertEqual(payload["data"][13]["coincoin_default_for"], ["embedding"])
         self.assertEqual(payload["data"][13]["coincoin_delivery_lane"], "upstream_direct")
-        self.assertEqual(payload["data"][14]["coincoin_capabilities"], ["chat/completions", "responses"])
-        self.assertEqual(payload["data"][14]["coincoin_billable_sku"], "gemini-fast")
-        self.assertEqual(payload["data"][14]["coincoin_delivery_lane"], "cpa_gemini")
-        self.assertEqual(payload["data"][15]["coincoin_capabilities"], ["images/generations", "images/edits"])
-        self.assertEqual(payload["data"][15]["coincoin_default_for"], ["image"])
+        self.assertEqual(payload["data"][14]["coincoin_capabilities"], ["images/generations", "images/edits"])
+        self.assertEqual(payload["data"][14]["coincoin_billable_sku"], "openai-image")
+        self.assertEqual(payload["data"][14]["coincoin_default_for"], ["image"])
+        self.assertEqual(payload["data"][14]["coincoin_delivery_lane"], "upstream_direct")
+        self.assertEqual(payload["data"][15]["coincoin_capabilities"], ["chat/completions", "responses"])
+        self.assertEqual(payload["data"][15]["coincoin_billable_sku"], "gemini-fast")
         self.assertEqual(payload["data"][15]["coincoin_delivery_lane"], "cpa_gemini")
+        self.assertEqual(payload["data"][16]["coincoin_capabilities"], ["images/generations", "images/edits"])
+        self.assertEqual(payload["data"][16]["coincoin_default_for"], [])
+        self.assertEqual(payload["data"][16]["coincoin_delivery_lane"], "cpa_gemini")
 
     async def test_models_endpoint_returns_station_scoped_aliases_for_station_key(self) -> None:
         station_models = [

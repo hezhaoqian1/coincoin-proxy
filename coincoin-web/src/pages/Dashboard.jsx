@@ -923,7 +923,7 @@ export default function Dashboard() {
                         </div>
                         <div className="price-item">
                             <span className="price-label">默认图片模型</span>
-                            <span className="price-val model-tag">{defaultImageModel?.id || 'gemini-image'}</span>
+                            <span className="price-val model-tag">{defaultImageModel?.id || 'gpt-image-2'}</span>
                         </div>
                     </div>
                 </div>

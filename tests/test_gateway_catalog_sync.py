@@ -75,7 +75,7 @@ OFFICIAL_DEFAULT_TEXT_PRICES = {
     "vertex-gemini-3.1-pro-preview": (125, 1000),
 }
 OFFICIAL_DEFAULT_IMAGE_PRICES = {
-    "${COINCOIN_IMAGE_MODEL:-gpt-image-1}": 4.0,
+    "${COINCOIN_IMAGE_MODEL:-gpt-image-2}": 5.3,
     "gemini-image": 6.7,
     "gemini-3.1-flash-image": 6.7,
     "vertex-gemini-2.5-flash-image": 6.7,
@@ -141,7 +141,7 @@ class GatewayCatalogSyncTests(unittest.TestCase):
 
     def test_default_models_exist_and_match_capabilities(self) -> None:
         public_models = {
-            item["id"]: item
+            _placeholder_default(item["id"]): item
             for item in (self.catalog.get("models") or [])
             if isinstance(item, dict) and item.get("id")
         }
