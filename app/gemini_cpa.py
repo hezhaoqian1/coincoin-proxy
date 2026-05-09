@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import random
 import re
+import secrets
 import time
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Tuple
@@ -226,6 +228,225 @@ def record_failure(channel: GeminiCpaChannel) -> None:
 
 def should_record_failure(status_code: int) -> bool:
     return status_code in {408, 409, 429} or status_code >= 500
+
+
+def _text_from_content(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+
+    pieces: List[str] = []
+    for part in content:
+        if isinstance(part, str):
+            pieces.append(part)
+        elif isinstance(part, dict) and isinstance(part.get("text"), str):
+            pieces.append(part["text"])
+    return "".join(pieces)
+
+
+def _responses_content_to_chat_content(content: Any, role: str) -> Any:
+    if isinstance(content, str):
+        return content
+
+    if not isinstance(content, list):
+        return ""
+
+    converted: List[Dict[str, Any]] = []
+    text_parts: List[str] = []
+    has_image = False
+    for part in content:
+        if isinstance(part, str):
+            text_parts.append(part)
+            continue
+        if not isinstance(part, dict):
+            continue
+
+        part_type = str(part.get("type") or "")
+        if part_type in {"input_text", "output_text", "text"}:
+            text_parts.append(str(part.get("text") or ""))
+            continue
+
+        if part_type == "input_image":
+            image_url = part.get("image_url") or part.get("url")
+            if isinstance(image_url, dict):
+                image_url = image_url.get("url")
+            if image_url:
+                converted.append({"type": "image_url", "image_url": {"url": str(image_url)}})
+                has_image = True
+            continue
+
+        if part_type == "image_url":
+            image_url = part.get("image_url") or part.get("url")
+            if image_url:
+                converted.append({"type": "image_url", "image_url": image_url})
+                has_image = True
+            continue
+
+        if isinstance(part.get("text"), str):
+            text_parts.append(part["text"])
+
+    text = "".join(text_parts)
+    if not has_image:
+        return text
+
+    if text:
+        converted.append({"type": "text", "text": text})
+    return converted or text
+
+
+def build_responses_chat_payload(payload: Dict[str, Any], provider_model: str) -> Dict[str, Any]:
+    """Adapt an OpenAI Responses request to Gemini CPA's stable chat endpoint."""
+    messages: List[Dict[str, Any]] = []
+    instructions = payload.get("instructions")
+    if isinstance(instructions, str) and instructions.strip():
+        messages.append({"role": "system", "content": instructions.strip()})
+
+    raw_input = payload.get("input")
+    if isinstance(raw_input, str):
+        messages.append({"role": "user", "content": raw_input or " "})
+    elif isinstance(raw_input, list):
+        for item in raw_input:
+            if isinstance(item, str):
+                messages.append({"role": "user", "content": item})
+                continue
+            if not isinstance(item, dict):
+                continue
+
+            item_type = str(item.get("type") or "")
+            if item_type == "message" or "role" in item:
+                role = str(item.get("role") or "user").strip().lower()
+                if role == "developer":
+                    role = "system"
+                if role not in {"system", "user", "assistant"}:
+                    role = "user"
+                content = _responses_content_to_chat_content(item.get("content"), role)
+                if not content and isinstance(item.get("text"), str):
+                    content = item["text"]
+                messages.append({"role": role, "content": content or " "})
+            elif item_type in {"input_text", "text"}:
+                messages.append({"role": "user", "content": str(item.get("text") or " ")})
+            elif item_type == "output_text":
+                messages.append({"role": "assistant", "content": str(item.get("text") or " ")})
+            elif item_type == "function_call_output":
+                output = item.get("output")
+                messages.append({"role": "user", "content": str(output or "")})
+
+    if not messages:
+        messages.append({"role": "user", "content": " "})
+
+    request_payload: Dict[str, Any] = {
+        "model": provider_model,
+        "messages": messages,
+    }
+
+    if "max_output_tokens" in payload:
+        request_payload["max_tokens"] = payload.get("max_output_tokens")
+    elif "max_tokens" in payload:
+        request_payload["max_tokens"] = payload.get("max_tokens")
+
+    for field in ("temperature", "top_p", "stop", "stream"):
+        if field in payload:
+            request_payload[field] = payload[field]
+
+    if isinstance(payload.get("tools"), list):
+        tools: List[Dict[str, Any]] = []
+        for tool in payload["tools"]:
+            if not isinstance(tool, dict):
+                continue
+            if tool.get("type") == "function" and isinstance(tool.get("function"), dict):
+                tools.append(tool)
+            elif tool.get("type") == "function" and tool.get("name"):
+                tools.append(
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": tool.get("name"),
+                            "description": tool.get("description", ""),
+                            "parameters": tool.get("parameters", {}),
+                        },
+                    }
+                )
+        if tools:
+            request_payload["tools"] = tools
+
+    if "tool_choice" in payload:
+        request_payload["tool_choice"] = payload["tool_choice"]
+
+    return request_payload
+
+
+def _responses_usage_from_chat_usage(usage: Dict[str, Any]) -> Dict[str, int]:
+    input_tokens = _as_int(usage.get("input_tokens") or usage.get("prompt_tokens"), 0)
+    output_tokens = _as_int(usage.get("output_tokens") or usage.get("completion_tokens"), 0)
+    total_tokens = _as_int(usage.get("total_tokens"), input_tokens + output_tokens)
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": total_tokens,
+    }
+
+
+def translate_chat_response_to_responses(data: Dict[str, Any], display_model: str) -> Dict[str, Any]:
+    """Return an OpenAI Responses-shaped payload from a chat completion response."""
+    output: List[Dict[str, Any]] = []
+    text_parts: List[str] = []
+    for choice in data.get("choices") or []:
+        if not isinstance(choice, dict):
+            continue
+        message = choice.get("message") or {}
+        if not isinstance(message, dict):
+            continue
+
+        text = _text_from_content(message.get("content")).strip()
+        if text:
+            text_parts.append(text)
+            output.append(
+                {
+                    "id": f"msg_{secrets.token_hex(20)}",
+                    "type": "message",
+                    "status": "completed",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": text,
+                            "annotations": [],
+                            "logprobs": [],
+                        }
+                    ],
+                }
+            )
+
+        for tool_call in message.get("tool_calls") or []:
+            if not isinstance(tool_call, dict):
+                continue
+            function = tool_call.get("function") if isinstance(tool_call.get("function"), dict) else {}
+            call_id = str(tool_call.get("id") or f"call_{secrets.token_hex(20)}")
+            arguments = function.get("arguments")
+            if isinstance(arguments, dict):
+                arguments = json.dumps(arguments, ensure_ascii=False)
+            output.append(
+                {
+                    "id": call_id,
+                    "call_id": call_id,
+                    "type": "function_call",
+                    "name": str(function.get("name") or tool_call.get("name") or ""),
+                    "arguments": str(arguments or ""),
+                }
+            )
+
+    output_text = "".join(text_parts)
+    return {
+        "id": f"resp_{secrets.token_hex(20)}",
+        "object": "response",
+        "created_at": int(data.get("created") or time.time()),
+        "status": "completed",
+        "model": display_model,
+        "output": output,
+        "output_text": output_text,
+        "usage": _responses_usage_from_chat_usage(data.get("usage") or {}),
+    }
 
 
 def _map_image_size_to_aspect_ratio(size: str) -> str:
