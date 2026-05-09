@@ -172,11 +172,11 @@ class ModelCatalogTests(unittest.TestCase):
                         "id": "gemini-image",
                         "owned_by": "google",
                         "provider_name": "Google",
-                        "provider_model": "gemini-3.1-flash-image-preview",
+                        "provider_model": "gemini-3.1-flash-image",
                         "capabilities": ["images/generations", "images/edits"],
                         "routing_mode": "direct",
                         "delivery_lane": "gateway",
-                        "upstream_model": "vertex-gemini-3.1-flash-image-preview",
+                        "upstream_model": "gemini-image",
                         "upstream_url": "https://gateway.example/v1",
                         "api_key": "gateway-key",
                         "auth_style": "bearer",
@@ -425,7 +425,7 @@ class ModelCatalogTests(unittest.TestCase):
 
         self.assertEqual(resolved.public_model.public_id, "gemini-image")
         self.assertEqual(resolved.public_model.delivery_lane, "gateway")
-        self.assertEqual(resolved.backend.model_id, "vertex-gemini-3.1-flash-image-preview")
+        self.assertEqual(resolved.backend.model_id, "gemini-image")
         self.assertEqual(resolved.backend.upstream_url, "https://gateway.example/v1")
         self.assertEqual(resolved.execution_profile, "gateway_direct")
         self.assertEqual(resolved.execution_pool, "gateway_direct_pool")
@@ -436,7 +436,7 @@ class ModelCatalogTests(unittest.TestCase):
 
         self.assertEqual(resolved.public_model.public_id, "gemini-image")
         self.assertEqual(resolved.public_model.delivery_lane, "gateway")
-        self.assertEqual(resolved.backend.model_id, "vertex-gemini-3.1-flash-image-preview")
+        self.assertEqual(resolved.backend.model_id, "gemini-image")
         self.assertEqual(resolved.backend.upstream_url, "https://gateway.example/v1")
         self.assertEqual(resolved.execution_profile, "gateway_direct")
         self.assertEqual(resolved.execution_pool, "gateway_direct_pool")

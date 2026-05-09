@@ -158,11 +158,11 @@ class ImageJobsTests(unittest.IsolatedAsyncioTestCase):
                         "id": "gemini-image",
                         "owned_by": "google",
                         "provider_name": "Google",
-                        "provider_model": "gemini-3.1-flash-image-preview",
+                        "provider_model": "gemini-3.1-flash-image",
                         "capabilities": ["images/generations", "images/edits"],
                         "routing_mode": "direct",
                         "delivery_lane": "gateway",
-                        "upstream_model": "vertex-gemini-3.1-flash-image-preview",
+                        "upstream_model": "gemini-image",
                         "upstream_url": "https://gateway.example/v1",
                         "api_key": "gateway-key",
                         "auth_style": "bearer",
@@ -231,7 +231,7 @@ class ImageJobsTests(unittest.IsolatedAsyncioTestCase):
             status=image_jobs_module.JOB_STATUS_COMPLETED,
             endpoint="images/edits",
             public_model="gemini-image",
-            provider_model="gemini-3.1-flash-image-preview",
+            provider_model="gemini-3.1-flash-image",
             route_reason="catalog:gemini-image:direct",
             image_count=3,
             request_payload_json="{}",
@@ -294,7 +294,7 @@ class ImageJobsTests(unittest.IsolatedAsyncioTestCase):
             status=image_jobs_module.JOB_STATUS_RUNNING,
             endpoint="images/edits",
             public_model="gemini-image",
-            provider_model="gemini-3.1-flash-image-preview",
+            provider_model="gemini-3.1-flash-image",
             route_reason="catalog:gemini-image:direct",
             image_count=3,
             request_payload_json=json.dumps(manifest),
@@ -333,7 +333,7 @@ class ImageJobsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("multipart/form-data; boundary=", upstream_client.calls[0]["headers"]["content-type"])
         posted_body = upstream_client.calls[0]["content"].decode("utf-8", errors="replace")
         self.assertIn('name="model"', posted_body)
-        self.assertIn("vertex-gemini-3.1-flash-image-preview", posted_body)
+        self.assertIn("gemini-image", posted_body)
         add_usage.assert_awaited_once()
         self.assertEqual(add_usage.await_args.kwargs["api_key_id"], "k_image_job")
         self.assertEqual(add_usage.await_args.kwargs["endpoint"], "image-jobs/edits")

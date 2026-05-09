@@ -177,14 +177,14 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             created_at=datetime(2026, 3, 25, 12, 34, 56),
             api_key_id="k_img",
             endpoint="images/generations",
-            model="vertex-gemini-3.1-flash-image-preview",
+            model="gemini-image",
             input_tokens=0,
             output_tokens=0,
             cached_tokens=0,
             cache_read_tokens=0,
             cache_creation_tokens=0,
             image_count=2,
-            provider_model="gemini-3.1-flash-image-preview",
+            provider_model="gemini-3.1-flash-image",
             customer_model_alias="gemini-image",
             usage_unit_type="images",
             usage_unit_count=2,
@@ -216,7 +216,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         payload = response.json()
         item = payload["data"][0]
         self.assertEqual(item["model"], "gemini-image")
-        self.assertEqual(item["provider_model"], "gemini-3.1-flash-image-preview")
+        self.assertEqual(item["provider_model"], "gemini-3.1-flash-image")
         self.assertEqual(item["customer_model_alias"], "gemini-image")
         self.assertEqual(item["usage_unit_type"], "images")
         self.assertEqual(item["usage_unit_count"], 2)

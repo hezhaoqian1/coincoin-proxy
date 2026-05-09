@@ -280,11 +280,11 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                         "id": "gemini-image",
                         "owned_by": "google",
                         "provider_name": "Google",
-                        "provider_model": "gemini-3.1-flash-image-preview",
+                        "provider_model": "gemini-3.1-flash-image",
                         "capabilities": ["images/generations", "images/edits"],
                         "routing_mode": "direct",
                         "delivery_lane": "gateway",
-                        "upstream_model": "vertex-gemini-3.1-flash-image-preview",
+                        "upstream_model": "gemini-image",
                         "upstream_url": "https://gateway.example/v1",
                         "api_key": "gateway-key",
                         "auth_style": "bearer",
@@ -1258,7 +1258,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             upstream_client.calls[0]["json"]["model"],
-            "vertex-gemini-3.1-flash-image-preview",
+            "gemini-image",
         )
         self.assertEqual(
             upstream_client.calls[0]["headers"]["authorization"],
@@ -1439,7 +1439,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(upstream_client.calls), 1)
         self.assertEqual(
             upstream_client.calls[0]["url"],
-            "https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-3.1-flash-image-preview:generateContent",
+            "https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-3.1-flash-image:generateContent",
         )
         self.assertEqual(upstream_client.calls[0]["headers"]["x-goog-api-key"], "vertex-direct-key")
         self.assertEqual(upstream_client.calls[0]["json"]["contents"][0]["role"], "user")
@@ -1499,7 +1499,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(upstream_client.calls), 1)
         self.assertEqual(
             upstream_client.calls[0]["url"],
-            "https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-3.1-flash-image-preview:generateContent",
+            "https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-3.1-flash-image:generateContent",
         )
         self.assertEqual(upstream_client.calls[0]["headers"]["x-goog-api-key"], "vertex-direct-key")
         self.assertEqual(upstream_client.calls[0]["json"]["contents"][0]["role"], "user")
@@ -1650,7 +1650,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("multipart/form-data; boundary=", upstream_client.calls[0]["headers"]["content-type"])
         posted_body = upstream_client.calls[0]["content"].decode("utf-8", errors="replace")
         self.assertIn('name="model"', posted_body)
-        self.assertIn("vertex-gemini-3.1-flash-image-preview", posted_body)
+        self.assertIn("gemini-image", posted_body)
         self.assertEqual(
             upstream_client.calls[0]["headers"]["authorization"],
             "Bearer gateway-key",
@@ -1704,7 +1704,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(upstream_client.calls), 1)
         self.assertEqual(
             upstream_client.calls[0]["url"],
-            "https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-3.1-flash-image-preview:generateContent",
+            "https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-3.1-flash-image:generateContent",
         )
         self.assertEqual(upstream_client.calls[0]["json"]["contents"][0]["role"], "user")
 
@@ -1768,7 +1768,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(upstream_client.calls), 1)
         self.assertEqual(
             upstream_client.calls[0]["url"],
-            "https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-3.1-flash-image-preview:generateContent",
+            "https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-3.1-flash-image:generateContent",
         )
         self.assertEqual(upstream_client.calls[0]["headers"]["x-goog-api-key"], "vertex-direct-key")
         self.assertEqual(upstream_client.calls[0]["json"]["contents"][0]["role"], "user")
