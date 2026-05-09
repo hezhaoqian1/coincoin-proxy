@@ -101,6 +101,7 @@ class ModelCatalogTests(unittest.TestCase):
             "fallback_price_output": settings.fallback_price_output,
             "fallback_auth_style": settings.fallback_auth_style,
             "gateway_auth_style": settings.gateway_auth_style,
+            "gemini_cpa_auth_style": settings.gemini_cpa_auth_style,
             "model_catalog_json": settings.model_catalog_json,
             "model_alias_overrides_path": settings.model_alias_overrides_path,
         }
@@ -130,6 +131,7 @@ class ModelCatalogTests(unittest.TestCase):
         settings.fallback_price_output = 3000
         settings.fallback_auth_style = "azure"
         settings.gateway_auth_style = "bearer"
+        settings.gemini_cpa_auth_style = "bearer"
         settings.model_alias_overrides_path = ""
         settings.model_catalog_json = json.dumps(
             {
@@ -161,12 +163,13 @@ class ModelCatalogTests(unittest.TestCase):
                         "provider_model": "gemini-2.5-flash",
                         "capabilities": ["chat/completions", "responses"],
                         "routing_mode": "direct",
-                        "delivery_lane": "gateway",
-                        "upstream_model": "gemini-fast",
-                        "upstream_url": "https://gateway.example/v1",
-                        "api_key": "gateway-key",
+                        "delivery_lane": "cpa_gemini",
+                        "upstream_model": "gemini-2.5-flash",
+                        "upstream_url": "https://gemini-cpa.example/v1",
+                        "api_key": "gemini-cpa-key",
                         "auth_style": "bearer",
                         "billable_sku": "gemini-fast-text",
+                        "metadata": {"provider_platform": "cpa_gemini"},
                     },
                     {
                         "id": "gemini-image",
@@ -175,13 +178,14 @@ class ModelCatalogTests(unittest.TestCase):
                         "provider_model": "gemini-3.1-flash-image",
                         "capabilities": ["images/generations", "images/edits"],
                         "routing_mode": "direct",
-                        "delivery_lane": "gateway",
-                        "upstream_model": "gemini-image",
-                        "upstream_url": "https://gateway.example/v1",
-                        "api_key": "gateway-key",
+                        "delivery_lane": "cpa_gemini",
+                        "upstream_model": "gemini-3.1-flash-image",
+                        "upstream_url": "https://gemini-cpa.example/v1",
+                        "api_key": "gemini-cpa-key",
                         "auth_style": "bearer",
                         "price_per_image_cents": 7,
                         "billable_sku": "gemini-image",
+                        "metadata": {"provider_platform": "cpa_gemini"},
                     },
                 ],
             }
@@ -209,18 +213,18 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertEqual(resolved.execution_profile, "legacy_general")
         self.assertEqual(resolved.execution_pool, "cpa_general_pool")
 
-    def test_explicit_gemini_text_model_uses_gateway_route(self) -> None:
+    def test_explicit_gemini_text_model_uses_native_cpa_route(self) -> None:
         resolved = registry.resolve_public_model("gemini-fast", "responses")
 
         self.assertEqual(resolved.public_model.public_id, "gemini-fast")
         self.assertEqual(resolved.public_model.provider_name, "Google")
-        self.assertEqual(resolved.public_model.delivery_lane, "gateway")
-        self.assertEqual(resolved.backend.model_id, "gemini-fast")
-        self.assertEqual(resolved.backend.upstream_url, "https://gateway.example/v1")
+        self.assertEqual(resolved.public_model.delivery_lane, "cpa_gemini")
+        self.assertEqual(resolved.backend.model_id, "gemini-2.5-flash")
+        self.assertEqual(resolved.backend.upstream_url, "https://gemini-cpa.example/v1")
         self.assertEqual(resolved.backend.auth_style, "bearer")
-        self.assertEqual(resolved.execution_profile, "gateway_direct")
-        self.assertEqual(resolved.execution_pool, "gateway_direct_pool")
-        self.assertEqual(resolved.route_reason, "catalog:gemini-fast:gateway")
+        self.assertEqual(resolved.execution_profile, "cpa_gemini_direct")
+        self.assertEqual(resolved.execution_pool, "cpa_gemini_direct_pool")
+        self.assertEqual(resolved.route_reason, "catalog:gemini-fast:cpa_gemini")
 
     def test_runtime_alias_override_changes_upstream_without_editing_catalog(self) -> None:
         with tempfile.NamedTemporaryFile("w", encoding="utf-8") as override_file:
@@ -245,8 +249,8 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertEqual(resolved.public_model.public_id, "gemini-fast")
         self.assertEqual(resolved.public_model.provider_model, "gemini-2.5-pro")
         self.assertEqual(resolved.backend.model_id, "vertex-gemini-2.5-pro")
-        self.assertEqual(resolved.backend.upstream_url, "https://gateway.example/v1")
-        self.assertEqual(resolved.route_reason, "catalog:gemini-fast:gateway")
+        self.assertEqual(resolved.backend.upstream_url, "https://gemini-cpa.example/v1")
+        self.assertEqual(resolved.route_reason, "catalog:gemini-fast:cpa_gemini")
 
     def test_runtime_alias_override_snapshot_is_used_from_memory(self) -> None:
         settings.model_alias_overrides_path = "/tmp/coincoin-override-file-should-not-be-read.json"
@@ -291,7 +295,7 @@ class ModelCatalogTests(unittest.TestCase):
         resolved = registry.resolve_public_model("gemini-fast", "responses")
 
         self.assertEqual(resolved.public_model.provider_model, "gemini-2.5-flash")
-        self.assertEqual(resolved.backend.model_id, "gemini-fast")
+        self.assertEqual(resolved.backend.model_id, "gemini-2.5-flash")
 
     def test_explicit_legacy_public_model_keeps_legacy_lane(self) -> None:
         resolved = registry.resolve_public_model(
@@ -424,23 +428,23 @@ class ModelCatalogTests(unittest.TestCase):
         resolved = registry.resolve_public_model(None, "images/generations")
 
         self.assertEqual(resolved.public_model.public_id, "gemini-image")
-        self.assertEqual(resolved.public_model.delivery_lane, "gateway")
-        self.assertEqual(resolved.backend.model_id, "gemini-image")
-        self.assertEqual(resolved.backend.upstream_url, "https://gateway.example/v1")
-        self.assertEqual(resolved.execution_profile, "gateway_direct")
-        self.assertEqual(resolved.execution_pool, "gateway_direct_pool")
-        self.assertEqual(resolved.route_reason, "catalog:gemini-image:gateway")
+        self.assertEqual(resolved.public_model.delivery_lane, "cpa_gemini")
+        self.assertEqual(resolved.backend.model_id, "gemini-3.1-flash-image")
+        self.assertEqual(resolved.backend.upstream_url, "https://gemini-cpa.example/v1")
+        self.assertEqual(resolved.execution_profile, "cpa_gemini_direct")
+        self.assertEqual(resolved.execution_pool, "cpa_gemini_direct_pool")
+        self.assertEqual(resolved.route_reason, "catalog:gemini-image:cpa_gemini")
 
     def test_default_image_model_supports_image_edits(self) -> None:
         resolved = registry.resolve_public_model(None, "images/edits")
 
         self.assertEqual(resolved.public_model.public_id, "gemini-image")
-        self.assertEqual(resolved.public_model.delivery_lane, "gateway")
-        self.assertEqual(resolved.backend.model_id, "gemini-image")
-        self.assertEqual(resolved.backend.upstream_url, "https://gateway.example/v1")
-        self.assertEqual(resolved.execution_profile, "gateway_direct")
-        self.assertEqual(resolved.execution_pool, "gateway_direct_pool")
-        self.assertEqual(resolved.route_reason, "catalog:gemini-image:gateway")
+        self.assertEqual(resolved.public_model.delivery_lane, "cpa_gemini")
+        self.assertEqual(resolved.backend.model_id, "gemini-3.1-flash-image")
+        self.assertEqual(resolved.backend.upstream_url, "https://gemini-cpa.example/v1")
+        self.assertEqual(resolved.execution_profile, "cpa_gemini_direct")
+        self.assertEqual(resolved.execution_pool, "cpa_gemini_direct_pool")
+        self.assertEqual(resolved.route_reason, "catalog:gemini-image:cpa_gemini")
 
     def test_string_false_enabled_flag_hides_public_gemini_models(self) -> None:
         catalog = json.loads(settings.model_catalog_json)

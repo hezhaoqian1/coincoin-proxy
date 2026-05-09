@@ -2,8 +2,6 @@ import json
 import unittest
 from pathlib import Path
 
-import yaml
-
 IMAGE_CAPABILITIES = {"images/generations", "images/edits"}
 EMBEDDING_CAPABILITIES = {"embeddings"}
 TEXT_CAPABILITIES = {"chat/completions", "responses"}
@@ -102,15 +100,8 @@ class GatewayCatalogSyncTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         repo_root = Path(__file__).resolve().parents[2]
         catalog_path = repo_root / "coincoin-proxy" / "config" / "model_catalog.json"
-        gateway_path = repo_root / "services" / "litellm-gateway" / "config.yaml"
 
         cls.catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
-        cls.gateway = yaml.safe_load(gateway_path.read_text(encoding="utf-8"))
-        cls.gateway_aliases = {
-            item["model_name"]: item.get("litellm_params") or {}
-            for item in (cls.gateway.get("model_list") or [])
-            if isinstance(item, dict) and item.get("model_name")
-        }
         cls.direct_models = [
             item
             for item in (cls.catalog.get("models") or [])
@@ -121,25 +112,30 @@ class GatewayCatalogSyncTests(unittest.TestCase):
             for item in cls.direct_models
             if item.get("delivery_lane") == "gateway"
         ]
+        cls.cpa_gemini_models = [
+            item
+            for item in cls.direct_models
+            if item.get("delivery_lane") == "cpa_gemini"
+        ]
         cls.upstream_direct_models = [
             item
             for item in cls.direct_models
             if item.get("delivery_lane") == "upstream_direct"
         ]
 
-    def test_every_gateway_public_model_targets_a_gateway_alias(self) -> None:
-        missing_aliases = sorted(
-            model["upstream_model"]
+    def test_gateway_lane_is_not_used_for_public_gemini(self) -> None:
+        google_gateway_aliases = sorted(
+            model["id"]
             for model in self.gateway_models
-            if model.get("upstream_model") not in self.gateway_aliases
+            if model.get("owned_by") == "google" or model.get("provider_name") == "Google"
         )
-        self.assertEqual(missing_aliases, [])
+        self.assertEqual(google_gateway_aliases, [])
 
     def test_direct_public_models_only_use_supported_delivery_lanes(self) -> None:
         invalid_models = sorted(
             model["id"]
             for model in self.direct_models
-            if model.get("delivery_lane") not in {"gateway", "upstream_direct"}
+            if model.get("delivery_lane") not in {"gateway", "cpa_gemini", "upstream_direct"}
         )
         self.assertEqual(invalid_models, [])
 
@@ -220,53 +216,37 @@ class GatewayCatalogSyncTests(unittest.TestCase):
                 self.assertEqual(metadata.get("execution_profile"), "legacy_coding")
                 self.assertEqual(metadata.get("execution_pool"), "cpa_coding_pool")
 
-    def test_text_models_match_cpa_gemini_gateway_shape(self) -> None:
-        for model in self.gateway_models:
+    def test_text_models_match_native_cpa_gemini_shape(self) -> None:
+        for model in self.cpa_gemini_models:
             capabilities = set(model.get("capabilities") or [])
             if capabilities.intersection(IMAGE_CAPABILITIES):
                 continue
 
-            alias_name = model["upstream_model"]
-            litellm_params = self.gateway_aliases[alias_name]
-
             with self.subTest(model=model["id"]):
-                self.assertEqual(
-                    litellm_params.get("model"),
-                    f"openai/{model['provider_model']}",
-                )
-                self.assertEqual(
-                    litellm_params.get("api_base"),
-                    "os.environ/COINCOIN_GEMINI_CPA_BASE_URL",
-                )
-                self.assertEqual(
-                    litellm_params.get("api_key"),
-                    "os.environ/COINCOIN_GEMINI_CPA_API_KEY",
-                )
+                self.assertEqual(model.get("provider_name"), "Google")
+                self.assertEqual(model.get("upstream_model"), model.get("provider_model"))
+                self.assertEqual(model.get("upstream_url"), "${COINCOIN_GEMINI_CPA_BASE_URL}/v1")
+                self.assertEqual(model.get("api_key"), "${COINCOIN_GEMINI_CPA_API_KEY}")
+                self.assertEqual(model.get("auth_style"), "${COINCOIN_GEMINI_CPA_AUTH_STYLE:-bearer}")
+                metadata = model.get("metadata") or {}
+                self.assertEqual(metadata.get("provider_platform"), "cpa_gemini")
+                self.assertEqual(metadata.get("channel_id"), "gemini-cpa-primary")
 
-    def test_image_models_match_cpa_gemini_gateway_shape(self) -> None:
-        for model in self.gateway_models:
+    def test_image_models_match_native_cpa_gemini_shape(self) -> None:
+        for model in self.cpa_gemini_models:
             capabilities = set(model.get("capabilities") or [])
             if not capabilities.intersection(IMAGE_CAPABILITIES):
                 continue
 
-            alias_name = model["upstream_model"]
-            litellm_params = self.gateway_aliases[alias_name]
-
             with self.subTest(model=model["id"]):
-                self.assertEqual(
-                    litellm_params.get("model"),
-                    f"openai/{model['provider_model']}",
-                )
-                self.assertEqual(
-                    litellm_params.get("api_base"),
-                    "os.environ/COINCOIN_GEMINI_CPA_BASE_URL",
-                )
-                self.assertEqual(
-                    litellm_params.get("api_key"),
-                    "os.environ/COINCOIN_GEMINI_CPA_API_KEY",
-                )
+                self.assertEqual(model.get("provider_name"), "Google")
+                self.assertEqual(model.get("upstream_model"), model.get("provider_model"))
+                self.assertEqual(model.get("upstream_url"), "${COINCOIN_GEMINI_CPA_BASE_URL}/v1")
+                self.assertEqual(model.get("api_key"), "${COINCOIN_GEMINI_CPA_API_KEY}")
+                self.assertEqual(model.get("auth_style"), "${COINCOIN_GEMINI_CPA_AUTH_STYLE:-bearer}")
                 metadata = model.get("metadata") or {}
                 self.assertEqual(metadata.get("provider_platform"), "cpa_gemini")
+                self.assertEqual(metadata.get("channel_id"), "gemini-cpa-primary")
 
     def test_upstream_direct_models_use_azure_openai_shape(self) -> None:
         for model in self.upstream_direct_models:

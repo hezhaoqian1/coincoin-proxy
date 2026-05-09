@@ -13,6 +13,7 @@ from sqlalchemy import select, func
 
 from .config import settings
 from .db import get_db
+from . import gemini_cpa
 from .prompt_cache import build_claude_code_prompt_cache_key
 from .proxy import (
     _build_upstream_headers, _ensure_content_text, _sanitize_encrypted_ids,
@@ -824,6 +825,20 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
     price_input_per_million = station_model.retail_input_per_million if station_model else public_model.price_input_per_million
     price_output_per_million = station_model.retail_output_per_million if station_model else public_model.price_output_per_million
 
+    if public_model.delivery_lane == gemini_cpa.DELIVERY_LANE:
+        return await _proxy_gemini_cpa_chat_completions(
+            payload=payload,
+            user=user,
+            public_model=public_model,
+            display_model=display_model,
+            used_cfg=used_cfg,
+            used_route_reason=used_route_reason,
+            api_key_id=api_key_id,
+            price_input_per_million=price_input_per_million,
+            price_output_per_million=price_output_per_million,
+            station_model=station_model,
+        )
+
     # ============== 构建 Responses API payload ==============
     resp_payload: Dict[str, Any] = {
         "model": used_cfg.model_id,
@@ -1436,6 +1451,118 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
 
     if isinstance(data, dict):
         return JSONResponse(content=build_chat_response(data, display_model), status_code=upstream.status_code, headers=response_headers)
+
+    return Response(content=str(data), status_code=upstream.status_code, headers=response_headers, media_type=content_type)
+
+
+async def _proxy_gemini_cpa_chat_completions(
+    *,
+    payload: Dict[str, Any],
+    user,
+    public_model,
+    display_model: str,
+    used_cfg,
+    used_route_reason: str,
+    api_key_id: str,
+    price_input_per_million: int,
+    price_output_per_million: int,
+    station_model,
+):
+    try:
+        channel = gemini_cpa.select_channel(public_model, used_cfg)
+    except gemini_cpa.GeminiCpaChannelUnavailable as exc:
+        return openai_error(str(exc), "server_error", code="gemini_cpa_channel_cooling_down", status_code=503)
+
+    send_payload = dict(payload)
+    send_payload["model"] = channel.provider_model
+    send_payload.pop("model_provider", None)
+    headers = gemini_cpa.build_headers(channel)
+    upstream_url = gemini_cpa.chat_completions_url(channel)
+
+    client = await get_http_client()
+    t0 = time.monotonic()
+    try:
+        upstream = await client.post(upstream_url, json=send_payload, headers=headers)
+    except (httpx.TimeoutException, httpx.RequestError) as exc:
+        gemini_cpa.record_failure(channel)
+        import logging
+        logging.getLogger("coincoin.compat").error("gemini cpa chat transport error: %s", exc)
+        return openai_error("Upstream request failed", "server_error", code="upstream_unreachable", status_code=502)
+    duration_ms = int((time.monotonic() - t0) * 1000)
+
+    response_headers = filter_headers(dict(upstream.headers))
+    response_headers.pop("content-length", None)
+    for header_name, header_value in gemini_cpa.iter_channel_debug_headers(channel):
+        response_headers.setdefault(header_name, header_value)
+    content_type = upstream.headers.get("content-type", "application/json")
+    upstream_request_id = extract_upstream_request_id(upstream.headers)
+
+    if "application/json" in content_type:
+        try:
+            data = upstream.json()
+        except Exception:
+            gemini_cpa.record_failure(channel)
+            return openai_error("Upstream returned invalid JSON", "server_error", code="upstream_invalid_json", status_code=502)
+    else:
+        data = upstream.text
+
+    if upstream.status_code < 400:
+        gemini_cpa.record_success(channel)
+    elif gemini_cpa.should_record_failure(upstream.status_code):
+        gemini_cpa.record_failure(channel)
+
+    input_tokens_delta = 0
+    output_tokens_delta = 0
+    cache_read_tokens_delta = 0
+    cache_creation_tokens_delta = 0
+    if isinstance(data, dict) and isinstance(data.get("error"), dict):
+        return JSONResponse(
+            content={"error": data["error"]},
+            status_code=upstream.status_code if upstream.status_code >= 400 else 502,
+            headers=response_headers,
+        )
+    if upstream.status_code < 400 and isinstance(data, dict):
+        usage = data.get("usage") or {}
+        input_tokens_delta = extract_total_input_tokens(usage)
+        output_tokens_delta = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
+        cache_read_tokens_delta = extract_cache_read_tokens(usage)
+        cache_creation_tokens_delta = extract_cache_creation_tokens(usage)
+
+        await usage_buffer.add(
+            user.id,
+            api_key_id=api_key_id,
+            input_tokens=input_tokens_delta,
+            output_tokens=output_tokens_delta,
+            cache_read_tokens=cache_read_tokens_delta,
+            cache_creation_tokens=cache_creation_tokens_delta,
+            requests=1,
+            endpoint="chat/completions",
+            model=display_model,
+            customer_model_alias=display_model,
+            provider_model=public_model.provider_model or channel.provider_model,
+            route_reason=used_route_reason,
+            duration_ms=duration_ms,
+            status_code=upstream.status_code,
+            price_input_per_million=price_input_per_million,
+            price_output_per_million=price_output_per_million,
+            usage_unit_type="tokens",
+            billable_sku=public_model.billable_sku or display_model,
+            upstream_request_id=upstream_request_id,
+            **station_usage_kwargs(station_model),
+        )
+
+    if upstream.status_code >= 400:
+        if isinstance(data, dict) and "error" in data:
+            return JSONResponse(content={"error": data["error"]}, status_code=upstream.status_code, headers=response_headers)
+        return JSONResponse(
+            content={"error": {"message": str(data)[:500] if data else "upstream error", "type": "upstream_error", "code": str(upstream.status_code)}},
+            status_code=upstream.status_code,
+            headers=response_headers,
+        )
+
+    if isinstance(data, dict):
+        data["model"] = display_model
+        return JSONResponse(content=data, status_code=upstream.status_code, headers=response_headers)
 
     return Response(content=str(data), status_code=upstream.status_code, headers=response_headers, media_type=content_type)
 

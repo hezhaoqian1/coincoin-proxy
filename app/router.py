@@ -33,7 +33,7 @@ class PublicModelConfig:
     provider_name: str = ""
     capabilities: Tuple[str, ...] = ()
     routing_mode: str = "direct"  # direct | legacy_auto
-    delivery_lane: str = "upstream_direct"  # legacy | gateway | vertex_direct | upstream_direct
+    delivery_lane: str = "upstream_direct"  # legacy | gateway | cpa_gemini | vertex_direct | upstream_direct
     upstream_model: str = ""
     provider_model: str = ""
     upstream_url: str = ""
@@ -87,7 +87,7 @@ LEGACY_ROUTE_SLOTS = frozenset({PREMIUM, CHEAP, FALLBACK, EMBEDDING})
 TEXT_ENDPOINTS = frozenset({"chat/completions", "responses"})
 EMBEDDING_ENDPOINTS = frozenset({"embeddings"})
 IMAGE_ENDPOINTS = frozenset({"images/generations", "images/edits"})
-DELIVERY_LANES = frozenset({"legacy", "gateway", "vertex_direct", "upstream_direct"})
+DELIVERY_LANES = frozenset({"legacy", "gateway", "cpa_gemini", "vertex_direct", "upstream_direct"})
 _ENV_PATTERN = re.compile(r"\$\{([A-Z0-9_]+)(:-([^}]*))?\}")
 _ROOT_DIR = Path(__file__).resolve().parent.parent
 ALIAS_OVERRIDE_FIELDS = frozenset({"provider_model", "upstream_model", "enabled"})
@@ -548,8 +548,9 @@ class ModelRegistry:
             if model.routing_mode != "legacy_auto":
                 if not (model.upstream_model and model.upstream_url and model.api_key):
                     logger.warning(
-                        "skipping public model %s because upstream gateway config is incomplete",
+                        "skipping public model %s because upstream config is incomplete for delivery_lane=%s",
                         model.public_id,
+                        model.delivery_lane,
                     )
                     continue
             if model.public_id in self.public_models:
