@@ -197,7 +197,7 @@ class UsageBufferUnitsTests(unittest.TestCase):
                 usage_unit_type="images",
                 usage_unit_count=3,
                 image_count=3,
-                price_per_image_cents=3.9,
+                price_per_image_cents=6.7,
                 billable_sku="gemini-image",
             )
             return await buffer.snapshot_and_reset()
@@ -208,8 +208,8 @@ class UsageBufferUnitsTests(unittest.TestCase):
             asyncio.set_event_loop(None)
             loop.close()
 
-        self.assertAlmostEqual(usage_by_user["u_image_fractional"]["cost_cents_f"], 11.7)
-        self.assertEqual(request_logs[0]["cost_cents"], 12)
+        self.assertAlmostEqual(usage_by_user["u_image_fractional"]["cost_cents_f"], 20.1)
+        self.assertEqual(request_logs[0]["cost_cents"], 20)
 
     def test_tracks_text_alias_and_provider_model_separately(self) -> None:
         loop = asyncio.new_event_loop()

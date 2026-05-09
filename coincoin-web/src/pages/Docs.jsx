@@ -39,6 +39,41 @@ const TAB_INDEX_BY_KEY = {
 
 const TAB_KEY_BY_INDEX = ['quickstart', 'models', 'api', 'snippets']
 
+const OFFICIAL_PRICE_SOURCE = 'Google Gemini API pricing · checked 2026-05-09'
+const GEMINI_OFFICIAL_PRICING = {
+    'gemini-balanced': {
+        providerModel: 'Gemini 2.5 Flash-Lite',
+        input: '$0.10 / 1M input tokens',
+        output: '$0.40 / 1M output tokens',
+    },
+    'gemini-fast': {
+        providerModel: 'Gemini 2.5 Flash',
+        input: '$0.30 / 1M input tokens',
+        output: '$2.50 / 1M output tokens',
+    },
+    'gemini-reasoning': {
+        providerModel: 'Gemini 2.5 Pro (<=200K prompt)',
+        input: '$1.25 / 1M input tokens',
+        output: '$10.00 / 1M output tokens',
+    },
+    'gemini-image': {
+        providerModel: 'Gemini 3.1 Flash Image Preview (1K)',
+        image: '$0.067 / 1K image',
+    },
+    'gemini-3.1-flash-image': {
+        providerModel: 'Gemini 3.1 Flash Image Preview (1K)',
+        image: '$0.067 / 1K image',
+    },
+    'vertex-gemini-2.5-flash-image': {
+        providerModel: 'Gemini 3.1 Flash Image Preview (1K)',
+        image: '$0.067 / 1K image',
+    },
+    'vertex-gemini-3.1-flash-image-preview': {
+        providerModel: 'Gemini 3.1 Flash Image Preview (1K)',
+        image: '$0.067 / 1K image',
+    },
+}
+
 function formatCaps(model) {
     return (model.coincoin_capabilities || []).join(' · ')
 }
@@ -61,6 +96,14 @@ function formatImagePrice(cents) {
     const value = Number(cents || 0)
     if (!value) return '后台配置'
     return `$${(value / 100).toFixed(3)} / image`
+}
+
+function getOfficialPricing(model) {
+    return GEMINI_OFFICIAL_PRICING[model?.id || ''] || null
+}
+
+function getProviderName(model) {
+    return model?.owned_by === 'google' ? 'Google' : model?.owned_by || 'provider'
 }
 
 export default function Docs() {
@@ -306,6 +349,29 @@ function QuickStart({ primaryTextModel, primaryImageModel }) {
     "stream": false
   }'`}</pre>
 
+            <h3>Gemini 生图</h3>
+            <div className="gemini-usage-grid">
+                <div className="gemini-usage-card">
+                    <span className="inline-badge">文生图</span>
+                    <strong>POST /v1/images/generations</strong>
+                    <p>把模型设为 <code>{imageModelId}</code>，其余认证和 Base URL 仍然使用同一把开发者 Key。</p>
+                </div>
+                <div className="gemini-usage-card">
+                    <span className="inline-badge">图生图</span>
+                    <strong>POST /v1/images/edits</strong>
+                    <p>上传 1-2 张参考图时使用同步编辑；3-8 张参考图改用异步 <code>/v1/image-jobs/edits</code>。</p>
+                </div>
+            </div>
+            <pre className="code-block">{`curl ${SITE}/v1/images/generations \\
+  -H "Authorization: Bearer sk_cc_xxxxx" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "${imageModelId}",
+    "prompt": "A polished product poster for an AI gateway",
+    "size": "1024x1024",
+    "n": 1
+  }'`}</pre>
+
             <h3>Codex</h3>
             <pre className="code-block">{`model = "${textModelId}"
 model_provider = "coincoin"
@@ -483,6 +549,14 @@ function ModelsAndPricing({ textModels, imageModels, defaultTextModel, defaultIm
             </div>
 
             <h3>文本模型</h3>
+            <div className="official-price-callout">
+                <div>
+                    <span className="docs-shell-kicker">Official Benchmark</span>
+                    <strong>Gemini 价格按 Google Gemini API 官方价格写入默认目录</strong>
+                    <p>页面展示的价格来自 <code>/v1/models</code>；生产环境如果配置了价格环境变量，会以线上返回值为准。</p>
+                </div>
+                <a href="https://ai.google.dev/gemini-api/docs/pricing" target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm">查看官方价格</a>
+            </div>
             <div className="pricing-table-wrap">
                 <table className="data-table pricing-table pricing-table-text">
                     <thead>
@@ -491,6 +565,7 @@ function ModelsAndPricing({ textModels, imageModels, defaultTextModel, defaultIm
                             <th>输入价格</th>
                             <th>输出价格</th>
                             <th>缓存读取</th>
+                            <th>官方对标</th>
                             <th>描述</th>
                             <th>状态</th>
                         </tr>
@@ -498,6 +573,7 @@ function ModelsAndPricing({ textModels, imageModels, defaultTextModel, defaultIm
                     <tbody>
                         {textModels.map((model) => {
                             const isDefault = (model.coincoin_default_for || []).includes('text')
+                            const official = getOfficialPricing(model)
                             return (
                                 <tr key={model.id}>
                                     <td>
@@ -509,6 +585,17 @@ function ModelsAndPricing({ textModels, imageModels, defaultTextModel, defaultIm
                                     <td className="price-cell">{formatUsdPerMillion(model.coincoin_price_input_per_million)}</td>
                                     <td className="price-cell">{formatUsdPerMillion(model.coincoin_price_output_per_million)}</td>
                                     <td className="price-cell">{formatUsdPerMillion(getCachedInputPricePerMillion(model), 3)}</td>
+                                    <td>
+                                        {official ? (
+                                            <div className="official-price-cell">
+                                                <strong>{official.providerModel}</strong>
+                                                <span>{official.input} · {official.output}</span>
+                                                <em>{OFFICIAL_PRICE_SOURCE}</em>
+                                            </div>
+                                        ) : (
+                                            <span className="table-subtle">{getProviderName(model)}</span>
+                                        )}
+                                    </td>
                                     <td>
                                         <div>{describePublicModel(model)}</div>
                                         <div className="table-subtle">{formatCaps(model)}</div>
@@ -528,35 +615,74 @@ function ModelsAndPricing({ textModels, imageModels, defaultTextModel, defaultIm
                         <tr>
                             <th>模型名称</th>
                             <th>图片价格</th>
+                            <th>官方对标</th>
                             <th>描述</th>
                             <th>状态</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {imageModels.map((model) => (
-                            <tr key={model.id}>
-                                <td>
-                                    <div className="model-name-cell">
-                                        <code className="model-tag-sm">{model.id}</code>
-                                        {(model.coincoin_default_for || []).includes('image') && <span className="inline-badge">默认图片</span>}
-                                    </div>
-                                </td>
-                                <td className="price-cell">{formatImagePrice(model.coincoin_price_per_image_cents)}</td>
-                                <td>
-                                    <div>{describePublicModel(model)}</div>
-                                    <div className="table-subtle">{formatCaps(model)}</div>
-                                </td>
-                                <td><span className={`badge ${model.coincoin_metadata?.tier === 'preview' ? 'badge-warning' : 'badge-success'}`}>{formatTier(model)}</span></td>
-                            </tr>
-                        ))}
+                        {imageModels.map((model) => {
+                            const official = getOfficialPricing(model)
+                            return (
+                                <tr key={model.id}>
+                                    <td>
+                                        <div className="model-name-cell">
+                                            <code className="model-tag-sm">{model.id}</code>
+                                            {(model.coincoin_default_for || []).includes('image') && <span className="inline-badge">默认图片</span>}
+                                        </div>
+                                    </td>
+                                    <td className="price-cell">{formatImagePrice(model.coincoin_price_per_image_cents)}</td>
+                                    <td>
+                                        {official ? (
+                                            <div className="official-price-cell">
+                                                <strong>{official.providerModel}</strong>
+                                                <span>{official.image}</span>
+                                                <em>{OFFICIAL_PRICE_SOURCE}</em>
+                                            </div>
+                                        ) : (
+                                            <span className="table-subtle">{getProviderName(model)}</span>
+                                        )}
+                                    </td>
+                                    <td>
+                                        <div>{describePublicModel(model)}</div>
+                                        <div className="table-subtle">{formatCaps(model)}</div>
+                                    </td>
+                                    <td><span className={`badge ${model.coincoin_metadata?.tier === 'preview' ? 'badge-warning' : 'badge-success'}`}>{formatTier(model)}</span></td>
+                                </tr>
+                            )
+                        })}
                     </tbody>
                 </table>
             </div>
+
+            <h3>Gemini 生图怎么用</h3>
+            <div className="gemini-usage-grid">
+                <div className="gemini-usage-card">
+                    <span className="inline-badge">Text to Image</span>
+                    <strong><code>{defaultImageModel?.id || imageModels[0]?.id || 'gemini-image'}</code></strong>
+                    <p>文生图走 <code>/v1/images/generations</code>，支持 <code>1024x1024</code> 等常见尺寸，当前一次请求只生成 1 张。</p>
+                </div>
+                <div className="gemini-usage-card">
+                    <span className="inline-badge">Image Edit</span>
+                    <strong>同步或异步编辑</strong>
+                    <p><code>1-2</code> 张参考图走 <code>/v1/images/edits</code>；<code>3-8</code> 张参考图走 <code>/v1/image-jobs/edits</code> 后轮询 job。</p>
+                </div>
+            </div>
+            <pre className="code-block">{`curl ${openaiBaseUrl}/images/generations \\
+  -H "Authorization: Bearer ${snippetKey}" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "${defaultImageModel?.id || imageModels[0]?.id || 'gemini-image'}",
+    "prompt": "A clean product poster for an AI gateway",
+    "size": "1024x1024",
+    "n": 1
+  }'`}</pre>
 
             <h3>计费说明</h3>
             <ul className="doc-list">
                 <li>文本模型按 Input / Cached Read / Output Token 计费；图片模型按图片张数计费。</li>
                 <li>Cached input 表示缓存读取 token，使用模型目录返回的单独缓存读取价格计费，不要按普通 Input 价格估算。</li>
+                <li>Gemini 默认价格对标 Google Gemini API 官方价格；例如 <code>gemini-image</code> 当前按 Gemini 3.1 Flash Image Preview 的 <code>$0.067 / 1K image</code> 展示。</li>
                 <li>Claude Code 走 GPT 上游时，缓存写入只作为用量观测字段记录；实际 GPT 上游不返回独立 cache write 计费项。</li>
                 <li>同一个账户余额同时覆盖文本模型和图片模型，不需要分开充值。</li>
                 <li>老客户端不传 <code>model</code> 时，仍然走默认文本模型，以保证兼容。</li>

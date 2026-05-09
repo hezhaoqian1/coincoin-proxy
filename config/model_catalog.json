@@ -474,6 +474,9 @@
         "allowed_fails": "${COINCOIN_GEMINI_CPA_ALLOWED_FAILS:-3}",
         "cooldown_seconds": "${COINCOIN_GEMINI_CPA_COOLDOWN_SECONDS:-30}",
         "provider_platform": "cpa_gemini",
+        "official_price_source": "Google Gemini API pricing",
+        "official_price_checked_at": "2026-05-09",
+        "official_price_model": "Gemini 2.5 Flash-Lite",
         "tier": "stable"
       }
     },
@@ -500,6 +503,9 @@
         "allowed_fails": "${COINCOIN_GEMINI_CPA_ALLOWED_FAILS:-3}",
         "cooldown_seconds": "${COINCOIN_GEMINI_CPA_COOLDOWN_SECONDS:-30}",
         "provider_platform": "cpa_gemini",
+        "official_price_source": "Google Gemini API pricing",
+        "official_price_checked_at": "2026-05-09",
+        "official_price_model": "Gemini 2.5 Flash",
         "tier": "stable"
       }
     },
@@ -526,6 +532,9 @@
         "allowed_fails": "${COINCOIN_GEMINI_CPA_ALLOWED_FAILS:-3}",
         "cooldown_seconds": "${COINCOIN_GEMINI_CPA_COOLDOWN_SECONDS:-30}",
         "provider_platform": "cpa_gemini",
+        "official_price_source": "Google Gemini API pricing",
+        "official_price_checked_at": "2026-05-09",
+        "official_price_model": "Gemini 2.5 Pro <=200K prompt",
         "tier": "stable"
       }
     },
@@ -698,7 +707,7 @@
       "upstream_url": "${COINCOIN_GEMINI_CPA_BASE_URL}/v1",
       "api_key": "${COINCOIN_GEMINI_CPA_API_KEY}",
       "auth_style": "${COINCOIN_GEMINI_CPA_AUTH_STYLE:-bearer}",
-      "price_per_image_cents": "${COINCOIN_GEMINI_IMAGE_PRICE:-3.9}",
+      "price_per_image_cents": "${COINCOIN_GEMINI_IMAGE_PRICE:-6.7}",
       "billable_sku": "gemini-image",
       "metadata": {
         "channel_id": "gemini-cpa-primary",
@@ -706,7 +715,10 @@
         "weight": 1,
         "allowed_fails": "${COINCOIN_GEMINI_CPA_ALLOWED_FAILS:-3}",
         "cooldown_seconds": "${COINCOIN_GEMINI_CPA_COOLDOWN_SECONDS:-30}",
-        "provider_platform": "cpa_gemini"
+        "provider_platform": "cpa_gemini",
+        "official_price_source": "Google Gemini API pricing",
+        "official_price_checked_at": "2026-05-09",
+        "official_price_model": "Gemini 3.1 Flash Image Preview 1K"
       }
     },
     {
@@ -722,7 +734,7 @@
       "upstream_url": "${COINCOIN_GEMINI_CPA_BASE_URL}/v1",
       "api_key": "${COINCOIN_GEMINI_CPA_API_KEY}",
       "auth_style": "${COINCOIN_GEMINI_CPA_AUTH_STYLE:-bearer}",
-      "price_per_image_cents": "${COINCOIN_GEMINI_IMAGE_PRICE:-3.9}",
+      "price_per_image_cents": "${COINCOIN_GEMINI_IMAGE_PRICE:-6.7}",
       "billable_sku": "gemini-3.1-flash-image",
       "metadata": {
         "channel_id": "gemini-cpa-primary",
@@ -731,7 +743,10 @@
         "allowed_fails": "${COINCOIN_GEMINI_CPA_ALLOWED_FAILS:-3}",
         "cooldown_seconds": "${COINCOIN_GEMINI_CPA_COOLDOWN_SECONDS:-30}",
         "tier": "stable",
-        "provider_platform": "cpa_gemini"
+        "provider_platform": "cpa_gemini",
+        "official_price_source": "Google Gemini API pricing",
+        "official_price_checked_at": "2026-05-09",
+        "official_price_model": "Gemini 3.1 Flash Image Preview 1K"
       }
     },
     {
@@ -747,7 +762,7 @@
       "upstream_url": "${COINCOIN_GEMINI_CPA_BASE_URL}/v1",
       "api_key": "${COINCOIN_GEMINI_CPA_API_KEY}",
       "auth_style": "${COINCOIN_GEMINI_CPA_AUTH_STYLE:-bearer}",
-      "price_per_image_cents": "${COINCOIN_VERTEX_FLASH_IMAGE_PRICE:-3.9}",
+      "price_per_image_cents": "${COINCOIN_VERTEX_FLASH_IMAGE_PRICE:-6.7}",
       "billable_sku": "vertex-gemini-2.5-flash-image",
       "metadata": {
         "channel_id": "gemini-cpa-primary",
@@ -757,7 +772,10 @@
         "cooldown_seconds": "${COINCOIN_GEMINI_CPA_COOLDOWN_SECONDS:-30}",
         "compat_alias": true,
         "legacy_provider_prefix": "vertex",
-        "provider_platform": "cpa_gemini"
+        "provider_platform": "cpa_gemini",
+        "official_price_source": "Google Gemini API pricing",
+        "official_price_checked_at": "2026-05-09",
+        "official_price_model": "Gemini 3.1 Flash Image Preview 1K"
       }
     },
     {
@@ -773,7 +791,7 @@
       "upstream_url": "${COINCOIN_GEMINI_CPA_BASE_URL}/v1",
       "api_key": "${COINCOIN_GEMINI_CPA_API_KEY}",
       "auth_style": "${COINCOIN_GEMINI_CPA_AUTH_STYLE:-bearer}",
-      "price_per_image_cents": "${COINCOIN_VERTEX_31_FLASH_IMAGE_PRICE:-3.9}",
+      "price_per_image_cents": "${COINCOIN_VERTEX_31_FLASH_IMAGE_PRICE:-6.7}",
       "billable_sku": "vertex-gemini-3.1-flash-image-preview",
       "metadata": {
         "channel_id": "gemini-cpa-primary",
@@ -783,7 +801,10 @@
         "cooldown_seconds": "${COINCOIN_GEMINI_CPA_COOLDOWN_SECONDS:-30}",
         "compat_alias": true,
         "legacy_provider_prefix": "vertex",
-        "provider_platform": "cpa_gemini"
+        "provider_platform": "cpa_gemini",
+        "official_price_source": "Google Gemini API pricing",
+        "official_price_checked_at": "2026-05-09",
+        "official_price_model": "Gemini 3.1 Flash Image Preview 1K"
       }
     }
   ]
