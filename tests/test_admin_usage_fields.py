@@ -954,6 +954,47 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["station_attribution"]["station_name"], "Alpha Station")
         self.assertEqual(payload["station_attribution"]["station_owner_user_id"], "u_owner")
 
+    async def test_update_user_can_clear_usage_limits(self) -> None:
+        user = SimpleNamespace(
+            id="u_1",
+            status="active",
+            balance=294,
+            token_limit=1_000_000,
+            token_used=1_000_000,
+            input_tokens_used=1_000_000,
+            output_tokens_used=9_400,
+            request_limit_per_minute=60,
+            request_limit_per_day=1000,
+        )
+        fake_db = _FakeDB(execute_results=[_FakeEntityResult(user)])
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.patch(
+                "/admin/users/u_1",
+                json={
+                    "token_limit": None,
+                    "request_limit_per_minute": None,
+                    "request_limit_per_day": None,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIsNone(user.token_limit)
+        self.assertIsNone(user.request_limit_per_minute)
+        self.assertIsNone(user.request_limit_per_day)
+        payload = response.json()
+        self.assertIsNone(payload["token_limit"])
+        self.assertIsNone(payload["request_limit_per_minute"])
+        self.assertIsNone(payload["request_limit_per_day"])
+        self.assertEqual(fake_db.commits, 1)
+
     async def test_user_detail_exposes_key_policy_and_shared_balance(self) -> None:
         user = SimpleNamespace(
             id="u_1",

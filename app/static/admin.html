@@ -2616,10 +2616,10 @@
       const rpm = document.getElementById('modalRPM').value;
       const rpd = document.getElementById('modalRPD').value;
       if (bal !== '') p.balance = Number(bal);
-      if (tl) p.token_limit = Number(tl);
+      p.token_limit = tl === '' ? null : Number(tl);
       if (tu !== '') p.token_used = Number(tu);
-      if (rpm) p.request_limit_per_minute = Number(rpm);
-      if (rpd) p.request_limit_per_day = Number(rpd);
+      p.request_limit_per_minute = rpm === '' ? null : Number(rpm);
+      p.request_limit_per_day = rpd === '' ? null : Number(rpd);
       try {
         const r = await fetch(`/admin/users/${currentUserId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...adminHeaders() }, body: JSON.stringify(p) });
         if (r.ok) { toast('保存成功', 'success'); closeModal('userModal'); loadUsers(); loadSummary(); }
