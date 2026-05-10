@@ -135,7 +135,7 @@ class GatewayCatalogSyncTests(unittest.TestCase):
         invalid_models = sorted(
             model["id"]
             for model in self.direct_models
-            if model.get("delivery_lane") not in {"gateway", "cpa_gemini", "upstream_direct"}
+            if model.get("delivery_lane") not in {"gateway", "cpa_gemini", "upstream_direct", "kiro_go"}
         )
         self.assertEqual(invalid_models, [])
 

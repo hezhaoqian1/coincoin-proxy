@@ -44,6 +44,14 @@ class Settings(BaseSettings):
     gateway_api_key: str = ""
     gateway_auth_style: str = "bearer"
 
+    # Claude compatibility upstream selection.
+    # `upstream_direct` keeps the existing OpenAI/Azure-style Claude compat path.
+    # `kiro_go` routes Claude aliases to a Kiro-Go deployment.
+    claude_compat_provider: str = "upstream_direct"
+    claude_compat_base_url: str = ""
+    claude_compat_api_key: str = ""
+    claude_compat_auth_style: str = "bearer"
+
     # Native Gemini CPA data plane. This is intentionally separate from the
     # Codex/OpenAI CPA upstreams and from the optional LiteLLM gateway.
     gemini_cpa_base_url: str = ""

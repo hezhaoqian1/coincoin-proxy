@@ -205,6 +205,19 @@ class ModelAliasOverride(Base):
     )
 
 
+class SystemSetting(Base):
+    """Small persistent key/value store for runtime control-plane switches."""
+    __tablename__ = "coincoin_system_settings"
+
+    setting_key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    setting_value: Mapped[str] = mapped_column(Text)
+    updated_by: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), index=True
+    )
+
+
 class ReferralReward(Base):
     """邀请奖励记录 — 记录邀请人和朋友各自拿到的 API 额度。"""
     __tablename__ = "coincoin_referral_rewards"

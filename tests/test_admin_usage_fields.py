@@ -1261,6 +1261,84 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                 model_registry.clear_runtime_alias_overrides()
                 model_registry._initialized = False
 
+    async def test_admin_can_switch_claude_compat_provider(self) -> None:
+        originals = {
+            "claude_compat_provider": admin_module._settings.claude_compat_provider,
+            "claude_compat_base_url": admin_module._settings.claude_compat_base_url,
+        }
+        setting_row = None
+        fake_db = _FakeDB(execute_results=[_FakeEntityResult(setting_row)])
+
+        async def fake_get_db():
+            yield fake_db
+
+        try:
+            admin_module._settings.claude_compat_provider = "upstream_direct"
+            admin_module._settings.claude_compat_base_url = "https://kiro-go.example"
+            model_registry.clear_runtime_system_settings()
+            model_registry._initialized = False
+            model_registry.init_from_settings()
+            app.dependency_overrides[admin_module.get_db] = fake_get_db
+            app.dependency_overrides[admin_module.admin_guard] = lambda: None
+
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                response = await client.patch(
+                    "/admin/settings/claude-compat",
+                    json={"provider": "kiro_go"},
+                )
+
+            self.assertEqual(response.status_code, 200, response.text)
+            payload = response.json()
+            self.assertEqual(payload["provider"], "kiro_go")
+            self.assertEqual(len(fake_db.added), 1)
+            self.assertEqual(fake_db.added[0].setting_key, "claude_compat_provider")
+            self.assertEqual(fake_db.added[0].setting_value, "kiro_go")
+            self.assertEqual(fake_db.commits, 1)
+            self.assertEqual(model_registry.current_claude_compat_provider(), "kiro_go")
+        finally:
+            admin_module._settings.claude_compat_provider = originals["claude_compat_provider"]
+            admin_module._settings.claude_compat_base_url = originals["claude_compat_base_url"]
+            model_registry.clear_runtime_system_settings()
+            model_registry._initialized = False
+            app.dependency_overrides.pop(admin_module.get_db, None)
+
+    async def test_admin_rejects_kiro_go_switch_without_base_url(self) -> None:
+        originals = {
+            "claude_compat_provider": admin_module._settings.claude_compat_provider,
+            "claude_compat_base_url": admin_module._settings.claude_compat_base_url,
+        }
+        fake_db = _FakeDB()
+
+        async def fake_get_db():
+            yield fake_db
+
+        try:
+            admin_module._settings.claude_compat_provider = "upstream_direct"
+            admin_module._settings.claude_compat_base_url = ""
+            model_registry.clear_runtime_system_settings()
+            model_registry._initialized = False
+            model_registry.init_from_settings()
+            app.dependency_overrides[admin_module.get_db] = fake_get_db
+            app.dependency_overrides[admin_module.admin_guard] = lambda: None
+
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                response = await client.patch(
+                    "/admin/settings/claude-compat",
+                    json={"provider": "kiro_go"},
+                )
+
+            self.assertEqual(response.status_code, 400, response.text)
+            self.assertIn("CLAUDE_COMPAT_BASE_URL", response.json()["detail"])
+            self.assertEqual(fake_db.commits, 0)
+        finally:
+            admin_module._settings.claude_compat_provider = originals["claude_compat_provider"]
+            admin_module._settings.claude_compat_base_url = originals["claude_compat_base_url"]
+            model_registry.clear_runtime_system_settings()
+            model_registry._initialized = False
+            app.dependency_overrides.pop(admin_module.get_db, None)
+
 
 if __name__ == "__main__":
     unittest.main()

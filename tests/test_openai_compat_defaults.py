@@ -207,6 +207,10 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             "image_edit_sync_gateway_timeout_seconds": settings.image_edit_sync_gateway_timeout_seconds,
             "vertex_api_key": settings.vertex_api_key,
             "vertex_gemini_api_base": settings.vertex_gemini_api_base,
+            "claude_compat_provider": settings.claude_compat_provider,
+            "claude_compat_base_url": settings.claude_compat_base_url,
+            "claude_compat_api_key": settings.claude_compat_api_key,
+            "claude_compat_auth_style": settings.claude_compat_auth_style,
             "model_catalog_json": settings.model_catalog_json,
         }
 
@@ -242,6 +246,10 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         settings.image_edit_sync_gateway_timeout_seconds = 60
         settings.vertex_api_key = ""
         settings.vertex_gemini_api_base = "https://aiplatform.googleapis.com/v1/publishers/google"
+        settings.claude_compat_provider = "upstream_direct"
+        settings.claude_compat_base_url = "https://kiro-go.example"
+        settings.claude_compat_api_key = "kiro-key"
+        settings.claude_compat_auth_style = "bearer"
         settings.model_catalog_json = json.dumps(
             {
                 "default_text_model": "gpt-5.4",
@@ -647,6 +655,179 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         add_usage.assert_awaited_once()
         self.assertEqual(add_usage.await_args.kwargs["api_key_id"], "k_claude_resp")
         self.assertEqual(add_usage.await_args.kwargs["cache_read_tokens"], 7)
+
+    async def test_chat_claude_alias_can_route_to_kiro_go_chat_endpoint(self) -> None:
+        self._add_claude_code_model()
+        settings.claude_compat_provider = "kiro_go"
+        registry._initialized = False
+        registry.init_from_settings()
+        fake_user = SimpleNamespace(id="u_test", _api_key_id="k_claude_chat_kiro")
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "chatcmpl_kiro_chat",
+                        "choices": [{"message": {"role": "assistant", "content": "OK"}, "finish_reason": "stop"}],
+                        "usage": {"prompt_tokens": 11, "completion_tokens": 2, "total_tokens": 13},
+                    }
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(openai_module, "authorize_request", AsyncMock(return_value=fake_user)), patch.object(
+                openai_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(openai_module.usage_buffer, "add", AsyncMock()) as add_usage:
+                response = await client.post(
+                    "/v1/chat/completions",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={
+                        "model": "claude-opus-4-7",
+                        "messages": [{"role": "user", "content": "Reply with only: OK"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["model"], "claude-opus-4-7")
+        self.assertEqual(payload["choices"][0]["message"]["content"], "OK")
+        self.assertEqual(upstream_client.calls[0]["url"], "https://kiro-go.example/v1/chat/completions")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "claude-opus-4.7")
+        self.assertEqual(upstream_client.calls[0]["headers"]["authorization"], "Bearer kiro-key")
+        add_usage.assert_awaited_once()
+
+    async def test_responses_claude_alias_can_bridge_to_kiro_go_chat_endpoint(self) -> None:
+        self._add_claude_code_model()
+        settings.claude_compat_provider = "kiro_go"
+        registry._initialized = False
+        registry.init_from_settings()
+        fake_user = SimpleNamespace(id="u_test", _api_key_id="k_claude_resp_kiro")
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "chatcmpl_kiro_resp",
+                        "choices": [{"message": {"role": "assistant", "content": "OK"}, "finish_reason": "stop"}],
+                        "usage": {"prompt_tokens": 9, "completion_tokens": 2, "total_tokens": 11},
+                    }
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(proxy_module.usage_buffer, "add", AsyncMock()) as add_usage:
+                response = await client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"model": "claude-opus-4-7", "input": "Reply with only: OK"},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["model"], "claude-opus-4-7")
+        self.assertEqual(payload["output_text"], "OK")
+        self.assertEqual(payload["output"][0]["content"][0]["text"], "OK")
+        self.assertEqual(upstream_client.calls[0]["url"], "https://kiro-go.example/v1/chat/completions")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "claude-opus-4.7")
+        self.assertEqual(upstream_client.calls[0]["headers"]["authorization"], "Bearer kiro-key")
+        add_usage.assert_awaited_once()
+        self.assertEqual(add_usage.await_args.kwargs["endpoint"], "responses")
+
+    async def test_chat_claude_alias_can_stream_from_kiro_go_chat_endpoint(self) -> None:
+        self._add_claude_code_model()
+        settings.claude_compat_provider = "kiro_go"
+        registry._initialized = False
+        registry.init_from_settings()
+        fake_user = SimpleNamespace(id="u_test", _api_key_id="k_claude_chat_stream_kiro")
+        upstream_client = _RecordingStreamClient(
+            [
+                _FakeEventStreamResponse(
+                    [
+                        'data: {"id":"chatcmpl_kiro_stream","object":"chat.completion.chunk","created":1700000000,"model":"claude-opus-4.7","choices":[{"index":0,"delta":{"role":"assistant","content":"OK"},"finish_reason":null}]}',
+                        'data: {"id":"chatcmpl_kiro_stream","object":"chat.completion.chunk","created":1700000001,"model":"claude-opus-4.7","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":9,"completion_tokens":2,"total_tokens":11}}',
+                        'data: [DONE]',
+                    ]
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(openai_module, "authorize_request", AsyncMock(return_value=fake_user)), patch.object(
+                openai_module,
+                "get_stream_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(openai_module.usage_buffer, "add", AsyncMock()) as add_usage:
+                response = await client.post(
+                    "/v1/chat/completions",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={
+                        "model": "claude-opus-4-7",
+                        "stream": True,
+                        "messages": [{"role": "user", "content": "Reply with only: OK"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn('"model":"claude-opus-4-7"', response.text)
+        self.assertIn('"content":"OK"', response.text)
+        self.assertEqual(upstream_client.calls[0]["url"], "https://kiro-go.example/v1/chat/completions")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "claude-opus-4.7")
+        add_usage.assert_awaited_once()
+        self.assertEqual(add_usage.await_args.kwargs["endpoint"], "chat/completions:stream")
+
+    async def test_responses_claude_alias_can_stream_from_kiro_go_chat_endpoint(self) -> None:
+        self._add_claude_code_model()
+        settings.claude_compat_provider = "kiro_go"
+        registry._initialized = False
+        registry.init_from_settings()
+        fake_user = SimpleNamespace(id="u_test", _api_key_id="k_claude_resp_stream_kiro")
+        upstream_client = _RecordingStreamClient(
+            [
+                _FakeEventStreamResponse(
+                    [
+                        'data: {"id":"chatcmpl_kiro_resp_stream","object":"chat.completion.chunk","created":1700000000,"model":"claude-opus-4.7","choices":[{"index":0,"delta":{"role":"assistant","content":"OK"},"finish_reason":null}]}',
+                        'data: {"id":"chatcmpl_kiro_resp_stream","object":"chat.completion.chunk","created":1700000001,"model":"claude-opus-4.7","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":9,"completion_tokens":2,"total_tokens":11}}',
+                        'data: [DONE]',
+                    ]
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=fake_user)), patch.object(
+                proxy_module,
+                "get_stream_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(proxy_module.usage_buffer, "add", AsyncMock()) as add_usage:
+                response = await client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={
+                        "model": "claude-opus-4-7",
+                        "stream": True,
+                        "input": "Reply with only: OK",
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn('event: response.created', response.text)
+        self.assertIn('event: response.output_text.delta', response.text)
+        self.assertIn('"model": "claude-opus-4-7"', response.text)
+        self.assertIn('"output_text": "OK"', response.text)
+        self.assertEqual(upstream_client.calls[0]["url"], "https://kiro-go.example/v1/chat/completions")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "claude-opus-4.7")
+        add_usage.assert_awaited_once()
+        self.assertEqual(add_usage.await_args.kwargs["endpoint"], "responses:stream")
 
     async def test_chat_explicit_legacy_alias_does_not_fallback_to_a_different_model(self) -> None:
         upstream_client = _RecordingClient(

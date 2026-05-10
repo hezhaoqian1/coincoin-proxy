@@ -136,6 +136,12 @@ class AdminModelAliasUpdate(BaseModel):
     enabled: Optional[bool] = None
 
 
+class AdminClaudeCompatSettingsUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str = Field(..., min_length=1, max_length=32)
+
+
 class RechargeRequest(BaseModel):
     """充值请求"""
     order_id: str = Field(..., description="外部订单号，用于幂等性校验")

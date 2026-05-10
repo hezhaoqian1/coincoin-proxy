@@ -102,6 +102,10 @@ class ModelCatalogTests(unittest.TestCase):
             "fallback_auth_style": settings.fallback_auth_style,
             "gateway_auth_style": settings.gateway_auth_style,
             "gemini_cpa_auth_style": settings.gemini_cpa_auth_style,
+            "claude_compat_provider": settings.claude_compat_provider,
+            "claude_compat_base_url": settings.claude_compat_base_url,
+            "claude_compat_api_key": settings.claude_compat_api_key,
+            "claude_compat_auth_style": settings.claude_compat_auth_style,
             "model_catalog_json": settings.model_catalog_json,
             "model_alias_overrides_path": settings.model_alias_overrides_path,
         }
@@ -132,6 +136,10 @@ class ModelCatalogTests(unittest.TestCase):
         settings.fallback_auth_style = "azure"
         settings.gateway_auth_style = "bearer"
         settings.gemini_cpa_auth_style = "bearer"
+        settings.claude_compat_provider = "upstream_direct"
+        settings.claude_compat_base_url = "https://kiro-go.example"
+        settings.claude_compat_api_key = "kiro-key"
+        settings.claude_compat_auth_style = "bearer"
         settings.model_alias_overrides_path = ""
         settings.model_catalog_json = json.dumps(
             {
@@ -170,6 +178,23 @@ class ModelCatalogTests(unittest.TestCase):
                         "auth_style": "azure",
                         "price_per_image_cents": 5.3,
                         "billable_sku": "openai-image",
+                    },
+                    {
+                        "id": "claude-opus-4-7",
+                        "owned_by": "coincoin",
+                        "provider_name": "",
+                        "provider_model": "claude-opus-4.7",
+                        "capabilities": ["chat/completions", "responses"],
+                        "routing_mode": "direct",
+                        "delivery_lane": "upstream_direct",
+                        "upstream_model": "claude-opus-4.7",
+                        "upstream_url": "https://legacy-claude.example/v1",
+                        "api_key": "legacy-claude-key",
+                        "auth_style": "bearer",
+                        "price_input_per_million": 500,
+                        "price_output_per_million": 2500,
+                        "billable_sku": "claude-code-compat-text",
+                        "metadata": {"compat_family": "claude-code"},
                     },
                     {
                         "id": "gemini-fast",
@@ -264,8 +289,20 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertEqual(resolved.public_model.public_id, "gemini-fast")
         self.assertEqual(resolved.public_model.provider_model, "gemini-2.5-pro")
         self.assertEqual(resolved.backend.model_id, "vertex-gemini-2.5-pro")
-        self.assertEqual(resolved.backend.upstream_url, "https://gemini-cpa.example/v1")
-        self.assertEqual(resolved.route_reason, "catalog:gemini-fast:cpa_gemini")
+
+    def test_claude_compat_alias_switches_to_kiro_go_lane(self) -> None:
+        settings.claude_compat_provider = "kiro_go"
+        registry._initialized = False
+        registry.init_from_settings()
+
+        resolved = registry.resolve_public_model("claude-opus-4-7", "responses")
+
+        self.assertEqual(resolved.public_model.delivery_lane, "kiro_go")
+        self.assertEqual(resolved.backend.model_id, "claude-opus-4.7")
+        self.assertEqual(resolved.backend.upstream_url, "https://kiro-go.example")
+        self.assertEqual(resolved.backend.api_key, "kiro-key")
+        self.assertEqual(resolved.backend.auth_style, "bearer")
+        self.assertEqual(resolved.route_reason, "catalog:claude-opus-4-7:kiro_go")
 
     def test_runtime_alias_override_snapshot_is_used_from_memory(self) -> None:
         settings.model_alias_overrides_path = "/tmp/coincoin-override-file-should-not-be-read.json"

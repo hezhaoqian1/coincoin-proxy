@@ -20,6 +20,7 @@ from .models import (
     Announcement,
     ApiKey,
     ModelAliasOverride,
+    SystemSetting,
     PaymentOrder,
     RechargeLog,
     RedemptionCode,
@@ -40,11 +41,21 @@ from .payment_common import PaymentConfirmError, confirm_paid_order
 from .schemas import (
     AdminKeyUpdate, AdminPaymentManualConfirmRequest, AdminUserPasswordResetRequest,
     AdminUserPasswordResetResponse, AdminUserUpdate,
-    AdminModelAliasUpdate, AnnouncementCreate, AnnouncementUpdate,
+    AdminClaudeCompatSettingsUpdate, AdminModelAliasUpdate, AnnouncementCreate, AnnouncementUpdate,
     RedemptionGenerateRequest, RedemptionGenerateResponse,
+)
+from .system_settings import (
+    CLAUDE_COMPAT_PROVIDER_KEY,
+    apply_runtime_system_setting,
+    refresh_runtime_system_settings_from_db,
 )
 from .config import settings as _settings
 from .router import registry as model_registry
+from .router import (
+    CLAUDE_COMPAT_PROVIDER_KIRO_GO,
+    CLAUDE_COMPAT_PROVIDER_UPSTREAM_DIRECT,
+    CLAUDE_COMPAT_PROVIDERS,
+)
 from .security import decrypt_api_key, encrypt_api_key, generate_api_key, generate_id, hash_key, hash_password, require_admin
 
 
@@ -99,6 +110,32 @@ def _matching_target_by_models(alias_id: str, provider_model: str, upstream_mode
 
 def admin_guard(request: Request):
     require_admin(request)
+
+
+def _claude_compat_settings_payload():
+    current_provider = model_registry.current_claude_compat_provider()
+    base_url = str(getattr(_settings, "claude_compat_base_url", "") or "").strip()
+    api_key = str(getattr(_settings, "claude_compat_api_key", "") or "").strip()
+    return {
+        "provider": current_provider,
+        "options": [
+            {
+                "id": CLAUDE_COMPAT_PROVIDER_UPSTREAM_DIRECT,
+                "label": "兼容直连上游",
+                "description": "继续使用当前 OpenAI/Azure 兼容上游，保持旧 Claude 兼容路线。",
+            },
+            {
+                "id": CLAUDE_COMPAT_PROVIDER_KIRO_GO,
+                "label": "Kiro-Go",
+                "description": "Claude 别名改走 Kiro-Go；/messages 原生直连，/responses 由 CoinCoin 本地兼容桥接。",
+            },
+        ],
+        "configured": {
+            "kiro_go_base_url": bool(base_url),
+            "kiro_go_api_key": bool(api_key),
+        },
+        "base_url": base_url or None,
+    }
 
 
 @router.post("/uploads/station-payout-proof", dependencies=[Depends(admin_guard)])
@@ -223,6 +260,34 @@ async def clear_model_alias_override(alias_id: str, db: AsyncSession = Depends(g
     if not payload:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="alias not found")
     return payload
+
+
+@router.get("/settings/claude-compat", dependencies=[Depends(admin_guard)])
+async def get_claude_compat_settings(db: AsyncSession = Depends(get_db)):
+    await refresh_runtime_system_settings_from_db(db)
+    return _claude_compat_settings_payload()
+
+
+@router.patch("/settings/claude-compat", dependencies=[Depends(admin_guard)])
+async def update_claude_compat_settings(payload: AdminClaudeCompatSettingsUpdate, db: AsyncSession = Depends(get_db)):
+    provider = payload.provider.strip().lower()
+    if provider not in CLAUDE_COMPAT_PROVIDERS:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unsupported claude compat provider")
+    if provider == CLAUDE_COMPAT_PROVIDER_KIRO_GO:
+        if not str(getattr(_settings, "claude_compat_base_url", "") or "").strip():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="COINCOIN_CLAUDE_COMPAT_BASE_URL is not configured")
+
+    existing = (
+        await db.execute(select(SystemSetting).where(SystemSetting.setting_key == CLAUDE_COMPAT_PROVIDER_KEY))
+    ).scalar_one_or_none()
+    if existing is None:
+        existing = SystemSetting(setting_key=CLAUDE_COMPAT_PROVIDER_KEY)
+        db.add(existing)
+    existing.setting_value = provider
+    existing.updated_by = "admin"
+    await db.commit()
+    apply_runtime_system_setting(CLAUDE_COMPAT_PROVIDER_KEY, provider)
+    return _claude_compat_settings_payload()
 
 
 @router.get("/users", dependencies=[Depends(admin_guard)])

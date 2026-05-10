@@ -87,7 +87,7 @@ LEGACY_ROUTE_SLOTS = frozenset({PREMIUM, CHEAP, FALLBACK, EMBEDDING})
 TEXT_ENDPOINTS = frozenset({"chat/completions", "responses"})
 EMBEDDING_ENDPOINTS = frozenset({"embeddings"})
 IMAGE_ENDPOINTS = frozenset({"images/generations", "images/edits"})
-DELIVERY_LANES = frozenset({"legacy", "gateway", "cpa_gemini", "vertex_direct", "upstream_direct"})
+DELIVERY_LANES = frozenset({"legacy", "gateway", "cpa_gemini", "vertex_direct", "upstream_direct", "kiro_go"})
 _ENV_PATTERN = re.compile(r"\$\{([A-Z0-9_]+)(:-([^}]*))?\}")
 _ROOT_DIR = Path(__file__).resolve().parent.parent
 ALIAS_OVERRIDE_FIELDS = frozenset({"provider_model", "upstream_model", "enabled"})
@@ -97,6 +97,30 @@ LEGACY_PROVIDER_MODEL_ALIASES = {
     "gpt-5.2-codex": "gpt-5.3-codex",
 }
 LEGACY_CODING_PUBLIC_ALIASES = frozenset({"gpt-5.2-codex", "gpt-5.3-codex"})
+CLAUDE_COMPAT_FAMILY = "claude-code"
+CLAUDE_COMPAT_PROVIDER_UPSTREAM_DIRECT = "upstream_direct"
+CLAUDE_COMPAT_PROVIDER_KIRO_GO = "kiro_go"
+CLAUDE_COMPAT_PROVIDERS = frozenset({
+    CLAUDE_COMPAT_PROVIDER_UPSTREAM_DIRECT,
+    CLAUDE_COMPAT_PROVIDER_KIRO_GO,
+})
+CLAUDE_COMPAT_KIRO_MODEL_MAP = {
+    "claude-opus-4-7": "claude-opus-4.7",
+    "claude-opus-4.7": "claude-opus-4.7",
+    "opus": "claude-opus-4.7",
+    "best": "claude-opus-4.7",
+    "default": "claude-opus-4.7",
+    "opus[1m]": "claude-opus-4.7",
+    "opusplan": "claude-opus-4.7",
+    "claude-sonnet-4-6": "claude-sonnet-4.6",
+    "claude-sonnet-4.6": "claude-sonnet-4.6",
+    "sonnet": "claude-sonnet-4.6",
+    "sonnet[1m]": "claude-sonnet-4.6",
+    "claude-haiku-4-5": "claude-haiku-4.5",
+    "claude-haiku-4.5": "claude-haiku-4.5",
+    "claude-haiku-4-5-20251001": "claude-haiku-4.5",
+    "haiku": "claude-haiku-4.5",
+}
 
 
 def _is_codex_like(model_id: str) -> bool:
@@ -106,6 +130,28 @@ def _is_codex_like(model_id: str) -> bool:
 def _provider_model_for_legacy_alias(model_id: str) -> str:
     normalized = (model_id or "").strip()
     return LEGACY_PROVIDER_MODEL_ALIASES.get(normalized, normalized)
+
+
+def _normalized_claude_compat_provider(value: Any) -> str:
+    provider = str(value or CLAUDE_COMPAT_PROVIDER_UPSTREAM_DIRECT).strip().lower()
+    if provider not in CLAUDE_COMPAT_PROVIDERS:
+        return CLAUDE_COMPAT_PROVIDER_UPSTREAM_DIRECT
+    return provider
+
+
+def _is_claude_compat_model(metadata: Dict[str, Any]) -> bool:
+    return str((metadata or {}).get("compat_family") or "").strip().lower() == CLAUDE_COMPAT_FAMILY
+
+
+def _kiro_go_claude_model_for_public_id(public_id: str, upstream_model: str, provider_model: str) -> str:
+    normalized = str(public_id or "").strip().lower()
+    mapped = CLAUDE_COMPAT_KIRO_MODEL_MAP.get(normalized)
+    if mapped:
+        return mapped
+    upstream_clean = str(upstream_model or "").strip()
+    if upstream_clean:
+        return upstream_clean
+    return str(provider_model or public_id).strip()
 
 
 def _default_legacy_metadata(public_id: str) -> Dict[str, Any]:
@@ -287,6 +333,9 @@ class ModelRegistry:
         self._runtime_alias_override_version: int = 0
         self._raw_public_models: Dict[str, Dict[str, Any]] = {}
         self._alias_override_state: Tuple[str, int] = ("", -1)
+        self._runtime_system_settings: Optional[Dict[str, Any]] = None
+        self._runtime_system_settings_version: int = 0
+        self._system_settings_state_snapshot: Tuple[str, int] = ("env", 0)
         self._initialized: bool = False
 
     def init_from_settings(self) -> None:
@@ -296,6 +345,7 @@ class ModelRegistry:
         self._init_legacy_backends()
         self._init_public_catalog()
         self._alias_override_state = self._current_alias_override_state()
+        self._system_settings_state_snapshot = self._current_system_settings_state()
         self._initialized = True
 
     def _init_legacy_backends(self) -> None:
@@ -498,6 +548,18 @@ class ModelRegistry:
         upstream_url = str(raw.get("upstream_url") or "").strip()
         api_key = str(raw.get("api_key") or "").strip()
         auth_style = str(raw.get("auth_style") or settings.gateway_auth_style or "bearer").strip() or "bearer"
+        if _is_claude_compat_model(metadata):
+            provider = self.current_claude_compat_provider()
+            if provider == CLAUDE_COMPAT_PROVIDER_KIRO_GO:
+                upstream_url = str(getattr(settings, "claude_compat_base_url", "") or "").strip()
+                api_key = str(getattr(settings, "claude_compat_api_key", "") or "").strip()
+                auth_style = str(getattr(settings, "claude_compat_auth_style", "") or "bearer").strip() or "bearer"
+                provider_model = _kiro_go_claude_model_for_public_id(public_id, upstream_model, provider_model)
+                upstream_model = provider_model
+                delivery_lane = CLAUDE_COMPAT_PROVIDER_KIRO_GO
+                metadata = {**metadata, "claude_compat_provider": CLAUDE_COMPAT_PROVIDER_KIRO_GO}
+            else:
+                metadata = {**metadata, "claude_compat_provider": CLAUDE_COMPAT_PROVIDER_UPSTREAM_DIRECT}
         default_price_input = settings.price_input_per_million if routing_mode == "legacy_auto" else 0
         default_price_output = settings.price_output_per_million if routing_mode == "legacy_auto" else 0
 
@@ -605,7 +667,11 @@ class ModelRegistry:
         return ""
 
     def ensure_initialized(self) -> None:
-        if not self._initialized or self._alias_override_state != self._current_alias_override_state():
+        if (
+            not self._initialized
+            or self._alias_override_state != self._current_alias_override_state()
+            or self._system_settings_state_snapshot != self._current_system_settings_state()
+        ):
             self.init_from_settings()
 
     def _current_alias_override_state(self) -> Tuple[str, int]:
@@ -620,6 +686,14 @@ class ModelRegistry:
         except OSError:
             return (str(path), -1)
 
+    def _system_settings_state(self) -> Tuple[str, int]:
+        if self._runtime_system_settings is not None:
+            return ("runtime", self._runtime_system_settings_version)
+        return ("env", 0)
+
+    def _current_system_settings_state(self) -> Tuple[str, int]:
+        return self._system_settings_state()
+
     def set_runtime_alias_overrides(self, overrides: Dict[str, Dict[str, Any]], version: int = 0) -> None:
         self._runtime_alias_overrides = _safe_alias_overrides({"aliases": overrides})
         self._runtime_alias_override_version = int(version or 0)
@@ -629,6 +703,27 @@ class ModelRegistry:
         self._runtime_alias_overrides = None
         self._runtime_alias_override_version = 0
         self._initialized = False
+
+    def set_runtime_system_settings(self, runtime_settings: Dict[str, Any], version: int = 0) -> None:
+        self._runtime_system_settings = dict(runtime_settings or {})
+        self._runtime_system_settings_version = int(version or 0)
+        self._initialized = False
+
+    def clear_runtime_system_settings(self) -> None:
+        self._runtime_system_settings = None
+        self._runtime_system_settings_version = 0
+        self._initialized = False
+
+    def current_system_settings(self) -> Dict[str, Any]:
+        if self._runtime_system_settings is not None:
+            return dict(self._runtime_system_settings)
+        return {}
+
+    def current_claude_compat_provider(self) -> str:
+        runtime_value = self.current_system_settings().get("claude_compat_provider")
+        if runtime_value not in (None, ""):
+            return _normalized_claude_compat_provider(runtime_value)
+        return _normalized_claude_compat_provider(getattr(settings, "claude_compat_provider", ""))
 
     def get(self, slot: str) -> ModelConfig:
         self.ensure_initialized()
