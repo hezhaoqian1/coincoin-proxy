@@ -107,6 +107,8 @@ CLAUDE_COMPAT_PROVIDERS = frozenset({
 CLAUDE_COMPAT_KIRO_MODEL_MAP = {
     "claude-opus-4-7": "claude-opus-4.7",
     "claude-opus-4.7": "claude-opus-4.7",
+    "claude-opus-4.6": "claude-opus-4.6",
+    "claude-opus-4.5": "claude-opus-4.5",
     "opus": "claude-opus-4.7",
     "best": "claude-opus-4.7",
     "default": "claude-opus-4.7",
@@ -114,6 +116,8 @@ CLAUDE_COMPAT_KIRO_MODEL_MAP = {
     "opusplan": "claude-opus-4.7",
     "claude-sonnet-4-6": "claude-sonnet-4.6",
     "claude-sonnet-4.6": "claude-sonnet-4.6",
+    "claude-sonnet-4.5": "claude-sonnet-4.5",
+    "claude-sonnet-4": "claude-sonnet-4",
     "sonnet": "claude-sonnet-4.6",
     "sonnet[1m]": "claude-sonnet-4.6",
     "claude-haiku-4-5": "claude-haiku-4.5",

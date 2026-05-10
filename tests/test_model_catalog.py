@@ -304,6 +304,78 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertEqual(resolved.backend.auth_style, "bearer")
         self.assertEqual(resolved.route_reason, "catalog:claude-opus-4-7:kiro_go")
 
+    def test_explicit_kiro_public_model_aliases_resolve_when_enabled(self) -> None:
+        settings.model_catalog_json = json.dumps(
+            {
+                "default_text_model": "claude-opus-4.7",
+                "models": [
+                    {
+                        "id": "claude-opus-4.7",
+                        "owned_by": "coincoin",
+                        "provider_name": "",
+                        "provider_model": "claude-opus-4.7",
+                        "capabilities": ["chat/completions", "responses"],
+                        "routing_mode": "direct",
+                        "delivery_lane": "upstream_direct",
+                        "upstream_model": "claude-opus-4.7",
+                        "upstream_url": "https://legacy-claude.example/v1",
+                        "api_key": "legacy-claude-key",
+                        "auth_style": "bearer",
+                        "price_input_per_million": 500,
+                        "price_output_per_million": 2500,
+                        "billable_sku": "claude-code-compat-text",
+                        "metadata": {"compat_family": "claude-code"},
+                    },
+                    {
+                        "id": "claude-sonnet-4.5",
+                        "owned_by": "coincoin",
+                        "provider_name": "",
+                        "provider_model": "claude-sonnet-4.5",
+                        "capabilities": ["chat/completions", "responses"],
+                        "routing_mode": "direct",
+                        "delivery_lane": "upstream_direct",
+                        "upstream_model": "claude-sonnet-4.5",
+                        "upstream_url": "https://legacy-claude.example/v1",
+                        "api_key": "legacy-claude-key",
+                        "auth_style": "bearer",
+                        "price_input_per_million": 300,
+                        "price_output_per_million": 1500,
+                        "billable_sku": "claude-code-compat-text",
+                        "metadata": {"compat_family": "claude-code"},
+                    },
+                    {
+                        "id": "claude-haiku-4.5",
+                        "owned_by": "coincoin",
+                        "provider_name": "",
+                        "provider_model": "claude-haiku-4.5",
+                        "capabilities": ["chat/completions", "responses"],
+                        "routing_mode": "direct",
+                        "delivery_lane": "upstream_direct",
+                        "upstream_model": "claude-haiku-4.5",
+                        "upstream_url": "https://legacy-claude.example/v1",
+                        "api_key": "legacy-claude-key",
+                        "auth_style": "bearer",
+                        "price_input_per_million": 100,
+                        "price_output_per_million": 500,
+                        "billable_sku": "claude-code-compat-text",
+                        "metadata": {"compat_family": "claude-code"},
+                    },
+                ],
+            }
+        )
+        settings.claude_compat_provider = "kiro_go"
+        registry._initialized = False
+        registry.init_from_settings()
+
+        opus = registry.resolve_public_model("claude-opus-4.7", "responses")
+        sonnet = registry.resolve_public_model("claude-sonnet-4.5", "responses")
+        haiku = registry.resolve_public_model("claude-haiku-4.5", "responses")
+
+        self.assertEqual(opus.public_model.delivery_lane, "kiro_go")
+        self.assertEqual(opus.backend.model_id, "claude-opus-4.7")
+        self.assertEqual(sonnet.backend.model_id, "claude-sonnet-4.5")
+        self.assertEqual(haiku.backend.model_id, "claude-haiku-4.5")
+
     def test_runtime_alias_override_snapshot_is_used_from_memory(self) -> None:
         settings.model_alias_overrides_path = "/tmp/coincoin-override-file-should-not-be-read.json"
         registry.set_runtime_alias_overrides(
