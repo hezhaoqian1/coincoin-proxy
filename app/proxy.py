@@ -10,7 +10,7 @@ from collections import OrderedDict
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from typing import Awaitable, Callable, Dict, List, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -33,6 +33,7 @@ from .station_runtime import (
     station_usage_kwargs,
 )
 from .router import (
+    CLAUDE_COMPAT_PROVIDER_KIRO_GO,
     ModelCapabilityError,
     UnknownModelError,
     extract_messages_for_routing_from_responses_payload,
@@ -163,6 +164,23 @@ def _normalize_openai_image_base_url(base_url: str) -> str:
     if not path:
         path = "/v1"
 
+    return urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, parsed.fragment))
+
+
+def _normalize_openai_base_url(base_url: str) -> str:
+    cleaned = str(base_url or "").strip()
+    while cleaned.endswith("}"):
+        cleaned = cleaned[:-1]
+    cleaned = cleaned.rstrip("/")
+    if not cleaned:
+        return cleaned
+
+    parsed = urlsplit(cleaned)
+    path = parsed.path.rstrip("/")
+    if not path:
+        path = "/v1"
+    elif not path.endswith("/v1"):
+        path = f"{path}/v1"
     return urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, parsed.fragment))
 
 
@@ -304,6 +322,250 @@ def _responses_payload_is_empty_success(resp: dict) -> bool:
     has_output_container = isinstance(output, list)
 
     return has_output_container or status == "completed" or output_tokens > 0
+
+
+def _responses_input_to_chat_messages(raw_input) -> List[Dict[str, Any]]:
+    messages: List[Dict[str, Any]] = []
+    if isinstance(raw_input, str):
+        messages.append({"role": "user", "content": raw_input or " "})
+        return messages
+    if not isinstance(raw_input, list):
+        return messages
+
+    for item in raw_input:
+        if isinstance(item, str):
+            messages.append({"role": "user", "content": item or " "})
+            continue
+        if not isinstance(item, dict):
+            continue
+
+        item_type = str(item.get("type") or "")
+        if item_type == "message" or "role" in item:
+            role = str(item.get("role") or "user").strip().lower()
+            if role == "developer":
+                role = "system"
+            if role not in {"system", "user", "assistant", "tool"}:
+                role = "user"
+            content = item.get("content")
+            if isinstance(content, str):
+                messages.append({"role": role, "content": content})
+                continue
+            if not isinstance(content, list):
+                messages.append({"role": role, "content": str(item.get("text") or "")})
+                continue
+
+            text_parts: List[str] = []
+            assistant_tool_calls: List[Dict[str, Any]] = []
+            tool_results: List[Dict[str, Any]] = []
+            for part in content:
+                if isinstance(part, str):
+                    text_parts.append(part)
+                    continue
+                if not isinstance(part, dict):
+                    continue
+                part_type = str(part.get("type") or "")
+                if part_type in {"input_text", "output_text", "text"}:
+                    text_parts.append(str(part.get("text") or ""))
+                    continue
+                if part_type == "tool_result":
+                    tool_results.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": str(part.get("tool_use_id") or ""),
+                            "content": str(part.get("content") or ""),
+                        }
+                    )
+                    continue
+                if part_type == "tool_use" and role == "assistant":
+                    tool_input = part.get("input")
+                    arguments = tool_input if isinstance(tool_input, str) else json.dumps(tool_input or {}, ensure_ascii=False)
+                    assistant_tool_calls.append(
+                        {
+                            "id": str(part.get("id") or f"call_{secrets.token_hex(8)}"),
+                            "type": "function",
+                            "function": {
+                                "name": str(part.get("name") or ""),
+                                "arguments": arguments,
+                            },
+                        }
+                    )
+            message: Dict[str, Any] = {"role": role, "content": "".join(text_parts)}
+            if assistant_tool_calls:
+                message["tool_calls"] = assistant_tool_calls
+                if not text_parts:
+                    message["content"] = None
+            if role != "tool":
+                messages.append(message)
+            for tool_item in tool_results:
+                if tool_item.get("tool_call_id"):
+                    messages.append(tool_item)
+            continue
+
+        if item_type in {"input_text", "text"}:
+            messages.append({"role": "user", "content": str(item.get("text") or " ")})
+            continue
+        if item_type == "output_text":
+            messages.append({"role": "assistant", "content": str(item.get("text") or "")})
+            continue
+        if item_type == "function_call_output":
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": str(item.get("call_id") or item.get("tool_call_id") or ""),
+                    "content": str(item.get("output") or ""),
+                }
+            )
+    return messages
+
+
+def _responses_tools_to_chat_tools(raw_tools) -> Optional[List[Dict[str, Any]]]:
+    if not isinstance(raw_tools, list):
+        return None
+    tools: List[Dict[str, Any]] = []
+    for tool in raw_tools:
+        if not isinstance(tool, dict):
+            continue
+        if tool.get("type") == "function" and isinstance(tool.get("function"), dict):
+            tools.append(tool)
+            continue
+        if tool.get("type") == "function" and tool.get("name"):
+            tools.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": tool.get("name"),
+                        "description": tool.get("description", ""),
+                        "parameters": tool.get("parameters", {}),
+                    },
+                }
+            )
+            continue
+        if tool.get("name"):
+            tools.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": tool.get("name"),
+                        "description": tool.get("description", ""),
+                        "parameters": tool.get("parameters", {}),
+                    },
+                }
+            )
+    return tools or None
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    if value in (None, ""):
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _responses_usage_from_chat_usage(usage: Dict[str, Any]) -> Dict[str, Any]:
+    prompt_tokens = _safe_int(usage.get("prompt_tokens") or usage.get("input_tokens"))
+    completion_tokens = _safe_int(usage.get("completion_tokens") or usage.get("output_tokens"))
+    total_tokens = _safe_int(usage.get("total_tokens")) or (prompt_tokens + completion_tokens)
+    response_usage: Dict[str, Any] = {
+        "input_tokens": prompt_tokens,
+        "output_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+    }
+    prompt_details = usage.get("prompt_tokens_details") if isinstance(usage.get("prompt_tokens_details"), dict) else {}
+    cached_tokens = _safe_int(prompt_details.get("cached_tokens"))
+    if cached_tokens:
+        response_usage["input_tokens_details"] = {"cached_tokens": cached_tokens}
+    return response_usage
+
+
+def _translate_chat_response_to_responses(data: Dict[str, Any], display_model: str) -> Dict[str, Any]:
+    output: List[Dict[str, Any]] = []
+    text_parts: List[str] = []
+
+    for choice in data.get("choices") or []:
+        if not isinstance(choice, dict):
+            continue
+        message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
+        text = ""
+        content = message.get("content")
+        if isinstance(content, str):
+            text = content
+        elif isinstance(content, list):
+            content_text_parts: List[str] = []
+            for part in content:
+                if isinstance(part, str):
+                    content_text_parts.append(part)
+                elif isinstance(part, dict) and isinstance(part.get("text"), str):
+                    content_text_parts.append(part["text"])
+            text = "".join(content_text_parts)
+        if text:
+            text_parts.append(text)
+            output.append(
+                {
+                    "id": f"msg_{secrets.token_hex(20)}",
+                    "type": "message",
+                    "status": "completed",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": text,
+                            "annotations": [],
+                            "logprobs": [],
+                        }
+                    ],
+                }
+            )
+        for tool_call in message.get("tool_calls") or []:
+            if not isinstance(tool_call, dict):
+                continue
+            function = tool_call.get("function") if isinstance(tool_call.get("function"), dict) else {}
+            call_id = str(tool_call.get("id") or f"call_{secrets.token_hex(20)}")
+            arguments = function.get("arguments")
+            if isinstance(arguments, dict):
+                arguments = json.dumps(arguments, ensure_ascii=False)
+            output.append(
+                {
+                    "id": call_id,
+                    "call_id": call_id,
+                    "type": "function_call",
+                    "name": str(function.get("name") or tool_call.get("name") or ""),
+                    "arguments": str(arguments or ""),
+                }
+            )
+
+    return {
+        "id": f"resp_{secrets.token_hex(20)}",
+        "object": "response",
+        "created_at": int(data.get("created") or time.time()),
+        "status": "completed",
+        "model": display_model,
+        "output": output,
+        "output_text": "".join(text_parts),
+        "usage": _responses_usage_from_chat_usage(data.get("usage") or {}),
+    }
+
+
+def _chat_completion_chunk_line(
+    *,
+    stream_id: str,
+    display_model: str,
+    delta: Dict[str, Any],
+    finish_reason: Any = None,
+) -> str:
+    chunk = {
+        "id": stream_id,
+        "object": "chat.completion.chunk",
+        "created": int(time.time()),
+        "model": display_model,
+        "choices": [{"index": 0, "delta": delta, "finish_reason": finish_reason}],
+    }
+    return f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+
+
+def _responses_sse_line(event: str, payload: Dict[str, Any]) -> str:
+    return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
 def _build_responses_output_text_item(text: str) -> dict:
@@ -1408,6 +1670,305 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
     api_key_id = getattr(user, _KEY_ID_ATTR, "")
     price_input_per_million = station_model.retail_input_per_million if station_model else public_model.price_input_per_million
     price_output_per_million = station_model.retail_output_per_million if station_model else public_model.price_output_per_million
+
+    if public_model.delivery_lane == CLAUDE_COMPAT_PROVIDER_KIRO_GO:
+        chat_payload: Dict[str, Any] = {
+            "model": used_cfg.model_id,
+            "messages": _responses_input_to_chat_messages(payload.get("input")),
+            "stream": bool(payload.get("stream")),
+        }
+        if not chat_payload["messages"]:
+            chat_payload["messages"] = [{"role": "user", "content": " "}]
+        if isinstance(payload.get("instructions"), str) and payload["instructions"].strip():
+            chat_payload["messages"] = [{"role": "system", "content": payload["instructions"].strip()}] + chat_payload["messages"]
+        tools = _responses_tools_to_chat_tools(payload.get("tools"))
+        if tools:
+            chat_payload["tools"] = tools
+        if "max_output_tokens" in payload:
+            chat_payload["max_tokens"] = payload.get("max_output_tokens")
+        elif "max_tokens" in payload:
+            chat_payload["max_tokens"] = payload.get("max_tokens")
+        for field in ("temperature", "top_p", "stop", "tool_choice"):
+            if field in payload:
+                chat_payload[field] = payload[field]
+
+        headers = _build_upstream_headers(used_cfg)
+        upstream_url = f"{_normalize_openai_base_url(used_cfg.upstream_url)}/chat/completions"
+        if chat_payload.get("stream"):
+            stream_client = await get_stream_client()
+            try:
+                req = stream_client.build_request("POST", upstream_url, json=chat_payload, headers=headers)
+                upstream = await stream_client.send(req, stream=True)
+            except (httpx.TimeoutException, httpx.RequestError):
+                return JSONResponse(
+                    content={"error": {"message": "Upstream request failed", "type": "server_error", "code": "upstream_unreachable"}},
+                    status_code=502,
+                )
+            stream_headers = filter_headers(dict(upstream.headers))
+            stream_headers.pop("content-length", None)
+            stream_headers.setdefault("cache-control", "no-cache")
+            stream_headers.setdefault("x-accel-buffering", "no")
+            stream_headers["content-type"] = "text/event-stream; charset=utf-8"
+            stream_usage = {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0}
+            response_id = ""
+            output_items: List[Dict[str, Any]] = []
+            text_parts: List[str] = []
+            current_tool_call_id = ""
+            current_tool_name = ""
+            current_tool_arguments = ""
+            tool_counter = 0
+            stream_t0 = time.monotonic()
+
+            async def iter_events():
+                nonlocal response_id, current_tool_call_id, current_tool_name, current_tool_arguments, tool_counter
+                try:
+                    response_id = f"resp_{secrets.token_hex(20)}"
+                    created_at = int(time.time())
+                    yield _responses_sse_line("response.created", {
+                        "type": "response.created",
+                        "response": {
+                            "id": response_id,
+                            "object": "response",
+                            "created_at": created_at,
+                            "status": "in_progress",
+                            "model": display_model,
+                            "output": [],
+                        },
+                    })
+                    async for line in upstream.aiter_lines():
+                        if not line or not line.startswith("data:"):
+                            continue
+                        data_str = line[5:].strip()
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            event = json.loads(data_str)
+                        except Exception:
+                            continue
+                        if not isinstance(event, dict):
+                            continue
+                        usage = event.get("usage")
+                        if isinstance(usage, dict):
+                            stream_usage["input"] = extract_total_input_tokens(usage)
+                            stream_usage["output"] = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
+                            stream_usage["cache_read"] = extract_cache_read_tokens(usage)
+                            stream_usage["cache_creation"] = extract_cache_creation_tokens(usage)
+                        if isinstance(event.get("error"), dict):
+                            yield _responses_sse_line("response.failed", {
+                                "type": "response.failed",
+                                "response": {
+                                    "id": response_id,
+                                    "object": "response",
+                                    "created_at": created_at,
+                                    "status": "failed",
+                                    "model": display_model,
+                                    "error": event["error"],
+                                },
+                            })
+                            yield "data: [DONE]\n\n"
+                            return
+
+                        choices = event.get("choices")
+                        choice = choices[0] if isinstance(choices, list) and choices and isinstance(choices[0], dict) else {}
+                        delta = choice.get("delta") if isinstance(choice.get("delta"), dict) else {}
+                        if not response_id:
+                            response_id = str(event.get("id") or f"resp_{secrets.token_hex(20)}")
+
+                        if isinstance(delta.get("content"), str) and delta["content"]:
+                            text = delta["content"]
+                            text_parts.append(text)
+                            yield _responses_sse_line("response.output_text.delta", {
+                                "type": "response.output_text.delta",
+                                "response_id": response_id,
+                                "delta": text,
+                            })
+
+                        tool_calls = delta.get("tool_calls")
+                        if isinstance(tool_calls, list):
+                            for tool_call in tool_calls:
+                                if not isinstance(tool_call, dict):
+                                    continue
+                                tool_index = int(tool_call.get("index") or tool_counter)
+                                tool_counter = max(tool_counter, tool_index + 1)
+                                if tool_call.get("id"):
+                                    current_tool_call_id = str(tool_call.get("id"))
+                                function = tool_call.get("function") if isinstance(tool_call.get("function"), dict) else {}
+                                if function.get("name"):
+                                    current_tool_name = str(function.get("name"))
+                                    current_tool_arguments = ""
+                                    yield _responses_sse_line("response.output_item.added", {
+                                        "type": "response.output_item.added",
+                                        "response_id": response_id,
+                                        "item": {
+                                            "type": "function_call",
+                                            "id": current_tool_call_id or f"call_{secrets.token_hex(8)}",
+                                            "call_id": current_tool_call_id or f"call_{secrets.token_hex(8)}",
+                                            "name": current_tool_name,
+                                            "arguments": "",
+                                        },
+                                    })
+                                if isinstance(function.get("arguments"), str) and function["arguments"]:
+                                    current_tool_arguments += function["arguments"]
+                                    yield _responses_sse_line("response.function_call_arguments.delta", {
+                                        "type": "response.function_call_arguments.delta",
+                                        "response_id": response_id,
+                                        "delta": {"arguments": function["arguments"]},
+                                    })
+
+                        finish_reason = choice.get("finish_reason")
+                        if finish_reason == "tool_calls" and current_tool_name:
+                            item = {
+                                "type": "function_call",
+                                "id": current_tool_call_id or f"call_{secrets.token_hex(8)}",
+                                "call_id": current_tool_call_id or f"call_{secrets.token_hex(8)}",
+                                "name": current_tool_name,
+                                "arguments": current_tool_arguments,
+                            }
+                            output_items.append(item)
+                            yield _responses_sse_line("response.function_call_arguments.done", {
+                                "type": "response.function_call_arguments.done",
+                                "response_id": response_id,
+                                "arguments": current_tool_arguments,
+                                "item": item,
+                            })
+                            current_tool_call_id = ""
+                            current_tool_name = ""
+                            current_tool_arguments = ""
+
+                    if text_parts:
+                        output_items.append(_build_responses_output_text_item("".join(text_parts)))
+                    usage_payload = {
+                        "input_tokens": stream_usage["input"],
+                        "output_tokens": stream_usage["output"],
+                        "total_tokens": stream_usage["input"] + stream_usage["output"],
+                    }
+                    if stream_usage["cache_read"]:
+                        usage_payload["input_tokens_details"] = {"cached_tokens": stream_usage["cache_read"]}
+                    completed = {
+                        "id": response_id,
+                        "object": "response",
+                        "created_at": created_at,
+                        "status": "completed",
+                        "model": display_model,
+                        "output": output_items,
+                        "output_text": "".join(text_parts),
+                        "usage": usage_payload,
+                    }
+                    yield _responses_sse_line("response.completed", {
+                        "type": "response.completed",
+                        "response": completed,
+                    })
+                    yield "data: [DONE]\n\n"
+                finally:
+                    await upstream.aclose()
+                    if upstream.status_code < 400:
+                        if response_id and output_items:
+                            _conv_cache.set(response_id, _normalize_responses_input_items(payload.get("input")), output_items)
+                        dur = int((time.monotonic() - stream_t0) * 1000)
+                        asyncio.create_task(usage_buffer.add(
+                            user.id,
+                            api_key_id=api_key_id,
+                            input_tokens=stream_usage["input"],
+                            output_tokens=stream_usage["output"],
+                            cache_read_tokens=stream_usage["cache_read"],
+                            cache_creation_tokens=stream_usage["cache_creation"],
+                            requests=1,
+                            endpoint="responses:stream",
+                            model=display_model,
+                            customer_model_alias=display_model,
+                            provider_model=public_model.provider_model or used_cfg.model_id,
+                            route_reason=used_route_reason,
+                            duration_ms=dur,
+                            status_code=upstream.status_code,
+                            price_input_per_million=price_input_per_million,
+                            price_output_per_million=price_output_per_million,
+                            usage_unit_type="tokens",
+                            billable_sku=public_model.billable_sku or display_model,
+                            upstream_request_id=extract_upstream_request_id(upstream.headers),
+                            **station_usage_kwargs(station_model),
+                        ))
+
+            return StreamingResponse(
+                iter_events(),
+                status_code=upstream.status_code,
+                headers=stream_headers,
+                media_type="text/event-stream",
+            )
+
+        client = await get_http_client()
+        t0 = time.monotonic()
+        try:
+            upstream = await client.post(upstream_url, json=chat_payload, headers=headers)
+        except (httpx.TimeoutException, httpx.RequestError):
+            return JSONResponse(
+                content={"error": {"message": "Upstream request failed", "type": "server_error", "code": "upstream_unreachable"}},
+                status_code=502,
+            )
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        response_headers = filter_headers(dict(upstream.headers))
+        response_headers.pop("content-length", None)
+        content_type = upstream.headers.get("content-type", "application/json")
+        upstream_request_id = extract_upstream_request_id(upstream.headers)
+        if "application/json" in content_type:
+            try:
+                data = upstream.json()
+            except Exception:
+                return JSONResponse(
+                    content={"error": {"message": "Upstream returned invalid JSON", "type": "server_error", "code": "upstream_invalid_json"}},
+                    status_code=502,
+                    headers=response_headers,
+                )
+        else:
+            data = upstream.text
+
+        if isinstance(data, dict) and isinstance(data.get("error"), dict):
+            return JSONResponse(
+                content={"error": data["error"]},
+                status_code=upstream.status_code if upstream.status_code >= 400 else 502,
+                headers=response_headers,
+            )
+        if upstream.status_code >= 400:
+            return JSONResponse(
+                content={"error": {"message": str(data)[:500] if data else "upstream error", "type": "upstream_error", "code": str(upstream.status_code)}},
+                status_code=upstream.status_code,
+                headers=response_headers,
+            )
+        if not isinstance(data, dict):
+            return Response(content=str(data), status_code=upstream.status_code, headers=response_headers, media_type=content_type)
+
+        response_payload = _translate_chat_response_to_responses(data, display_model)
+        usage = response_payload.get("usage") or {}
+        input_tokens_delta = extract_total_input_tokens(usage)
+        output_tokens_delta = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
+        cache_read_tokens_delta = extract_cache_read_tokens(usage)
+        cache_creation_tokens_delta = extract_cache_creation_tokens(usage)
+        response_id = response_payload.get("id")
+        response_output = response_payload.get("output")
+        if response_id and isinstance(response_output, list):
+            _conv_cache.set(response_id, _normalize_responses_input_items(payload.get("input")), response_output)
+        await usage_buffer.add(
+            user.id,
+            api_key_id=api_key_id,
+            input_tokens=input_tokens_delta,
+            output_tokens=output_tokens_delta,
+            cache_read_tokens=cache_read_tokens_delta,
+            cache_creation_tokens=cache_creation_tokens_delta,
+            requests=1,
+            endpoint="responses",
+            model=display_model,
+            customer_model_alias=display_model,
+            provider_model=public_model.provider_model or used_cfg.model_id,
+            route_reason=used_route_reason,
+            duration_ms=duration_ms,
+            status_code=upstream.status_code,
+            price_input_per_million=price_input_per_million,
+            price_output_per_million=price_output_per_million,
+            usage_unit_type="tokens",
+            billable_sku=public_model.billable_sku or display_model,
+            upstream_request_id=upstream_request_id,
+            **station_usage_kwargs(station_model),
+        )
+        return JSONResponse(content=response_payload, status_code=upstream.status_code, headers=response_headers)
 
     payload["model"] = used_cfg.model_id
     payload.pop("model_provider", None)

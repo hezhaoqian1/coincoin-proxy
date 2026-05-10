@@ -18,11 +18,15 @@ from .prompt_cache import build_claude_code_prompt_cache_key
 from .proxy import (
     _build_upstream_headers, _ensure_content_text, _sanitize_encrypted_ids,
     _collect_responses_event_stream_payload, _responses_payload_is_empty_success,
+    _chat_completion_chunk_line,
+    _normalize_openai_base_url, _responses_tools_to_chat_tools,
+    _translate_chat_response_to_responses,
     authenticate_user, authorize_request, extract_upstream_request_id,
     filter_headers, get_http_client, get_stream_client, proxy_images_edits, proxy_images_generations,
     proxy_responses, responses_health, _KEY_ID_ATTR,
 )
 from .router import (
+    CLAUDE_COMPAT_PROVIDER_KIRO_GO,
     ModelCapabilityError,
     UnknownModelError,
     registry as model_registry,
@@ -838,6 +842,184 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
             price_output_per_million=price_output_per_million,
             station_model=station_model,
         )
+
+    if public_model.delivery_lane == CLAUDE_COMPAT_PROVIDER_KIRO_GO:
+        chat_payload: Dict[str, Any] = {
+            "model": used_cfg.model_id,
+            "messages": messages,
+            "stream": bool(payload.get("stream")),
+        }
+        if "tools" in payload:
+            tools_payload = _responses_tools_to_chat_tools(payload.get("tools"))
+            if tools_payload:
+                chat_payload["tools"] = tools_payload
+        if "max_tokens" in payload:
+            chat_payload["max_tokens"] = payload.get("max_tokens")
+        if "max_completion_tokens" in payload and "max_tokens" not in chat_payload:
+            chat_payload["max_tokens"] = payload.get("max_completion_tokens")
+        for field in ("temperature", "top_p", "stop", "tool_choice"):
+            if field in payload:
+                chat_payload[field] = payload[field]
+        prompt_cache_key = build_claude_code_prompt_cache_key(user, api_key_id, display_model, public_model)
+        if prompt_cache_key:
+            chat_payload["prompt_cache_key"] = prompt_cache_key
+
+        headers = _build_upstream_headers(used_cfg)
+        upstream_url = f"{_normalize_openai_base_url(used_cfg.upstream_url)}/chat/completions"
+        if chat_payload.get("stream"):
+            stream_client = await get_stream_client()
+            try:
+                req = stream_client.build_request("POST", upstream_url, json=chat_payload, headers=headers)
+                upstream = await stream_client.send(req, stream=True)
+            except (httpx.TimeoutException, httpx.RequestError):
+                return openai_error("Upstream request failed", "server_error", code="upstream_unreachable", status_code=502)
+            stream_headers = filter_headers(dict(upstream.headers))
+            stream_headers.pop("content-length", None)
+            stream_headers.setdefault("cache-control", "no-cache")
+            stream_headers.setdefault("x-accel-buffering", "no")
+            stream_headers["content-type"] = "text/event-stream; charset=utf-8"
+            stream_t0 = time.monotonic()
+            stream_usage = {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0}
+
+            async def iter_events():
+                finish_sent = False
+                try:
+                    async for line in upstream.aiter_lines():
+                        if not line or not line.startswith("data:"):
+                            continue
+                        data_str = line[5:].strip()
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            event = json.loads(data_str)
+                        except Exception:
+                            continue
+                        if not isinstance(event, dict):
+                            continue
+                        usage = event.get("usage")
+                        if isinstance(usage, dict):
+                            stream_usage["input"] = extract_total_input_tokens(usage)
+                            stream_usage["output"] = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
+                            stream_usage["cache_read"] = extract_cache_read_tokens(usage)
+                            stream_usage["cache_creation"] = extract_cache_creation_tokens(usage)
+                        if isinstance(event.get("error"), dict):
+                            err = event["error"]
+                            yield _chat_completion_chunk_line(
+                                stream_id=str(event.get("id") or f"chatcmpl-{secrets.token_hex(12)}"),
+                                display_model=display_model,
+                                delta={},
+                                finish_reason="stop",
+                            )
+                            yield f"data: {json.dumps({'error': err}, ensure_ascii=False)}\n\n"
+                            yield "data: [DONE]\n\n"
+                            finish_sent = True
+                            return
+                        if "model" in event:
+                            event["model"] = display_model
+                        yield f"{line.replace(used_cfg.model_id, display_model)}\n\n" if used_cfg.model_id and used_cfg.model_id in line else f"{line}\n\n"
+                        choices = event.get("choices")
+                        choice = choices[0] if isinstance(choices, list) and choices and isinstance(choices[0], dict) else {}
+                        finish_reason = choice.get("finish_reason")
+                        if finish_reason is not None:
+                            finish_sent = True
+                    if not finish_sent:
+                        yield _chat_completion_chunk_line(
+                            stream_id=f"chatcmpl-{secrets.token_hex(12)}",
+                            display_model=display_model,
+                            delta={},
+                            finish_reason="stop",
+                        )
+                    yield "data: [DONE]\n\n"
+                finally:
+                    await upstream.aclose()
+                    if upstream.status_code < 400:
+                        dur = int((time.monotonic() - stream_t0) * 1000)
+                        asyncio.create_task(usage_buffer.add(
+                            user.id,
+                            api_key_id=api_key_id,
+                            input_tokens=stream_usage["input"],
+                            output_tokens=stream_usage["output"],
+                            cache_read_tokens=stream_usage["cache_read"],
+                            cache_creation_tokens=stream_usage["cache_creation"],
+                            requests=1,
+                            endpoint="chat/completions:stream",
+                            model=display_model,
+                            customer_model_alias=display_model,
+                            provider_model=public_model.provider_model or used_cfg.model_id,
+                            route_reason=used_route_reason,
+                            duration_ms=dur,
+                            status_code=upstream.status_code,
+                            price_input_per_million=price_input_per_million,
+                            price_output_per_million=price_output_per_million,
+                            usage_unit_type="tokens",
+                            billable_sku=public_model.billable_sku or display_model,
+                            upstream_request_id=extract_upstream_request_id(upstream.headers),
+                            **station_usage_kwargs(station_model),
+                        ))
+
+            return StreamingResponse(
+                iter_events(),
+                status_code=upstream.status_code,
+                headers=stream_headers,
+                media_type="text/event-stream",
+            )
+
+        client = await get_http_client()
+        t0 = time.monotonic()
+        try:
+            upstream = await client.post(upstream_url, json=chat_payload, headers=headers)
+        except (httpx.TimeoutException, httpx.RequestError):
+            return openai_error("Upstream request failed", "server_error", code="upstream_unreachable", status_code=502)
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        response_headers = filter_headers(dict(upstream.headers))
+        response_headers.pop("content-length", None)
+        content_type = upstream.headers.get("content-type", "application/json")
+        upstream_request_id = extract_upstream_request_id(upstream.headers)
+        if "application/json" in content_type:
+            try:
+                data = upstream.json()
+            except Exception:
+                return openai_error("Upstream returned invalid JSON", "server_error", code="upstream_invalid_json", status_code=502)
+        else:
+            data = upstream.text
+
+        if isinstance(data, dict) and isinstance(data.get("error"), dict):
+            return JSONResponse(content={"error": data["error"]}, status_code=upstream.status_code if upstream.status_code >= 400 else 502, headers=response_headers)
+        if upstream.status_code >= 400:
+            return JSONResponse(
+                content={"error": {"message": str(data)[:500] if data else "upstream error", "type": "upstream_error", "code": str(upstream.status_code)}},
+                status_code=upstream.status_code,
+                headers=response_headers,
+            )
+        if not isinstance(data, dict):
+            return Response(content=str(data), status_code=upstream.status_code, headers=response_headers, media_type=content_type)
+
+        usage = _translate_chat_response_to_responses(data, display_model).get("usage") or {}
+        await usage_buffer.add(
+            user.id,
+            api_key_id=api_key_id,
+            input_tokens=extract_total_input_tokens(usage),
+            output_tokens=int(usage.get("output_tokens") or usage.get("completion_tokens") or 0),
+            cache_read_tokens=extract_cache_read_tokens(usage),
+            cache_creation_tokens=extract_cache_creation_tokens(usage),
+            requests=1,
+            endpoint="chat/completions",
+            model=display_model,
+            customer_model_alias=display_model,
+            provider_model=public_model.provider_model or used_cfg.model_id,
+            route_reason=used_route_reason,
+            duration_ms=duration_ms,
+            status_code=upstream.status_code,
+            price_input_per_million=price_input_per_million,
+            price_output_per_million=price_output_per_million,
+            usage_unit_type="tokens",
+            billable_sku=public_model.billable_sku or display_model,
+            upstream_request_id=upstream_request_id,
+            **station_usage_kwargs(station_model),
+        )
+
+        data["model"] = display_model
+        return JSONResponse(content=data, status_code=upstream.status_code, headers=response_headers)
 
     # ============== 构建 Responses API payload ==============
     resp_payload: Dict[str, Any] = {

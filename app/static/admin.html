@@ -1367,6 +1367,33 @@
           <h1 class="page-title">模型路由</h1>
           <p class="page-desc">这里决定“用户调用的模型名”背后实际转发到哪个已批准模型。修改后，用户看到的 alias 名称和计费档位不变，只调整后台实际转发目标。</p>
         </div>
+        <div class="card" style="margin-bottom:20px">
+          <div class="card-header">
+            <div>
+              <span class="card-title">Claude 兼容上游</span>
+              <div class="text-sm text-muted" id="claudeCompatSummary">加载中...</div>
+            </div>
+            <button class="btn btn-secondary" onclick="loadClaudeCompatSettings()">刷新</button>
+          </div>
+          <div class="card-body">
+            <div style="display:grid;grid-template-columns:minmax(260px,340px) 1fr;gap:16px;align-items:end">
+              <div class="form-group" style="margin-bottom:0">
+                <label class="form-label">当前 Claude 路线</label>
+                <select id="claudeCompatProvider" class="form-select">
+                  <option value="upstream_direct">兼容直连上游</option>
+                  <option value="kiro_go">Kiro-Go</option>
+                </select>
+              </div>
+              <div class="text-sm text-muted" id="claudeCompatDetail">
+                切到 Kiro-Go 后，Claude alias 会改走 Kiro-Go；现有 GPT / Gemini 路线不受影响。
+              </div>
+            </div>
+            <div style="display:flex;gap:12px;align-items:center;margin-top:14px;flex-wrap:wrap">
+              <button class="btn btn-primary" onclick="saveClaudeCompatSettings()">保存 Claude 路线</button>
+              <span class="text-sm text-muted" id="claudeCompatConfigStatus">加载中...</span>
+            </div>
+          </div>
+        </div>
         <div class="card">
           <div class="card-header">
             <div>
@@ -2261,6 +2288,7 @@
     let stationPayoutBatchCache = [];
     let modelAliasCache = [];
     let currentModelAliasId = null;
+    let claudeCompatSettingsCache = null;
 
     function toggleSidebar() {
       document.getElementById('sidebar').classList.toggle('open');
@@ -2702,6 +2730,8 @@
           return '直连上游';
         case 'vertex_direct':
           return '直连 Vertex';
+        case 'kiro_go':
+          return 'Kiro-Go';
         default:
           return lane || '-';
       }
@@ -2733,6 +2763,61 @@
       return `<div>${escapeHtml(provider)}</div><div class="text-sm text-muted">实际请求名：${escapeHtml(upstream)}</div>`;
     }
 
+    function renderClaudeCompatProviderLabel(provider) {
+      switch ((provider || '').trim().toLowerCase()) {
+        case 'kiro_go':
+          return 'Kiro-Go';
+        case 'upstream_direct':
+          return '兼容直连上游';
+        default:
+          return provider || '-';
+      }
+    }
+
+    async function loadClaudeCompatSettings() {
+      try {
+        const r = await fetch('/admin/settings/claude-compat', { headers: adminHeaders() });
+        if (!r.ok) return toast('加载 Claude 路线失败', 'error');
+        const data = await r.json();
+        claudeCompatSettingsCache = data;
+        const provider = data.provider || 'upstream_direct';
+        document.getElementById('claudeCompatProvider').value = provider;
+        document.getElementById('claudeCompatSummary').textContent = `当前走 ${renderClaudeCompatProviderLabel(provider)}，只影响 Claude 兼容 alias。`;
+        const configured = data.configured || {};
+        const configStatus = [];
+        configStatus.push(`Kiro-Go Base URL：${configured.kiro_go_base_url ? '已配置' : '未配置'}`);
+        configStatus.push(`Kiro-Go API Key：${configured.kiro_go_api_key ? '已配置' : '未配置'}`);
+        document.getElementById('claudeCompatConfigStatus').textContent = configStatus.join(' · ');
+        const baseUrlText = data.base_url ? `当前 Kiro-Go 地址：${data.base_url}` : '当前没有配置 Kiro-Go Base URL。';
+        document.getElementById('claudeCompatDetail').textContent = provider === 'kiro_go'
+          ? `${baseUrlText} /messages 走原生 Claude 口，/responses 由 CoinCoin 本地兼容桥接。`
+          : `${baseUrlText} 当前仍使用旧的兼容直连上游路线。`;
+      } catch (e) {
+        console.error(e);
+        toast('加载 Claude 路线失败', 'error');
+      }
+    }
+
+    async function saveClaudeCompatSettings() {
+      const provider = document.getElementById('claudeCompatProvider').value;
+      try {
+        const r = await fetch('/admin/settings/claude-compat', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+          body: JSON.stringify({ provider })
+        });
+        const data = await r.json();
+        if (!r.ok) return toast(data.detail || '保存 Claude 路线失败', 'error');
+        claudeCompatSettingsCache = data;
+        toast('Claude 路线已更新', 'success');
+        loadClaudeCompatSettings();
+        loadModelAliases();
+      } catch (e) {
+        console.error(e);
+        toast('保存 Claude 路线失败', 'error');
+      }
+    }
+
     async function loadModelAliases() {
       try {
         const r = await fetch('/admin/model-aliases', { headers: adminHeaders() });
@@ -2761,6 +2846,7 @@
             <td><button class="btn btn-sm btn-secondary" onclick="openModelAliasModal('${escapeHtml(alias.id)}')">修改</button></td>
           </tr>
         `).join('');
+        loadClaudeCompatSettings();
       } catch (e) {
         console.error(e);
         toast('加载模型路由失败', 'error');
