@@ -22,6 +22,9 @@ CLAUDE_HAIKU_INPUT_PRICE_PLACEHOLDER = "${COINCOIN_CLAUDE_HAIKU_INPUT_PRICE:-100
 CLAUDE_HAIKU_OUTPUT_PRICE_PLACEHOLDER = "${COINCOIN_CLAUDE_HAIKU_OUTPUT_PRICE:-500}"
 CLAUDE_OPUS_ALIASES = {
     "claude-opus-4-7",
+    "claude-opus-4.7",
+    "claude-opus-4.6",
+    "claude-opus-4.5",
     "opus",
     "best",
     "default",
@@ -30,11 +33,15 @@ CLAUDE_OPUS_ALIASES = {
 }
 CLAUDE_SONNET_ALIASES = {
     "claude-sonnet-4-6",
+    "claude-sonnet-4.6",
+    "claude-sonnet-4.5",
+    "claude-sonnet-4",
     "sonnet",
     "sonnet[1m]",
 }
 CLAUDE_HAIKU_ALIASES = {
     "claude-haiku-4-5",
+    "claude-haiku-4.5",
     "claude-haiku-4-5-20251001",
     "haiku",
 }
@@ -52,8 +59,15 @@ OFFICIAL_DEFAULT_TEXT_PRICES = {
     "gpt-5.4-mini": CHEAP_TEXT_PRICE,
     "gpt-5.5": FIXED_TEXT_PRICE,
     "claude-opus-4-7": CLAUDE_OPUS_PRICE,
+    "claude-opus-4.7": CLAUDE_OPUS_PRICE,
+    "claude-opus-4.6": CLAUDE_OPUS_PRICE,
+    "claude-opus-4.5": CLAUDE_OPUS_PRICE,
     "claude-sonnet-4-6": CLAUDE_SONNET_PRICE,
+    "claude-sonnet-4.6": CLAUDE_SONNET_PRICE,
+    "claude-sonnet-4.5": CLAUDE_SONNET_PRICE,
+    "claude-sonnet-4": CLAUDE_SONNET_PRICE,
     "claude-haiku-4-5": CLAUDE_HAIKU_PRICE,
+    "claude-haiku-4.5": CLAUDE_HAIKU_PRICE,
     "claude-haiku-4-5-20251001": CLAUDE_HAIKU_PRICE,
     "opus": CLAUDE_OPUS_PRICE,
     "sonnet": CLAUDE_SONNET_PRICE,
