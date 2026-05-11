@@ -50,6 +50,7 @@ from .system_settings import (
     refresh_runtime_system_settings_from_db,
 )
 from .config import settings as _settings
+from .billing import get_available_balance_cents, product_by_id, serialize_billing_state
 from .router import registry as model_registry
 from .router import (
     CLAUDE_COMPAT_PROVIDER_KIRO_GO,
@@ -80,6 +81,56 @@ def _recover_raw_key(encrypted_key: Optional[str]) -> Optional[str]:
         return decrypt_api_key(encrypted_key)
     except Exception:
         return None
+
+
+def _product_admin_payload(product_id: str) -> dict:
+    product = product_by_id(product_id)
+    if not product:
+        return {
+            "product_id": product_id or "",
+            "product_name": product_id or "",
+            "product_kind": "legacy",
+        }
+    return {
+        "product_id": product.id,
+        "product_name": product.name,
+        "product_kind": product.kind,
+        "product_money": product.money,
+        "product_balance_cents": product.balance_cents,
+        "product_rank": product.rank,
+        "product_min_plan_rank": product.min_plan_rank,
+    }
+
+
+async def _admin_billing_state(db: AsyncSession, user: User) -> dict:
+    snapshot = await get_available_balance_cents(db, user)
+    return serialize_billing_state(
+        snapshot.get("subscription"),
+        snapshot.get("traffic_packs") or [],
+        user,
+    )
+
+
+def _billing_summary_for_admin(billing: dict) -> dict:
+    subscription = billing.get("subscription") or {}
+    traffic_packs = billing.get("traffic_packs") or {}
+    legacy_balance = billing.get("legacy_balance") or {}
+    available = billing.get("available") or {}
+    return {
+        "available_cents": int(available.get("remaining_cents") or 0),
+        "available_usd": float(available.get("remaining_usd") or 0),
+        "subscription_active": bool(subscription.get("active")),
+        "subscription_plan_id": subscription.get("plan_id"),
+        "subscription_plan_name": subscription.get("plan_name"),
+        "subscription_remaining_cents": int(subscription.get("remaining_cents") or 0),
+        "subscription_quota_cents": int(subscription.get("quota_cents") or 0),
+        "subscription_used_cents": int(subscription.get("used_cents") or 0),
+        "subscription_period_end": subscription.get("period_end"),
+        "subscription_paid_until": subscription.get("paid_until"),
+        "traffic_pack_remaining_cents": int(traffic_packs.get("remaining_cents") or 0),
+        "traffic_pack_count": len(traffic_packs.get("items") or []),
+        "legacy_balance_cents": int(legacy_balance.get("remaining_cents") or 0),
+    }
 
 
 def _alias_payload(alias_id: str):
@@ -318,8 +369,10 @@ async def list_users(search: Optional[str] = None, db: AsyncSession = Depends(ge
             )
     result = await db.execute(query.limit(200))
     rows = result.all()
-    return [
-        {
+    items = []
+    for u, link, station in rows:
+        billing = await _admin_billing_state(db, u)
+        items.append({
             "id": u.id,
             "username": u.username,
             "email": getattr(u, "email", None),
@@ -337,15 +390,16 @@ async def list_users(search: Optional[str] = None, db: AsyncSession = Depends(ge
             "referred_by": u.referred_by,
             "created_at": u.created_at,
             "updated_at": u.updated_at,
+            "billing": billing,
+            "billing_summary": _billing_summary_for_admin(billing),
             "station_attribution": None if not station else {
                 "station_id": station.id,
                 "station_name": station.display_name,
                 "station_owner_user_id": station.owner_user_id,
                 "link_status": getattr(link, "status", None),
             },
-        }
-        for u, link, station in rows
-    ]
+        })
+    return items
 
 
 @router.patch("/users/{user_id}", dependencies=[Depends(admin_guard)])
@@ -482,6 +536,7 @@ async def get_user_detail(user_id: str, db: AsyncSession = Depends(get_db)):
         select(ApiKey).where(ApiKey.user_id == user_id).order_by(ApiKey.created_at.desc())
     )
     keys = keys_result.scalars().all()
+    billing = await _admin_billing_state(db, user)
     
     return {
         "id": user.id,
@@ -500,6 +555,8 @@ async def get_user_detail(user_id: str, db: AsyncSession = Depends(get_db)):
         "request_limit_per_day": user.request_limit_per_day,
         "created_at": user.created_at,
         "updated_at": user.updated_at,
+        "billing": billing,
+        "billing_summary": _billing_summary_for_admin(billing),
         "finance_summary": await build_user_finance_snapshot(db, user.id, user.balance),
         "station_attribution": None if not station else {
             "station_id": station.id,
@@ -665,8 +722,10 @@ async def finance_summary(
         db,
         {user.id: int(user.balance or 0) for user in users},
     )
-    return [
-        {
+    rows = []
+    for user in users:
+        billing = await _admin_billing_state(db, user)
+        rows.append({
             "user_id": user.id,
             "username": user.username,
             "email": getattr(user, "email", None),
@@ -674,10 +733,11 @@ async def finance_summary(
             "external_id": user.external_id,
             "created_at": user.created_at,
             "status": user.status,
+            "billing": billing,
+            "billing_summary": _billing_summary_for_admin(billing),
             "finance_summary": snapshots.get(user.id, {}),
-        }
-        for user in users
-    ]
+        })
+    return rows
 
 
 @router.get("/keys", dependencies=[Depends(admin_guard)])
@@ -1050,6 +1110,7 @@ async def list_payment_orders(
     orders = result.scalars().all()
     return [
         {
+            **_product_admin_payload(getattr(o, "product_id", "") or ""),
             "id": o.id,
             "user_id": o.user_id,
             "order_no": o.order_no,
@@ -1087,6 +1148,7 @@ async def force_confirm_order(order_no: str, db: AsyncSession = Depends(get_db))
         "status": "already_confirmed" if result.get("already_confirmed") else "confirmed",
         "trade_no": result["order"].trade_no,
         "added_cents": result["added_cents"],
+        "billing_action": result.get("billing_action"),
         "new_balance": result["user"].balance,
         "new_balance_usd": result["user"].balance / 100,
     }
@@ -1141,6 +1203,7 @@ async def manual_confirm_order(
         "status": "already_confirmed" if result.get("already_confirmed") else "confirmed",
         "trade_no": callback["trade_no"],
         "added_cents": result["added_cents"],
+        "billing_action": result.get("billing_action"),
         "new_balance": user.balance,
         "new_balance_usd": user.balance / 100,
     }
