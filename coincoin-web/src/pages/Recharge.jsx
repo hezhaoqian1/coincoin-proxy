@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useSearchParams } from 'react-router-dom'
-import { PRICING_PLANS, redeemCode, getApiKey, confirmOrder, listOrders } from '../api/client'
+import { PRICING_PLANS, TRAFFIC_PACKS, redeemCode, getApiKey, confirmOrder, listOrders } from '../api/client'
 import useOrderConfirm from '../hooks/useOrderConfirm'
 import { useAuth } from '../hooks/useAuth'
 import AppShell from '../components/AppShell'
@@ -25,9 +25,8 @@ function formatOrderTime(value) {
 export default function Recharge() {
     const [searchParams, setSearchParams] = useSearchParams()
     const { isLoggedIn } = useAuth()
-    const [selectedPlan, setSelectedPlan] = useState(2)
-    const [customAmount, setCustomAmount] = useState('')
-    const [useCustom, setUseCustom] = useState(false)
+    const products = [...PRICING_PLANS, ...TRAFFIC_PACKS]
+    const [selectedProductId, setSelectedProductId] = useState('monthly_basic')
     const [loading, setLoading] = useState(false)
 
     const [redeemInput, setRedeemInput] = useState('')
@@ -120,11 +119,11 @@ export default function Recharge() {
             return
         }
 
-        const plan = useCustom ? null : PRICING_PLANS[selectedPlan]
-        const planMoney = useCustom ? parseFloat(customAmount).toFixed(2) : plan.money
+        const plan = products.find(item => item.id === selectedProductId) || PRICING_PLANS[1] || products[0]
+        const planMoney = plan.money
         if (!planMoney || parseFloat(planMoney) <= 0) return
 
-        const planName = useCustom ? `自定义充值 ¥${customAmount}` : `${plan.name} 套餐`
+        const planName = `${plan.name} ${plan.kind === 'addon' ? '流量包' : '套餐'}`
 
         // IMPORTANT:
         // Open a blank tab synchronously on the click gesture. If we wait until after `await fetch`,
@@ -146,7 +145,7 @@ export default function Recharge() {
                     'Authorization': `Bearer ${getApiKey()}`,
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({ name: planName, money: planMoney, pay_type: 'alipay' })
+                body: JSON.stringify({ name: planName, money: planMoney, pay_type: 'alipay', product_id: plan.id })
             })
             const res = await raw.json()
             if (!raw.ok) {
@@ -269,30 +268,17 @@ export default function Recharge() {
                 </div>
                 <div className="recharge-overview-points">
                     <div className="recharge-point">
-                        <strong>选套餐</strong>
-                        <p>大多数情况直接选预设档位就够了。</p>
+                            <strong>选月卡</strong>
+                            <p>先按月选一个预算档位，额度进入账户余额。</p>
                     </div>
                     <div className="recharge-point">
-                        <strong>支付</strong>
-                        <p>支付页会在新标签打开，本页自动查询到账结果。</p>
+                            <strong>补流量</strong>
+                            <p>额度用完后买流量包，不影响原来的使用习惯。</p>
                     </div>
                     <div className="recharge-point">
-                        <strong>到账后继续</strong>
-                        <p>支付完成后可以直接回概览或日志页。</p>
+                            <strong>按量扣费</strong>
+                            <p>所有文本和图片请求仍然从同一个余额里扣。</p>
                     </div>
-                </div>
-            </div>
-
-            <div className="recharge-path-grid">
-                <div className="recharge-path-card glass-card animate-fade-in-up">
-                    <span className="recharge-path-label">套餐充值</span>
-                    <strong>套餐充值</strong>
-                    <p>适合第一次充值，或者临时补余额。</p>
-                </div>
-                <div className="recharge-path-card glass-card animate-fade-in-up" style={{ animationDelay: '80ms' }}>
-                    <span className="recharge-path-label">兑换码</span>
-                    <strong>兑换码</strong>
-                    <p>适合活动码、补偿码和测试额度。</p>
                 </div>
             </div>
 
@@ -307,61 +293,47 @@ export default function Recharge() {
 
                 <div id="recharge-section-recharge" className="recharge-anchor"></div>
 
+                <div className="pricing-section-head">
+                    <div>
+                        <span className="recharge-kicker">Monthly</span>
+                        <h3>月付套餐</h3>
+                    </div>
+                    <p>现在按余额模型入账，作为月度建议额度使用；后续做真订阅时再加自动重置和套餐状态。</p>
+                </div>
                 <div className="recharge-plans stagger-children">
                     {PRICING_PLANS.map((plan, i) => (
-                        <div
-                            key={i}
-                            className={`recharge-plan glass-card animate-fade-in-up ${selectedPlan === i && !useCustom ? 'plan-selected' : ''} ${plan.highlight ? 'plan-popular' : ''}`}
-                            onClick={() => { setSelectedPlan(i); setUseCustom(false) }}
-                        >
-                            {plan.badge && <div className="pricing-badge">{plan.badge}</div>}
-                            <div className="plan-header">
-                                <h3>{plan.name}</h3>
-                                <div className="plan-price">
-                                    <span className="plan-amount">{plan.price}</span>
-                                    {plan.priceNote && <span className="plan-note">{plan.priceNote}</span>}
-                                </div>
-                                <div className="plan-balance-label">{plan.balanceLabel}</div>
-                            </div>
-                            <ul className="plan-features">
-                                {plan.features.map((f, j) => (
-                                    <li key={j}>&#10003; {f}</li>
-                                ))}
-                            </ul>
-                            {selectedPlan === i && !useCustom && (
-                                <div className="plan-check">
-                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent-emerald)" strokeWidth="3"><polyline points="20 6 9 17 4 12" /></svg>
-                                </div>
-                            )}
-                        </div>
+                        <ProductCard
+                            key={plan.id}
+                            product={plan}
+                            selected={selectedProductId === plan.id}
+                            onSelect={() => setSelectedProductId(plan.id)}
+                            delay={i * 80}
+                        />
                     ))}
                 </div>
 
-                <div className="custom-amount glass-card animate-fade-in-up" style={{ animationDelay: '300ms' }}>
-                    <div className="custom-header">
-                        <label className="custom-toggle">
-                            <input type="checkbox" checked={useCustom} onChange={(e) => setUseCustom(e.target.checked)} />
-                            <span className="toggle-slider"></span>
-                        </label>
-                        <span>自定义充值金额</span>
+                <div className="pricing-section-head pricing-section-head-addon">
+                    <div>
+                        <span className="recharge-kicker">Add-on</span>
+                        <h3>流量包</h3>
                     </div>
-                    {useCustom && (
-                        <div className="custom-input-row animate-fade-in">
-                            <span className="currency-sign">&#165;</span>
-                            <input
-                                type="number"
-                                className="input-field custom-input"
-                                placeholder="输入金额"
-                                value={customAmount}
-                                onChange={(e) => setCustomAmount(e.target.value)}
-                                min="1"
-                                step="0.01"
-                            />
-                            {customAmount && parseFloat(customAmount) > 0 && (
-                                <span className="custom-hint">&#8776; ${(parseFloat(customAmount) * 0.14).toFixed(2)} 余额</span>
-                            )}
-                        </div>
-                    )}
+                    <p>额度用光后买流量包补余额；流量包不刷新月度时间，只追加账户余额，大包单价更低。</p>
+                </div>
+                <div className="recharge-plans recharge-addon-plans stagger-children">
+                    {TRAFFIC_PACKS.map((pack, i) => (
+                        <ProductCard
+                            key={pack.id}
+                            product={pack}
+                            selected={selectedProductId === pack.id}
+                            onSelect={() => setSelectedProductId(pack.id)}
+                            delay={i * 80}
+                        />
+                    ))}
+                </div>
+
+                <div className="pricing-policy-note glass-card animate-fade-in-up" style={{ animationDelay: '300ms' }}>
+                    <strong>购买规则</strong>
+                    <p>补量优先买流量包。当前版本所有购买都会进入账户余额，支付成功后立即可用；真订阅开启后再处理高低档覆盖和月度重置。</p>
                 </div>
 
                 <div id="recharge-section-orders" className="recharge-anchor"></div>
@@ -416,16 +388,14 @@ export default function Recharge() {
                         <button
                             className="btn btn-primary btn-lg pay-btn"
                             onClick={handlePay}
-                            disabled={(isLoggedIn && loading) || (useCustom && (!customAmount || parseFloat(customAmount) <= 0))}
+                            disabled={isLoggedIn && loading}
                         >
                             {isLoggedIn && loading ? '创建订单中...' : (
                                 <>
                                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="1" y="4" width="22" height="16" rx="2" ry="2" /><line x1="1" y1="10" x2="23" y2="10" /></svg>
                                     {!isLoggedIn
                                         ? '登录后充值'
-                                        : useCustom
-                                        ? `支付宝支付 ¥${customAmount || '0'}`
-                                        : `支付宝支付 ${PRICING_PLANS[selectedPlan].price}`
+                                        : `支付宝支付 ${(products.find(item => item.id === selectedProductId) || PRICING_PLANS[1] || products[0])?.price || ''}`
                                     }
                                 </>
                             )}
@@ -564,6 +534,37 @@ export default function Recharge() {
                 </div>
                 {pageContent}
             </div>
+        </div>
+    )
+}
+
+function ProductCard({ product, selected, onSelect, delay = 0 }) {
+    return (
+        <div
+            className={`recharge-plan glass-card animate-fade-in-up ${selected ? 'plan-selected' : ''} ${product.highlight ? 'plan-popular' : ''}`}
+            style={{ animationDelay: `${delay}ms` }}
+            onClick={onSelect}
+        >
+            {product.badge && <div className="pricing-badge">{product.badge}</div>}
+            <div className="plan-header">
+                <h3>{product.name}</h3>
+                <div className="plan-price">
+                    <span className="plan-amount">{product.price}</span>
+                    {product.priceNote && <span className="plan-note">{product.priceNote}</span>}
+                </div>
+                <div className="plan-balance-label">{product.balanceLabel}</div>
+                <div className="plan-unit-label">{product.unitLabel}</div>
+            </div>
+            <ul className="plan-features">
+                {product.features.map((feature) => (
+                    <li key={feature}>&#10003; {feature}</li>
+                ))}
+            </ul>
+            {selected && (
+                <div className="plan-check">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent-emerald)" strokeWidth="3"><polyline points="20 6 9 17 4 12" /></svg>
+                </div>
+            )}
         </div>
     )
 }
