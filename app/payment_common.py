@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal, InvalidOperation, ROUND_DOWN
 from typing import Optional
@@ -7,37 +6,18 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .config import settings
+from .billing import (
+    BillingError,
+    PAYMENT_PRODUCTS,
+    PRODUCTS_BY_ID,
+    PRODUCTS_BY_MONEY,
+    PaymentProduct,
+    apply_payment_product,
+    product_by_id,
+)
 from .finance_summary import ensure_finance_summary_initialized, increment_finance_summary
 from .models import PaymentOrder, User
 from .referral import process_referral_reward
-
-@dataclass(frozen=True)
-class PaymentProduct:
-    id: str
-    kind: str
-    name: str
-    money: str
-    balance_cents: int
-
-    @property
-    def money_decimal(self) -> Decimal:
-        return Decimal(self.money).quantize(Decimal("0.01"))
-
-
-PAYMENT_PRODUCTS: tuple[PaymentProduct, ...] = (
-    PaymentProduct("monthly_light", "monthly", "轻量月卡", "29.90", 7500),
-    PaymentProduct("monthly_basic", "monthly", "基础月卡", "129.00", 38000),
-    PaymentProduct("monthly_flagship", "monthly", "旗舰月卡", "299.00", 100000),
-    PaymentProduct("addon_boost", "addon", "补量包", "99.00", 25000),
-    PaymentProduct("addon_project", "addon", "项目包", "249.00", 78000),
-    PaymentProduct("addon_ultra", "addon", "超大包", "499.00", 200000),
-)
-
-PRODUCTS_BY_ID: dict[str, PaymentProduct] = {product.id: product for product in PAYMENT_PRODUCTS}
-PRODUCTS_BY_MONEY: dict[Decimal, PaymentProduct] = {}
-for product in PAYMENT_PRODUCTS:
-    PRODUCTS_BY_MONEY.setdefault(product.money_decimal, product)
 
 
 class PaymentConfirmError(Exception):
@@ -55,7 +35,7 @@ def normalize_rmb(money_str: str) -> str:
 
 
 def rmb_to_cents(money_str: str) -> int:
-    """RMB string → balance cents. Uses Decimal to avoid float rounding."""
+    """Legacy RMB string -> balance cents. Kept for old custom/proof paths."""
     try:
         d = Decimal(str(money_str)).quantize(Decimal("0.01"))
     except (InvalidOperation, ValueError, TypeError):
@@ -64,6 +44,7 @@ def rmb_to_cents(money_str: str) -> int:
         return 0
     if d in PRODUCTS_BY_MONEY:
         return PRODUCTS_BY_MONEY[d].balance_cents
+    from .config import settings
     rate = Decimal(str(settings.rmb_to_cents_rate))
     return max(1, int((d * rate).to_integral_value(ROUND_DOWN)))
 
@@ -71,7 +52,7 @@ def rmb_to_cents(money_str: str) -> int:
 def quote_payment_cents(money_str: str, product_id: Optional[str] = None) -> int:
     if product_id and product_id not in PRODUCTS_BY_ID:
         raise PaymentConfirmError("unknown payment product", status_code=400)
-    product = PRODUCTS_BY_ID.get(product_id or "")
+    product = product_by_id(product_id)
     if product:
         if normalize_rmb(money_str) != format(product.money_decimal, "f"):
             raise PaymentConfirmError("payment amount does not match selected product", status_code=400)
@@ -88,6 +69,10 @@ def rmb_to_minor_cents(money_str: str) -> int:
     if d <= 0:
         return 0
     return int((d * 100).to_integral_value(ROUND_DOWN))
+
+
+def _translate_billing_error(exc: BillingError) -> PaymentConfirmError:
+    return PaymentConfirmError(exc.detail, status_code=exc.status_code)
 
 
 async def confirm_paid_order(
@@ -123,6 +108,7 @@ async def confirm_paid_order(
             "user": user,
             "amount_rmb": order.amount_rmb,
             "added_cents": order.add_balance_cents,
+            "billing_action": "already_confirmed",
         }
 
     if normalized_money != normalize_rmb(order.amount_rmb):
@@ -140,21 +126,29 @@ async def confirm_paid_order(
     if duplicate_trade:
         raise PaymentConfirmError(f"trade_no already linked to order {duplicate_trade}", status_code=409)
 
-    # The quoted balance is locked in when the order is created.
-    # Confirming an old pending order must not pick up a newer pricing table.
     add_cents = int(getattr(order, "add_balance_cents", 0) or 0)
-    if add_cents <= 0:
-        add_cents = rmb_to_cents(normalized_money)
+    product = product_by_id(getattr(order, "product_id", "") or "")
+    billing_action = "legacy_balance_credit"
+    if product:
+        try:
+            result = await apply_payment_product(user=user, product=product, order_no=order_no, db=db)
+        except BillingError as exc:
+            raise _translate_billing_error(exc) from exc
+        add_cents = int(result.get("added_cents", add_cents) or 0)
+        billing_action = str(result.get("billing_action") or product.kind)
+    else:
         if add_cents <= 0:
-            raise PaymentConfirmError("invalid payment amount", status_code=400)
+            add_cents = rmb_to_cents(normalized_money)
+            if add_cents <= 0:
+                raise PaymentConfirmError("invalid payment amount", status_code=400)
+        user.balance += add_cents
 
-    await ensure_finance_summary_initialized(db, user.id, commit=False)
-    user.balance += add_cents
     order.status = "confirmed"
     order.add_balance_cents = add_cents
     order.trade_no = trade_no or order.trade_no
     order.confirmed_at = datetime.utcnow()
 
+    await ensure_finance_summary_initialized(db, user.id, commit=False)
     await increment_finance_summary(
         db,
         user.id,
@@ -179,4 +173,5 @@ async def confirm_paid_order(
         "user": user,
         "amount_rmb": normalized_money,
         "added_cents": add_cents,
+        "billing_action": billing_action,
     }

@@ -54,6 +54,7 @@ async def _run_migrations(conn):
     migrations = [
         ("coincoin_payment_orders", "trade_no", "VARCHAR(128) NULL"),
         ("coincoin_payment_orders", "pay_url", "VARCHAR(512) NULL"),
+        ("coincoin_payment_orders", "product_id", "VARCHAR(64) DEFAULT ''"),
         ("coincoin_payment_orders", "station_id", "VARCHAR(32) NULL"),
         ("coincoin_payment_orders", "station_owner_user_id", "VARCHAR(32) NULL"),
         ("coincoin_payment_orders", "station_commission_rate", "DOUBLE DEFAULT 0"),
@@ -140,6 +141,60 @@ async def _run_migrations(conn):
                 logger.warning("migration failed for %s.%s: %s", table, col, exc)
 
     table_migrations = [
+        """
+        CREATE TABLE coincoin_user_subscriptions (
+            id VARCHAR(32) PRIMARY KEY,
+            user_id VARCHAR(32) NOT NULL UNIQUE,
+            plan_id VARCHAR(64) DEFAULT '',
+            status VARCHAR(16) DEFAULT 'active',
+            period_start DATETIME NULL,
+            period_end DATETIME NULL,
+            paid_until DATETIME NULL,
+            quota_cents BIGINT DEFAULT 0,
+            used_cents BIGINT DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX ix_user_subscriptions_user_id (user_id),
+            INDEX ix_user_subscriptions_status (status),
+            INDEX ix_user_subscriptions_paid_until (paid_until)
+        )
+        """,
+        """
+        CREATE TABLE coincoin_traffic_pack_balances (
+            id VARCHAR(32) PRIMARY KEY,
+            user_id VARCHAR(32) NOT NULL,
+            product_id VARCHAR(64) DEFAULT '',
+            status VARCHAR(16) DEFAULT 'active',
+            original_cents BIGINT DEFAULT 0,
+            remaining_cents BIGINT DEFAULT 0,
+            expires_at DATETIME NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX ix_traffic_pack_balances_user_id (user_id),
+            INDEX ix_traffic_pack_balances_product_id (product_id),
+            INDEX ix_traffic_pack_balances_status (status),
+            INDEX ix_traffic_pack_balances_expires_at (expires_at)
+        )
+        """,
+        """
+        CREATE TABLE coincoin_billing_ledger (
+            id VARCHAR(32) PRIMARY KEY,
+            user_id VARCHAR(32) NOT NULL,
+            entry_type VARCHAR(32) DEFAULT '',
+            amount_cents BIGINT DEFAULT 0,
+            source_type VARCHAR(32) DEFAULT '',
+            source_id VARCHAR(128) DEFAULT '',
+            product_id VARCHAR(64) DEFAULT '',
+            balance_after_cents BIGINT DEFAULT 0,
+            note VARCHAR(512) DEFAULT '',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            INDEX ix_billing_ledger_user_id (user_id),
+            INDEX ix_billing_ledger_entry_type (entry_type),
+            INDEX ix_billing_ledger_source_id (source_id),
+            INDEX ix_billing_ledger_product_id (product_id),
+            INDEX ix_billing_ledger_created_at (created_at)
+        )
+        """,
         """
         CREATE TABLE coincoin_station_applications (
             id VARCHAR(32) PRIMARY KEY,

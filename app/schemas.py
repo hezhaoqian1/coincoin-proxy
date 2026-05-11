@@ -185,6 +185,7 @@ class BalanceResponse(BaseModel):
     station_slug: Optional[str] = None
     station_display_name: Optional[str] = None
     station_pricing_models: Optional[List[dict]] = None
+    billing: Optional[dict] = None
 
 
 class ReferralCodeUpdateRequest(BaseModel):

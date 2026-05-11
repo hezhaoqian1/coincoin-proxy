@@ -21,6 +21,8 @@ from .epay import (
     query_epay_order,
     verify_epay_callback_params,
 )
+from .billing import BillingError, product_by_id, validate_product_purchase
+from .billing import get_available_balance_cents, serialize_billing_state
 from .models import PaymentOrder
 from .payment_common import PaymentConfirmError, confirm_paid_order, quote_payment_cents
 from .proxy import authenticate_user
@@ -144,6 +146,20 @@ async def list_orders(
     return [_payment_order_payload(order) for order in result.scalars().all()]
 
 
+@router.get("/billing/state")
+async def billing_state(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    cached = await authenticate_user(request, db)
+    snapshot = await get_available_balance_cents(db, cached)
+    return serialize_billing_state(
+        snapshot.get("subscription"),
+        snapshot.get("traffic_packs") or [],
+        cached,
+    )
+
+
 @router.post("/orders/create", response_model=OrderCreateResponse)
 async def create_order(
     payload: OrderCreateRequest,
@@ -160,7 +176,20 @@ async def create_order(
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "too many order requests")
 
     try:
-        expected_cents = quote_payment_cents(payload.money, payload.product_id)
+        product = product_by_id(payload.product_id)
+        if product:
+            normalized_money = await validate_product_purchase(
+                user_id=user_id,
+                product=product,
+                money=payload.money,
+                db=db,
+            )
+            payload.money = normalized_money
+            expected_cents = product.balance_cents
+        else:
+            expected_cents = quote_payment_cents(payload.money, payload.product_id)
+    except BillingError as exc:
+        raise _translate_confirm_error(PaymentConfirmError(exc.detail, status_code=exc.status_code)) from exc
     except PaymentConfirmError as exc:
         raise _translate_confirm_error(exc) from exc
     if expected_cents <= 0:
@@ -191,6 +220,7 @@ async def create_order(
         order_no=order_no,
         amount_rmb=payload.money,
         add_balance_cents=expected_cents,
+        product_id=payload.product_id or "",
         status="pending",
         pay_url=pay_url,
     )

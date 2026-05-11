@@ -293,7 +293,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fake_db.commits, 0)
 
     async def test_admin_reset_user_password_validates_length(self) -> None:
-        fake_db = _FakeDB()
+        fake_db = _FakeDB(execute_results=[_FakeEntityResult(None)])
 
         async def fake_get_db():
             yield fake_db
@@ -589,7 +589,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         payment_module.settings.self_base_url = "https://bird-alipay.up.railway.app"
 
         user = SimpleNamespace(id="u_1")
-        fake_db = _FakeDB()
+        fake_db = _FakeDB(execute_results=[_FakeEntityResult(None)])
 
         async def fake_get_db():
             yield fake_db
@@ -635,7 +635,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
     def test_product_quote_uses_selected_product_id(self) -> None:
         self.assertEqual(quote_payment_cents("29.90", "monthly_light"), 7500)
         self.assertEqual(quote_payment_cents("299.00", "monthly_flagship"), 100000)
-        self.assertEqual(quote_payment_cents("249.00", "addon_project"), 78000)
+        self.assertEqual(quote_payment_cents("299.00", "addon_project"), 110000)
         self.assertEqual(quote_payment_cents("499.00", "addon_ultra"), 200000)
 
     def test_product_quote_rejects_unknown_or_mismatched_product(self) -> None:

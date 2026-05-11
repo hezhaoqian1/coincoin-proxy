@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useSearchParams } from 'react-router-dom'
-import { PRICING_PLANS, TRAFFIC_PACKS, redeemCode, getApiKey, confirmOrder, listOrders } from '../api/client'
+import { PRICING_PLANS, TRAFFIC_PACKS, redeemCode, getApiKey, confirmOrder, listOrders, getBillingState } from '../api/client'
 import useOrderConfirm from '../hooks/useOrderConfirm'
 import { useAuth } from '../hooks/useAuth'
 import AppShell from '../components/AppShell'
@@ -9,6 +9,62 @@ import './Recharge.css'
 
 const POLL_INTERVAL = 3000
 const MAX_POLL_ATTEMPTS = 200
+
+function formatUsd(cents) {
+    return `$${((Number(cents) || 0) / 100).toFixed(2)}`
+}
+
+function formatDateTime(value) {
+    if (!value) return '-'
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) return '-'
+    return date.toLocaleString('zh-CN', {
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+    })
+}
+
+function trimMoney(value) {
+    const numberValue = Number(value)
+    if (!Number.isFinite(numberValue)) return value || ''
+    return numberValue.toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1')
+}
+
+function mergeProduct(apiProduct, fallbackProduct) {
+    if (!apiProduct) return fallbackProduct
+    const payMoney = apiProduct.pay_money || apiProduct.money || fallbackProduct.money
+    const balanceCents = apiProduct.balance_cents ?? fallbackProduct.balanceCents
+    const isMonthly = apiProduct.kind === 'monthly'
+    const action = apiProduct.purchase_action || 'purchase'
+    const actionFeature = action === 'upgrade'
+        ? `本周期补差价 ¥${trimMoney(payMoney)}，到期时间不变`
+        : action === 'renew'
+            ? '同档购买只续费 30 天，不重置当前用量'
+            : isMonthly
+                ? '购买后开启 30 天套餐周期'
+                : '流量包 180 天有效，套餐有效时可用'
+    return {
+        ...fallbackProduct,
+        id: apiProduct.id,
+        kind: apiProduct.kind,
+        name: apiProduct.name || fallbackProduct.name,
+        money: payMoney,
+        baseMoney: apiProduct.money || fallbackProduct.money,
+        price: `¥${trimMoney(payMoney)}`,
+        priceNote: isMonthly ? (action === 'upgrade' ? ' / 本周期补差' : ' / 月') : '',
+        balanceCents,
+        balanceLabel: isMonthly
+            ? `${formatUsd(balanceCents)} / 30 天套餐额度`
+            : `${formatUsd(balanceCents)} 流量包额度`,
+        unitLabel: fallbackProduct.unitLabel,
+        allowed: apiProduct.allowed !== false,
+        unavailableReason: apiProduct.unavailable_reason || '',
+        purchaseAction: action,
+        features: [actionFeature, ...(fallbackProduct.features || []).slice(1)],
+    }
+}
 
 function formatOrderTime(value) {
     if (!value) return '-'
@@ -25,9 +81,11 @@ function formatOrderTime(value) {
 export default function Recharge() {
     const [searchParams, setSearchParams] = useSearchParams()
     const { isLoggedIn } = useAuth()
-    const products = [...PRICING_PLANS, ...TRAFFIC_PACKS]
     const [selectedProductId, setSelectedProductId] = useState('monthly_basic')
     const [loading, setLoading] = useState(false)
+    const [billingState, setBillingState] = useState(null)
+    const [billingLoading, setBillingLoading] = useState(false)
+    const [billingError, setBillingError] = useState('')
 
     const [redeemInput, setRedeemInput] = useState('')
     const [redeemLoading, setRedeemLoading] = useState(false)
@@ -45,6 +103,39 @@ export default function Recharge() {
     const [popupBlocked, setPopupBlocked] = useState(false)
     const navigate = useNavigate()
     const activeSection = searchParams.get('section') || 'recharge'
+
+    const loadBillingState = useCallback(async () => {
+        if (!isLoggedIn) {
+            setBillingState(null)
+            setBillingError('')
+            return
+        }
+        setBillingLoading(true)
+        setBillingError('')
+        try {
+            const data = await getBillingState()
+            setBillingState(data)
+        } catch {
+            setBillingError('套餐状态加载失败，请刷新后重试。')
+        } finally {
+            setBillingLoading(false)
+        }
+    }, [isLoggedIn])
+
+    const monthlyProducts = PRICING_PLANS.map(plan => (
+        mergeProduct(
+            billingState?.products?.monthly?.find(item => item.id === plan.id),
+            plan,
+        )
+    ))
+    const addonProducts = TRAFFIC_PACKS.map(pack => (
+        mergeProduct(
+            billingState?.products?.addons?.find(item => item.id === pack.id),
+            pack,
+        )
+    ))
+    const products = [...monthlyProducts, ...addonProducts]
+    const selectedProduct = products.find(item => item.id === selectedProductId) || monthlyProducts[1] || products[0]
 
     const loadOrders = useCallback(async () => {
         if (!isLoggedIn) return
@@ -73,6 +164,16 @@ export default function Recharge() {
     }, [loadOrders])
 
     useEffect(() => {
+        loadBillingState()
+    }, [loadBillingState])
+
+    useEffect(() => {
+        if (!selectedProduct || selectedProduct.allowed !== false) return
+        const fallback = products.find(item => item.allowed !== false)
+        if (fallback) setSelectedProductId(fallback.id)
+    }, [selectedProduct, products])
+
+    useEffect(() => {
         if (!payResult) return
         if (autoRedirect <= 0) { navigate('/dashboard'); return }
         const t = setTimeout(() => setAutoRedirect(prev => prev - 1), 1000)
@@ -96,6 +197,7 @@ export default function Recharge() {
                     setPayResult(result)
                     localStorage.removeItem('coincoin_last_order')
                     loadOrders()
+                    loadBillingState()
                     document.title = '\u2705 \u5145\u503c\u6210\u529f\uff01'
                     setTimeout(() => { document.title = 'ClawFather' }, 8000)
                     return
@@ -111,7 +213,7 @@ export default function Recharge() {
             }
         }
         poll()
-    }, [loadOrders])
+    }, [loadOrders, loadBillingState])
 
     const handlePay = async () => {
         if (!isLoggedIn) {
@@ -119,9 +221,13 @@ export default function Recharge() {
             return
         }
 
-        const plan = products.find(item => item.id === selectedProductId) || PRICING_PLANS[1] || products[0]
+        const plan = selectedProduct || PRICING_PLANS[1] || products[0]
         const planMoney = plan.money
         if (!planMoney || parseFloat(planMoney) <= 0) return
+        if (plan.allowed === false) {
+            alert(plan.unavailableReason || '当前暂不可购买这个套餐')
+            return
+        }
 
         const planName = `${plan.name} ${plan.kind === 'addon' ? '流量包' : '套餐'}`
 
@@ -173,6 +279,7 @@ export default function Recharge() {
                 }
                 startPolling(res.order_no, planName, planMoney, res.pay_url)
                 loadOrders()
+                loadBillingState()
             } else {
                 alert(res.detail || '创建订单失败，请重试')
                 if (payWin) payWin.close()
@@ -199,6 +306,7 @@ export default function Recharge() {
             if (res.success) {
                 setRedeemMsg({ type: 'success', text: `兑换成功！充值 $${(res.added_cents / 100).toFixed(2)}，当前余额 $${res.new_balance_usd.toFixed(2)}` })
                 setRedeemInput('')
+                loadBillingState()
             } else {
                 setRedeemMsg({ type: 'error', text: res.detail || res.message || '兑换失败' })
             }
@@ -263,29 +371,38 @@ export default function Recharge() {
             <div className="recharge-overview glass-card animate-fade-in-up">
                 <div className="recharge-overview-copy">
                     <span className="recharge-kicker">Billing</span>
-                    <h2>一个余额，覆盖全部模型</h2>
-                    <p>文本和图片请求共用一个余额，不需要分开充值。</p>
+                    <h2>月卡额度优先，流量包补量</h2>
+                    <p>所有模型共用同一套额度池，扣费顺序为套餐额度、流量包、历史余额。</p>
                 </div>
                 <div className="recharge-overview-points">
                     <div className="recharge-point">
                             <strong>选月卡</strong>
-                            <p>先按月选一个预算档位，额度进入账户余额。</p>
+                            <p>套餐每 30 天重置一次，未用完不结转。</p>
                     </div>
                     <div className="recharge-point">
                             <strong>补流量</strong>
-                            <p>额度用完后买流量包，不影响原来的使用习惯。</p>
+                            <p>流量包有效期 180 天，套餐有效时才会消耗。</p>
                     </div>
                     <div className="recharge-point">
-                            <strong>按量扣费</strong>
-                            <p>所有文本和图片请求仍然从同一个余额里扣。</p>
+                            <strong>升级补差</strong>
+                            <p>高档升级按本周期剩余时间补差，低档购买会被拦截。</p>
                     </div>
                 </div>
             </div>
 
+                {isLoggedIn && (
+                    <BillingSnapshot
+                        billingState={billingState}
+                        loading={billingLoading}
+                        error={billingError}
+                        onRefresh={loadBillingState}
+                    />
+                )}
+
                 {orderConfirmed && (
                     <div className="glass-card animate-fade-in" style={{ padding: 'var(--space-lg)', marginBottom: 'var(--space-lg)', background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.25)' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <span style={{ color: 'var(--accent-emerald)' }}>&#10003; 上一笔充值已到账。+${(orderConfirmed.added_cents / 100).toFixed(2)}，当前余额 ${orderConfirmed.new_balance_usd?.toFixed(2)}</span>
+                            <span style={{ color: 'var(--accent-emerald)' }}>&#10003; 上一笔支付已到账，获得 {formatUsd(orderConfirmed.added_cents)} 可用额度。</span>
                             <button className="btn btn-sm btn-secondary" onClick={dismissOrder}>知道了</button>
                         </div>
                     </div>
@@ -298,10 +415,10 @@ export default function Recharge() {
                         <span className="recharge-kicker">Monthly</span>
                         <h3>月付套餐</h3>
                     </div>
-                    <p>现在按余额模型入账，作为月度建议额度使用；后续做真订阅时再加自动重置和套餐状态。</p>
+                    <p>同一时间只有一个有效套餐；同档购买只续费，高档购买按剩余天数补差升级。</p>
                 </div>
                 <div className="recharge-plans stagger-children">
-                    {PRICING_PLANS.map((plan, i) => (
+                    {monthlyProducts.map((plan, i) => (
                         <ProductCard
                             key={plan.id}
                             product={plan}
@@ -317,10 +434,10 @@ export default function Recharge() {
                         <span className="recharge-kicker">Add-on</span>
                         <h3>流量包</h3>
                     </div>
-                    <p>额度用光后买流量包补余额；流量包不刷新月度时间，只追加账户余额，大包单价更低。</p>
+                    <p>流量包只保留三档，必须有有效月卡；轻量解锁补量包，基础解锁项目包，旗舰解锁超大包。</p>
                 </div>
                 <div className="recharge-plans recharge-addon-plans stagger-children">
-                    {TRAFFIC_PACKS.map((pack, i) => (
+                    {addonProducts.map((pack, i) => (
                         <ProductCard
                             key={pack.id}
                             product={pack}
@@ -333,7 +450,7 @@ export default function Recharge() {
 
                 <div className="pricing-policy-note glass-card animate-fade-in-up" style={{ animationDelay: '300ms' }}>
                     <strong>购买规则</strong>
-                    <p>补量优先买流量包。当前版本所有购买都会进入账户余额，支付成功后立即可用；真订阅开启后再处理高低档覆盖和月度重置。</p>
+                    <p>套餐额度每 30 天重置且不结转；同档购买只续费；高档购买补差升级；低档购买无效；流量包 180 天有效，套餐过期后暂停使用。</p>
                 </div>
 
                 <div id="recharge-section-orders" className="recharge-anchor"></div>
@@ -343,7 +460,7 @@ export default function Recharge() {
                         <div style={{ fontSize: '3rem', marginBottom: 'var(--space-md)' }}>&#10003;</div>
                         <h2 style={{ color: 'var(--accent-emerald)', marginBottom: 'var(--space-sm)' }}>充值成功！</h2>
                         <p style={{ fontSize: '1.1rem', marginBottom: 'var(--space-md)' }}>
-                            +${(payResult.added_cents / 100).toFixed(2)} 已到账，当前余额 ${payResult.new_balance_usd?.toFixed(2)}
+                            {formatUsd(payResult.added_cents)} 可用额度已到账。
                         </p>
                         <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: 'var(--space-md)' }}>
                             {autoRedirect} 秒后自动跳转到概览页...
@@ -388,14 +505,16 @@ export default function Recharge() {
                         <button
                             className="btn btn-primary btn-lg pay-btn"
                             onClick={handlePay}
-                            disabled={isLoggedIn && loading}
+                            disabled={isLoggedIn && (loading || selectedProduct?.allowed === false)}
                         >
                             {isLoggedIn && loading ? '创建订单中...' : (
                                 <>
                                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="1" y="4" width="22" height="16" rx="2" ry="2" /><line x1="1" y1="10" x2="23" y2="10" /></svg>
                                     {!isLoggedIn
                                         ? '登录后充值'
-                                        : `支付宝支付 ${(products.find(item => item.id === selectedProductId) || PRICING_PLANS[1] || products[0])?.price || ''}`
+                                        : selectedProduct?.allowed === false
+                                            ? '当前不可购买'
+                                            : `支付宝支付 ${selectedProduct?.price || ''}`
                                     }
                                 </>
                             )}
@@ -538,12 +657,68 @@ export default function Recharge() {
     )
 }
 
+function BillingSnapshot({ billingState, loading, error, onRefresh }) {
+    const subscription = billingState?.subscription || {}
+    const trafficPacks = billingState?.traffic_packs || {}
+    const legacyBalance = billingState?.legacy_balance || {}
+    const available = billingState?.available || {}
+    const statusText = subscription.active
+        ? `${subscription.plan_name || '当前套餐'} · 到期 ${formatDateTime(subscription.paid_until)}`
+        : '暂无有效月卡'
+
+    return (
+        <div className="billing-snapshot glass-card animate-fade-in-up">
+            <div className="billing-snapshot-head">
+                <div>
+                    <span className="recharge-kicker">Account</span>
+                    <h3>当前额度</h3>
+                </div>
+                <button className="btn btn-secondary btn-sm" onClick={onRefresh} disabled={loading}>
+                    {loading ? '刷新中...' : '刷新'}
+                </button>
+            </div>
+            {error ? (
+                <div className="billing-snapshot-error">{error}</div>
+            ) : (
+                <>
+                    <div className="billing-status-line">{statusText}</div>
+                    <div className="billing-pool-grid">
+                        <div className="billing-pool">
+                            <span>套餐剩余</span>
+                            <strong>{formatUsd(subscription.remaining_cents)}</strong>
+                            <small>本期已用 {formatUsd(subscription.used_cents)} / {formatUsd(subscription.quota_cents)}</small>
+                        </div>
+                        <div className="billing-pool">
+                            <span>流量包</span>
+                            <strong>{formatUsd(trafficPacks.remaining_cents)}</strong>
+                            <small>{subscription.active ? '180 天有效，先到期先扣' : '套餐过期时暂停使用'}</small>
+                        </div>
+                        <div className="billing-pool">
+                            <span>历史余额</span>
+                            <strong>{formatUsd(legacyBalance.remaining_cents)}</strong>
+                            <small>老充值余额保留，最后扣费</small>
+                        </div>
+                        <div className="billing-pool billing-pool-total">
+                            <span>可用总额</span>
+                            <strong>{formatUsd(available.remaining_cents)}</strong>
+                            <small>{'套餐 -> 流量包 -> 历史余额'}</small>
+                        </div>
+                    </div>
+                </>
+            )}
+        </div>
+    )
+}
+
 function ProductCard({ product, selected, onSelect, delay = 0 }) {
+    const disabled = product.allowed === false
     return (
         <div
-            className={`recharge-plan glass-card animate-fade-in-up ${selected ? 'plan-selected' : ''} ${product.highlight ? 'plan-popular' : ''}`}
+            className={`recharge-plan glass-card animate-fade-in-up ${selected ? 'plan-selected' : ''} ${product.highlight ? 'plan-popular' : ''} ${disabled ? 'plan-disabled' : ''}`}
             style={{ animationDelay: `${delay}ms` }}
-            onClick={onSelect}
+            onClick={() => {
+                if (!disabled) onSelect()
+            }}
         >
             {product.badge && <div className="pricing-badge">{product.badge}</div>}
             <div className="plan-header">
@@ -560,6 +735,7 @@ function ProductCard({ product, selected, onSelect, delay = 0 }) {
                     <li key={feature}>&#10003; {feature}</li>
                 ))}
             </ul>
+            {disabled && <div className="plan-disabled-reason">{product.unavailableReason || '当前不可购买'}</div>}
             {selected && (
                 <div className="plan-check">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent-emerald)" strokeWidth="3"><polyline points="20 6 9 17 4 12" /></svg>

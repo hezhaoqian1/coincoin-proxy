@@ -10,6 +10,7 @@ from sqlalchemy.dialects.mysql import insert as mysql_insert
 from .config import settings
 from .db import SessionLocal
 from .finance_summary import increment_finance_summary
+from .billing import debit_usage_cents
 from .models import RequestLog, UsageDaily, User
 from .referral import process_first_usage_referral_reward
 from .security import generate_id
@@ -447,7 +448,12 @@ async def flush_once() -> None:
                     user.token_used = int(user.token_used or 0) + total_tokens
                     user.input_tokens_used = int(user.input_tokens_used or 0) + input_tokens
                     user.output_tokens_used = int(user.output_tokens_used or 0) + output_tokens
-                    user.balance = int(user.balance or 0) - cost_cents
+                    await debit_usage_cents(
+                        db=session,
+                        user=user,
+                        cost_cents=cost_cents,
+                        source_id=f"usage_flush:{china_today().isoformat()}",
+                    )
                     await increment_finance_summary(
                         session,
                         user_id,
