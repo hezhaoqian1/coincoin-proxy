@@ -706,7 +706,6 @@ function ModelsAndPricing({ textModels, imageModels, defaultTextModel, defaultIm
                 <li>Cached input 表示缓存读取 token，使用模型目录返回的单独缓存读取价格计费，不要按普通 Input 价格估算。</li>
                 <li><code>gpt-image-2</code> 默认图片价格按 OpenAI 官方 medium <code>1024x1024</code> 参考价展示；实际成本会随质量、尺寸和上游计费策略变化。</li>
                 <li><code>gemini-image</code> 价格对标 Google Gemini API 官方价格，当前按 Gemini 3.1 Flash Image Preview 的 <code>$0.067 / 1K image</code> 展示。</li>
-                <li>Claude Code 走 GPT 上游时，缓存写入只作为用量观测字段记录；实际 GPT 上游不返回独立 cache write 计费项。</li>
                 <li>同一个账户余额同时覆盖文本模型和图片模型，不需要分开充值。</li>
                 <li>老客户端不传 <code>model</code> 时，仍然走默认文本模型，以保证兼容。</li>
             </ul>
