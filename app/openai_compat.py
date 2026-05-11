@@ -153,10 +153,11 @@ async def get_balance(request: Request, db: AsyncSession = Depends(get_db)):
     # 获取待刷新的数据
     pending_tokens = await usage_buffer.get_pending_tokens(user.id)
     pending_cost = await usage_buffer.get_pending_cost(user.id)
+    from .billing import get_available_balance_cents, serialize_billing_state
+    billing_snapshot = await get_available_balance_cents(db, user, pending_cost_cents=pending_cost)
     
     # 计算当前值（数据库最新值 + 待刷新）
-    current_balance = user.balance or 0
-    balance = current_balance - pending_cost
+    balance = int(billing_snapshot.get("available_cents", 0))
     token_used = (user.token_used or 0) + pending_tokens
     input_tokens_used = user.input_tokens_used or 0
     output_tokens_used = user.output_tokens_used or 0
@@ -213,6 +214,11 @@ async def get_balance(request: Request, db: AsyncSession = Depends(get_db)):
         station_slug=station_slug,
         station_display_name=station_display_name,
         station_pricing_models=station_models if station_models else None,
+        billing=serialize_billing_state(
+            billing_snapshot.get("subscription"),
+            billing_snapshot.get("traffic_packs") or [],
+            user,
+        ),
     )
 
 

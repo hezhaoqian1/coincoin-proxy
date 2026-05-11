@@ -313,6 +313,13 @@ export async function getBalance() {
     return parseJsonResponse(res, 'Invalid API Key')
 }
 
+export async function getBillingState() {
+    const res = await fetch(`${PROXY_BASE}/v1/billing/state`, {
+        headers: authHeaders()
+    })
+    return parseJsonResponse(res, 'Failed to fetch billing state')
+}
+
 /** Get usage logs */
 export async function getUsageLogs(limit = 50, offset = 0, filters = {}) {
     const params = new URLSearchParams({ limit, offset })
@@ -758,9 +765,9 @@ export const PRICING_PLANS = [
         priceNote: '/ 月',
         money: '29.90',
         balanceCents: 7500,
-        balanceLabel: '$75 月付建议额度',
+        balanceLabel: '$75 / 30 天套餐额度',
         unitLabel: '约 ¥0.40 / $1',
-        features: ['$75 账户余额', '适合轻量开发和日常对话', '额度入账到账户余额', '用完后可买流量包补量'],
+        features: ['$75 套餐额度', '每 30 天重置一次', '同档续费不重置本期用量', '用完后可买流量包补量'],
         badge: null,
         highlight: false
     },
@@ -772,9 +779,9 @@ export const PRICING_PLANS = [
         priceNote: '/ 月',
         money: '129.00',
         balanceCents: 38000,
-        balanceLabel: '$380 月付建议额度',
+        balanceLabel: '$380 / 30 天套餐额度',
         unitLabel: '约 ¥0.34 / $1',
-        features: ['$380 账户余额', '适合稳定主力使用', '文本和图片模型共用余额', '比轻量档单价更低'],
+        features: ['$380 套餐额度', '适合稳定主力使用', '高档升级按剩余天数补差', '比轻量档单价更低'],
         badge: '推荐',
         highlight: true
     },
@@ -786,9 +793,9 @@ export const PRICING_PLANS = [
         priceNote: '/ 月',
         money: '299.00',
         balanceCents: 100000,
-        balanceLabel: '$1000 月付建议额度',
+        balanceLabel: '$1000 / 30 天套餐额度',
         unitLabel: '约 ¥0.30 / $1',
-        features: ['$1,000 账户余额', '适合高频调用和多工具工作流', '月度预算感最清晰', '套餐内最低单价'],
+        features: ['$1,000 套餐额度', '适合高频调用和多工具工作流', '解锁全部流量包', '套餐内最低单价'],
         badge: null,
         highlight: false
     }
@@ -802,10 +809,10 @@ export const TRAFFIC_PACKS = [
         price: '¥99',
         priceNote: '',
         money: '99.00',
-        balanceCents: 25000,
-        balanceLabel: '$250 额外余额',
-        unitLabel: '约 ¥0.40 / $1',
-        features: ['$250 额外余额', '适合月底临时补量', '不改变月付套餐', '到账后直接按量扣费'],
+        balanceCents: 28000,
+        balanceLabel: '$280 额外额度',
+        unitLabel: '约 ¥0.35 / $1',
+        features: ['$280 流量包额度', '有效期 180 天', '需要有效月卡', '轻量套餐起可买'],
         badge: null,
         highlight: false
     },
@@ -813,13 +820,13 @@ export const TRAFFIC_PACKS = [
         id: 'addon_project',
         name: '项目包',
         kind: 'addon',
-        price: '¥249',
+        price: '¥299',
         priceNote: '',
-        money: '249.00',
-        balanceCents: 78000,
-        balanceLabel: '$780 额外余额',
-        unitLabel: '约 ¥0.32 / $1',
-        features: ['$780 额外余额', '适合一次项目或批量任务', '比小包更划算', '余额长期共用'],
+        money: '299.00',
+        balanceCents: 110000,
+        balanceLabel: '$1100 额外额度',
+        unitLabel: '约 ¥0.27 / $1',
+        features: ['$1,100 流量包额度', '有效期 180 天', '基础套餐起可买', '适合一次项目或批量任务'],
         badge: '补量推荐',
         highlight: true
     },
@@ -831,9 +838,9 @@ export const TRAFFIC_PACKS = [
         priceNote: '',
         money: '499.00',
         balanceCents: 200000,
-        balanceLabel: '$2000 额外余额',
+        balanceLabel: '$2000 额外额度',
         unitLabel: '约 ¥0.25 / $1',
-        features: ['$2,000 额外余额', '适合长期高频和团队共用', '最低补量单价', '大额调用成本更稳'],
+        features: ['$2,000 流量包额度', '有效期 180 天', '旗舰套餐可买', '最低补量单价'],
         badge: '最划算',
         highlight: false
     }

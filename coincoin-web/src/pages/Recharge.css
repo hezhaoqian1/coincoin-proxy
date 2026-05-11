@@ -61,6 +61,7 @@
     margin: 0;
     color: var(--text-secondary);
     line-height: 1.65;
+    overflow-wrap: anywhere;
 }
 
 .recharge-overview-points {
@@ -96,6 +97,73 @@
     margin-bottom: var(--space-lg);
 }
 
+.billing-snapshot {
+    padding: var(--space-lg);
+    margin-bottom: var(--space-lg);
+}
+
+.billing-snapshot-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: var(--space-md);
+    margin-bottom: var(--space-md);
+}
+
+.billing-snapshot-head h3 {
+    margin: 0;
+    font-size: 1.12rem;
+}
+
+.billing-status-line {
+    margin-bottom: var(--space-md);
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+.billing-snapshot-error {
+    padding: var(--space-md);
+    border: 1px solid rgba(239, 68, 68, 0.22);
+    border-radius: var(--radius-md);
+    color: var(--accent-red);
+    background: rgba(239, 68, 68, 0.08);
+}
+
+.billing-pool-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: var(--space-sm);
+}
+
+.billing-pool {
+    min-width: 0;
+    padding: 14px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-glass);
+}
+
+.billing-pool span,
+.billing-pool small {
+    display: block;
+    color: var(--text-tertiary);
+    font-size: 0.78rem;
+    line-height: 1.45;
+}
+
+.billing-pool strong {
+    display: block;
+    margin: 6px 0;
+    color: var(--text-primary);
+    font-size: 1.25rem;
+    overflow-wrap: anywhere;
+}
+
+.billing-pool-total {
+    border-color: rgba(99, 102, 241, 0.26);
+    background: rgba(99, 102, 241, 0.08);
+}
+
 .recharge-plan {
     position: relative;
     cursor: pointer;
@@ -106,6 +174,15 @@
 
 .recharge-plan:hover {
     transform: translateY(-3px);
+}
+
+.plan-disabled {
+    cursor: not-allowed;
+    opacity: 0.58;
+}
+
+.plan-disabled:hover {
+    transform: none;
 }
 
 .plan-selected {
@@ -156,6 +233,16 @@
     padding: 4px 0;
 }
 
+.plan-disabled-reason {
+    margin-top: var(--space-md);
+    padding: 9px 10px;
+    border-radius: var(--radius-sm);
+    color: var(--accent-amber);
+    background: rgba(245, 158, 11, 0.1);
+    font-size: 0.8rem;
+    line-height: 1.5;
+}
+
 .plan-check {
     position: absolute;
     top: 16px;
@@ -181,6 +268,7 @@
     color: var(--text-secondary);
     font-size: 0.86rem;
     line-height: 1.65;
+    overflow-wrap: anywhere;
 }
 
 .pricing-section-head-addon {
@@ -327,6 +415,10 @@
         grid-template-columns: 1fr;
     }
 
+    .billing-pool-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
     .recharge-plans {
         grid-template-columns: repeat(2, 1fr);
     }
@@ -374,7 +466,7 @@
 
     .recharge-overview-points {
         display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-columns: 1fr;
         gap: 8px;
     }
 
@@ -393,7 +485,7 @@
     }
 
     .recharge-plans {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-template-columns: 1fr;
         gap: 10px;
         max-width: none;
         margin: 0 0 14px;
@@ -401,6 +493,28 @@
 
     .recharge-overview {
         padding: 16px;
+    }
+
+    .recharge-page .glass-card {
+        min-width: 0;
+    }
+
+    .billing-snapshot {
+        padding: 16px;
+        margin-bottom: 14px;
+    }
+
+    .billing-pool-grid {
+        grid-template-columns: 1fr;
+        gap: 10px;
+    }
+
+    .billing-pool {
+        padding: 12px;
+    }
+
+    .billing-pool strong {
+        font-size: 1.05rem;
     }
 
     .recharge-plan {
@@ -521,10 +635,9 @@
     }
 }
 
-@media (max-width: 380px) {
-    .recharge-plans,
-    .recharge-overview-points {
-        grid-template-columns: 1fr;
+@media (max-width: 480px) {
+    .pricing-section-head p {
+        overflow-wrap: anywhere;
     }
 }
 

@@ -148,6 +148,7 @@ class PaymentOrder(Base):
     order_no: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     amount_rmb: Mapped[str] = mapped_column(String(16), default="0")
     add_balance_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    product_id: Mapped[str] = mapped_column(String(64), default="")
     station_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True)
     station_owner_user_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True)
     station_commission_rate: Mapped[float] = mapped_column(Float, default=0.0)
@@ -158,6 +159,54 @@ class PaymentOrder(Base):
     pay_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     confirmed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class UserSubscription(Base):
+    """Active monthly subscription state for a user."""
+    __tablename__ = "coincoin_user_subscriptions"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_users.id"), unique=True, index=True)
+    plan_id: Mapped[str] = mapped_column(String(64), default="")
+    status: Mapped[str] = mapped_column(String(16), default="active", index=True)
+    period_start: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    period_end: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    paid_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    quota_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    used_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class TrafficPackBalance(Base):
+    """Purchased add-on balance. It can only be spent while a subscription is active."""
+    __tablename__ = "coincoin_traffic_pack_balances"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_users.id"), index=True)
+    product_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    status: Mapped[str] = mapped_column(String(16), default="active", index=True)
+    original_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    remaining_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class BillingLedgerEntry(Base):
+    """Billing audit trail for subscription grants, add-on grants, and usage debits."""
+    __tablename__ = "coincoin_billing_ledger"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_users.id"), index=True)
+    entry_type: Mapped[str] = mapped_column(String(32), default="", index=True)
+    amount_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    source_type: Mapped[str] = mapped_column(String(32), default="")
+    source_id: Mapped[str] = mapped_column(String(128), default="", index=True)
+    product_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    balance_after_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    note: Mapped[str] = mapped_column(String(512), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 
 class RedemptionCode(Base):

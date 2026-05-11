@@ -1604,8 +1604,9 @@ async def authorize_request(request: Request, db: AsyncSession):
     # 余额检查（balance 计费模式）
     if settings.billing_mode == "balance":
         pending_cost = await usage_buffer.get_pending_cost(user.id)
-        current_balance = getattr(user, "balance", 0) or 0
-        if current_balance - pending_cost <= 0:
+        from .billing import get_available_balance_cents
+        available = await get_available_balance_cents(db, user, pending_cost_cents=pending_cost)
+        if int(available.get("available_cents", 0)) <= 0:
             raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail="insufficient balance")
 
     if user.request_limit_per_day is not None:
