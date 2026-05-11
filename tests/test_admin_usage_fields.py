@@ -644,6 +644,58 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(payment_module.PaymentConfirmError):
             quote_payment_cents("29.90", "monthly_basic")
 
+    async def test_admin_payment_orders_expose_product_metadata(self) -> None:
+        orders = [
+            SimpleNamespace(
+                id="po_1",
+                user_id="u_1",
+                order_no="CC_monthly_basic",
+                amount_rmb="129.00",
+                add_balance_cents=38000,
+                product_id="monthly_basic",
+                status="confirmed",
+                trade_no="trade_1",
+                pay_url="https://code.nxslq.top/submit.php?...",
+                created_at=datetime(2026, 3, 25, 11, 0, 0),
+                confirmed_at=datetime(2026, 3, 25, 11, 2, 0),
+            ),
+            SimpleNamespace(
+                id="po_2",
+                user_id="u_1",
+                order_no="CC_addon_ultra",
+                amount_rmb="499.00",
+                add_balance_cents=200000,
+                product_id="addon_ultra",
+                status="pending",
+                trade_no=None,
+                pay_url="https://code.nxslq.top/submit.php?...",
+                created_at=datetime(2026, 3, 26, 11, 0, 0),
+                confirmed_at=None,
+            ),
+        ]
+        fake_db = _FakeDB(execute_results=[_FakeScalarsResult(orders)])
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get("/admin/payment-orders")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload[0]["product_id"], "monthly_basic")
+        self.assertEqual(payload[0]["product_name"], "基础月卡")
+        self.assertEqual(payload[0]["product_kind"], "monthly")
+        self.assertEqual(payload[0]["product_balance_cents"], 38000)
+        self.assertEqual(payload[1]["product_id"], "addon_ultra")
+        self.assertEqual(payload[1]["product_name"], "超大包")
+        self.assertEqual(payload[1]["product_kind"], "addon")
+        self.assertEqual(payload[1]["product_min_plan_rank"], 3)
+
     async def test_list_orders_returns_current_user_payment_history(self) -> None:
         user = SimpleNamespace(id="u_1")
         orders = [
@@ -945,6 +997,8 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             execute_results=[
                 _FakeAllResult([(user, station_link, station)]),
                 _FakeScalarsResult([]),
+                _FakeEntityResult(None),
+                _FakeScalarsResult([]),
                 _FakeEntityResult(finance_summary),
             ],
             scalar_results=[120, 450],
@@ -968,6 +1022,9 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["finance_summary"]["consumed_7d_cents"], 120)
         self.assertEqual(payload["finance_summary"]["consumed_30d_cents"], 450)
         self.assertEqual(payload["finance_summary"]["current_balance_cents"], 4321)
+        self.assertEqual(payload["billing_summary"]["available_cents"], 4321)
+        self.assertEqual(payload["billing_summary"]["legacy_balance_cents"], 4321)
+        self.assertEqual(payload["billing"]["legacy_balance"]["remaining_cents"], 4321)
         self.assertEqual(payload["station_attribution"]["station_id"], "st_1")
         self.assertEqual(payload["station_attribution"]["station_name"], "Alpha Station")
         self.assertEqual(payload["station_attribution"]["station_owner_user_id"], "u_owner")
@@ -1064,6 +1121,8 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             execute_results=[
                 _FakeAllResult([(user, None, None)]),
                 _FakeScalarsResult([session_key, api_key]),
+                _FakeEntityResult(None),
+                _FakeScalarsResult([]),
                 _FakeEntityResult(finance_summary),
             ],
             scalar_results=[0, 0],
@@ -1092,6 +1151,9 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(keys_by_id["k_api"]["kind"], "api")
         self.assertEqual(keys_by_id["k_api"]["fingerprint"], "0123456789ab")
         self.assertEqual(keys_by_id["k_api"]["raw_key"], "sk_cc_test_admin_visible")
+        self.assertEqual(payload["billing_summary"]["available_cents"], 2500)
+        self.assertEqual(payload["billing_summary"]["legacy_balance_cents"], 2500)
+        self.assertEqual(payload["billing"]["available"]["remaining_cents"], 2500)
 
     async def test_list_keys_exposes_kind_fingerprint_and_shared_balance(self) -> None:
         key = SimpleNamespace(
