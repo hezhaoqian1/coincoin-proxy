@@ -22,7 +22,7 @@ from .epay import (
     verify_epay_callback_params,
 )
 from .models import PaymentOrder
-from .payment_common import PaymentConfirmError, confirm_paid_order, rmb_to_cents
+from .payment_common import PaymentConfirmError, confirm_paid_order, quote_payment_cents
 from .proxy import authenticate_user
 from .rate_limiter import rate_limiter
 from .schemas import (
@@ -159,7 +159,10 @@ async def create_order(
     if not await rate_limiter.allow(f"order_create:{user_id}", CONFIRM_RATE_LIMIT):
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "too many order requests")
 
-    expected_cents = rmb_to_cents(payload.money)
+    try:
+        expected_cents = quote_payment_cents(payload.money, payload.product_id)
+    except PaymentConfirmError as exc:
+        raise _translate_confirm_error(exc) from exc
     if expected_cents <= 0:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid money amount")
 

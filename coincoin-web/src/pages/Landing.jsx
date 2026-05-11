@@ -95,7 +95,7 @@ const FAQS = [
 ]
 
 function PricingPreview({ isLoggedIn }) {
-    const featuredPlans = [PRICING_PLANS[0], PRICING_PLANS[2], PRICING_PLANS[5]]
+    const featuredPlans = PRICING_PLANS
 
     return (
         <section className="landing-band landing-pricing-band">
@@ -103,9 +103,9 @@ function PricingPreview({ isLoggedIn }) {
                 <div className="landing-section-head">
                     <div>
                         <span className="landing-eyebrow">Pricing</span>
-                        <h2>充值后按量扣费</h2>
+                        <h2>按月选预算，用完可补量</h2>
                     </div>
-                    <p>文本和图片共用一个余额，实际调用按模型计费。</p>
+                    <p>月付套餐给清晰预算感，文本和图片最终仍从同一个余额扣费。</p>
                 </div>
                 <div className="landing-pricing-grid">
                     {featuredPlans.map((plan) => (

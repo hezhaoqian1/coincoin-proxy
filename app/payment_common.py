@@ -1,5 +1,7 @@
+from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal, InvalidOperation, ROUND_DOWN
+from typing import Optional
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -10,14 +12,32 @@ from .finance_summary import ensure_finance_summary_initialized, increment_finan
 from .models import PaymentOrder, User
 from .referral import process_referral_reward
 
-PLAN_MAP: dict[Decimal, int] = {
-    Decimal("9.90"):   4999,    # 体验包  $49.99
-    Decimal("29.90"):  14999,   # 轻量版  $149.99
-    Decimal("59.90"):  29999,   # 基础版  $299.99
-    Decimal("99.90"):  49999,   # 进阶版  $499.99
-    Decimal("199.90"): 99999,   # 专业版  $999.99
-    Decimal("499.90"): 249999,  # 旗舰版  $2499.99
-}
+@dataclass(frozen=True)
+class PaymentProduct:
+    id: str
+    kind: str
+    name: str
+    money: str
+    balance_cents: int
+
+    @property
+    def money_decimal(self) -> Decimal:
+        return Decimal(self.money).quantize(Decimal("0.01"))
+
+
+PAYMENT_PRODUCTS: tuple[PaymentProduct, ...] = (
+    PaymentProduct("monthly_light", "monthly", "轻量月卡", "29.90", 7500),
+    PaymentProduct("monthly_basic", "monthly", "基础月卡", "129.00", 38000),
+    PaymentProduct("monthly_flagship", "monthly", "旗舰月卡", "299.00", 100000),
+    PaymentProduct("addon_boost", "addon", "补量包", "99.00", 25000),
+    PaymentProduct("addon_project", "addon", "项目包", "249.00", 78000),
+    PaymentProduct("addon_ultra", "addon", "超大包", "499.00", 200000),
+)
+
+PRODUCTS_BY_ID: dict[str, PaymentProduct] = {product.id: product for product in PAYMENT_PRODUCTS}
+PRODUCTS_BY_MONEY: dict[Decimal, PaymentProduct] = {}
+for product in PAYMENT_PRODUCTS:
+    PRODUCTS_BY_MONEY.setdefault(product.money_decimal, product)
 
 
 class PaymentConfirmError(Exception):
@@ -42,10 +62,21 @@ def rmb_to_cents(money_str: str) -> int:
         return 0
     if d <= 0:
         return 0
-    if d in PLAN_MAP:
-        return PLAN_MAP[d]
+    if d in PRODUCTS_BY_MONEY:
+        return PRODUCTS_BY_MONEY[d].balance_cents
     rate = Decimal(str(settings.rmb_to_cents_rate))
     return max(1, int((d * rate).to_integral_value(ROUND_DOWN)))
+
+
+def quote_payment_cents(money_str: str, product_id: Optional[str] = None) -> int:
+    if product_id and product_id not in PRODUCTS_BY_ID:
+        raise PaymentConfirmError("unknown payment product", status_code=400)
+    product = PRODUCTS_BY_ID.get(product_id or "")
+    if product:
+        if normalize_rmb(money_str) != format(product.money_decimal, "f"):
+            raise PaymentConfirmError("payment amount does not match selected product", status_code=400)
+        return product.balance_cents
+    return rmb_to_cents(money_str)
 
 
 def rmb_to_minor_cents(money_str: str) -> int:

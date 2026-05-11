@@ -15,6 +15,7 @@ import app.payment as payment_module
 import app.proxy as proxy_module
 import app.webhook as webhook_module
 import app.openai_compat as openai_module
+from app.payment_common import quote_payment_cents
 from app.router import registry as model_registry
 
 
@@ -610,7 +611,12 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
                 response = await client.post(
                     "/v1/orders/create",
-                    json={"name": "体验包 套餐", "money": "9.90", "pay_type": "alipay"},
+                    json={
+                        "name": "基础月卡 套餐",
+                        "money": "129.00",
+                        "pay_type": "alipay",
+                        "product_id": "monthly_basic",
+                    },
                     headers={"Authorization": "Bearer sk_cc_test"},
                 )
         finally:
@@ -623,8 +629,20 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("notify_url=https%3A%2F%2Fbird-alipay.up.railway.app%2Fwebhook%2Fpay-notify", payload["pay_url"])
         self.assertIn("return_url=https%3A%2F%2Fbird-alipay.up.railway.app%2Fpay%2Freturn%3Forder_no%3D", payload["pay_url"])
         self.assertIn("sign=", payload["pay_url"])
-        self.assertEqual(payload["expected_cents"], 4999)
+        self.assertEqual(payload["expected_cents"], 38000)
         self.assertEqual(fake_db.commits, 1)
+
+    def test_product_quote_uses_selected_product_id(self) -> None:
+        self.assertEqual(quote_payment_cents("29.90", "monthly_light"), 7500)
+        self.assertEqual(quote_payment_cents("299.00", "monthly_flagship"), 100000)
+        self.assertEqual(quote_payment_cents("249.00", "addon_project"), 78000)
+        self.assertEqual(quote_payment_cents("499.00", "addon_ultra"), 200000)
+
+    def test_product_quote_rejects_unknown_or_mismatched_product(self) -> None:
+        with self.assertRaises(payment_module.PaymentConfirmError):
+            quote_payment_cents("129.00", "missing_product")
+        with self.assertRaises(payment_module.PaymentConfirmError):
+            quote_payment_cents("29.90", "monthly_basic")
 
     async def test_list_orders_returns_current_user_payment_history(self) -> None:
         user = SimpleNamespace(id="u_1")

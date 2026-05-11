@@ -328,11 +328,13 @@ export async function getUsageLogs(limit = 50, offset = 0, filters = {}) {
 // ===== Payment APIs =====
 
 /** Create order via proxy (proxy creates order + calls payment service) */
-export async function createOrder({ name, money, pay_type = 'alipay' }) {
+export async function createOrder({ name, money, pay_type = 'alipay', product_id = null }) {
+    const body = { name, money, pay_type }
+    if (product_id) body.product_id = product_id
     const res = await fetch(`${PROXY_BASE}/v1/orders/create`, {
         method: 'POST',
         headers: authHeaders(),
-        body: JSON.stringify({ name, money, pay_type })
+        body: JSON.stringify(body)
     })
     return res.json()
 }
@@ -749,62 +751,89 @@ export const MOCK_USAGE = {
 
 export const PRICING_PLANS = [
     {
-        name: '体验包',
-        price: '¥9.9',
-        priceNote: '',
-        money: '9.90',
-        balanceLabel: '$49.99 余额',
-        features: ['$49.99 账户余额', '适合接入测试与小流量使用', '多模型可选', '按量计费 · 用多少扣多少'],
-        badge: null,
-        highlight: false
-    },
-    {
-        name: '轻量版',
+        id: 'monthly_light',
+        name: '轻量月卡',
+        kind: 'monthly',
         price: '¥29.9',
-        priceNote: '',
+        priceNote: '/ 月',
         money: '29.90',
-        balanceLabel: '$149.99 余额',
-        features: ['$149.99 账户余额', '适合日常编码和对话请求', '支持文本与图片模型', '按量计费 · 用多少扣多少'],
+        balanceCents: 7500,
+        balanceLabel: '$75 月付建议额度',
+        unitLabel: '约 ¥0.40 / $1',
+        features: ['$75 账户余额', '适合轻量开发和日常对话', '额度入账到账户余额', '用完后可买流量包补量'],
         badge: null,
         highlight: false
     },
     {
-        name: '基础版',
-        price: '¥59.9',
-        priceNote: '',
-        money: '59.90',
-        balanceLabel: '$299.99 余额',
-        features: ['$299.99 账户余额', '适合多客户端长期使用', '默认兼容文本 + 多模型', '按量计费 · 用多少扣多少'],
-        badge: '最受欢迎',
+        id: 'monthly_basic',
+        name: '基础月卡',
+        kind: 'monthly',
+        price: '¥129',
+        priceNote: '/ 月',
+        money: '129.00',
+        balanceCents: 38000,
+        balanceLabel: '$380 月付建议额度',
+        unitLabel: '约 ¥0.34 / $1',
+        features: ['$380 账户余额', '适合稳定主力使用', '文本和图片模型共用余额', '比轻量档单价更低'],
+        badge: '推荐',
         highlight: true
     },
     {
-        name: '进阶版',
-        price: '¥99.9',
+        id: 'monthly_flagship',
+        name: '旗舰月卡',
+        kind: 'monthly',
+        price: '¥299',
+        priceNote: '/ 月',
+        money: '299.00',
+        balanceCents: 100000,
+        balanceLabel: '$1000 月付建议额度',
+        unitLabel: '约 ¥0.30 / $1',
+        features: ['$1,000 账户余额', '适合高频调用和多工具工作流', '月度预算感最清晰', '套餐内最低单价'],
+        badge: null,
+        highlight: false
+    }
+]
+
+export const TRAFFIC_PACKS = [
+    {
+        id: 'addon_boost',
+        name: '补量包',
+        kind: 'addon',
+        price: '¥99',
         priceNote: '',
-        money: '99.90',
-        balanceLabel: '$499.99 余额',
-        features: ['$499.99 账户余额', '适合团队协作与代理工作流', '文本 + 生图请求统一计费', '按量计费 · 用多少扣多少'],
+        money: '99.00',
+        balanceCents: 25000,
+        balanceLabel: '$250 额外余额',
+        unitLabel: '约 ¥0.40 / $1',
+        features: ['$250 额外余额', '适合月底临时补量', '不改变月付套餐', '到账后直接按量扣费'],
         badge: null,
         highlight: false
     },
     {
-        name: '专业版',
-        price: '¥199.9',
+        id: 'addon_project',
+        name: '项目包',
+        kind: 'addon',
+        price: '¥249',
         priceNote: '',
-        money: '199.90',
-        balanceLabel: '$999.99 余额',
-        features: ['$999.99 账户余额', '适合高频自动化与批量调用', '支持稳定版与预览版模型', '按量计费 · 用多少扣多少'],
-        badge: null,
-        highlight: false
+        money: '249.00',
+        balanceCents: 78000,
+        balanceLabel: '$780 额外余额',
+        unitLabel: '约 ¥0.32 / $1',
+        features: ['$780 额外余额', '适合一次项目或批量任务', '比小包更划算', '余额长期共用'],
+        badge: '补量推荐',
+        highlight: true
     },
     {
-        name: '旗舰版',
-        price: '¥499.9',
+        id: 'addon_ultra',
+        name: '超大包',
+        kind: 'addon',
+        price: '¥499',
         priceNote: '',
-        money: '499.90',
-        balanceLabel: '$2499.99 余额',
-        features: ['$2,499.99 账户余额', '适合多账号、长上下文和图片工作流', 'ClawFather 长期主力方案', '按量计费 · 用多少扣多少'],
+        money: '499.00',
+        balanceCents: 200000,
+        balanceLabel: '$2000 额外余额',
+        unitLabel: '约 ¥0.25 / $1',
+        features: ['$2,000 额外余额', '适合长期高频和团队共用', '最低补量单价', '大额调用成本更稳'],
         badge: '最划算',
         highlight: false
     }

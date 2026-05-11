@@ -197,6 +197,7 @@ class OrderCreateRequest(BaseModel):
     money: str = Field(..., description="支付金额（元），如 '9.90'")
     name: str = Field(default="CoinCoin 充值", description="商品名称")
     pay_type: str = Field(default="alipay", description="支付方式: alipay / wxpay")
+    product_id: Optional[str] = Field(default=None, description="预设套餐或流量包 ID")
 
 class OrderCreateResponse(BaseModel):
     order_no: str
