@@ -2,7 +2,7 @@ import os
 import secrets
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from fastapi.responses import FileResponse
@@ -163,7 +163,7 @@ def admin_guard(request: Request):
     require_admin(request)
 
 
-def _analytics_period(period: str) -> tuple[str, int, date, datetime):
+def _analytics_period(period: str) -> Tuple[str, int, date, datetime]:
     normalized = (period or "today").strip().lower()
     days_by_period = {
         "today": 1,
