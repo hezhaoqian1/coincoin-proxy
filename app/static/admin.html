@@ -1135,6 +1135,10 @@
             <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
             数据概览
           </div>
+          <div class="nav-item" data-page="analytics">
+            <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 19h16M7 16l3-3 3 2 5-7"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 8h2v2"/></svg>
+            经营看板
+          </div>
         </div>
 
         <div class="nav-group">
@@ -1320,6 +1324,111 @@
                 <thead><tr><th>用户</th><th>请求数</th><th>Tokens</th><th>图片数</th></tr></thead>
                 <tbody id="topUsageBody"></tbody>
               </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- =============== Analytics =============== -->
+      <div id="page-analytics" class="page">
+        <div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap">
+          <div>
+            <h1 class="page-title">经营看板</h1>
+            <p class="page-desc">基于现有聚合数据查看收入、消耗、用户排行、余额风险和错误概览。</p>
+          </div>
+          <div class="filter-bar">
+            <select id="analyticsPeriod" class="form-select" style="width:140px" onchange="loadAnalytics()">
+              <option value="today">今天</option>
+              <option value="7d">近 7 天</option>
+              <option value="30d">近 30 天</option>
+            </select>
+            <button class="btn btn-secondary" onclick="loadAnalytics()">刷新</button>
+          </div>
+        </div>
+
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-icon">¥</div>
+            <div class="stat-value" id="analyticsPaid">-</div>
+            <div class="stat-label">实付入账</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon">↗</div>
+            <div class="stat-value" id="analyticsCharge">-</div>
+            <div class="stat-label">用户侧消耗</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon">#</div>
+            <div class="stat-value" id="analyticsRequests">-</div>
+            <div class="stat-label">请求数</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon">U</div>
+            <div class="stat-value" id="analyticsActiveUsers">-</div>
+            <div class="stat-label">活跃用户</div>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-header"><span class="card-title">Top 用户消耗</span></div>
+            <div class="card-body flush">
+              <div class="table-wrapper">
+                <table>
+                  <thead><tr><th>用户</th><th>消耗</th><th>请求</th><th>Tokens</th><th>余额</th></tr></thead>
+                  <tbody id="analyticsTopUsersBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header"><span class="card-title">余额风险</span></div>
+            <div class="card-body flush">
+              <div class="table-wrapper">
+                <table>
+                  <thead><tr><th>用户</th><th>余额</th><th>日均消耗</th><th>预计天数</th><th>风险</th></tr></thead>
+                  <tbody id="analyticsLowBalanceBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-header"><span class="card-title">错误概览</span></div>
+            <div class="card-body">
+              <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-bottom:16px">
+                <div style="border:1px solid var(--border);border-radius:12px;padding:14px;background:rgba(255,255,255,0.02)">
+                  <div class="stat-value" id="analyticsFailedRequests" style="font-size:24px">-</div>
+                  <div class="stat-label">失败请求</div>
+                </div>
+                <div style="border:1px solid var(--border);border-radius:12px;padding:14px;background:rgba(255,255,255,0.02)">
+                  <div class="stat-value" id="analyticsErrorRate" style="font-size:24px">-</div>
+                  <div class="stat-label">失败率</div>
+                </div>
+              </div>
+              <div class="grid-2" style="margin-bottom:0">
+                <div>
+                  <div class="card-title" style="margin-bottom:10px">状态码</div>
+                  <div id="analyticsErrorsByStatus" class="monitoring-probe-list"></div>
+                </div>
+                <div>
+                  <div class="card-title" style="margin-bottom:10px">模型</div>
+                  <div id="analyticsErrorsByModel" class="monitoring-probe-list"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header"><span class="card-title">最近失败请求</span></div>
+            <div class="card-body flush">
+              <div class="table-wrapper">
+                <table>
+                  <thead><tr><th>时间</th><th>用户</th><th>状态</th><th>模型</th><th>Route</th></tr></thead>
+                  <tbody id="analyticsRecentErrorsBody"></tbody>
+                </table>
+              </div>
             </div>
           </div>
         </div>
@@ -2303,6 +2412,7 @@
     function getPageLoader(page) {
       const loaders = {
         dashboard: loadDashboard,
+        analytics: loadAnalytics,
         users: loadUsers,
         'finance-summary': loadFinanceSummary,
         keys: loadAllKeys,
@@ -2491,6 +2601,88 @@
     function loadDashboard() {
       loadSummary();
       loadUsage();
+    }
+
+    // ==================== Analytics ====================
+    function analyticsPeriod() {
+      return document.getElementById('analyticsPeriod')?.value || 'today';
+    }
+
+    function riskBadge(level) {
+      if (level === 'critical') return '<span class="badge badge-error">紧急</span>';
+      if (level === 'warning') return '<span class="badge badge-warning">预警</span>';
+      if (level === 'watch') return '<span class="badge badge-info">观察</span>';
+      return '<span class="badge">未知</span>';
+    }
+
+    function metricRows(items, labelFn) {
+      return items.length ? items.map(labelFn).join('') : '<div class="text-sm text-muted">暂无数据</div>';
+    }
+
+    async function loadAnalytics() {
+      const period = analyticsPeriod();
+      try {
+        const [overviewResp, topResp, lowResp, errorsResp] = await Promise.all([
+          fetch(`/admin/analytics/overview?period=${encodeURIComponent(period)}`, { headers: adminHeaders() }),
+          fetch(`/admin/analytics/top-users?period=${encodeURIComponent(period)}&metric=cost_cents&limit=10`, { headers: adminHeaders() }),
+          fetch(`/admin/analytics/low-balance-users?period=${encodeURIComponent(period)}&limit=10`, { headers: adminHeaders() }),
+          fetch(`/admin/analytics/errors?period=${encodeURIComponent(period)}&limit=10`, { headers: adminHeaders() }),
+        ]);
+        if (!overviewResp.ok || !topResp.ok || !lowResp.ok || !errorsResp.ok) return toast('加载失败', 'error');
+        const overview = await overviewResp.json();
+        const top = await topResp.json();
+        const low = await lowResp.json();
+        const errors = await errorsResp.json();
+
+        document.getElementById('analyticsPaid').textContent = formatMoney(overview.paid_cents || 0);
+        document.getElementById('analyticsCharge').textContent = formatMoney(overview.user_charge_cents || 0);
+        document.getElementById('analyticsRequests').textContent = formatNum(overview.requests_total || 0);
+        document.getElementById('analyticsActiveUsers').textContent = formatNum(overview.active_users_period || 0);
+
+        const topRows = top.data || [];
+        document.getElementById('analyticsTopUsersBody').innerHTML = topRows.length ? topRows.map(row => `
+          <tr>
+            <td><div class="user-info"><strong>${escapeHtml(row.display_name || row.user_id)}</strong><span>${escapeHtml(row.user_id || '')}</span></div></td>
+            <td><strong>${formatMoney(row.cost_cents || 0)}</strong></td>
+            <td>${formatNum(row.requests_total || 0)}</td>
+            <td>${formatNum(row.tokens_total || 0)}</td>
+            <td>${formatMoney(row.balance_cents || 0)}</td>
+          </tr>
+        `).join('') : '<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--text-tertiary)">暂无数据</td></tr>';
+
+        const lowRows = low.data || [];
+        document.getElementById('analyticsLowBalanceBody').innerHTML = lowRows.length ? lowRows.map(row => `
+          <tr>
+            <td><div class="user-info"><strong>${escapeHtml(row.display_name || row.user_id)}</strong><span>${escapeHtml(row.user_id || '')}</span></div></td>
+            <td>${formatMoney(row.balance_cents || 0)}</td>
+            <td>${formatMoney(row.avg_daily_cost_cents || 0)}</td>
+            <td>${row.estimated_days_remaining === null || row.estimated_days_remaining === undefined ? '-' : row.estimated_days_remaining}</td>
+            <td>${riskBadge(row.risk_level)}</td>
+          </tr>
+        `).join('') : '<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--text-tertiary)">暂无风险用户</td></tr>';
+
+        document.getElementById('analyticsFailedRequests').textContent = formatNum(errors.failed_requests || 0);
+        document.getElementById('analyticsErrorRate').textContent = `${((errors.error_rate || 0) * 100).toFixed(1)}%`;
+        document.getElementById('analyticsErrorsByStatus').innerHTML = metricRows(errors.by_status || [], item => `
+          <div class="monitoring-probe-item" style="grid-template-columns:1fr auto"><div>HTTP ${item.status_code}</div><strong>${formatNum(item.count || 0)}</strong></div>
+        `);
+        document.getElementById('analyticsErrorsByModel').innerHTML = metricRows(errors.by_model || [], item => `
+          <div class="monitoring-probe-item" style="grid-template-columns:1fr auto"><div>${escapeHtml(item.model || '-')}</div><strong>${formatNum(item.count || 0)}</strong></div>
+        `);
+        const recent = errors.recent || [];
+        document.getElementById('analyticsRecentErrorsBody').innerHTML = recent.length ? recent.map(item => `
+          <tr>
+            <td class="text-sm text-muted">${formatDate(item.created_at)}</td>
+            <td>${escapeHtml(item.user || item.user_id || '-')}</td>
+            <td><span class="badge badge-error">${item.status_code}</span></td>
+            <td>${escapeHtml(item.model || '-')}</td>
+            <td><div class="text-sm text-muted">${escapeHtml(item.route_reason || '-')}</div></td>
+          </tr>
+        `).join('') : '<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--text-tertiary)">暂无失败请求</td></tr>';
+      } catch (e) {
+        console.error(e);
+        toast('加载失败', 'error');
+      }
     }
 
     // ==================== Users ====================

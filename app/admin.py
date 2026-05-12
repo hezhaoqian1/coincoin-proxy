@@ -163,6 +163,51 @@ def admin_guard(request: Request):
     require_admin(request)
 
 
+def _analytics_period(period: str) -> tuple[str, int, date, datetime):
+    normalized = (period or "today").strip().lower()
+    days_by_period = {
+        "today": 1,
+        "7d": 7,
+        "30d": 30,
+    }
+    if normalized not in days_by_period:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unsupported period")
+    days = days_by_period[normalized]
+    end_day = date.today()
+    start_day = end_day - timedelta(days=days - 1)
+    since = datetime.utcnow() - timedelta(days=days)
+    return normalized, days, start_day, since
+
+
+def _row_value(row, key: str, default=0):
+    if row is None:
+        return default
+    mapping = getattr(row, "_mapping", None)
+    if mapping is not None and key in mapping:
+        return mapping[key]
+    if hasattr(row, key):
+        return getattr(row, key)
+    if isinstance(row, dict):
+        return row.get(key, default)
+    return default
+
+
+def _display_name(username: Optional[str], email: Optional[str], external_id: Optional[str], user_id: str) -> str:
+    return username or email or external_id or user_id
+
+
+def _risk_level(days_remaining: Optional[float], balance_cents: int) -> str:
+    if balance_cents <= 0:
+        return "critical"
+    if days_remaining is None:
+        return "unknown"
+    if days_remaining <= 3:
+        return "critical"
+    if days_remaining <= 7:
+        return "warning"
+    return "watch"
+
+
 def _claude_compat_settings_payload():
     current_provider = model_registry.current_claude_compat_provider()
     base_url = str(getattr(_settings, "claude_compat_base_url", "") or "").strip()
@@ -698,6 +743,255 @@ async def summary_metrics(db: AsyncSession = Depends(get_db)):
         "consumed_today_usd": int(consumed_today_cents or 0) / 100,
         "net_today_cents": int((paid_today_cents or 0) - (consumed_today_cents or 0)),
         "net_today_usd": int((paid_today_cents or 0) - (consumed_today_cents or 0)) / 100,
+    }
+
+
+@router.get("/analytics/overview", dependencies=[Depends(admin_guard)])
+async def analytics_overview(period: str = "today", db: AsyncSession = Depends(get_db)):
+    period, days, start_day, _since = _analytics_period(period)
+    total_users = await db.scalar(select(func.count()).select_from(User))
+    active_users = await db.scalar(select(func.count()).select_from(User).where(User.status == "active"))
+    paid_cents = await db.scalar(
+        select(func.coalesce(func.sum(PaymentOrder.add_balance_cents), 0)).where(
+            PaymentOrder.status == "confirmed",
+            func.date(PaymentOrder.confirmed_at) >= start_day,
+        )
+    )
+    usage_row = (
+        await db.execute(
+            select(
+                func.count(func.distinct(UsageDaily.user_id)).label("active_users"),
+                func.coalesce(func.sum(UsageDaily.requests_total), 0).label("requests_total"),
+                func.coalesce(func.sum(UsageDaily.input_tokens), 0).label("input_tokens"),
+                func.coalesce(func.sum(UsageDaily.output_tokens), 0).label("output_tokens"),
+                func.coalesce(func.sum(UsageDaily.tokens_total), 0).label("tokens_total"),
+                func.coalesce(func.sum(UsageDaily.images_total), 0).label("images_total"),
+                func.coalesce(func.sum(UsageDaily.cost_cents), 0).label("cost_cents"),
+            ).where(UsageDaily.day >= start_day)
+        )
+    ).first()
+
+    user_charge_cents = int(_row_value(usage_row, "cost_cents", 0) or 0)
+    paid_cents = int(paid_cents or 0)
+    return {
+        "period": period,
+        "days": days,
+        "start_day": str(start_day),
+        "end_day": str(date.today()),
+        "total_users": int(total_users or 0),
+        "active_users": int(active_users or 0),
+        "active_users_period": int(_row_value(usage_row, "active_users", 0) or 0),
+        "requests_total": int(_row_value(usage_row, "requests_total", 0) or 0),
+        "input_tokens": int(_row_value(usage_row, "input_tokens", 0) or 0),
+        "output_tokens": int(_row_value(usage_row, "output_tokens", 0) or 0),
+        "tokens_total": int(_row_value(usage_row, "tokens_total", 0) or 0),
+        "images_total": int(_row_value(usage_row, "images_total", 0) or 0),
+        "user_charge_cents": user_charge_cents,
+        "user_charge_usd": user_charge_cents / 100,
+        "paid_cents": paid_cents,
+        "paid_usd": paid_cents / 100,
+        "net_cashflow_cents": paid_cents - user_charge_cents,
+        "net_cashflow_usd": (paid_cents - user_charge_cents) / 100,
+    }
+
+
+@router.get("/analytics/top-users", dependencies=[Depends(admin_guard)])
+async def analytics_top_users(
+    period: str = "today",
+    metric: str = "cost_cents",
+    limit: int = 20,
+    db: AsyncSession = Depends(get_db),
+):
+    period, days, start_day, _since = _analytics_period(period)
+    limit = max(1, min(limit, 100))
+    metric_map = {
+        "cost_cents": func.coalesce(func.sum(UsageDaily.cost_cents), 0),
+        "requests_total": func.coalesce(func.sum(UsageDaily.requests_total), 0),
+        "tokens_total": func.coalesce(func.sum(UsageDaily.tokens_total), 0),
+        "images_total": func.coalesce(func.sum(UsageDaily.images_total), 0),
+    }
+    order_metric = metric_map.get(metric)
+    if order_metric is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unsupported metric")
+    result = await db.execute(
+        select(
+            User.id.label("user_id"),
+            User.username.label("username"),
+            User.email.label("email"),
+            User.external_id.label("external_id"),
+            User.balance.label("balance"),
+            func.coalesce(func.sum(UsageDaily.requests_total), 0).label("requests_total"),
+            func.coalesce(func.sum(UsageDaily.input_tokens), 0).label("input_tokens"),
+            func.coalesce(func.sum(UsageDaily.output_tokens), 0).label("output_tokens"),
+            func.coalesce(func.sum(UsageDaily.tokens_total), 0).label("tokens_total"),
+            func.coalesce(func.sum(UsageDaily.images_total), 0).label("images_total"),
+            func.coalesce(func.sum(UsageDaily.cost_cents), 0).label("cost_cents"),
+        )
+        .join(User, UsageDaily.user_id == User.id)
+        .where(UsageDaily.day >= start_day)
+        .group_by(User.id, User.username, User.email, User.external_id, User.balance)
+        .order_by(order_metric.desc())
+        .limit(limit)
+    )
+    rows = result.all()
+    return {
+        "period": period,
+        "days": days,
+        "metric": metric,
+        "limit": limit,
+        "data": [
+            {
+                "rank": idx + 1,
+                "user_id": _row_value(row, "user_id", ""),
+                "username": _row_value(row, "username", None),
+                "email": _row_value(row, "email", None),
+                "external_id": _row_value(row, "external_id", None),
+                "display_name": _display_name(
+                    _row_value(row, "username", None),
+                    _row_value(row, "email", None),
+                    _row_value(row, "external_id", None),
+                    _row_value(row, "user_id", ""),
+                ),
+                "balance_cents": int(_row_value(row, "balance", 0) or 0),
+                "requests_total": int(_row_value(row, "requests_total", 0) or 0),
+                "input_tokens": int(_row_value(row, "input_tokens", 0) or 0),
+                "output_tokens": int(_row_value(row, "output_tokens", 0) or 0),
+                "tokens_total": int(_row_value(row, "tokens_total", 0) or 0),
+                "images_total": int(_row_value(row, "images_total", 0) or 0),
+                "cost_cents": int(_row_value(row, "cost_cents", 0) or 0),
+            }
+            for idx, row in enumerate(rows)
+        ],
+    }
+
+
+@router.get("/analytics/low-balance-users", dependencies=[Depends(admin_guard)])
+async def analytics_low_balance_users(
+    period: str = "7d",
+    limit: int = 20,
+    db: AsyncSession = Depends(get_db),
+):
+    period, days, start_day, _since = _analytics_period(period)
+    limit = max(1, min(limit, 100))
+    avg_daily = func.coalesce(func.sum(UsageDaily.cost_cents), 0) / days
+    result = await db.execute(
+        select(
+            User.id.label("user_id"),
+            User.username.label("username"),
+            User.email.label("email"),
+            User.external_id.label("external_id"),
+            User.balance.label("balance"),
+            func.coalesce(func.sum(UsageDaily.requests_total), 0).label("requests_total"),
+            func.coalesce(func.sum(UsageDaily.tokens_total), 0).label("tokens_total"),
+            func.coalesce(func.sum(UsageDaily.images_total), 0).label("images_total"),
+            func.coalesce(func.sum(UsageDaily.cost_cents), 0).label("cost_cents"),
+        )
+        .join(User, UsageDaily.user_id == User.id)
+        .where(UsageDaily.day >= start_day, User.status == "active")
+        .group_by(User.id, User.username, User.email, User.external_id, User.balance)
+        .having(func.coalesce(func.sum(UsageDaily.cost_cents), 0) > 0)
+        .order_by((User.balance / avg_daily).asc())
+        .limit(limit)
+    )
+    rows = result.all()
+    items = []
+    for idx, row in enumerate(rows):
+        balance_cents = int(_row_value(row, "balance", 0) or 0)
+        cost_cents = int(_row_value(row, "cost_cents", 0) or 0)
+        avg_daily_cost = int(round(cost_cents / days)) if days else 0
+        days_remaining = round(balance_cents / avg_daily_cost, 2) if avg_daily_cost > 0 else None
+        user_id = _row_value(row, "user_id", "")
+        items.append({
+            "rank": idx + 1,
+            "user_id": user_id,
+            "username": _row_value(row, "username", None),
+            "email": _row_value(row, "email", None),
+            "external_id": _row_value(row, "external_id", None),
+            "display_name": _display_name(
+                _row_value(row, "username", None),
+                _row_value(row, "email", None),
+                _row_value(row, "external_id", None),
+                user_id,
+            ),
+            "balance_cents": balance_cents,
+            "period_cost_cents": cost_cents,
+            "avg_daily_cost_cents": avg_daily_cost,
+            "estimated_days_remaining": days_remaining,
+            "risk_level": _risk_level(days_remaining, balance_cents),
+            "requests_total": int(_row_value(row, "requests_total", 0) or 0),
+            "tokens_total": int(_row_value(row, "tokens_total", 0) or 0),
+            "images_total": int(_row_value(row, "images_total", 0) or 0),
+        })
+    return {"period": period, "days": days, "limit": limit, "data": items}
+
+
+@router.get("/analytics/errors", dependencies=[Depends(admin_guard)])
+async def analytics_errors(
+    period: str = "today",
+    limit: int = 20,
+    db: AsyncSession = Depends(get_db),
+):
+    period, days, _start_day, since = _analytics_period(period)
+    limit = max(1, min(limit, 100))
+    total_requests = (
+        await db.scalar(select(func.count()).select_from(RequestLog).where(RequestLog.created_at >= since))
+    ) or 0
+    failed_requests = (
+        await db.scalar(
+            select(func.count()).select_from(RequestLog).where(RequestLog.created_at >= since, RequestLog.status_code >= 400)
+        )
+    ) or 0
+    status_rows = (
+        await db.execute(
+            select(RequestLog.status_code, func.count())
+            .where(RequestLog.created_at >= since, RequestLog.status_code >= 400)
+            .group_by(RequestLog.status_code)
+            .order_by(func.count().desc())
+            .limit(10)
+        )
+    ).all()
+    model_rows = (
+        await db.execute(
+            select(RequestLog.model, func.count())
+            .where(RequestLog.created_at >= since, RequestLog.status_code >= 400)
+            .group_by(RequestLog.model)
+            .order_by(func.count().desc())
+            .limit(10)
+        )
+    ).all()
+    recent_rows = (
+        await db.execute(
+            select(RequestLog, User)
+            .join(User, RequestLog.user_id == User.id)
+            .where(RequestLog.created_at >= since, RequestLog.status_code >= 400)
+            .order_by(RequestLog.created_at.desc())
+            .limit(limit)
+        )
+    ).all()
+    total_requests = int(total_requests or 0)
+    failed_requests = int(failed_requests or 0)
+    return {
+        "period": period,
+        "days": days,
+        "total_requests": total_requests,
+        "failed_requests": failed_requests,
+        "error_rate": (failed_requests / total_requests) if total_requests else 0,
+        "by_status": [{"status_code": int(code), "count": int(count)} for code, count in status_rows],
+        "by_model": [{"model": model or "-", "count": int(count)} for model, count in model_rows],
+        "recent": [
+            {
+                "created_at": log.created_at,
+                "user_id": log.user_id,
+                "user": _display_name(user.username, getattr(user, "email", None), user.external_id, user.id),
+                "endpoint": log.endpoint,
+                "model": log.model,
+                "status_code": log.status_code,
+                "duration_ms": log.duration_ms,
+                "route_reason": log.route_reason,
+                "upstream_request_id": log.upstream_request_id,
+            }
+            for log, user in recent_rows
+        ],
     }
 
 
