@@ -127,6 +127,37 @@ class AdminPaymentManualConfirmRequest(BaseModel):
     proof_url: str = Field(..., description="支付成功回跳 URL，需包含 out_trade_no / trade_no / money / trade_status")
 
 
+class AdminSubscriptionAdjustRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    plan_id: str = Field(..., description="月卡产品 ID")
+    status: str = Field(default="active", pattern=r"^(active|expired|disabled)$")
+    period_start: Optional[datetime] = None
+    period_end: Optional[datetime] = None
+    paid_until: Optional[datetime] = None
+    quota_cents: Optional[int] = Field(default=None, ge=0)
+    used_cents: Optional[int] = Field(default=None, ge=0)
+    note: Optional[str] = Field(default="", max_length=512)
+
+
+class AdminTrafficPackGrantRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    product_id: str = Field(..., description="流量包产品 ID")
+    remaining_cents: Optional[int] = Field(default=None, ge=0)
+    expires_at: Optional[datetime] = None
+    note: Optional[str] = Field(default="", max_length=512)
+
+
+class AdminTrafficPackUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Optional[str] = Field(default=None, pattern=r"^(active|depleted|expired|disabled)$")
+    remaining_cents: Optional[int] = Field(default=None, ge=0)
+    expires_at: Optional[datetime] = None
+    note: Optional[str] = Field(default="", max_length=512)
+
+
 class AdminModelAliasUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

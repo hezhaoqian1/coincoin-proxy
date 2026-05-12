@@ -1,6 +1,6 @@
 import os
 import secrets
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -28,9 +28,11 @@ from .models import (
     RequestLog,
     Station,
     StationCustomerLink,
+    TrafficPackBalance,
     UsageDaily,
     User,
     Account,
+    UserSubscription,
 )
 from .model_alias_overrides import (
     apply_runtime_alias_override,
@@ -39,7 +41,8 @@ from .model_alias_overrides import (
 )
 from .payment_common import PaymentConfirmError, confirm_paid_order
 from .schemas import (
-    AdminKeyUpdate, AdminPaymentManualConfirmRequest, AdminUserPasswordResetRequest,
+    AdminKeyUpdate, AdminPaymentManualConfirmRequest, AdminSubscriptionAdjustRequest,
+    AdminTrafficPackGrantRequest, AdminTrafficPackUpdateRequest, AdminUserPasswordResetRequest,
     AdminUserPasswordResetResponse, AdminUserUpdate,
     AdminClaudeCompatSettingsUpdate, AdminModelAliasUpdate, AnnouncementCreate, AnnouncementUpdate,
     RedemptionGenerateRequest, RedemptionGenerateResponse,
@@ -50,7 +53,20 @@ from .system_settings import (
     refresh_runtime_system_settings_from_db,
 )
 from .config import settings as _settings
-from .billing import get_available_balance_cents, product_by_id, serialize_billing_state
+from .billing import (
+    ADDONS_BY_ID,
+    MONTHLY_BY_ID,
+    TRAFFIC_PACK_VALID_DAYS,
+    add_billing_ledger,
+    available_subscription_cents,
+    get_available_balance_cents,
+    get_subscription_for_update,
+    get_traffic_pack_for_update,
+    normalize_subscription_period,
+    product_by_id,
+    serialize_billing_state,
+    utcnow,
+)
 from .router import registry as model_registry
 from .router import (
     CLAUDE_COMPAT_PROVIDER_KIRO_GO,
@@ -102,11 +118,30 @@ def _product_admin_payload(product_id: str) -> dict:
     }
 
 
+def _normalize_utc_naive(value: Optional[datetime]) -> Optional[datetime]:
+    if value is None:
+        return None
+    if value.tzinfo is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
+
+
 async def _admin_billing_state(db: AsyncSession, user: User) -> dict:
     snapshot = await get_available_balance_cents(db, user)
+    all_packs = list((
+        await db.execute(
+            select(TrafficPackBalance)
+            .where(TrafficPackBalance.user_id == user.id)
+            .order_by(TrafficPackBalance.created_at.desc())
+            .limit(50)
+        )
+    ).scalars().all())
+    active_ids = {getattr(pack, "id", "") for pack in (snapshot.get("traffic_packs") or [])}
+    merged_packs = list(snapshot.get("traffic_packs") or [])
+    merged_packs.extend([pack for pack in all_packs if getattr(pack, "id", "") not in active_ids])
     return serialize_billing_state(
         snapshot.get("subscription"),
-        snapshot.get("traffic_packs") or [],
+        merged_packs,
         user,
     )
 
@@ -494,6 +529,156 @@ async def update_user(user_id: str, payload: AdminUserUpdate, db: AsyncSession =
         "output_tokens_used": user.output_tokens_used,
         "request_limit_per_minute": user.request_limit_per_minute,
         "request_limit_per_day": user.request_limit_per_day,
+    }
+
+
+@router.patch("/users/{user_id}/subscription", dependencies=[Depends(admin_guard)])
+async def adjust_user_subscription(
+    user_id: str,
+    payload: AdminSubscriptionAdjustRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
+
+    product = MONTHLY_BY_ID.get(payload.plan_id)
+    if not product:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unknown monthly plan")
+
+    now = utcnow()
+    sub = await get_subscription_for_update(db, user_id)
+    before_remaining = available_subscription_cents(sub)
+    if sub is None:
+        sub = UserSubscription(id=generate_id("sub_"), user_id=user_id)
+        db.add(sub)
+
+    period_start = _normalize_utc_naive(payload.period_start) or sub.period_start or now
+    paid_until = _normalize_utc_naive(payload.paid_until) or sub.paid_until or (now + timedelta(days=30))
+    period_end = _normalize_utc_naive(payload.period_end) or sub.period_end
+    if not period_end:
+        period_end = min(period_start + timedelta(days=30), paid_until)
+
+    sub.plan_id = product.id
+    sub.status = payload.status
+    sub.period_start = period_start
+    sub.period_end = period_end
+    sub.paid_until = paid_until
+    sub.quota_cents = product.balance_cents if payload.quota_cents is None else int(payload.quota_cents)
+    sub.used_cents = min(int(payload.used_cents or 0), int(sub.quota_cents or 0)) if "used_cents" in payload.model_fields_set else min(int(sub.used_cents or 0), int(sub.quota_cents or 0))
+    if sub.status == "active":
+        normalize_subscription_period(sub, now)
+
+    after_remaining = available_subscription_cents(sub)
+    add_billing_ledger(
+        db,
+        user_id=user_id,
+        entry_type="admin_subscription_adjust",
+        amount_cents=after_remaining - before_remaining,
+        source_type="admin",
+        source_id="manual",
+        product_id=product.id,
+        balance_after_cents=after_remaining,
+        note=payload.note or "admin adjusted subscription",
+    )
+    await db.commit()
+    billing = await _admin_billing_state(db, user)
+    return {
+        "user_id": user_id,
+        "billing": billing,
+        "billing_summary": _billing_summary_for_admin(billing),
+    }
+
+
+@router.post("/users/{user_id}/traffic-packs", dependencies=[Depends(admin_guard)])
+async def grant_user_traffic_pack(
+    user_id: str,
+    payload: AdminTrafficPackGrantRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
+
+    product = ADDONS_BY_ID.get(payload.product_id)
+    if not product:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unknown traffic pack")
+
+    now = utcnow()
+    remaining_cents = int(product.balance_cents if payload.remaining_cents is None else payload.remaining_cents)
+    pack = TrafficPackBalance(
+        id=generate_id("tp_"),
+        user_id=user_id,
+        product_id=product.id,
+        status="active" if remaining_cents > 0 else "depleted",
+        original_cents=product.balance_cents,
+        remaining_cents=remaining_cents,
+        expires_at=_normalize_utc_naive(payload.expires_at) or (now + timedelta(days=TRAFFIC_PACK_VALID_DAYS)),
+    )
+    db.add(pack)
+    add_billing_ledger(
+        db,
+        user_id=user_id,
+        entry_type="admin_traffic_pack_grant",
+        amount_cents=remaining_cents,
+        source_type="admin",
+        source_id=pack.id,
+        product_id=product.id,
+        balance_after_cents=remaining_cents,
+        note=payload.note or "admin granted traffic pack",
+    )
+    await db.commit()
+    billing = await _admin_billing_state(db, user)
+    return {
+        "user_id": user_id,
+        "traffic_pack_id": pack.id,
+        "billing": billing,
+        "billing_summary": _billing_summary_for_admin(billing),
+    }
+
+
+@router.patch("/traffic-packs/{pack_id}", dependencies=[Depends(admin_guard)])
+async def update_traffic_pack(
+    pack_id: str,
+    payload: AdminTrafficPackUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    pack = await get_traffic_pack_for_update(db, pack_id)
+    if not pack:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="traffic pack not found")
+    user = (await db.execute(select(User).where(User.id == pack.user_id))).scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found for traffic pack")
+
+    before_remaining = int(pack.remaining_cents or 0)
+    if payload.status is not None:
+        pack.status = payload.status
+    if payload.remaining_cents is not None:
+        pack.remaining_cents = int(payload.remaining_cents)
+        if pack.remaining_cents <= 0 and (payload.status is None or pack.status == "active"):
+            pack.status = "depleted"
+    if payload.expires_at is not None:
+        pack.expires_at = _normalize_utc_naive(payload.expires_at)
+    after_remaining = int(pack.remaining_cents or 0)
+
+    add_billing_ledger(
+        db,
+        user_id=pack.user_id,
+        entry_type="admin_traffic_pack_adjust",
+        amount_cents=after_remaining - before_remaining,
+        source_type="admin",
+        source_id=pack.id,
+        product_id=pack.product_id,
+        balance_after_cents=after_remaining,
+        note=payload.note or "admin adjusted traffic pack",
+    )
+    await db.commit()
+    billing = await _admin_billing_state(db, user)
+    return {
+        "user_id": pack.user_id,
+        "traffic_pack_id": pack.id,
+        "billing": billing,
+        "billing_summary": _billing_summary_for_admin(billing),
     }
 
 

@@ -88,7 +88,9 @@ def active_subscription(sub: UserSubscription | None, now: datetime | None = Non
     if not sub:
         return False
     current = now or utcnow()
-    return sub.status == "active" and bool(sub.paid_until) and sub.paid_until > current
+    status = getattr(sub, "status", "")
+    paid_until = getattr(sub, "paid_until", None)
+    return status == "active" and bool(paid_until) and paid_until > current
 
 
 def _period_end_from(start: datetime, paid_until: datetime) -> datetime:
@@ -119,6 +121,32 @@ def _ledger(
     )
 
 
+def add_billing_ledger(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    entry_type: str,
+    amount_cents: int,
+    source_type: str = "",
+    source_id: str = "",
+    product_id: str = "",
+    balance_after_cents: int = 0,
+    note: str = "",
+) -> BillingLedgerEntry:
+    entry = _ledger(
+        user_id=user_id,
+        entry_type=entry_type,
+        amount_cents=amount_cents,
+        source_type=source_type,
+        source_id=source_id,
+        product_id=product_id,
+        balance_after_cents=balance_after_cents,
+        note=note,
+    )
+    db.add(entry)
+    return entry
+
+
 async def get_subscription_for_update(db: AsyncSession, user_id: str) -> UserSubscription | None:
     return (
         await db.execute(
@@ -135,29 +163,59 @@ async def get_subscription(db: AsyncSession, user_id: str) -> UserSubscription |
     ).scalar_one_or_none()
 
 
+async def get_traffic_pack_for_update(db: AsyncSession, pack_id: str) -> TrafficPackBalance | None:
+    return (
+        await db.execute(
+            select(TrafficPackBalance)
+            .where(TrafficPackBalance.id == pack_id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+
+
+def _result_rows(result) -> list:
+    if result is None:
+        return []
+    if hasattr(result, "scalars"):
+        scalars = result.scalars()
+        if hasattr(scalars, "all"):
+            return list(scalars.all())
+    if hasattr(result, "all"):
+        return list(result.all())
+    scalar_one_or_none = getattr(result, "scalar_one_or_none", None)
+    if callable(scalar_one_or_none):
+        value = scalar_one_or_none()
+        return [] if value is None else [value]
+    scalar = getattr(result, "scalar", None)
+    if callable(scalar):
+        value = scalar()
+        return [] if value is None else [value]
+    return []
+
+
 def normalize_subscription_period(sub: UserSubscription | None, now: datetime | None = None) -> bool:
     if not sub:
         return False
     current = now or utcnow()
     changed = False
-    paid_until = sub.paid_until
+    paid_until = getattr(sub, "paid_until", None)
     if not paid_until or paid_until <= current:
-        if sub.status != "expired":
+        if getattr(sub, "status", "") != "expired":
             sub.status = "expired"
             changed = True
         return changed
 
-    if sub.status != "active":
+    if getattr(sub, "status", "") != "active":
         sub.status = "active"
         changed = True
 
-    if not sub.period_start or not sub.period_end:
+    if not getattr(sub, "period_start", None) or not getattr(sub, "period_end", None):
         sub.period_start = current
         sub.period_end = _period_end_from(current, paid_until)
         sub.used_cents = 0
         return True
 
-    while sub.period_end and sub.period_end <= current and sub.period_end < paid_until:
+    while getattr(sub, "period_end", None) and sub.period_end <= current and sub.period_end < paid_until:
         sub.period_start = sub.period_end
         sub.period_end = _period_end_from(sub.period_start, paid_until)
         sub.used_cents = 0
@@ -294,40 +352,38 @@ async def _apply_addon_product(
 def available_subscription_cents(sub: UserSubscription | None) -> int:
     if not active_subscription(sub):
         return 0
-    return max(0, int(sub.quota_cents or 0) - int(sub.used_cents or 0))
+    return max(0, int(getattr(sub, "quota_cents", 0) or 0) - int(getattr(sub, "used_cents", 0) or 0))
 
 
 async def active_traffic_packs_for_update(db: AsyncSession, user_id: str, now: datetime | None = None) -> list[TrafficPackBalance]:
     current = now or utcnow()
-    return list((
-        await db.execute(
-            select(TrafficPackBalance)
-            .where(
-                TrafficPackBalance.user_id == user_id,
-                TrafficPackBalance.status == "active",
-                TrafficPackBalance.remaining_cents > 0,
-                TrafficPackBalance.expires_at > current,
-            )
-            .order_by(TrafficPackBalance.expires_at.asc(), TrafficPackBalance.created_at.asc())
-            .with_for_update()
+    result = await db.execute(
+        select(TrafficPackBalance)
+        .where(
+            TrafficPackBalance.user_id == user_id,
+            TrafficPackBalance.status == "active",
+            TrafficPackBalance.remaining_cents > 0,
+            TrafficPackBalance.expires_at > current,
         )
-    ).scalars().all())
+        .order_by(TrafficPackBalance.expires_at.asc(), TrafficPackBalance.created_at.asc())
+        .with_for_update()
+    )
+    return _result_rows(result)
 
 
 async def active_traffic_packs(db: AsyncSession, user_id: str, now: datetime | None = None) -> list[TrafficPackBalance]:
     current = now or utcnow()
-    return list((
-        await db.execute(
-            select(TrafficPackBalance)
-            .where(
-                TrafficPackBalance.user_id == user_id,
-                TrafficPackBalance.status == "active",
-                TrafficPackBalance.remaining_cents > 0,
-                TrafficPackBalance.expires_at > current,
-            )
-            .order_by(TrafficPackBalance.expires_at.asc(), TrafficPackBalance.created_at.asc())
+    result = await db.execute(
+        select(TrafficPackBalance)
+        .where(
+            TrafficPackBalance.user_id == user_id,
+            TrafficPackBalance.status == "active",
+            TrafficPackBalance.remaining_cents > 0,
+            TrafficPackBalance.expires_at > current,
         )
-    ).scalars().all())
+        .order_by(TrafficPackBalance.expires_at.asc(), TrafficPackBalance.created_at.asc())
+    )
+    return _result_rows(result)
 
 
 async def get_available_balance_cents(
@@ -438,21 +494,28 @@ def serialize_billing_state(sub: UserSubscription | None, packs: list[TrafficPac
     current = now or utcnow()
     subscription_active = active_subscription(sub, current)
     subscription_remaining = available_subscription_cents(sub)
-    traffic_remaining = sum(int(pack.remaining_cents or 0) for pack in packs) if subscription_active else 0
+    active_packs = [
+        pack for pack in packs
+        if getattr(pack, "status", "") == "active"
+        and int(getattr(pack, "remaining_cents", 0) or 0) > 0
+        and getattr(pack, "expires_at", None)
+        and pack.expires_at > current
+    ]
+    traffic_remaining = sum(int(getattr(pack, "remaining_cents", 0) or 0) for pack in active_packs) if subscription_active else 0
     legacy_balance = int(user.balance or 0)
-    current_plan = MONTHLY_BY_ID.get(sub.plan_id) if sub and sub.plan_id else None
+    current_plan = MONTHLY_BY_ID.get(getattr(sub, "plan_id", None)) if sub and getattr(sub, "plan_id", None) else None
     current_rank = current_plan.rank if current_plan and subscription_active else 0
     return {
         "subscription": {
             "active": subscription_active,
-            "plan_id": sub.plan_id if sub else None,
+            "plan_id": getattr(sub, "plan_id", None) if sub else None,
             "plan_name": current_plan.name if current_plan else None,
             "rank": current_rank,
-            "period_start": sub.period_start.isoformat() if sub and sub.period_start else None,
-            "period_end": sub.period_end.isoformat() if sub and sub.period_end else None,
-            "paid_until": sub.paid_until.isoformat() if sub and sub.paid_until else None,
-            "quota_cents": int(sub.quota_cents or 0) if sub else 0,
-            "used_cents": int(sub.used_cents or 0) if sub else 0,
+            "period_start": getattr(sub, "period_start", None).isoformat() if sub and getattr(sub, "period_start", None) else None,
+            "period_end": getattr(sub, "period_end", None).isoformat() if sub and getattr(sub, "period_end", None) else None,
+            "paid_until": getattr(sub, "paid_until", None).isoformat() if sub and getattr(sub, "paid_until", None) else None,
+            "quota_cents": int(getattr(sub, "quota_cents", 0) or 0) if sub else 0,
+            "used_cents": int(getattr(sub, "used_cents", 0) or 0) if sub else 0,
             "remaining_cents": subscription_remaining,
             "remaining_usd": cents_to_usd(subscription_remaining),
         },
@@ -461,11 +524,25 @@ def serialize_billing_state(sub: UserSubscription | None, packs: list[TrafficPac
             "remaining_usd": cents_to_usd(traffic_remaining),
             "items": [
                 {
-                    "id": pack.id,
-                    "product_id": pack.product_id,
-                    "remaining_cents": int(pack.remaining_cents or 0),
-                    "remaining_usd": cents_to_usd(pack.remaining_cents),
-                    "expires_at": pack.expires_at.isoformat() if pack.expires_at else None,
+                    "id": getattr(pack, "id", ""),
+                    "product_id": getattr(pack, "product_id", ""),
+                    "remaining_cents": int(getattr(pack, "remaining_cents", 0) or 0),
+                    "remaining_usd": cents_to_usd(getattr(pack, "remaining_cents", 0)),
+                    "expires_at": getattr(pack, "expires_at", None).isoformat() if getattr(pack, "expires_at", None) else None,
+                }
+                for pack in active_packs
+            ],
+            "all_items": [
+                {
+                    "id": getattr(pack, "id", ""),
+                    "product_id": getattr(pack, "product_id", ""),
+                    "product_name": PRODUCTS_BY_ID.get(getattr(pack, "product_id", "")).name if PRODUCTS_BY_ID.get(getattr(pack, "product_id", "")) else getattr(pack, "product_id", ""),
+                    "status": getattr(pack, "status", ""),
+                    "original_cents": int(getattr(pack, "original_cents", 0) or 0),
+                    "remaining_cents": int(getattr(pack, "remaining_cents", 0) or 0),
+                    "remaining_usd": cents_to_usd(getattr(pack, "remaining_cents", 0)),
+                    "expires_at": getattr(pack, "expires_at", None).isoformat() if getattr(pack, "expires_at", None) else None,
+                    "created_at": getattr(pack, "created_at", None).isoformat() if getattr(pack, "created_at", None) else None,
                 }
                 for pack in packs
             ],
@@ -504,7 +581,7 @@ def serialize_product(
     pay_money = product.money
     purchase_action = "purchase"
     if product.kind == "monthly" and active_subscription(sub, current):
-        current_product = MONTHLY_BY_ID.get(sub.plan_id)
+        current_product = MONTHLY_BY_ID.get(getattr(sub, "plan_id", None))
         current_product_rank = current_product.rank if current_product else 0
         if product.rank == current_product_rank:
             purchase_action = "renew"
@@ -543,15 +620,15 @@ def quote_product_money(product: PaymentProduct, sub: UserSubscription | None, n
     if not active_subscription(sub, current):
         return product.money
 
-    current_product = MONTHLY_BY_ID.get(sub.plan_id)
+    current_product = MONTHLY_BY_ID.get(getattr(sub, "plan_id", None))
     current_rank = current_product.rank if current_product else 0
     if product.rank < current_rank:
         raise BillingError("cannot purchase a lower tier while a higher subscription is active", status_code=409)
     if product.rank == current_rank:
         return product.money
 
-    period_start = sub.period_start or current
-    period_end = sub.period_end or sub.paid_until or (current + timedelta(days=BILLING_PERIOD_DAYS))
+    period_start = getattr(sub, "period_start", None) or current
+    period_end = getattr(sub, "period_end", None) or getattr(sub, "paid_until", None) or (current + timedelta(days=BILLING_PERIOD_DAYS))
     total_seconds = max(1, int((period_end - period_start).total_seconds()))
     remaining_seconds = max(0, int((period_end - current).total_seconds()))
     current_money_cents = money_to_rmb_cents(current_product.money) if current_product else 0
@@ -577,7 +654,7 @@ async def validate_product_purchase(
     if product.kind == "addon":
         if not active_subscription(sub, current):
             raise BillingError("traffic packs require an active monthly subscription", status_code=409)
-        monthly = MONTHLY_BY_ID.get(sub.plan_id)
+        monthly = MONTHLY_BY_ID.get(getattr(sub, "plan_id", None))
         current_rank = monthly.rank if monthly else 0
         if current_rank < product.min_plan_rank:
             raise BillingError("traffic pack is not available for the current subscription tier", status_code=409)
