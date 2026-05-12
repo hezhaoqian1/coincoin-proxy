@@ -97,6 +97,39 @@
     margin-bottom: var(--space-lg);
 }
 
+.recharge-monthly-plans {
+    margin-bottom: var(--space-md);
+}
+
+.addon-entry {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--space-lg);
+    padding: var(--space-lg);
+    margin-bottom: var(--space-md);
+}
+
+.addon-entry h3 {
+    margin: 0 0 6px;
+    font-size: 1.02rem;
+}
+
+.addon-entry p {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 0.86rem;
+    line-height: 1.65;
+    overflow-wrap: anywhere;
+}
+
+.addon-entry-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    flex-shrink: 0;
+}
+
 .billing-snapshot {
     padding: var(--space-lg);
     margin-bottom: var(--space-lg);
@@ -587,6 +620,16 @@
 
     .pricing-section-head-addon {
         margin-top: 18px;
+    }
+
+    .addon-entry {
+        display: block;
+        padding: 16px;
+    }
+
+    .addon-entry-actions {
+        margin-top: 12px;
+        justify-content: flex-start;
     }
 
     .pricing-policy-note {

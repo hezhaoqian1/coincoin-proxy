@@ -1153,6 +1153,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                 _FakeScalarsResult([]),
                 _FakeEntityResult(None),
                 _FakeScalarsResult([]),
+                _FakeScalarsResult([]),
                 _FakeEntityResult(finance_summary),
             ],
             scalar_results=[120, 450],
@@ -1277,6 +1278,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                 _FakeScalarsResult([session_key, api_key]),
                 _FakeEntityResult(None),
                 _FakeScalarsResult([]),
+                _FakeScalarsResult([]),
                 _FakeEntityResult(finance_summary),
             ],
             scalar_results=[0, 0],
@@ -1308,6 +1310,191 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["billing_summary"]["available_cents"], 2500)
         self.assertEqual(payload["billing_summary"]["legacy_balance_cents"], 2500)
         self.assertEqual(payload["billing"]["available"]["remaining_cents"], 2500)
+
+    async def test_admin_can_adjust_subscription(self) -> None:
+        user = SimpleNamespace(id="u_1", balance=1200, status="active")
+        sub = SimpleNamespace(
+            id="sub_1",
+            user_id="u_1",
+            plan_id="monthly_light",
+            status="active",
+            period_start=datetime(2026, 5, 1, 0, 0, 0),
+            period_end=datetime(2026, 5, 31, 0, 0, 0),
+            paid_until=datetime(2026, 5, 31, 0, 0, 0),
+            quota_cents=7500,
+            used_cents=500,
+        )
+        finance_summary = SimpleNamespace(
+            user_id="u_1",
+            initialized_from_history=1,
+            total_paid_rmb_cents=0,
+            total_paid_balance_cents=0,
+            total_ops_credit_cents=0,
+            total_bonus_cents=0,
+            total_consumed_cents=0,
+            total_ops_debit_cents=0,
+            legacy_unclassified_cents=0,
+            total_paid_orders=0,
+            last_payment_at=None,
+        )
+        fake_db = _FakeDB(
+            execute_results=[
+                _FakeEntityResult(user),
+                _FakeEntityResult(sub),
+                _FakeEntityResult(sub),
+                _FakeScalarsResult([]),
+                _FakeScalarsResult([]),
+                _FakeEntityResult(finance_summary),
+            ],
+            scalar_results=[0, 0],
+        )
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.patch(
+                "/admin/users/u_1/subscription",
+                json={
+                    "plan_id": "monthly_basic",
+                    "status": "active",
+                    "period_start": "2026-05-01T00:00:00Z",
+                    "period_end": "2026-05-31T00:00:00Z",
+                    "paid_until": "2026-06-15T00:00:00Z",
+                    "quota_cents": 40000,
+                    "used_cents": 3000,
+                    "note": "manual adjust",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(sub.plan_id, "monthly_basic")
+        self.assertEqual(sub.quota_cents, 40000)
+        self.assertEqual(sub.used_cents, 3000)
+        self.assertEqual(payload["billing_summary"]["subscription_plan_id"], "monthly_basic")
+        self.assertEqual(fake_db.commits, 1)
+        self.assertTrue(any(getattr(item, "entry_type", "") == "admin_subscription_adjust" for item in fake_db.added))
+
+    async def test_admin_can_grant_traffic_pack(self) -> None:
+        user = SimpleNamespace(id="u_1", balance=800, status="active")
+        finance_summary = SimpleNamespace(
+            user_id="u_1",
+            initialized_from_history=1,
+            total_paid_rmb_cents=0,
+            total_paid_balance_cents=0,
+            total_ops_credit_cents=0,
+            total_bonus_cents=0,
+            total_consumed_cents=0,
+            total_ops_debit_cents=0,
+            legacy_unclassified_cents=0,
+            total_paid_orders=0,
+            last_payment_at=None,
+        )
+        fake_db = _FakeDB(
+            execute_results=[
+                _FakeEntityResult(user),
+                _FakeEntityResult(None),
+                _FakeScalarsResult([]),
+                _FakeScalarsResult([]),
+                _FakeEntityResult(finance_summary),
+            ],
+            scalar_results=[0, 0],
+        )
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.post(
+                "/admin/users/u_1/traffic-packs",
+                json={
+                    "product_id": "addon_project",
+                    "remaining_cents": 90000,
+                    "expires_at": "2026-12-01T00:00:00Z",
+                    "note": "campaign bonus",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["traffic_pack_id"][:3], "tp_")
+        granted_pack = next(item for item in fake_db.added if getattr(item, "id", "").startswith("tp_"))
+        self.assertEqual(granted_pack.product_id, "addon_project")
+        self.assertEqual(granted_pack.remaining_cents, 90000)
+        self.assertEqual(fake_db.commits, 1)
+        self.assertTrue(any(getattr(item, "entry_type", "") == "admin_traffic_pack_grant" for item in fake_db.added))
+
+    async def test_admin_can_update_traffic_pack(self) -> None:
+        user = SimpleNamespace(id="u_1", balance=600, status="active")
+        pack = SimpleNamespace(
+            id="tp_1",
+            user_id="u_1",
+            product_id="addon_boost",
+            status="active",
+            original_cents=28000,
+            remaining_cents=12000,
+            expires_at=datetime(2026, 9, 1, 0, 0, 0),
+            created_at=datetime(2026, 5, 2, 0, 0, 0),
+        )
+        finance_summary = SimpleNamespace(
+            user_id="u_1",
+            initialized_from_history=1,
+            total_paid_rmb_cents=0,
+            total_paid_balance_cents=0,
+            total_ops_credit_cents=0,
+            total_bonus_cents=0,
+            total_consumed_cents=0,
+            total_ops_debit_cents=0,
+            legacy_unclassified_cents=0,
+            total_paid_orders=0,
+            last_payment_at=None,
+        )
+        fake_db = _FakeDB(
+            execute_results=[
+                _FakeEntityResult(pack),
+                _FakeEntityResult(user),
+                _FakeEntityResult(None),
+                _FakeScalarsResult([pack]),
+                _FakeScalarsResult([]),
+                _FakeEntityResult(finance_summary),
+            ],
+            scalar_results=[0, 0],
+        )
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.patch(
+                "/admin/traffic-packs/tp_1",
+                json={
+                    "status": "disabled",
+                    "remaining_cents": 5000,
+                    "expires_at": "2026-10-01T00:00:00Z",
+                    "note": "manual pack edit",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(pack.status, "disabled")
+        self.assertEqual(pack.remaining_cents, 5000)
+        self.assertEqual(payload["traffic_pack_id"], "tp_1")
+        self.assertEqual(fake_db.commits, 1)
+        self.assertTrue(any(getattr(item, "entry_type", "") == "admin_traffic_pack_adjust" for item in fake_db.added))
 
     async def test_list_keys_exposes_kind_fingerprint_and_shared_balance(self) -> None:
         key = SimpleNamespace(

@@ -82,6 +82,7 @@ export default function Recharge() {
     const [searchParams, setSearchParams] = useSearchParams()
     const { isLoggedIn } = useAuth()
     const [selectedProductId, setSelectedProductId] = useState('monthly_basic')
+    const [showAddonPlans, setShowAddonPlans] = useState(false)
     const [loading, setLoading] = useState(false)
     const [billingState, setBillingState] = useState(null)
     const [billingLoading, setBillingLoading] = useState(false)
@@ -417,7 +418,7 @@ export default function Recharge() {
                     </div>
                     <p>同一时间只有一个有效套餐；同档购买只续费，高档购买按剩余天数补差升级。</p>
                 </div>
-                <div className="recharge-plans stagger-children">
+                <div className="recharge-plans recharge-monthly-plans stagger-children">
                     {monthlyProducts.map((plan, i) => (
                         <ProductCard
                             key={plan.id}
@@ -429,24 +430,44 @@ export default function Recharge() {
                     ))}
                 </div>
 
-                <div className="pricing-section-head pricing-section-head-addon">
+                <div className="addon-entry glass-card animate-fade-in-up" style={{ animationDelay: '220ms' }}>
                     <div>
                         <span className="recharge-kicker">Add-on</span>
-                        <h3>流量包</h3>
+                        <h3>需要补量时再买流量包</h3>
+                        <p>流量包只保留三档，必须先有有效月卡；有效期 180 天，套餐失效时暂停消耗。</p>
                     </div>
-                    <p>流量包只保留三档，必须有有效月卡；轻量解锁补量包，基础解锁项目包，旗舰解锁超大包。</p>
+                    <div className="addon-entry-actions">
+                        <button
+                            type="button"
+                            className={`btn ${showAddonPlans ? 'btn-secondary' : 'btn-ghost'} btn-sm`}
+                            onClick={() => setShowAddonPlans(prev => !prev)}
+                        >
+                            {showAddonPlans ? '收起流量包' : '查看流量包'}
+                        </button>
+                    </div>
                 </div>
-                <div className="recharge-plans recharge-addon-plans stagger-children">
-                    {addonProducts.map((pack, i) => (
-                        <ProductCard
-                            key={pack.id}
-                            product={pack}
-                            selected={selectedProductId === pack.id}
-                            onSelect={() => setSelectedProductId(pack.id)}
-                            delay={i * 80}
-                        />
-                    ))}
-                </div>
+                {showAddonPlans && (
+                    <>
+                        <div className="pricing-section-head pricing-section-head-addon">
+                            <div>
+                                <span className="recharge-kicker">Add-on</span>
+                                <h3>流量包</h3>
+                            </div>
+                            <p>轻量解锁补量包，基础解锁项目包，旗舰解锁超大包。默认先推荐升级月卡，再做补量。</p>
+                        </div>
+                        <div className="recharge-plans recharge-addon-plans stagger-children">
+                            {addonProducts.map((pack, i) => (
+                                <ProductCard
+                                    key={pack.id}
+                                    product={pack}
+                                    selected={selectedProductId === pack.id}
+                                    onSelect={() => setSelectedProductId(pack.id)}
+                                    delay={i * 80}
+                                />
+                            ))}
+                        </div>
+                    </>
+                )}
 
                 <div className="pricing-policy-note glass-card animate-fade-in-up" style={{ animationDelay: '300ms' }}>
                     <strong>购买规则</strong>

@@ -1993,7 +1993,7 @@
 
   <!-- User Edit Modal -->
   <div id="userModal" class="modal-overlay">
-    <div class="modal" style="max-width:540px">
+    <div class="modal" style="max-width:880px">
       <div class="modal-header">
         <span class="modal-title">编辑用户</span>
         <button class="modal-close" onclick="closeModal('userModal')">&times;</button>
@@ -2399,6 +2399,17 @@
     let modelAliasCache = [];
     let currentModelAliasId = null;
     let claudeCompatSettingsCache = null;
+    const ADMIN_TRAFFIC_PACK_VALID_DAYS = 180;
+    const ADMIN_MONTHLY_PRODUCTS = [
+      { id: 'monthly_light', name: '轻量月卡', balance_cents: 7500 },
+      { id: 'monthly_basic', name: '基础月卡', balance_cents: 38000 },
+      { id: 'monthly_flagship', name: '旗舰月卡', balance_cents: 100000 },
+    ];
+    const ADMIN_TRAFFIC_PACK_PRODUCTS = [
+      { id: 'addon_boost', name: '补量包', balance_cents: 28000 },
+      { id: 'addon_project', name: '项目包', balance_cents: 110000 },
+      { id: 'addon_ultra', name: '超大包', balance_cents: 200000 },
+    ];
 
     function toggleSidebar() {
       document.getElementById('sidebar').classList.toggle('open');
@@ -2528,6 +2539,38 @@
       return `${n < 0 ? '-' : ''}$${Math.abs(n).toFixed(2)}`;
     }
 
+    function toDatetimeLocal(value) {
+      if (!value) return '';
+      const d = utcDate(value);
+      if (!d || Number.isNaN(d.getTime())) return '';
+      const pad = n => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    }
+
+    function fromDatetimeLocal(value) {
+      if (!value) return null;
+      const d = new Date(value);
+      return Number.isNaN(d.getTime()) ? null : d.toISOString();
+    }
+
+    function defaultDatetimeLocal(days) {
+      const d = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+      const pad = n => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    }
+
+    function parseOptionalNumber(value) {
+      if (value === '' || value === null || value === undefined) return null;
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    async function parseAdminResponse(r, fallback = '操作失败') {
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.detail || fallback);
+      return data;
+    }
+
     function billingSummaryHtml(summary, compact = false) {
       const b = summary || {};
       const plan = b.subscription_active
@@ -2549,14 +2592,123 @@
       const packs = state.traffic_packs || {};
       const legacy = state.legacy_balance || {};
       const available = state.available || {};
+      const monthlyProducts = state.products?.monthly || ADMIN_MONTHLY_PRODUCTS;
+      const addonProducts = state.products?.addons || ADMIN_TRAFFIC_PACK_PRODUCTS;
       const productItems = packs.items || [];
+      const allItems = packs.all_items || productItems;
+      const selectedSubPlanId = sub.plan_id || 'monthly_basic';
+      const subPlanOptions = monthlyProducts.map(plan => `
+        <option value="${escapeHtml(plan.id)}" ${plan.id === selectedSubPlanId ? 'selected' : ''}>
+          ${escapeHtml(plan.name || plan.id)} · ${formatMoney(plan.balance_cents || 0)}
+        </option>
+      `).join('');
+      const addonOptions = addonProducts.map(pack => `
+        <option value="${escapeHtml(pack.id)}">${escapeHtml(pack.name || pack.id)} · ${formatMoney(pack.balance_cents || 0)}</option>
+      `).join('');
+      const packRows = allItems.length ? allItems.map(pack => `
+        <div style="display:grid;grid-template-columns:minmax(0,1.15fr) 110px 120px 170px auto;gap:8px;align-items:center;padding:8px;border:1px solid var(--border);border-radius:8px;margin-top:8px;background:var(--bg-primary)">
+          <div><strong>${escapeHtml(pack.product_name || pack.product_id || pack.id)}</strong><div class="text-sm text-muted">${escapeHtml(pack.id || '')} · ${escapeHtml(pack.status || '-')}</div></div>
+          <input type="number" class="form-input" id="packRemaining_${escapeHtml(pack.id)}" value="${Number(pack.remaining_cents || 0)}" />
+          <select class="form-select" id="packStatus_${escapeHtml(pack.id)}">
+            <option value="active" ${pack.status === 'active' ? 'selected' : ''}>active</option>
+            <option value="depleted" ${pack.status === 'depleted' ? 'selected' : ''}>depleted</option>
+            <option value="expired" ${pack.status === 'expired' ? 'selected' : ''}>expired</option>
+            <option value="disabled" ${pack.status === 'disabled' ? 'selected' : ''}>disabled</option>
+          </select>
+          <input type="datetime-local" class="form-input" id="packExpires_${escapeHtml(pack.id)}" value="${toDatetimeLocal(pack.expires_at)}" />
+          <input type="text" class="form-input" id="packNote_${escapeHtml(pack.id)}" placeholder="备注" value="" />
+          <button class="btn btn-sm btn-secondary" onclick="saveTrafficPack('${escapeHtml(pack.id)}')">保存</button>
+        </div>`).join('') : '<div class="text-sm text-muted" style="margin-top:8px">暂无流量包</div>';
       return `
         <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px">
           <div style="padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--bg-primary)"><div class="text-sm text-muted">可用总额</div><div style="font-weight:700">${formatMoney(available.remaining_cents || 0)}</div><div class="text-sm text-muted">套餐 -> 流量包 -> 历史余额</div></div>
           <div style="padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--bg-primary)"><div class="text-sm text-muted">当前套餐</div><div style="font-weight:700">${sub.active ? escapeHtml(sub.plan_name || sub.plan_id || '-') : '无有效月卡'}</div><div class="text-sm text-muted">${sub.active ? '到期 ' + formatDateFull(sub.paid_until) : '流量包暂停使用'}</div></div>
           <div style="padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--bg-primary)"><div class="text-sm text-muted">套餐额度</div><div style="font-weight:700">${formatMoney(sub.remaining_cents || 0)}</div><div class="text-sm text-muted">已用 ${formatMoney(sub.used_cents || 0)} / 总额 ${formatMoney(sub.quota_cents || 0)}</div></div>
           <div style="padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--bg-primary)"><div class="text-sm text-muted">流量包 / 历史余额</div><div style="font-weight:700">${formatMoney(packs.remaining_cents || 0)} / ${formatMoney(legacy.remaining_cents || 0)}</div><div class="text-sm text-muted">有效流量包 ${productItems.length} 个，180 天有效</div></div>
+        </div>
+        <div style="margin-top:12px">
+          <div class="text-sm text-muted" style="margin-bottom:8px">月卡管理</div>
+          <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding:12px;border:1px solid var(--border);border-radius:10px;background:var(--bg-primary)">
+            <div class="form-group" style="margin:0">
+              <label class="form-label">套餐档位</label>
+              <select id="billingSubPlanId" class="form-select">${subPlanOptions}</select>
+            </div>
+            <div class="form-group" style="margin:0">
+              <label class="form-label">状态</label>
+              <select id="billingSubStatus" class="form-select">
+                <option value="active" ${sub.active ? 'selected' : ''}>active</option>
+                <option value="expired" ${!sub.active && sub.plan_id ? 'selected' : ''}>expired</option>
+                <option value="disabled">disabled</option>
+              </select>
+            </div>
+            <div class="form-group" style="margin:0">
+              <label class="form-label">period_start</label>
+              <input type="datetime-local" id="billingSubPeriodStart" class="form-input" value="${toDatetimeLocal(sub.period_start) || defaultDatetimeLocal(0)}" />
+            </div>
+            <div class="form-group" style="margin:0">
+              <label class="form-label">period_end</label>
+              <input type="datetime-local" id="billingSubPeriodEnd" class="form-input" value="${toDatetimeLocal(sub.period_end) || defaultDatetimeLocal(30)}" />
+            </div>
+            <div class="form-group" style="margin:0">
+              <label class="form-label">paid_until</label>
+              <input type="datetime-local" id="billingSubPaidUntil" class="form-input" value="${toDatetimeLocal(sub.paid_until) || defaultDatetimeLocal(30)}" />
+            </div>
+            <div class="form-group" style="margin:0">
+              <label class="form-label">quota_cents</label>
+              <input type="number" id="billingSubQuotaCents" class="form-input" value="${Number(sub.quota_cents || monthlyProducts.find(plan => plan.id === selectedSubPlanId)?.balance_cents || 0)}" />
+            </div>
+            <div class="form-group" style="margin:0">
+              <label class="form-label">used_cents</label>
+              <input type="number" id="billingSubUsedCents" class="form-input" value="${Number(sub.used_cents || 0)}" />
+            </div>
+            <div class="form-group" style="margin:0">
+              <label class="form-label">备注</label>
+              <input type="text" id="billingSubNote" class="form-input" placeholder="例如：手动延期 / 活动补偿" value="" />
+            </div>
+            <div style="grid-column:1 / -1;display:flex;justify-content:flex-end">
+              <button class="btn btn-sm btn-primary" onclick="saveSubscription()">保存月卡</button>
+            </div>
+          </div>
+        </div>
+        <div style="margin-top:12px">
+          <div class="text-sm text-muted" style="margin-bottom:8px">发放流量包</div>
+          <div style="display:grid;grid-template-columns:minmax(0,1.2fr) 120px 170px minmax(0,1fr) auto;gap:8px;align-items:end;padding:12px;border:1px solid var(--border);border-radius:10px;background:var(--bg-primary)">
+            <div class="form-group" style="margin:0">
+              <label class="form-label">流量包</label>
+              <select id="billingGrantProductId" class="form-select" onchange="syncGrantTrafficPackDefaults()">${addonOptions}</select>
+            </div>
+            <div class="form-group" style="margin:0">
+              <label class="form-label">remaining_cents</label>
+              <input type="number" id="billingGrantRemainingCents" class="form-input" value="" />
+            </div>
+            <div class="form-group" style="margin:0">
+              <label class="form-label">expires_at</label>
+              <input type="datetime-local" id="billingGrantExpiresAt" class="form-input" value="" />
+            </div>
+            <div class="form-group" style="margin:0">
+              <label class="form-label">备注</label>
+              <input type="text" id="billingGrantNote" class="form-input" placeholder="例如：活动补量 / 客诉补偿" value="" />
+            </div>
+            <button class="btn btn-sm btn-primary" onclick="grantTrafficPack()">发放</button>
+          </div>
+        </div>
+        <div style="margin-top:12px">
+          <div class="text-sm text-muted">流量包明细</div>
+          ${packRows}
         </div>`;
+    }
+
+    function syncGrantTrafficPackDefaults() {
+      const productId = document.getElementById('billingGrantProductId')?.value || '';
+      const remainingInput = document.getElementById('billingGrantRemainingCents');
+      const expiresInput = document.getElementById('billingGrantExpiresAt');
+      const product = [...ADMIN_TRAFFIC_PACK_PRODUCTS].find(item => item.id === productId);
+      if (remainingInput && product) {
+        remainingInput.value = String(product.balance_cents || 0);
+      }
+      if (expiresInput && !expiresInput.value) {
+        expiresInput.value = defaultDatetimeLocal(ADMIN_TRAFFIC_PACK_VALID_DAYS);
+      }
     }
 
     function productLabel(o) {
@@ -2834,8 +2986,91 @@
             <div class="text-sm text-muted" style="margin-top:8px">最后支付: ${formatDateFull(f.last_payment_at)} · 仅预聚合读取</div>
           </div>
           <div class="form-group"><label class="form-label">API 密钥 (${u.keys?.length||0})</label><div style="max-height:200px;overflow-y:auto">${keysHtml}</div>${policyHtml}</div>`;
+        syncGrantTrafficPackDefaults();
         openModal('userModal');
       } catch (e) { console.error(e); toast('加载失败', 'error'); }
+    }
+
+    async function saveSubscription() {
+      if (!currentUserId) return toast('当前没有选中用户', 'error');
+      const payload = {
+        plan_id: document.getElementById('billingSubPlanId')?.value || 'monthly_basic',
+        status: document.getElementById('billingSubStatus')?.value || 'active',
+        period_start: fromDatetimeLocal(document.getElementById('billingSubPeriodStart')?.value),
+        period_end: fromDatetimeLocal(document.getElementById('billingSubPeriodEnd')?.value),
+        paid_until: fromDatetimeLocal(document.getElementById('billingSubPaidUntil')?.value),
+        quota_cents: parseOptionalNumber(document.getElementById('billingSubQuotaCents')?.value),
+        used_cents: parseOptionalNumber(document.getElementById('billingSubUsedCents')?.value),
+        note: document.getElementById('billingSubNote')?.value?.trim() || '',
+      };
+      try {
+        const r = await fetch(`/admin/users/${currentUserId}/subscription`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+          body: JSON.stringify(payload),
+        });
+        await parseAdminResponse(r, '保存月卡失败');
+        toast('月卡已更新', 'success');
+        await openUserModal(currentUserId);
+        loadUsers();
+        loadSummary();
+      } catch (e) {
+        toast(e.message || '保存月卡失败', 'error');
+      }
+    }
+
+    async function grantTrafficPack() {
+      if (!currentUserId) return toast('当前没有选中用户', 'error');
+      const remaining = parseOptionalNumber(document.getElementById('billingGrantRemainingCents')?.value);
+      const payload = {
+        product_id: document.getElementById('billingGrantProductId')?.value || '',
+        remaining_cents: remaining,
+        expires_at: fromDatetimeLocal(document.getElementById('billingGrantExpiresAt')?.value),
+        note: document.getElementById('billingGrantNote')?.value?.trim() || '',
+      };
+      if (!payload.product_id) return toast('请选择流量包', 'error');
+      try {
+        const r = await fetch(`/admin/users/${currentUserId}/traffic-packs`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+          body: JSON.stringify(payload),
+        });
+        await parseAdminResponse(r, '发放流量包失败');
+        toast('流量包已发放', 'success');
+        await openUserModal(currentUserId);
+        loadUsers();
+        loadSummary();
+      } catch (e) {
+        toast(e.message || '发放流量包失败', 'error');
+      }
+    }
+
+    async function saveTrafficPack(packId) {
+      const remaining = parseOptionalNumber(document.getElementById(`packRemaining_${packId}`)?.value);
+      const statusValue = document.getElementById(`packStatus_${packId}`)?.value || null;
+      const expiresAt = fromDatetimeLocal(document.getElementById(`packExpires_${packId}`)?.value);
+      const note = document.getElementById(`packNote_${packId}`)?.value?.trim() || '';
+      const payload = {};
+      if (remaining !== null) payload.remaining_cents = remaining;
+      if (statusValue) payload.status = statusValue;
+      if (expiresAt) payload.expires_at = expiresAt;
+      if (note) payload.note = note;
+      try {
+        const r = await fetch(`/admin/traffic-packs/${packId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+          body: JSON.stringify(payload),
+        });
+        await parseAdminResponse(r, '保存流量包失败');
+        toast('流量包已更新', 'success');
+        if (currentUserId) {
+          await openUserModal(currentUserId);
+          loadUsers();
+          loadSummary();
+        }
+      } catch (e) {
+        toast(e.message || '保存流量包失败', 'error');
+      }
     }
 
     async function resetUserPassword(userId) {

@@ -215,6 +215,50 @@ class SubscriptionBillingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pack.status, "depleted")
         self.assertEqual(user.balance, 700)
 
+    def test_serialize_billing_state_separates_active_and_historical_traffic_packs(self):
+        now = datetime(2026, 5, 10, 12, 0, 0)
+        sub = SimpleNamespace(
+            id="sub_1",
+            user_id="u_1",
+            plan_id="monthly_basic",
+            status="active",
+            period_start=datetime(2026, 5, 1, 12, 0, 0),
+            period_end=datetime(2026, 5, 31, 12, 0, 0),
+            paid_until=datetime(2026, 5, 31, 12, 0, 0),
+            quota_cents=38000,
+            used_cents=1000,
+        )
+        active_pack = SimpleNamespace(
+            id="tp_active",
+            user_id="u_1",
+            product_id="addon_boost",
+            status="active",
+            original_cents=28000,
+            remaining_cents=12000,
+            expires_at=datetime(2026, 8, 1, 0, 0, 0),
+            created_at=datetime(2026, 5, 2, 0, 0, 0),
+        )
+        depleted_pack = SimpleNamespace(
+            id="tp_old",
+            user_id="u_1",
+            product_id="addon_project",
+            status="depleted",
+            original_cents=110000,
+            remaining_cents=0,
+            expires_at=datetime(2026, 7, 1, 0, 0, 0),
+            created_at=datetime(2026, 5, 1, 0, 0, 0),
+        )
+        user = SimpleNamespace(id="u_1", balance=500, referred_by=None, status="active")
+
+        snapshot = serialize_billing_state(sub, [active_pack, depleted_pack], user, now=now)
+
+        self.assertEqual(snapshot["traffic_packs"]["remaining_cents"], 12000)
+        self.assertEqual([item["id"] for item in snapshot["traffic_packs"]["items"]], ["tp_active"])
+        self.assertEqual(
+            [item["id"] for item in snapshot["traffic_packs"]["all_items"]],
+            ["tp_active", "tp_old"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
