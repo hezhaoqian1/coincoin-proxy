@@ -173,6 +173,14 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             admin_html,
         )
 
+    def test_admin_ui_wires_analytics_page_loader(self) -> None:
+        admin_html = (Path(admin_module.__file__).parent / "static" / "admin.html").read_text()
+
+        self.assertIn('data-page="analytics"', admin_html)
+        self.assertIn('id="page-analytics"', admin_html)
+        self.assertIn("analytics: loadAnalytics,", admin_html)
+        self.assertIn("async function loadAnalytics()", admin_html)
+
     async def test_request_logs_expose_provider_alias_and_usage_units(self) -> None:
         log = SimpleNamespace(
             created_at=datetime(2026, 3, 25, 12, 34, 56),
@@ -480,6 +488,152 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["total_images_today"], 6)
         self.assertEqual(payload["paid_today_cents"], 999)
         self.assertEqual(payload["consumed_today_cents"], 321)
+
+    async def test_admin_analytics_overview_uses_existing_daily_aggregates(self) -> None:
+        usage_row = SimpleNamespace(
+            active_users=3,
+            requests_total=45,
+            input_tokens=1000,
+            output_tokens=250,
+            tokens_total=1250,
+            images_total=6,
+            cost_cents=321,
+        )
+        fake_db = _FakeDB(
+            execute_results=[_FakeSummaryResult(usage_row)],
+            scalar_results=[12, 10, 999],
+        )
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get("/admin/analytics/overview?period=today")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["period"], "today")
+        self.assertEqual(payload["days"], 1)
+        self.assertEqual(payload["total_users"], 12)
+        self.assertEqual(payload["active_users"], 10)
+        self.assertEqual(payload["active_users_period"], 3)
+        self.assertEqual(payload["requests_total"], 45)
+        self.assertEqual(payload["tokens_total"], 1250)
+        self.assertEqual(payload["images_total"], 6)
+        self.assertEqual(payload["user_charge_cents"], 321)
+        self.assertEqual(payload["paid_cents"], 999)
+        self.assertEqual(payload["net_cashflow_cents"], 678)
+
+    async def test_admin_analytics_top_users_returns_ranked_usage_rows(self) -> None:
+        row = SimpleNamespace(
+            user_id="u_1",
+            username="alice",
+            email="alice@example.com",
+            external_id="ext_alice",
+            balance=4321,
+            requests_total=9,
+            input_tokens=100,
+            output_tokens=50,
+            tokens_total=150,
+            images_total=2,
+            cost_cents=88,
+        )
+        fake_db = _FakeDB(execute_results=[_FakeAllResult([row])])
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get("/admin/analytics/top-users?period=7d&metric=cost_cents&limit=5")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["period"], "7d")
+        self.assertEqual(payload["metric"], "cost_cents")
+        self.assertEqual(payload["data"][0]["user_id"], "u_1")
+        self.assertEqual(payload["data"][0]["display_name"], "alice")
+        self.assertEqual(payload["data"][0]["cost_cents"], 88)
+        self.assertEqual(payload["data"][0]["balance_cents"], 4321)
+
+    async def test_admin_analytics_low_balance_users_estimates_days_remaining(self) -> None:
+        row = SimpleNamespace(
+            user_id="u_low",
+            username="low",
+            email=None,
+            external_id=None,
+            balance=120,
+            requests_total=12,
+            tokens_total=300,
+            images_total=0,
+            cost_cents=420,
+        )
+        fake_db = _FakeDB(execute_results=[_FakeAllResult([row])])
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get("/admin/analytics/low-balance-users?period=7d&limit=5")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        item = payload["data"][0]
+        self.assertEqual(item["user_id"], "u_low")
+        self.assertEqual(item["avg_daily_cost_cents"], 60)
+        self.assertEqual(item["estimated_days_remaining"], 2.0)
+        self.assertEqual(item["risk_level"], "critical")
+
+    async def test_admin_analytics_errors_returns_recent_error_rollup(self) -> None:
+        recent_log = SimpleNamespace(
+            created_at=datetime(2026, 5, 12, 8, 30, 0),
+            user_id="u_1",
+            endpoint="responses",
+            model="gpt-5.4",
+            status_code=429,
+            duration_ms=1800,
+            route_reason="catalog:gpt-5.4:legacy_explicit",
+            upstream_request_id="req_123",
+        )
+        user = SimpleNamespace(username="alice", email=None, external_id=None, id="u_1")
+        fake_db = _FakeDB(
+            execute_results=[
+                _FakeAllResult([(429, 3)]),
+                _FakeAllResult([("gpt-5.4", 3)]),
+                _FakeAllResult([(recent_log, user)]),
+            ],
+            scalar_results=[10, 3],
+        )
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get("/admin/analytics/errors?period=today&limit=5")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["total_requests"], 10)
+        self.assertEqual(payload["failed_requests"], 3)
+        self.assertEqual(payload["error_rate"], 0.3)
+        self.assertEqual(payload["by_status"][0]["status_code"], 429)
+        self.assertEqual(payload["by_model"][0]["model"], "gpt-5.4")
+        self.assertEqual(payload["recent"][0]["user"], "alice")
 
     async def test_manual_payment_confirm_credits_pending_order_from_proof_url(self) -> None:
         admin_module._settings.epay_api_url = "https://code.nxslq.top/"
