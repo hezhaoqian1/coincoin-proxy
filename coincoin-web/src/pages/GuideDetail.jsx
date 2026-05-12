@@ -7,6 +7,7 @@ import './GuideDetail.css'
 
 const SITE_ROOT = typeof window !== 'undefined' ? window.location.origin : ''
 const OPENAI_BASE_URL = SITE_ROOT ? `${SITE_ROOT}/v1` : '/v1'
+const CODEX_MODEL_ID = 'gpt-5.4'
 
 function CopyButton({ text, idleLabel = '复制', doneLabel = '已复制' }) {
     const [copied, setCopied] = useState(false)
@@ -242,7 +243,7 @@ if [ -f ~/.codex/config.toml ]; then
 fi
 cat > ~/.codex/config.toml <<'EOF'
 model_provider = "coincoin"
-model = "${codingModel?.id || 'opus'}"
+model = "${CODEX_MODEL_ID}"
 disable_response_storage = true
 model_reasoning_effort = "high"
 web_search = "live"
@@ -264,7 +265,7 @@ if (Test-Path "$HOME\\.codex\\config.toml") {
 }
 @"
 model_provider = "coincoin"
-model = "${codingModel?.id || 'opus'}"
+model = "${CODEX_MODEL_ID}"
 disable_response_storage = true
 model_reasoning_effort = "high"
 web_search = "live"

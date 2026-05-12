@@ -7,6 +7,7 @@ import { usePublicModels } from '../hooks/usePublicModels'
 import './Docs.css'
 
 const SITE = typeof window !== 'undefined' ? window.location.origin : ''
+const CODEX_MODEL_ID = 'gpt-5.4'
 const TABS = [
     {
         label: '快速开始',
@@ -386,7 +387,7 @@ function QuickStart({ primaryTextModel, primaryImageModel }) {
   }'`}</pre>
 
             <h3>Codex</h3>
-            <pre className="code-block">{`model = "${textModelId}"
+            <pre className="code-block">{`model = "${CODEX_MODEL_ID}"
 model_provider = "coincoin"
 disable_response_storage = true
 model_reasoning_effort = "high"
@@ -949,7 +950,7 @@ const data = await res.json();
 console.log(data.data[0]);`}</pre>
 
             <h3>Codex CLI</h3>
-            <pre className="code-block">{`model = "${textModelId}"
+            <pre className="code-block">{`model = "${CODEX_MODEL_ID}"
 model_provider = "clawfather"
 disable_response_storage = true
 model_reasoning_effort = "high"
