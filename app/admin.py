@@ -365,6 +365,26 @@ def _billing_package_entry_types():
     return ("usage_subscription_debit", "usage_traffic_pack_debit")
 
 
+def _is_test_identity(*values: Optional[str]) -> bool:
+    text = " ".join(str(value or "").lower() for value in values)
+    markers = ("test", "smoke", "demo", "dummy", "internal", "codex_", "probe")
+    return any(marker in text for marker in markers)
+
+
+def _analytics_meta(*, generated_at: datetime, cache_hit: bool) -> dict:
+    return {
+        "generated_at": generated_at,
+        "cache_hit": cache_hit,
+        "cache_ttl_seconds": ANALYTICS_DASHBOARD_CACHE_TTL_SECONDS,
+        "freshness": "cached" if cache_hit else "fresh",
+        "freshness_note": (
+            f"命中 {ANALYTICS_DASHBOARD_CACHE_TTL_SECONDS}s 内存缓存，dashboard 快速打开。"
+            if cache_hit
+            else f"本次从数据库实时聚合；结果会缓存 {ANALYTICS_DASHBOARD_CACHE_TTL_SECONDS}s。"
+        ),
+    }
+
+
 def _source_quality(*, upstream_cost_cents: int, user_charge_cents: int, channel_known_rate: float = 0.0) -> dict:
     upstream_known = upstream_cost_cents > 0
     return {
@@ -399,7 +419,16 @@ def _build_action_items(
 ) -> dict:
     items = []
 
-    for user in (low_balance.get("data") or [])[:3]:
+    for user in (low_balance.get("data") or []):
+        if _is_test_identity(
+            user.get("display_name"),
+            user.get("username"),
+            user.get("email"),
+            user.get("external_id"),
+        ):
+            continue
+        if len([item for item in items if item.get("type") == "low_balance_top_user"]) >= 1:
+            break
         days_remaining = user.get("estimated_days_remaining")
         if days_remaining is not None and float(days_remaining) <= 2:
             items.append({
@@ -415,6 +444,20 @@ def _build_action_items(
                 },
                 "suggested_action": "今天联系用户充值或确认是否需要企业方案。",
             })
+
+    if int(revenue.get("paid_cents") or 0) <= 500 and int(revenue.get("user_charge_cents") or 0) >= 5000:
+        items.append({
+            "severity": "high",
+            "type": "growth_conversion_gap",
+            "owner": "product",
+            "title": "今日消耗主要来自存量用户，新接入/首充不足",
+            "evidence": {
+                "paid_cents": revenue.get("paid_cents"),
+                "user_charge_cents": revenue.get("user_charge_cents"),
+                "period": period,
+            },
+            "suggested_action": "检查注册到首充漏斗和拉新渠道；确认今天是否需要运营触达高消耗未续费用户。",
+        })
 
     if float(errors.get("error_rate") or 0) > 0.05 or int(errors.get("failed_requests") or 0) >= 10:
         top_model = (errors.get("by_model") or [{}])[0]
@@ -445,6 +488,26 @@ def _build_action_items(
                     "failure_rate": item.get("failure_rate"),
                 },
                 "suggested_action": "检查该 SKU 的上游错误和路由策略。",
+            })
+            break
+
+    for item in usage.get("data") or []:
+        avg_latency_ms = int(item.get("avg_latency_ms") or 0)
+        requests = int(item.get("requests") or 0)
+        if avg_latency_ms >= 12000 and requests >= 5:
+            items.append({
+                "severity": "high" if avg_latency_ms >= 30000 else "medium",
+                "type": "high_latency_model",
+                "owner": "tech",
+                "title": f"{item.get('model')} 平均延迟 {avg_latency_ms // 1000}s，影响可用性",
+                "evidence": {
+                    "model": item.get("model"),
+                    "billable_sku": item.get("billable_sku"),
+                    "requests": requests,
+                    "avg_latency_ms": avg_latency_ms,
+                    "user_charge_cents": item.get("user_charge_cents"),
+                },
+                "suggested_action": "检查该模型上游耗时、图片任务同步路径和是否需要路由降级/异步化。",
             })
             break
 
@@ -1844,7 +1907,9 @@ async def analytics_operating_dashboard(period: str = "today", db: AsyncSession 
     now_ts = time.time()
     cached = _analytics_dashboard_cache.get(cache_key)
     if cached and now_ts - cached[0] < ANALYTICS_DASHBOARD_CACHE_TTL_SECONDS:
-        return cached[1]
+        cached_payload = dict(cached[1])
+        cached_payload["cache"] = _analytics_meta(generated_at=cached[1]["generated_at"], cache_hit=True)
+        return cached_payload
     overview = await analytics_overview(period=period, db=db)
     growth = await analytics_growth(period=period, db=db)
     revenue = await analytics_revenue_margin(period=period, db=db)
@@ -1868,10 +1933,17 @@ async def analytics_operating_dashboard(period: str = "today", db: AsyncSession 
         if (revenue.get("source_quality") or {}).get("upstream_cost_available")
         else "缺上游真实成本，无法判断毛利"
     )
+    account_pool = channel.get("account_pool") or {}
+    account_pool_share = _safe_rate(account_pool.get("requests", 0), channel.get("total_requests", 0))
     channel_judgement = (
-        "号池通道可由 route_reason 部分推断，需补稳定字段"
-        if (channel.get("source_quality") or {}).get("channel_type_available")
+        f"号池占比 {account_pool_share * 100:.1f}%，但缺真实成本，今天无法判断是否赚钱"
+        if account_pool
         else "缺 channel_type，无法管理号池"
+    )
+    growth_judgement = (
+        "今日没有新增接入，消耗来自存量用户，需看拉新/转化"
+        if int(growth.get("new_users") or 0) == 0 and int(growth.get("first_call_users") or 0) > 0
+        else f"新增注册 {growth.get('new_users', 0)}，创建 Key {growth.get('new_api_key_users', 0)}，首次调用 {growth.get('first_call_users', 0)}，首充 {growth.get('first_paid_users', 0)}。"
     )
     high_actions = [item for item in (actions.get("items") or []) if item.get("severity") == "high"]
     judgement = {
@@ -1880,7 +1952,7 @@ async def analytics_operating_dashboard(period: str = "today", db: AsyncSession 
             f"今日新增 {growth.get('new_users', 0)}，首充 {growth.get('first_paid_users', 0)}，"
             f"消耗 {revenue.get('user_charge_cents', 0) / 100:.2f} 美元。"
         ),
-        "growth": f"新增注册 {growth.get('new_users', 0)}，创建 Key {growth.get('new_api_key_users', 0)}，首次调用 {growth.get('first_call_users', 0)}，首充 {growth.get('first_paid_users', 0)}。",
+        "growth": growth_judgement,
         "revenue": revenue_judgement,
         "channel": channel_judgement,
         "risk": f"今日动作 {len(actions.get('items') or [])} 条，其中高优先级 {len(high_actions)} 条。",
@@ -1901,6 +1973,7 @@ async def analytics_operating_dashboard(period: str = "today", db: AsyncSession 
         "errors": errors,
         "low_balance": low_balance,
     }
+    payload["cache"] = _analytics_meta(generated_at=payload["generated_at"], cache_hit=False)
     _analytics_dashboard_cache[cache_key] = (now_ts, payload)
     return payload
 

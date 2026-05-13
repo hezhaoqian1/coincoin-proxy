@@ -216,6 +216,131 @@ def fetch_report_data(token: str) -> Dict[str, Any]:
     return dashboard
 
 
+def fetch_report_data_from_snapshot(path: str) -> Dict[str, Any]:
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    if "trend" not in data:
+        growth_daily = ((data.get("growth") or {}).get("daily") or [])
+        data["trend"] = [
+            {
+                "day": item.get("day"),
+                "requests_total": item.get("requests_total", 0),
+                "user_charge_cents": item.get("user_charge_cents", 0),
+                "tokens_total": item.get("tokens_total", 0),
+                "active_users": item.get("active_users", 0),
+            }
+            for item in growth_daily[-7:]
+        ]
+    return data
+
+
+def is_test_identity(*values: Any) -> bool:
+    text = " ".join(str(value or "").lower() for value in values)
+    markers = ("test", "smoke", "demo", "dummy", "internal", "codex_", "probe")
+    return any(marker in text for marker in markers)
+
+
+def curated_actions(data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    actions = list(((data.get("action_items") or {}).get("items") or []))
+    usage_items = (data.get("usage_structure") or {}).get("data") or []
+    revenue = data.get("revenue_margin") or {}
+    channel = data.get("channel_health") or {}
+    growth = data.get("growth") or {}
+    low_balance = (data.get("low_balance") or {}).get("data") or []
+
+    curated: List[Dict[str, Any]] = []
+    seen_types = set()
+
+    def add(item: Dict[str, Any]) -> None:
+        key = item.get("type") or item.get("title")
+        if key in seen_types:
+            return
+        seen_types.add(key)
+        curated.append(item)
+
+    account_pool = channel.get("account_pool") or {}
+    if account_pool and not (revenue.get("source_quality") or {}).get("upstream_cost_available"):
+        add({
+            "severity": "high",
+            "type": "account_pool_margin_gap",
+            "owner": "tech",
+            "title": f"号池占比 {pct(account_pool.get('request_share'))}，但缺真实成本，无法判断是否赚钱",
+            "evidence": {
+                "account_pool_share": account_pool.get("request_share"),
+                "account_pool_requests": account_pool.get("requests"),
+                "user_charge_cents": revenue.get("user_charge_cents"),
+            },
+            "suggested_action": "今天补 upstream_cost 写入/回填，至少让 account_pool 能算收入、成本和毛利。",
+        })
+
+    if int(growth.get("new_users") or 0) == 0 and int(growth.get("first_call_users") or 0) > 0:
+        add({
+            "severity": "high",
+            "type": "growth_gap",
+            "owner": "product",
+            "title": "今日没有新增接入，消耗来自存量用户",
+            "evidence": {
+                "new_users": growth.get("new_users"),
+                "new_api_key_users": growth.get("new_api_key_users"),
+                "first_call_users": growth.get("first_call_users"),
+                "first_paid_users": growth.get("first_paid_users"),
+            },
+            "suggested_action": "检查注册到 API Key/首充漏斗，今天明确拉新或转化动作。",
+        })
+
+    high_latency = next(
+        (item for item in usage_items if int(item.get("avg_latency_ms") or 0) >= 12000 and int(item.get("requests") or 0) >= 5),
+        None,
+    )
+    if high_latency:
+        avg_latency_ms = int(high_latency.get("avg_latency_ms") or 0)
+        add({
+            "severity": "high" if avg_latency_ms >= 30000 else "medium",
+            "type": "high_latency_model",
+            "owner": "tech",
+            "title": f"{high_latency.get('model')} 平均延迟 {avg_latency_ms // 1000}s，影响可用性",
+            "evidence": {
+                "model": high_latency.get("model"),
+                "billable_sku": high_latency.get("billable_sku"),
+                "requests": high_latency.get("requests"),
+                "avg_latency_ms": avg_latency_ms,
+            },
+            "suggested_action": "检查高延迟模型/图片任务，必要时路由降级或转异步。",
+        })
+
+    real_low_balance = next(
+        (
+            user for user in low_balance
+            if not is_test_identity(user.get("display_name"), user.get("username"), user.get("email"), user.get("external_id"))
+            and user.get("estimated_days_remaining") is not None
+            and float(user.get("estimated_days_remaining") or 0) <= 2
+        ),
+        None,
+    )
+    if real_low_balance:
+        add({
+            "severity": "high",
+            "type": "real_low_balance_user",
+            "owner": "bd",
+            "title": f"{real_low_balance.get('display_name') or real_low_balance.get('user_id')} 余额预计不足 2 天",
+            "evidence": {
+                "user_id": real_low_balance.get("user_id"),
+                "balance_cents": real_low_balance.get("balance_cents"),
+                "estimated_days_remaining": real_low_balance.get("estimated_days_remaining"),
+            },
+            "suggested_action": "今天联系真实高消耗用户充值或确认企业方案。",
+        })
+
+    for item in actions:
+        title = item.get("title", "")
+        if is_test_identity(title, json.dumps(item.get("evidence", {}), ensure_ascii=False)):
+            continue
+        add(item)
+        if len(curated) >= 5:
+            break
+
+    return curated[:5]
+
+
 def positive_balance_users_label(overview: Dict[str, Any]) -> Tuple[str, str]:
     for key in ("positive_balance_users", "users_with_balance", "balance_positive_users"):
         if key in overview:
@@ -244,6 +369,28 @@ def draw_text(draw: ImageDraw.ImageDraw, xy, text: str, font, fill="#111827", ma
     for line in lines:
         draw.text((x, y), line, font=font, fill=fill)
         y += font.size + 6
+
+
+def wrapped_height(draw: ImageDraw.ImageDraw, text: str, font, max_width: int) -> int:
+    if not text:
+        return font.size + 6
+    line = ""
+    lines = 1
+    for char in str(text):
+        candidate = line + char
+        if draw.textbbox((0, 0), candidate, font=font)[2] <= max_width:
+            line = candidate
+        else:
+            lines += 1
+            line = char
+    return lines * (font.size + 6)
+
+
+def conclusion_row(draw: ImageDraw.ImageDraw, box, title: str, text: str, fill="#ffffff", outline="#e5e7eb"):
+    x1, y1, x2, y2 = box
+    draw.rounded_rectangle(box, radius=16, fill=fill, outline=outline, width=2)
+    draw_text(draw, (x1 + 18, y1 + 18), title, FONT_H2, fill="#111827")
+    draw_text(draw, (x1 + 110, y1 + 18), text, FONT_BODY, fill="#111827", max_width=x2 - x1 - 136)
 
 
 def card(draw: ImageDraw.ImageDraw, box, title: str, value: str, subtitle: str, accent="#2563eb"):
@@ -396,7 +543,6 @@ def render_report(data: Dict[str, Any], output_path: Path) -> None:
     revenue = data.get("revenue_margin") or {}
     usage = data.get("usage_structure") or {}
     channel = data.get("channel_health") or {}
-    actions = data.get("action_items") or {}
     top_users = (data.get("top_users") or {}).get("data", [])[:6]
     low_balance = (data.get("low_balance") or {}).get("data", [])[:6]
     errors = data.get("errors") or {}
@@ -405,8 +551,19 @@ def render_report(data: Dict[str, Any], output_path: Path) -> None:
     balance_user_value, balance_user_subtitle = positive_balance_users_label(overview)
     margin_available = bool((revenue.get("source_quality") or {}).get("upstream_cost_available"))
     account_pool = channel.get("account_pool") or {}
+    action_rows_data = curated_actions(data)
+    account_pool_share_text = pct(account_pool.get("request_share")) if account_pool else "缺字段"
+    if int(growth.get("new_users") or 0) == 0 and int(growth.get("first_call_users") or 0) > 0:
+        growth_text = "今日没有新增接入，消耗来自存量用户，需看拉新/转化。"
+    else:
+        growth_text = status_text(judgement.get("growth"))
+    channel_text = (
+        f"号池占比 {account_pool_share_text}，但缺真实成本，今天无法判断是否赚钱。"
+        if account_pool and not margin_available
+        else status_text(judgement.get("channel"))
+    )
 
-    img = Image.new("RGB", (1600, 3000), "#f3f4f6")
+    img = Image.new("RGB", (1600, 3500), "#f3f4f6")
     draw = ImageDraw.Draw(img)
 
     draw.rectangle((0, 0, 1600, 180), fill="#111827")
@@ -416,13 +573,13 @@ def render_report(data: Dict[str, Any], output_path: Path) -> None:
     draw_text(draw, (66, 108), f"数据周期：{period} · 生成时间：{generated}", FONT_BODY, fill="#cbd5e1")
     draw_text(draw, (1240, 58), "Asia/Singapore 08:00", FONT_BODY, fill="#93c5fd")
 
-    draw.rounded_rectangle((64, 210, 1536, 430), radius=18, fill="#ffffff", outline="#dbeafe", width=2)
+    draw.rounded_rectangle((64, 210, 1536, 620), radius=18, fill="#ffffff", outline="#dbeafe", width=2)
     draw_text(draw, (96, 238), "今日经营结论", FONT_H2, fill="#111827")
     draw_text(draw, (96, 278), status_text(judgement.get("overall")), FONT_BODY, fill="#111827", max_width=1340)
-    judgement_box(draw, (96, 336, 430, 404), "增长", status_text(judgement.get("growth")), "#eef2ff", "#c7d2fe")
-    judgement_box(draw, (454, 336, 788, 404), "收入", status_text(judgement.get("revenue")), "#ecfdf5", "#bbf7d0")
-    judgement_box(draw, (812, 336, 1146, 404), "号池", status_text(judgement.get("channel")), "#fff7ed", "#fed7aa")
-    judgement_box(draw, (1170, 336, 1504, 404), "风险", status_text(judgement.get("risk")), "#fef2f2", "#fecaca")
+    conclusion_row(draw, (96, 332, 1504, 390), "增长", growth_text, "#eef2ff", "#c7d2fe")
+    conclusion_row(draw, (96, 402, 1504, 460), "收入", status_text(judgement.get("revenue")), "#ecfdf5", "#bbf7d0")
+    conclusion_row(draw, (96, 472, 1504, 530), "号池", channel_text, "#fff7ed", "#fed7aa")
+    conclusion_row(draw, (96, 542, 1504, 600), "风险", status_text(judgement.get("risk")), "#fef2f2", "#fecaca")
 
     cards = [
         ("有余额用户", balance_user_value, balance_user_subtitle, "#7c3aed"),
@@ -434,16 +591,16 @@ def render_report(data: Dict[str, Any], output_path: Path) -> None:
         ("错误率", pct(float(errors.get("error_rate") or 0)), f"失败 {intfmt(errors.get('failed_requests'))} / {intfmt(errors.get('total_requests'))}", "#0f766e"),
     ]
     cards = cards[:8]
-    x0, y0 = 64, 470
+    x0, y0 = 64, 660
     cw, ch, gap = 464, 142, 38
     for i, item in enumerate(cards[:6]):
         row, col = divmod(i, 3)
         card(draw, (x0 + col * (cw + gap), y0 + row * (ch + 28), x0 + col * (cw + gap) + cw, y0 + row * (ch + 28) + ch), *item)
 
-    y = 820
+    y = 1010
     draw_text(draw, (64, y), "今日必须处理", FONT_H2)
     action_rows = []
-    for idx, item in enumerate((actions.get("items") or [])[:5], start=1):
+    for idx, item in enumerate(action_rows_data[:4], start=1):
         action_rows.append([
             str(idx),
             item.get("severity", "-"),
@@ -453,14 +610,20 @@ def render_report(data: Dict[str, Any], output_path: Path) -> None:
         ])
     table(draw, 64, y + 44, 1472, "", ["#", "级别", "Owner", "问题", "动作"], action_rows, [54, 90, 120, 520, 650], row_height=58)
 
-    y = 1220
-    draw_text(draw, (64, y), "7 日基础趋势", FONT_H2)
-    draw_mini_chart(draw, (64, y + 46, 390, y + 260), "请求数", trend, "requests_total", "#2563eb", compact_int)
-    draw_mini_chart(draw, (430, y + 46, 756, y + 260), "Token 消耗", trend, "tokens_total", "#7c3aed", compact_int)
-    draw_mini_chart(draw, (796, y + 46, 1122, y + 260), "用户侧消耗", trend, "user_charge_cents", "#dc2626", money)
-    draw_mini_chart(draw, (1162, y + 46, 1536, y + 260), "活跃用户", trend, "active_users", "#059669")
+    y = 1370
+    if len(trend) >= 2:
+        draw_text(draw, (64, y), "7 日基础趋势", FONT_H2)
+        draw_mini_chart(draw, (64, y + 46, 390, y + 250), "请求数", trend, "requests_total", "#2563eb", compact_int)
+        draw_mini_chart(draw, (430, y + 46, 756, y + 250), "Token 消耗", trend, "tokens_total", "#7c3aed", compact_int)
+        draw_mini_chart(draw, (796, y + 46, 1122, y + 250), "用户侧消耗", trend, "user_charge_cents", "#dc2626", money)
+        draw_mini_chart(draw, (1162, y + 46, 1536, y + 250), "活跃用户", trend, "active_users", "#059669")
+        y += 300
+    else:
+        draw.rounded_rectangle((64, y, 1536, y + 96), radius=18, fill="#fffbeb", outline="#fde68a", width=2)
+        draw_text(draw, (96, y + 22), "7 日趋势暂降级", FONT_H2, fill="#92400e")
+        draw_text(draw, (310, y + 25), "当前 snapshot 只有单日趋势数据，先不占用大面积展示；正式线上 API 会补 7 日 daily 后恢复折线。", FONT_BODY, fill="#78350f", max_width=1100)
+        y += 140
 
-    y = 1520
     usage_rows = [
         [
             item.get("model") or "-",
@@ -483,7 +646,7 @@ def render_report(data: Dict[str, Any], output_path: Path) -> None:
         [310, 390, 170, 170, 150, 150],
     )
 
-    y = 1940
+    y += 440
     channel_rows = [
         [
             item.get("channel_type") or "-",
@@ -505,13 +668,13 @@ def render_report(data: Dict[str, Any], output_path: Path) -> None:
         channel_rows,
         [310, 170, 150, 190, 190, 150],
     )
-    y += 320
+    y += 260
     if not (channel.get("source_quality") or {}).get("channel_type_available"):
         draw.rounded_rectangle((64, y, 1536, y + 110), radius=18, fill="#fff7ed", outline="#fed7aa", width=2)
         draw_text(draw, (96, y + 26), "号池字段缺口影响经营判断", FONT_H2, fill="#9a3412")
         draw_text(draw, (96, y + 66), "缺稳定 channel_type / provider_pool_id / provider_account_fingerprint，不能准确看号池请求占比、单账号异常和 fallback 压力。", FONT_BODY, fill="#7c2d12", max_width=1340)
 
-    y = 2390
+    y += 130
     risk_rows = [
         [
             str(u.get("rank", "")),
@@ -534,7 +697,7 @@ def render_report(data: Dict[str, Any], output_path: Path) -> None:
         [70, 520, 210, 240, 220, 170],
     )
 
-    y = 2670
+    y += 420
     draw_text(draw, (64, y), "错误概览", FONT_H2)
     y += 44
     draw.rounded_rectangle((64, y, 1536, y + 190), radius=18, fill="#ffffff", outline="#e5e7eb", width=2)
@@ -549,7 +712,7 @@ def render_report(data: Dict[str, Any], output_path: Path) -> None:
     else:
         draw_text(draw, (520, y + 66), "最近失败请求：暂无", FONT_BODY, fill="#059669")
 
-    draw_text(draw, (64, 2950), "数据源：CoinCoin admin analytics operating-dashboard API · 自动生成，不含敏感 token / API Key", FONT_SMALL, fill="#6b7280")
+    draw_text(draw, (64, 3450), "数据源：CoinCoin admin analytics operating-dashboard API · 自动生成，不含敏感 token / API Key", FONT_SMALL, fill="#6b7280")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     img.save(output_path)
 
@@ -606,14 +769,17 @@ def main() -> int:
     parser.add_argument("--target", default=TARGET_CHANNEL)
     parser.add_argument("--output", default="")
     parser.add_argument("--dry-run-label", action="store_true", help="Use test label in sent summary")
+    parser.add_argument("--input-json", default="", help="Render from a prepared operating-dashboard JSON snapshot")
     args = parser.parse_args()
 
-    token = os.environ.get("COINCOIN_ADMIN_TOKEN")
-    if not token:
-        print("COINCOIN_ADMIN_TOKEN is required", file=sys.stderr)
-        return 2
-
-    data = fetch_report_data(token)
+    if args.input_json:
+        data = fetch_report_data_from_snapshot(args.input_json)
+    else:
+        token = os.environ.get("COINCOIN_ADMIN_TOKEN")
+        if not token:
+            print("COINCOIN_ADMIN_TOKEN is required", file=sys.stderr)
+            return 2
+        data = fetch_report_data(token)
     today = datetime.now().strftime("%Y%m%d-%H%M%S")
     output_path = Path(args.output) if args.output else OUTPUT_DIR / f"coincoin-daily-report-{today}.png"
     render_report(data, output_path)
