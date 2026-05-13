@@ -8,7 +8,9 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
+import pymysql
 import requests
 from PIL import Image, ImageDraw, ImageFont
 
@@ -117,9 +119,91 @@ def fetch_trend_data(token: str, days: int = 7) -> List[Dict[str, Any]]:
     return items
 
 
+def database_url() -> str:
+    url = os.environ.get("COINCOIN_DATABASE_URL") or os.environ.get("DATABASE_URL") or os.environ.get("MYSQL_URL") or ""
+    if url:
+        return url
+    host = os.environ.get("COINCOIN_DB_HOST")
+    name = os.environ.get("COINCOIN_DB_NAME")
+    user = os.environ.get("COINCOIN_DB_USER")
+    password = os.environ.get("COINCOIN_DB_PASSWORD")
+    port = os.environ.get("COINCOIN_DB_PORT", "3306")
+    if host and name and user and password:
+        return f"mysql://{user}:{password}@{host}:{port}/{name}"
+    return ""
+
+
+def fetch_positive_balance_users_from_db() -> Optional[int]:
+    url = database_url()
+    if not url:
+        return None
+    parsed = urlparse(url)
+    if parsed.scheme not in ("mysql", "mysql+pymysql", "mysql+asyncmy"):
+        return None
+    conn = pymysql.connect(
+        host=parsed.hostname or "localhost",
+        port=parsed.port or 3306,
+        user=parsed.username or "",
+        password=parsed.password or "",
+        database=(parsed.path or "/").lstrip("/"),
+        charset="utf8mb4",
+        cursorclass=pymysql.cursors.DictCursor,
+        connect_timeout=10,
+        read_timeout=20,
+        write_timeout=20,
+    )
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM coincoin_users u
+                LEFT JOIN (
+                    SELECT
+                        s.user_id,
+                        GREATEST(s.quota_cents - s.used_cents, 0)
+                        + COALESCE(tp.remaining_cents, 0) AS balance_cents
+                    FROM coincoin_user_subscriptions s
+                    LEFT JOIN (
+                        SELECT user_id, SUM(remaining_cents) AS remaining_cents
+                        FROM coincoin_traffic_pack_balances
+                        WHERE status = 'active'
+                          AND remaining_cents > 0
+                          AND expires_at > UTC_TIMESTAMP()
+                        GROUP BY user_id
+                    ) tp ON tp.user_id = s.user_id
+                    WHERE s.status = 'active'
+                      AND s.paid_until IS NOT NULL
+                      AND s.paid_until > UTC_TIMESTAMP()
+                ) b ON b.user_id = u.id
+                WHERE COALESCE(u.balance, 0) + COALESCE(b.balance_cents, 0) > 0
+                """
+            )
+            row = cursor.fetchone() or {}
+            return int(row.get("count") or 0)
+    finally:
+        conn.close()
+
+
+def fill_positive_balance_users(overview: Dict[str, Any]) -> None:
+    if any(key in overview for key in ("positive_balance_users", "users_with_balance", "balance_positive_users")):
+        return
+    try:
+        count = fetch_positive_balance_users_from_db()
+    except Exception as exc:
+        print(f"positive balance DB fallback failed: {exc}", file=sys.stderr)
+        return
+    if count is not None:
+        overview["positive_balance_users"] = count
+        overview["users_with_balance"] = count
+        overview["positive_balance_users_source"] = "db_fallback"
+
+
 def fetch_report_data(token: str) -> Dict[str, Any]:
+    overview = fetch_json("/admin/analytics/overview", token)
+    fill_positive_balance_users(overview)
     return {
-        "overview": fetch_json("/admin/analytics/overview", token),
+        "overview": overview,
         "top_users": fetch_json("/admin/analytics/top-users?period=7d&metric=cost_cents&limit=10", token),
         "low_balance": fetch_json("/admin/analytics/low-balance-users?period=7d&limit=10", token),
         "errors": fetch_json("/admin/analytics/errors?period=today&limit=10", token),
