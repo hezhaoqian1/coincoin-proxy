@@ -24,6 +24,7 @@ from .proxy import (
 )
 from .router import (
     CLAUDE_COMPAT_PROVIDER_KIRO_GO,
+    CLAUDE_COMPAT_KIRO_MODEL_MAP,
     ModelCapabilityError,
     UnknownModelError,
     build_model_cloak,
@@ -39,6 +40,13 @@ from .usage_buffer import (
 
 
 router = APIRouter(prefix="/v1", tags=["anthropic-compat"])
+
+
+def _kiro_go_upstream_model(model_id: str) -> str:
+    """Canonicalize public Claude aliases before the final Kiro-Go hop."""
+    normalized = str(model_id or "").strip()
+    mapped = CLAUDE_COMPAT_KIRO_MODEL_MAP.get(normalized.lower())
+    return mapped or normalized
 
 
 @dataclass
@@ -778,7 +786,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
         upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/v1/messages"
         headers = _build_anthropic_upstream_headers(used_cfg, request)
         upstream_payload = dict(payload)
-        upstream_payload["model"] = used_cfg.model_id
+        upstream_payload["model"] = _kiro_go_upstream_model(used_cfg.model_id)
     else:
         upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/chat/completions"
         headers = _build_anthropic_upstream_headers(used_cfg, request)

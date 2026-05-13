@@ -325,6 +325,100 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         add_usage.assert_awaited_once()
         self.assertEqual(add_usage.await_args.kwargs["cache_read_tokens"], 7)
 
+    async def test_messages_canonicalizes_kiro_go_model_at_final_hop(self):
+        fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_kiro_canonical")
+        settings.claude_compat_provider = "kiro_go"
+        settings.claude_compat_base_url = "https://kiro-go.example"
+        settings.claude_compat_api_key = "kiro-key"
+        settings.claude_compat_auth_style = "bearer"
+        registry.set_runtime_alias_overrides(
+            {
+                "claude-opus-4-7": {
+                    "provider_model": "claude-opus-4-7",
+                    "upstream_model": "claude-opus-4-7",
+                }
+            },
+            version=1,
+        )
+        registry.init_from_settings()
+        client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "msg_kiro_canonical",
+                        "type": "message",
+                        "role": "assistant",
+                        "model": "claude-opus-4.7",
+                        "content": [{"type": "text", "text": "OK"}],
+                        "stop_reason": "end_turn",
+                        "stop_sequence": None,
+                        "usage": {"input_tokens": 5, "output_tokens": 2},
+                    }
+                )
+            ]
+        )
+
+        try:
+            with (
+                patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+                patch.object(anthropic_module, "get_http_client", AsyncMock(return_value=client)),
+                patch.object(anthropic_module.usage_buffer, "add", AsyncMock()),
+            ):
+                async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                    response = await http_client.post(
+                        "/v1/messages",
+                        headers={
+                            "authorization": "Bearer sk_test",
+                            "anthropic-version": "2023-06-01",
+                        },
+                        json={
+                            "model": "claude-opus-4-7",
+                            "max_tokens": 64,
+                            "messages": [
+                                {"role": "user", "content": "Read foo.txt"},
+                                {
+                                    "role": "assistant",
+                                    "content": [
+                                        {
+                                            "type": "tool_use",
+                                            "id": "call_read_1",
+                                            "name": "Read",
+                                            "input": {"file_path": "foo.txt"},
+                                        }
+                                    ],
+                                },
+                                {
+                                    "role": "user",
+                                    "content": [
+                                        {
+                                            "type": "tool_result",
+                                            "tool_use_id": "call_read_1",
+                                            "content": "file contents",
+                                        }
+                                    ],
+                                },
+                            ],
+                            "tools": [
+                                {
+                                    "name": "Read",
+                                    "description": "Read a file",
+                                    "input_schema": {
+                                        "type": "object",
+                                        "properties": {"file_path": {"type": "string"}},
+                                    },
+                                }
+                            ],
+                        },
+                    )
+        finally:
+            registry.clear_runtime_alias_overrides()
+            registry.init_from_settings()
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["model"], "claude-opus-4-7")
+        self.assertEqual(client.calls[0]["url"], "https://kiro-go.example/v1/messages")
+        self.assertEqual(client.calls[0]["json"]["model"], "claude-opus-4.7")
+
     async def test_messages_stream_can_route_to_kiro_go_native_claude_endpoint(self):
         fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_kiro_stream")
         settings.claude_compat_provider = "kiro_go"
