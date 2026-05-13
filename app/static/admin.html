@@ -2892,7 +2892,9 @@
         const low = dashboard.low_balance || {};
         const judgement = dashboard.judgement || {};
 
-        document.getElementById('analyticsGeneratedAt').textContent = dashboard.generated_at ? `生成 ${formatDateFull(dashboard.generated_at)}` : '-';
+        const cache = dashboard.cache || {};
+        const cacheText = cache.cache_hit ? `缓存命中，TTL ${cache.cache_ttl_seconds || 60}s` : `实时聚合，缓存 ${cache.cache_ttl_seconds || 60}s`;
+        document.getElementById('analyticsGeneratedAt').textContent = dashboard.generated_at ? `生成 ${formatDateFull(dashboard.generated_at)} · ${cacheText}` : cacheText;
         document.getElementById('analyticsOverallJudgement').textContent = judgement.overall || '-';
         document.getElementById('analyticsGrowthJudgement').textContent = judgement.growth || '-';
         document.getElementById('analyticsRevenueJudgement').textContent = judgement.revenue || '-';
