@@ -499,9 +499,10 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             images_total=6,
             cost_cents=321,
         )
+        admin_module._analytics_balance_cache.clear()
         fake_db = _FakeDB(
             execute_results=[_FakeSummaryResult(usage_row)],
-            scalar_results=[12, 10, 999],
+            scalar_results=[12, 10, 4, 999],
         )
 
         async def fake_get_db():
@@ -520,6 +521,8 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["days"], 1)
         self.assertEqual(payload["total_users"], 12)
         self.assertEqual(payload["active_users"], 10)
+        self.assertEqual(payload["positive_balance_users"], 4)
+        self.assertEqual(payload["users_with_balance"], 4)
         self.assertEqual(payload["active_users_period"], 3)
         self.assertEqual(payload["requests_total"], 45)
         self.assertEqual(payload["tokens_total"], 1250)
