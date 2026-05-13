@@ -1137,7 +1137,7 @@
           </div>
           <div class="nav-item" data-page="analytics">
             <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 19h16M7 16l3-3 3 2 5-7"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 8h2v2"/></svg>
-            经营看板
+            经营驾驶舱
           </div>
         </div>
 
@@ -1333,8 +1333,8 @@
       <div id="page-analytics" class="page">
         <div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap">
           <div>
-            <h1 class="page-title">经营看板</h1>
-            <p class="page-desc">基于现有聚合数据查看收入、消耗、用户排行、余额风险和错误概览。</p>
+            <h1 class="page-title">公司经营驾驶舱</h1>
+            <p class="page-desc">每天回答增长、收入毛利、使用结构、号池健康和今日动作，不只展示数据。</p>
           </div>
           <div class="filter-bar">
             <select id="analyticsPeriod" class="form-select" style="width:140px" onchange="loadAnalytics()">
@@ -1346,41 +1346,108 @@
           </div>
         </div>
 
+        <div class="card" style="margin-bottom:24px;border-color:rgba(99,102,241,0.24)">
+          <div class="card-header">
+            <span class="card-title">今日经营结论</span>
+            <span class="text-sm text-muted" id="analyticsGeneratedAt">-</span>
+          </div>
+          <div class="card-body">
+            <div style="display:grid;grid-template-columns:1.3fr 1fr;gap:20px">
+              <div>
+                <div id="analyticsOverallJudgement" style="font-size:22px;font-weight:700;line-height:1.45;margin-bottom:16px">-</div>
+                <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px">
+                  <div class="monitoring-action-item"><strong>增长</strong><div id="analyticsGrowthJudgement" class="text-sm text-muted">-</div></div>
+                  <div class="monitoring-action-item"><strong>收入</strong><div id="analyticsRevenueJudgement" class="text-sm text-muted">-</div></div>
+                  <div class="monitoring-action-item"><strong>号池</strong><div id="analyticsChannelJudgement" class="text-sm text-muted">-</div></div>
+                  <div class="monitoring-action-item"><strong>风险</strong><div id="analyticsRiskJudgement" class="text-sm text-muted">-</div></div>
+                </div>
+              </div>
+              <div>
+                <div class="card-title" style="margin-bottom:12px">今日必须处理</div>
+                <div id="analyticsActionItems" class="monitoring-action-list"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-icon">U</div>
+            <div class="stat-value" id="analyticsPositiveUsers">-</div>
+            <div class="stat-label">有余额用户</div>
+          </div>
           <div class="stat-card">
             <div class="stat-icon">¥</div>
             <div class="stat-value" id="analyticsPaid">-</div>
             <div class="stat-label">实付入账</div>
           </div>
           <div class="stat-card">
-            <div class="stat-icon">↗</div>
-            <div class="stat-value" id="analyticsCharge">-</div>
-            <div class="stat-label">用户侧消耗</div>
+            <div class="stat-icon">M</div>
+            <div class="stat-value" id="analyticsMargin">-</div>
+            <div class="stat-label">真实毛利</div>
           </div>
           <div class="stat-card">
-            <div class="stat-icon">#</div>
-            <div class="stat-value" id="analyticsRequests">-</div>
-            <div class="stat-label">请求数</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-icon">U</div>
-            <div class="stat-value" id="analyticsActiveUsers">-</div>
-            <div class="stat-label">活跃用户</div>
+            <div class="stat-icon">P</div>
+            <div class="stat-value" id="analyticsPoolShare">-</div>
+            <div class="stat-label">号池请求占比</div>
           </div>
         </div>
 
         <div class="grid-2">
           <div class="card">
-            <div class="card-header"><span class="card-title">Top 用户消耗</span></div>
+            <div class="card-header"><span class="card-title">增长漏斗</span></div>
+            <div class="card-body">
+              <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px">
+                <div class="monitoring-layer-metric"><div class="monitoring-layer-metric-label">新增注册</div><div class="monitoring-layer-metric-value" id="analyticsNewUsers">-</div></div>
+                <div class="monitoring-layer-metric"><div class="monitoring-layer-metric-label">创建 Key</div><div class="monitoring-layer-metric-value" id="analyticsNewKeys">-</div></div>
+                <div class="monitoring-layer-metric"><div class="monitoring-layer-metric-label">首次调用</div><div class="monitoring-layer-metric-value" id="analyticsFirstCalls">-</div></div>
+                <div class="monitoring-layer-metric"><div class="monitoring-layer-metric-label">首充用户</div><div class="monitoring-layer-metric-value" id="analyticsFirstPaid">-</div></div>
+                <div class="monitoring-layer-metric"><div class="monitoring-layer-metric-label">今日活跃</div><div class="monitoring-layer-metric-value" id="analyticsActiveUsers">-</div></div>
+                <div class="monitoring-layer-metric"><div class="monitoring-layer-metric-label">7日留存</div><div class="monitoring-layer-metric-value" id="analyticsRetention">-</div></div>
+              </div>
+              <div class="monitoring-layer-foot" id="analyticsGrowthNotes"></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header"><span class="card-title">收入与毛利</span></div>
+            <div class="card-body">
+              <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px">
+                <div class="monitoring-layer-metric"><div class="monitoring-layer-metric-label">用户侧消耗</div><div class="monitoring-layer-metric-value" id="analyticsCharge">-</div></div>
+                <div class="monitoring-layer-metric"><div class="monitoring-layer-metric-label">上游真实成本</div><div class="monitoring-layer-metric-value" id="analyticsUpstreamCost">-</div></div>
+                <div class="monitoring-layer-metric"><div class="monitoring-layer-metric-label">毛利率</div><div class="monitoring-layer-metric-value" id="analyticsMarginRate">-</div></div>
+                <div class="monitoring-layer-metric"><div class="monitoring-layer-metric-label">权益消耗</div><div class="monitoring-layer-metric-value" id="analyticsPackageConsumption">-</div></div>
+              </div>
+              <div class="monitoring-layer-foot" id="analyticsRevenueNotes"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-header"><span class="card-title">Top 模型 / SKU</span></div>
             <div class="card-body flush">
               <div class="table-wrapper">
                 <table>
-                  <thead><tr><th>用户</th><th>消耗</th><th>请求</th><th>Tokens</th><th>余额</th></tr></thead>
-                  <tbody id="analyticsTopUsersBody"></tbody>
+                  <thead><tr><th>模型/SKU</th><th>消耗</th><th>成本</th><th>失败率</th><th>延迟</th></tr></thead>
+                  <tbody id="analyticsUsageStructureBody"></tbody>
                 </table>
               </div>
             </div>
           </div>
+          <div class="card">
+            <div class="card-header"><span class="card-title">号池健康</span></div>
+            <div class="card-body flush">
+              <div class="table-wrapper">
+                <table>
+                  <thead><tr><th>通道</th><th>请求</th><th>消耗</th><th>毛利</th><th>失败率</th></tr></thead>
+                  <tbody id="analyticsChannelBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid-2">
           <div class="card">
             <div class="card-header"><span class="card-title">余额风险</span></div>
             <div class="card-body flush">
@@ -1392,9 +1459,6 @@
               </div>
             </div>
           </div>
-        </div>
-
-        <div class="grid-2">
           <div class="card">
             <div class="card-header"><span class="card-title">错误概览</span></div>
             <div class="card-body">
@@ -1417,6 +1481,20 @@
                   <div class="card-title" style="margin-bottom:10px">模型</div>
                   <div id="analyticsErrorsByModel" class="monitoring-probe-list"></div>
                 </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-header"><span class="card-title">Top 用户消耗</span></div>
+            <div class="card-body flush">
+              <div class="table-wrapper">
+                <table>
+                  <thead><tr><th>用户</th><th>消耗</th><th>请求</th><th>Tokens</th><th>余额</th></tr></thead>
+                  <tbody id="analyticsTopUsersBody"></tbody>
+                </table>
               </div>
             </div>
           </div>
@@ -2539,6 +2617,29 @@
       return `${n < 0 ? '-' : ''}$${Math.abs(n).toFixed(2)}`;
     }
 
+    function formatPct(value) {
+      return `${(Number(value || 0) * 100).toFixed(1)}%`;
+    }
+
+    function formatLatency(ms) {
+      const value = Number(ms || 0);
+      if (value >= 1000) return `${(value / 1000).toFixed(1)}s`;
+      return `${Math.round(value)}ms`;
+    }
+
+    function severityBadge(level) {
+      if (level === 'high') return '<span class="badge badge-error">高</span>';
+      if (level === 'medium') return '<span class="badge badge-warning">中</span>';
+      return '<span class="badge badge-info">低</span>';
+    }
+
+    function channelLabel(channel) {
+      if (channel === 'account_pool') return '号池/成本优化';
+      if (channel === 'official_provider') return '官方通道';
+      if (channel === 'unknown') return '未知通道';
+      return channel || '-';
+    }
+
     function toDatetimeLocal(value) {
       if (!value) return '';
       const d = utcDate(value);
@@ -2774,22 +2875,77 @@
     async function loadAnalytics() {
       const period = analyticsPeriod();
       try {
-        const [overviewResp, topResp, lowResp, errorsResp] = await Promise.all([
-          fetch(`/admin/analytics/overview?period=${encodeURIComponent(period)}`, { headers: adminHeaders() }),
+        const [dashboardResp, topResp] = await Promise.all([
+          fetch(`/admin/analytics/operating-dashboard?period=${encodeURIComponent(period)}`, { headers: adminHeaders() }),
           fetch(`/admin/analytics/top-users?period=${encodeURIComponent(period)}&metric=cost_cents&limit=10`, { headers: adminHeaders() }),
-          fetch(`/admin/analytics/low-balance-users?period=${encodeURIComponent(period)}&limit=10`, { headers: adminHeaders() }),
-          fetch(`/admin/analytics/errors?period=${encodeURIComponent(period)}&limit=10`, { headers: adminHeaders() }),
         ]);
-        if (!overviewResp.ok || !topResp.ok || !lowResp.ok || !errorsResp.ok) return toast('加载失败', 'error');
-        const overview = await overviewResp.json();
+        if (!dashboardResp.ok || !topResp.ok) return toast('加载失败', 'error');
+        const dashboard = await dashboardResp.json();
         const top = await topResp.json();
-        const low = await lowResp.json();
-        const errors = await errorsResp.json();
+        const overview = dashboard.overview || {};
+        const growth = dashboard.growth || {};
+        const revenue = dashboard.revenue_margin || {};
+        const usage = dashboard.usage_structure || {};
+        const channel = dashboard.channel_health || {};
+        const actions = dashboard.action_items || {};
+        const errors = dashboard.errors || {};
+        const low = dashboard.low_balance || {};
+        const judgement = dashboard.judgement || {};
 
+        document.getElementById('analyticsGeneratedAt').textContent = dashboard.generated_at ? `生成 ${formatDateFull(dashboard.generated_at)}` : '-';
+        document.getElementById('analyticsOverallJudgement').textContent = judgement.overall || '-';
+        document.getElementById('analyticsGrowthJudgement').textContent = judgement.growth || '-';
+        document.getElementById('analyticsRevenueJudgement').textContent = judgement.revenue || '-';
+        document.getElementById('analyticsChannelJudgement').textContent = judgement.channel || '-';
+        document.getElementById('analyticsRiskJudgement').textContent = judgement.risk || '-';
+        const actionRows = actions.items || [];
+        document.getElementById('analyticsActionItems').innerHTML = actionRows.length ? actionRows.map(item => `
+          <div class="monitoring-action-item">
+            <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">${severityBadge(item.severity)}<strong>${escapeHtml(item.title || '-')}</strong><span class="text-sm text-muted">owner: ${escapeHtml(item.owner || '-')}</span></div>
+            <div class="text-sm text-muted">${escapeHtml(item.suggested_action || '')}</div>
+          </div>
+        `).join('') : '<div class="text-sm text-muted">暂无动作项</div>';
+
+        document.getElementById('analyticsPositiveUsers').textContent = formatNum(overview.positive_balance_users || overview.users_with_balance || 0);
         document.getElementById('analyticsPaid').textContent = formatMoney(overview.paid_cents || 0);
-        document.getElementById('analyticsCharge').textContent = formatMoney(overview.user_charge_cents || 0);
-        document.getElementById('analyticsRequests').textContent = formatNum(overview.requests_total || 0);
+        document.getElementById('analyticsMargin').textContent = (revenue.source_quality?.upstream_cost_available) ? formatMoney(revenue.gross_margin_cents || 0) : '无法判断';
+        document.getElementById('analyticsPoolShare').textContent = channel.account_pool ? formatPct(channel.account_pool.request_share || 0) : '缺字段';
+
+        document.getElementById('analyticsNewUsers').textContent = formatNum(growth.new_users || 0);
+        document.getElementById('analyticsNewKeys').textContent = formatNum(growth.new_api_key_users || 0);
+        document.getElementById('analyticsFirstCalls').textContent = formatNum(growth.first_call_users || 0);
+        document.getElementById('analyticsFirstPaid').textContent = formatNum(growth.first_paid_users || 0);
         document.getElementById('analyticsActiveUsers').textContent = formatNum(overview.active_users_period || 0);
+        document.getElementById('analyticsRetention').textContent = growth.retention_7d_cohort_users ? formatPct(growth.retention_7d || 0) : '样本不足';
+        document.getElementById('analyticsGrowthNotes').textContent = growth.field_notes?.new_positive_balance_users || '';
+
+        document.getElementById('analyticsCharge').textContent = formatMoney(revenue.user_charge_cents || 0);
+        document.getElementById('analyticsUpstreamCost').textContent = (revenue.source_quality?.upstream_cost_available) ? formatMoney(revenue.upstream_cost_cents || 0) : '缺字段';
+        document.getElementById('analyticsMarginRate').textContent = (revenue.source_quality?.upstream_cost_available) ? formatPct(revenue.gross_margin_rate || 0) : '无法判断';
+        document.getElementById('analyticsPackageConsumption').textContent = formatMoney(revenue.package_consumption_cents || 0);
+        document.getElementById('analyticsRevenueNotes').textContent = revenue.source_quality?.upstream_cost_available ? '毛利来自 request_logs 的 retail/wholesale 成本字段。' : '缺 upstream_cost 会影响毛利、利润、号池是否赚钱的判断。';
+
+        const usageRows = usage.data || [];
+        document.getElementById('analyticsUsageStructureBody').innerHTML = usageRows.length ? usageRows.map(row => `
+          <tr>
+            <td><strong>${escapeHtml(row.model || '-')}</strong><div class="text-sm text-muted">${escapeHtml(row.billable_sku || '-')} · ${escapeHtml(row.task_type || '-')}</div></td>
+            <td>${formatMoney(row.user_charge_cents || 0)}<div class="text-sm text-muted">${formatNum(row.requests || 0)} req</div></td>
+            <td>${formatMoney(row.upstream_cost_cents || 0)}</td>
+            <td>${formatPct(row.failure_rate || 0)}</td>
+            <td>${formatLatency(row.avg_latency_ms || 0)}</td>
+          </tr>
+        `).join('') : '<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--text-tertiary)">暂无数据</td></tr>';
+
+        const channelRows = channel.data || [];
+        document.getElementById('analyticsChannelBody').innerHTML = channelRows.length ? channelRows.map(row => `
+          <tr>
+            <td><strong>${escapeHtml(channelLabel(row.channel_type))}</strong><div class="text-sm text-muted">${row.channel_type === 'unknown' ? '需补 channel_type' : 'route_reason 推断'}</div></td>
+            <td>${formatNum(row.requests || 0)}<div class="text-sm text-muted">${formatPct(row.request_share || 0)}</div></td>
+            <td>${formatMoney(row.user_charge_cents || 0)}</td>
+            <td>${row.upstream_cost_cents ? formatMoney(row.gross_margin_cents || 0) : '无法判断'}</td>
+            <td>${formatPct(row.failure_rate || 0)}</td>
+          </tr>
+        `).join('') : '<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--text-tertiary)">暂无通道数据</td></tr>';
 
         const topRows = top.data || [];
         document.getElementById('analyticsTopUsersBody').innerHTML = topRows.length ? topRows.map(row => `

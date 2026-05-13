@@ -140,6 +140,23 @@ async def _run_migrations(conn):
             else:
                 logger.warning("migration failed for %s.%s: %s", table, col, exc)
 
+    index_migrations = [
+        ("coincoin_request_logs", "ix_request_logs_created_at", "CREATE INDEX ix_request_logs_created_at ON coincoin_request_logs (created_at)"),
+        ("coincoin_request_logs", "ix_request_logs_created_model", "CREATE INDEX ix_request_logs_created_model ON coincoin_request_logs (created_at, model)"),
+        ("coincoin_payment_orders", "ix_payment_orders_confirmed_at", "CREATE INDEX ix_payment_orders_confirmed_at ON coincoin_payment_orders (confirmed_at)"),
+        ("coincoin_api_keys", "ix_api_keys_created_at", "CREATE INDEX ix_api_keys_created_at ON coincoin_api_keys (created_at)"),
+    ]
+    for table, index_name, ddl in index_migrations:
+        try:
+            await conn.execute(text(ddl))
+            logger.info("index migration OK: %s.%s", table, index_name)
+        except Exception as exc:
+            exc_msg = str(exc).lower()
+            if "duplicate" in exc_msg or "already exists" in exc_msg:
+                logger.debug("index %s.%s already exists, skipping", table, index_name)
+            else:
+                logger.warning("index migration failed for %s.%s: %s", table, index_name, exc)
+
     table_migrations = [
         """
         CREATE TABLE coincoin_user_subscriptions (
