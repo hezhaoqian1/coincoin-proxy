@@ -1,12 +1,13 @@
 import os
 import secrets
+import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional, Tuple
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from fastapi.responses import FileResponse
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .db import get_db
@@ -78,6 +79,8 @@ from .security import decrypt_api_key, encrypt_api_key, generate_api_key, genera
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 ADMIN_UPLOAD_ROOT = Path(_settings.admin_upload_dir)
+ANALYTICS_BALANCE_CACHE_TTL_SECONDS = 60
+_analytics_balance_cache: dict[str, tuple[float, int]] = {}
 
 
 def _configured(value: Optional[str]) -> bool:
@@ -229,6 +232,71 @@ def _row_value(row, key: str, default=0):
 
 def _display_name(username: Optional[str], email: Optional[str], external_id: Optional[str], user_id: str) -> str:
     return username or email or external_id or user_id
+
+
+async def _positive_balance_users_count(db: AsyncSession) -> int:
+    """Count users whose currently available billing balance is positive without loading user rows."""
+    cache_key = "positive_balance_users"
+    now_ts = time.time()
+    cached = _analytics_balance_cache.get(cache_key)
+    if cached and now_ts - cached[0] < ANALYTICS_BALANCE_CACHE_TTL_SECONDS:
+        return cached[1]
+
+    current = utcnow()
+    active_subscriptions = (
+        select(
+            UserSubscription.user_id.label("user_id"),
+            (UserSubscription.quota_cents - UserSubscription.used_cents).label("remaining_cents"),
+        )
+        .where(
+            UserSubscription.status == "active",
+            UserSubscription.paid_until.is_not(None),
+            UserSubscription.paid_until > current,
+        )
+        .subquery()
+    )
+    traffic_packs = (
+        select(
+            TrafficPackBalance.user_id.label("user_id"),
+            func.coalesce(func.sum(TrafficPackBalance.remaining_cents), 0).label("remaining_cents"),
+        )
+        .join(active_subscriptions, active_subscriptions.c.user_id == TrafficPackBalance.user_id)
+        .where(
+            TrafficPackBalance.status == "active",
+            TrafficPackBalance.remaining_cents > 0,
+            TrafficPackBalance.expires_at > current,
+        )
+        .group_by(TrafficPackBalance.user_id)
+        .subquery()
+    )
+    active_subscription_balances = (
+        select(
+            active_subscriptions.c.user_id.label("user_id"),
+            (
+                case(
+                    (active_subscriptions.c.remaining_cents > 0, active_subscriptions.c.remaining_cents),
+                    else_=0,
+                )
+                + func.coalesce(traffic_packs.c.remaining_cents, 0)
+            ).label("balance_cents"),
+        )
+        .outerjoin(traffic_packs, traffic_packs.c.user_id == active_subscriptions.c.user_id)
+        .subquery()
+    )
+    positive_balance_users = await db.scalar(
+        select(func.count()).select_from(User)
+        .outerjoin(active_subscription_balances, active_subscription_balances.c.user_id == User.id)
+        .where(
+            (
+                func.coalesce(User.balance, 0)
+                + func.coalesce(active_subscription_balances.c.balance_cents, 0)
+            )
+            > 0
+        )
+    )
+    value = int(positive_balance_users or 0)
+    _analytics_balance_cache[cache_key] = (now_ts, value)
+    return value
 
 
 def _risk_level(days_remaining: Optional[float], balance_cents: int) -> str:
@@ -936,6 +1004,7 @@ async def analytics_overview(period: str = "today", db: AsyncSession = Depends(g
     period, days, start_day, _since = _analytics_period(period)
     total_users = await db.scalar(select(func.count()).select_from(User))
     active_users = await db.scalar(select(func.count()).select_from(User).where(User.status == "active"))
+    positive_balance_users = await _positive_balance_users_count(db)
     paid_cents = await db.scalar(
         select(func.coalesce(func.sum(PaymentOrder.add_balance_cents), 0)).where(
             PaymentOrder.status == "confirmed",
@@ -965,6 +1034,8 @@ async def analytics_overview(period: str = "today", db: AsyncSession = Depends(g
         "end_day": str(date.today()),
         "total_users": int(total_users or 0),
         "active_users": int(active_users or 0),
+        "positive_balance_users": positive_balance_users,
+        "users_with_balance": positive_balance_users,
         "active_users_period": int(_row_value(usage_row, "active_users", 0) or 0),
         "requests_total": int(_row_value(usage_row, "requests_total", 0) or 0),
         "input_tokens": int(_row_value(usage_row, "input_tokens", 0) or 0),
