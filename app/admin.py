@@ -20,6 +20,7 @@ from .finance_summary import (
 from .models import (
     Announcement,
     ApiKey,
+    BillingLedgerEntry,
     ModelAliasOverride,
     SystemSetting,
     PaymentOrder,
@@ -81,6 +82,8 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 ADMIN_UPLOAD_ROOT = Path(_settings.admin_upload_dir)
 ANALYTICS_BALANCE_CACHE_TTL_SECONDS = 60
 _analytics_balance_cache: dict[str, tuple[float, int]] = {}
+ANALYTICS_DASHBOARD_CACHE_TTL_SECONDS = 60
+_analytics_dashboard_cache: dict[str, tuple[float, dict]] = {}
 
 
 def _configured(value: Optional[str]) -> bool:
@@ -309,6 +312,193 @@ def _risk_level(days_remaining: Optional[float], balance_cents: int) -> str:
     if days_remaining <= 7:
         return "warning"
     return "watch"
+
+
+def _period_start_datetime(start_day: date) -> datetime:
+    return datetime.combine(start_day, datetime.min.time())
+
+
+def _safe_rate(numerator: int | float, denominator: int | float) -> float:
+    denominator = float(denominator or 0)
+    if denominator <= 0:
+        return 0.0
+    return float(numerator or 0) / denominator
+
+
+def _date_key(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    return str(value)
+
+
+def _request_user_charge_expr():
+    return case(
+        (func.coalesce(RequestLog.retail_charge_cents, 0) > 0, func.coalesce(RequestLog.retail_charge_cents, 0)),
+        else_=func.coalesce(RequestLog.cost_cents, 0),
+    )
+
+
+def _request_upstream_cost_expr():
+    return func.coalesce(RequestLog.wholesale_cost_cents, 0)
+
+
+def _request_channel_type_expr():
+    route = func.lower(func.coalesce(RequestLog.route_reason, ""))
+    return case(
+        (
+            route.like("%cpa_gemini%") | route.like("%legacy%"),
+            "account_pool",
+        ),
+        (
+            route.like("%upstream_direct%") | route.like("%vertex_direct%") | route.like("%kiro_go%"),
+            "official_provider",
+        ),
+        else_="unknown",
+    )
+
+
+def _billing_package_entry_types():
+    return ("usage_subscription_debit", "usage_traffic_pack_debit")
+
+
+def _source_quality(*, upstream_cost_cents: int, user_charge_cents: int, channel_known_rate: float = 0.0) -> dict:
+    upstream_known = upstream_cost_cents > 0
+    return {
+        "upstream_cost_available": upstream_known,
+        "upstream_cost_coverage": "partial" if upstream_known and upstream_cost_cents < user_charge_cents else ("available" if upstream_known else "missing"),
+        "channel_type_available": channel_known_rate > 0,
+        "channel_type_confidence": "route_reason_inferred",
+        "channel_known_rate": channel_known_rate,
+        "missing_fields": [
+            field
+            for field, missing in {
+                "channel_type": channel_known_rate < 1,
+                "provider_pool_id": True,
+                "provider_account_fingerprint": True,
+                "upstream_cost": not upstream_known,
+            }.items()
+            if missing
+        ],
+    }
+
+
+def _build_action_items(
+    *,
+    period: str,
+    days: int,
+    low_balance: dict,
+    errors: dict,
+    channel: dict,
+    revenue: dict,
+    usage: dict,
+    limit: int,
+) -> dict:
+    items = []
+
+    for user in (low_balance.get("data") or [])[:3]:
+        days_remaining = user.get("estimated_days_remaining")
+        if days_remaining is not None and float(days_remaining) <= 2:
+            items.append({
+                "severity": "high",
+                "type": "low_balance_top_user",
+                "owner": "bd",
+                "title": f"{user.get('display_name') or user.get('user_id')} 余额预计不足 2 天",
+                "evidence": {
+                    "user_id": user.get("user_id"),
+                    "balance_cents": user.get("balance_cents"),
+                    "avg_daily_cost_cents": user.get("avg_daily_cost_cents"),
+                    "estimated_days_remaining": days_remaining,
+                },
+                "suggested_action": "今天联系用户充值或确认是否需要企业方案。",
+            })
+
+    if float(errors.get("error_rate") or 0) > 0.05 or int(errors.get("failed_requests") or 0) >= 10:
+        top_model = (errors.get("by_model") or [{}])[0]
+        items.append({
+            "severity": "high",
+            "type": "model_error_rate",
+            "owner": "tech",
+            "title": f"失败率 {float(errors.get('error_rate') or 0) * 100:.1f}%，需排查模型/通道",
+            "evidence": {
+                "failed_requests": errors.get("failed_requests"),
+                "total_requests": errors.get("total_requests"),
+                "top_model": top_model,
+            },
+            "suggested_action": "检查最近失败请求、上游状态和必要的模型降权/切换。",
+        })
+
+    for item in usage.get("data") or []:
+        if float(item.get("failure_rate") or 0) > 0.05 and int(item.get("requests") or 0) >= 5:
+            items.append({
+                "severity": "medium",
+                "type": "usage_model_failure",
+                "owner": "tech",
+                "title": f"{item.get('model')} 失败率偏高",
+                "evidence": {
+                    "model": item.get("model"),
+                    "billable_sku": item.get("billable_sku"),
+                    "requests": item.get("requests"),
+                    "failure_rate": item.get("failure_rate"),
+                },
+                "suggested_action": "检查该 SKU 的上游错误和路由策略。",
+            })
+            break
+
+    if not (revenue.get("source_quality") or {}).get("upstream_cost_available"):
+        items.append({
+            "severity": "high",
+            "type": "missing_upstream_cost",
+            "owner": "tech",
+            "title": "缺上游真实成本，无法判断今天是否赚钱",
+            "evidence": {
+                "user_charge_cents": revenue.get("user_charge_cents"),
+                "upstream_cost_cents": revenue.get("upstream_cost_cents"),
+            },
+            "suggested_action": "补齐 RequestLog.wholesale_cost_cents 写入或接入 provider 成本回填。",
+        })
+
+    if (channel.get("source_quality") or {}).get("channel_known_rate", 0) < 1:
+        items.append({
+            "severity": "high",
+            "type": "missing_channel_type",
+            "owner": "tech",
+            "title": "缺稳定 channel_type，无法准确拆号池/官方通道",
+            "evidence": channel.get("source_quality"),
+            "suggested_action": "在请求日志补 channel_type、provider_pool_id、provider_account_fingerprint，并做按通道聚合。",
+        })
+
+    if int(revenue.get("paid_cents") or 0) == 0 and int(revenue.get("user_charge_cents") or 0) > 0:
+        items.append({
+            "severity": "medium",
+            "type": "weak_cash_in",
+            "owner": "ops",
+            "title": "今天有消耗但没有实付入账",
+            "evidence": {
+                "paid_cents": revenue.get("paid_cents"),
+                "user_charge_cents": revenue.get("user_charge_cents"),
+                "package_consumption_cents": revenue.get("package_consumption_cents"),
+            },
+            "suggested_action": "检查高消耗用户余额和套餐消耗，推动充值或套餐续费。",
+        })
+
+    if not items:
+        items.append({
+            "severity": "low",
+            "type": "daily_watch",
+            "owner": "ops",
+            "title": "暂无高优先级异常，保持观察 Top 消耗用户",
+            "evidence": {
+                "paid_cents": revenue.get("paid_cents"),
+                "user_charge_cents": revenue.get("user_charge_cents"),
+                "error_rate": errors.get("error_rate"),
+            },
+            "suggested_action": "运营查看 Top 用户是否需要续费提醒；技术继续观察错误趋势。",
+        })
+    return {"period": period, "days": days, "limit": limit, "items": items[:limit]}
 
 
 def _claude_compat_settings_payload():
@@ -1249,6 +1439,470 @@ async def analytics_errors(
             for log, user in recent_rows
         ],
     }
+
+
+@router.get("/analytics/growth", dependencies=[Depends(admin_guard)])
+async def analytics_growth(period: str = "today", db: AsyncSession = Depends(get_db)):
+    period, days, start_day, since = _analytics_period(period)
+    start_dt = _period_start_datetime(start_day)
+    today_day = date.today()
+    seven_days_ago = today_day - timedelta(days=7)
+    new_users = await db.scalar(select(func.count(User.id)).where(User.created_at >= start_dt))
+    new_api_key_users = await db.scalar(
+        select(func.count(func.distinct(ApiKey.user_id))).where(ApiKey.created_at >= start_dt)
+    )
+    first_call_users = await db.scalar(
+        select(func.count(func.distinct(RequestLog.user_id))).where(RequestLog.created_at >= start_dt)
+    )
+    first_paid_users = await db.scalar(
+        select(func.count(func.distinct(PaymentOrder.user_id))).where(
+            PaymentOrder.status == "confirmed",
+            PaymentOrder.confirmed_at >= start_dt,
+        )
+    )
+    daily_usage_rows = (
+        await db.execute(
+            select(
+                UsageDaily.day.label("day"),
+                func.count(func.distinct(UsageDaily.user_id)).label("active_users"),
+                func.coalesce(func.sum(UsageDaily.requests_total), 0).label("requests_total"),
+                func.coalesce(func.sum(UsageDaily.cost_cents), 0).label("user_charge_cents"),
+            )
+            .where(UsageDaily.day >= start_day)
+            .group_by(UsageDaily.day)
+            .order_by(UsageDaily.day)
+        )
+    ).all()
+    new_user_rows = (
+        await db.execute(
+            select(func.date(User.created_at).label("day"), func.count(User.id).label("new_users"))
+            .where(User.created_at >= start_dt)
+            .group_by(func.date(User.created_at))
+            .order_by(func.date(User.created_at))
+        )
+    ).all()
+    first_key_rows = (
+        await db.execute(
+            select(func.date(ApiKey.created_at).label("day"), func.count(func.distinct(ApiKey.user_id)).label("new_api_key_users"))
+            .where(ApiKey.created_at >= start_dt)
+            .group_by(func.date(ApiKey.created_at))
+            .order_by(func.date(ApiKey.created_at))
+        )
+    ).all()
+    first_call_rows = (
+        await db.execute(
+            select(func.date(RequestLog.created_at).label("day"), func.count(func.distinct(RequestLog.user_id)).label("first_call_users"))
+            .where(RequestLog.created_at >= start_dt)
+            .group_by(func.date(RequestLog.created_at))
+            .order_by(func.date(RequestLog.created_at))
+        )
+    ).all()
+    first_paid_rows = (
+        await db.execute(
+            select(func.date(PaymentOrder.confirmed_at).label("day"), func.count(func.distinct(PaymentOrder.user_id)).label("first_paid_users"))
+            .where(PaymentOrder.status == "confirmed", PaymentOrder.confirmed_at >= start_dt)
+            .group_by(func.date(PaymentOrder.confirmed_at))
+            .order_by(func.date(PaymentOrder.confirmed_at))
+        )
+    ).all()
+    day_map: dict[str, dict] = {}
+    for offset in range(days):
+        day = (start_day + timedelta(days=offset)).isoformat()
+        day_map[day] = {
+            "day": day,
+            "new_users": 0,
+            "new_api_key_users": 0,
+            "first_call_users": 0,
+            "first_paid_users": 0,
+            "active_users": 0,
+            "requests_total": 0,
+            "user_charge_cents": 0,
+        }
+    for row in daily_usage_rows:
+        item = day_map.setdefault(_date_key(_row_value(row, "day")), {"day": _date_key(_row_value(row, "day"))})
+        item.update({
+            "active_users": int(_row_value(row, "active_users", 0) or 0),
+            "requests_total": int(_row_value(row, "requests_total", 0) or 0),
+            "user_charge_cents": int(_row_value(row, "user_charge_cents", 0) or 0),
+        })
+    for rows, key in (
+        (new_user_rows, "new_users"),
+        (first_key_rows, "new_api_key_users"),
+        (first_call_rows, "first_call_users"),
+        (first_paid_rows, "first_paid_users"),
+    ):
+        for row in rows:
+            item = day_map.setdefault(_date_key(_row_value(row, "day")), {"day": _date_key(_row_value(row, "day"))})
+            item[key] = int(_row_value(row, key, 0) or 0)
+
+    cohort_users = (
+        await db.scalar(
+            select(func.count(User.id)).where(
+                func.date(User.created_at) == seven_days_ago,
+            )
+        )
+    ) or 0
+    retained_users = (
+        await db.scalar(
+            select(func.count(func.distinct(UsageDaily.user_id)))
+            .join(User, UsageDaily.user_id == User.id)
+            .where(func.date(User.created_at) == seven_days_ago, UsageDaily.day == today_day)
+        )
+    ) or 0
+    return {
+        "period": period,
+        "days": days,
+        "start_day": str(start_day),
+        "end_day": str(today_day),
+        "new_users": int(new_users or 0),
+        "new_positive_balance_users": None,
+        "positive_balance_users": await _positive_balance_users_count(db),
+        "first_paid_users": int(first_paid_users or 0),
+        "new_api_key_users": int(new_api_key_users or 0),
+        "first_call_users": int(first_call_users or 0),
+        "retention_7d": _safe_rate(retained_users, cohort_users),
+        "retention_7d_cohort_users": int(cohort_users),
+        "retention_7d_retained_users": int(retained_users),
+        "paid_retention_7d": None,
+        "daily": [day_map[key] for key in sorted(day_map.keys())],
+        "field_notes": {
+            "new_positive_balance_users": "需要记录用户首次余额 > 0 的时间；当前只能展示当前有余额用户。",
+            "first_call_users": "MVP 为周期内有调用的用户数；严格首次调用需预聚合 first_call_at。",
+            "paid_retention_7d": "需要付费 cohort 快照；当前 MVP 暂不计算。",
+        },
+    }
+
+
+@router.get("/analytics/revenue-margin", dependencies=[Depends(admin_guard)])
+async def analytics_revenue_margin(period: str = "today", db: AsyncSession = Depends(get_db)):
+    period, days, start_day, since = _analytics_period(period)
+    request_charge = _request_user_charge_expr()
+    upstream_cost = _request_upstream_cost_expr()
+    paid_rows = (
+        await db.execute(
+            select(
+                func.date(PaymentOrder.confirmed_at).label("day"),
+                func.coalesce(func.sum(PaymentOrder.add_balance_cents), 0).label("paid_cents"),
+                func.count(func.distinct(PaymentOrder.user_id)).label("paid_users"),
+            )
+            .where(PaymentOrder.status == "confirmed", PaymentOrder.confirmed_at >= _period_start_datetime(start_day))
+            .group_by(func.date(PaymentOrder.confirmed_at))
+            .order_by(func.date(PaymentOrder.confirmed_at))
+        )
+    ).all()
+    request_rows = (
+        await db.execute(
+            select(
+                func.date(RequestLog.created_at).label("day"),
+                func.coalesce(func.sum(request_charge), 0).label("user_charge_cents"),
+                func.coalesce(func.sum(upstream_cost), 0).label("upstream_cost_cents"),
+                func.count(RequestLog.id).label("requests_total"),
+            )
+            .where(RequestLog.created_at >= since)
+            .group_by(func.date(RequestLog.created_at))
+            .order_by(func.date(RequestLog.created_at))
+        )
+    ).all()
+    package_consumption_cents = (
+        await db.scalar(
+            select(func.coalesce(func.sum(-BillingLedgerEntry.amount_cents), 0)).where(
+                BillingLedgerEntry.created_at >= since,
+                BillingLedgerEntry.entry_type.in_(_billing_package_entry_types()),
+            )
+        )
+    ) or 0
+    failed_payment_cents = (
+        await db.scalar(
+            select(func.coalesce(func.sum(PaymentOrder.add_balance_cents), 0)).where(
+                PaymentOrder.created_at >= since,
+                PaymentOrder.status != "confirmed",
+            )
+        )
+    ) or 0
+    day_map: dict[str, dict] = {}
+    for offset in range(days):
+        day = (start_day + timedelta(days=offset)).isoformat()
+        day_map[day] = {
+            "day": day,
+            "paid_cents": 0,
+            "paid_users": 0,
+            "user_charge_cents": 0,
+            "upstream_cost_cents": 0,
+            "gross_margin_cents": 0,
+            "gross_margin_rate": 0,
+            "requests_total": 0,
+        }
+    for row in paid_rows:
+        day = _date_key(_row_value(row, "day"))
+        if day not in day_map:
+            continue
+        item = day_map[day]
+        item["paid_cents"] = int(_row_value(row, "paid_cents", 0) or 0)
+        item["paid_users"] = int(_row_value(row, "paid_users", 0) or 0)
+    for row in request_rows:
+        day = _date_key(_row_value(row, "day"))
+        if day not in day_map:
+            continue
+        item = day_map[day]
+        charge = int(_row_value(row, "user_charge_cents", 0) or 0)
+        cost = int(_row_value(row, "upstream_cost_cents", 0) or 0)
+        item.update({
+            "user_charge_cents": charge,
+            "upstream_cost_cents": cost,
+            "gross_margin_cents": charge - cost,
+            "gross_margin_rate": _safe_rate(charge - cost, charge),
+            "requests_total": int(_row_value(row, "requests_total", 0) or 0),
+        })
+    daily = [day_map[key] for key in sorted(day_map.keys())]
+    paid_cents = sum(item["paid_cents"] for item in daily)
+    user_charge_cents = sum(item["user_charge_cents"] for item in daily)
+    upstream_cost_cents = sum(item["upstream_cost_cents"] for item in daily)
+    gross_margin_cents = user_charge_cents - upstream_cost_cents
+    return {
+        "period": period,
+        "days": days,
+        "paid_cents": paid_cents,
+        "user_charge_cents": user_charge_cents,
+        "upstream_cost_cents": upstream_cost_cents,
+        "gross_margin_cents": gross_margin_cents,
+        "gross_margin_rate": _safe_rate(gross_margin_cents, user_charge_cents),
+        "package_consumption_cents": int(package_consumption_cents),
+        "refund_cents": 0,
+        "failed_payment_cents": int(failed_payment_cents),
+        "daily": daily,
+        "source_quality": _source_quality(
+            upstream_cost_cents=upstream_cost_cents,
+            user_charge_cents=user_charge_cents,
+        ),
+    }
+
+
+@router.get("/analytics/usage-structure", dependencies=[Depends(admin_guard)])
+async def analytics_usage_structure(
+    period: str = "today",
+    limit: int = 12,
+    db: AsyncSession = Depends(get_db),
+):
+    period, days, _start_day, since = _analytics_period(period)
+    limit = max(1, min(limit, 50))
+    request_charge = _request_user_charge_expr()
+    upstream_cost = _request_upstream_cost_expr()
+    rows = (
+        await db.execute(
+            select(
+                RequestLog.model.label("model"),
+                RequestLog.billable_sku.label("billable_sku"),
+                RequestLog.usage_unit_type.label("task_type"),
+                func.count(RequestLog.id).label("requests"),
+                func.coalesce(func.sum(RequestLog.input_tokens + RequestLog.output_tokens), 0).label("tokens"),
+                func.coalesce(func.sum(RequestLog.image_count), 0).label("images"),
+                func.coalesce(func.sum(request_charge), 0).label("user_charge_cents"),
+                func.coalesce(func.sum(upstream_cost), 0).label("upstream_cost_cents"),
+                func.coalesce(func.avg(RequestLog.duration_ms), 0).label("avg_latency_ms"),
+                func.coalesce(func.sum(case((RequestLog.status_code >= 400, 1), else_=0)), 0).label("failed_requests"),
+            )
+            .where(RequestLog.created_at >= since)
+            .group_by(RequestLog.model, RequestLog.billable_sku, RequestLog.usage_unit_type)
+            .order_by(func.coalesce(func.sum(request_charge), 0).desc())
+            .limit(limit)
+        )
+    ).all()
+    total_requests = sum(int(_row_value(row, "requests", 0) or 0) for row in rows)
+    data = []
+    for row in rows:
+        requests = int(_row_value(row, "requests", 0) or 0)
+        failed = int(_row_value(row, "failed_requests", 0) or 0)
+        charge = int(_row_value(row, "user_charge_cents", 0) or 0)
+        cost = int(_row_value(row, "upstream_cost_cents", 0) or 0)
+        data.append({
+            "model": _row_value(row, "model", "") or "-",
+            "billable_sku": _row_value(row, "billable_sku", "") or (_row_value(row, "model", "") or "-"),
+            "task_type": _row_value(row, "task_type", "") or "tokens",
+            "requests": requests,
+            "request_share": _safe_rate(requests, total_requests),
+            "tokens": int(_row_value(row, "tokens", 0) or 0),
+            "images": int(_row_value(row, "images", 0) or 0),
+            "user_charge_cents": charge,
+            "upstream_cost_cents": cost,
+            "gross_margin_cents": charge - cost,
+            "gross_margin_rate": _safe_rate(charge - cost, charge),
+            "avg_latency_ms": int(float(_row_value(row, "avg_latency_ms", 0) or 0)),
+            "p95_latency_ms": None,
+            "failed_requests": failed,
+            "failure_rate": _safe_rate(failed, requests),
+            "growth_rate_7d": None,
+        })
+    return {
+        "period": period,
+        "days": days,
+        "limit": limit,
+        "data": data,
+        "field_notes": {
+            "p95_latency_ms": "MySQL 版本未统一，MVP 先返回 avg latency；后续用窗口函数或预聚合补 P95。",
+            "growth_rate_7d": "需要上一窗口同维度对比；v2.1 补。",
+        },
+    }
+
+
+@router.get("/analytics/channel-health", dependencies=[Depends(admin_guard)])
+async def analytics_channel_health(period: str = "today", db: AsyncSession = Depends(get_db)):
+    period, days, _start_day, since = _analytics_period(period)
+    request_charge = _request_user_charge_expr()
+    upstream_cost = _request_upstream_cost_expr()
+    channel_type = _request_channel_type_expr()
+    fallback_expr = case((func.lower(func.coalesce(RequestLog.route_reason, "")).like("%fallback%"), 1), else_=0)
+    rows = (
+        await db.execute(
+            select(
+                channel_type.label("channel_type"),
+                func.count(RequestLog.id).label("requests"),
+                func.coalesce(func.sum(case((RequestLog.status_code < 400, 1), else_=0)), 0).label("success"),
+                func.coalesce(func.sum(case((RequestLog.status_code >= 400, 1), else_=0)), 0).label("failed"),
+                func.coalesce(func.sum(request_charge), 0).label("user_charge_cents"),
+                func.coalesce(func.sum(upstream_cost), 0).label("upstream_cost_cents"),
+                func.coalesce(func.sum(fallback_expr), 0).label("fallback_count"),
+                func.coalesce(func.avg(RequestLog.duration_ms), 0).label("avg_latency_ms"),
+            )
+            .where(RequestLog.created_at >= since)
+            .group_by(channel_type)
+            .order_by(func.count(RequestLog.id).desc())
+        )
+    ).all()
+    total_requests = sum(int(_row_value(row, "requests", 0) or 0) for row in rows)
+    data = []
+    for row in rows:
+        requests = int(_row_value(row, "requests", 0) or 0)
+        failed = int(_row_value(row, "failed", 0) or 0)
+        charge = int(_row_value(row, "user_charge_cents", 0) or 0)
+        cost = int(_row_value(row, "upstream_cost_cents", 0) or 0)
+        data.append({
+            "channel_type": _row_value(row, "channel_type", "unknown") or "unknown",
+            "requests": requests,
+            "request_share": _safe_rate(requests, total_requests),
+            "success": int(_row_value(row, "success", 0) or 0),
+            "failed": failed,
+            "user_charge_cents": charge,
+            "upstream_cost_cents": cost,
+            "gross_margin_cents": charge - cost,
+            "gross_margin_rate": _safe_rate(charge - cost, charge),
+            "fallback_count": int(_row_value(row, "fallback_count", 0) or 0),
+            "avg_latency_ms": int(float(_row_value(row, "avg_latency_ms", 0) or 0)),
+            "p95_latency_ms": None,
+            "failure_rate": _safe_rate(failed, requests),
+        })
+    account_pool = next((item for item in data if item["channel_type"] == "account_pool"), None)
+    known_requests = sum(item["requests"] for item in data if item["channel_type"] != "unknown")
+    user_charge_cents = sum(item["user_charge_cents"] for item in data)
+    upstream_cost_cents = sum(item["upstream_cost_cents"] for item in data)
+    return {
+        "period": period,
+        "days": days,
+        "total_requests": total_requests,
+        "account_pool": account_pool,
+        "data": data,
+        "source_quality": _source_quality(
+            upstream_cost_cents=upstream_cost_cents,
+            user_charge_cents=user_charge_cents,
+            channel_known_rate=_safe_rate(known_requests, total_requests),
+        ),
+        "field_notes": {
+            "channel_type": "当前由 route_reason 推断，需补稳定枚举 account_pool / official_provider。",
+            "provider_account_fingerprint": "未落库，暂不能看单账号负载和异常。",
+        },
+    }
+
+
+@router.get("/analytics/action-items", dependencies=[Depends(admin_guard)])
+async def analytics_action_items(
+    period: str = "today",
+    limit: int = 12,
+    db: AsyncSession = Depends(get_db),
+):
+    period, days, _start_day, since = _analytics_period(period)
+    limit = max(1, min(limit, 50))
+    low_balance = await analytics_low_balance_users(period="7d", limit=5, db=db)
+    errors = await analytics_errors(period=period, limit=5, db=db)
+    channel = await analytics_channel_health(period=period, db=db)
+    revenue = await analytics_revenue_margin(period=period, db=db)
+    usage = await analytics_usage_structure(period=period, limit=5, db=db)
+    return _build_action_items(
+        period=period,
+        days=days,
+        low_balance=low_balance,
+        errors=errors,
+        channel=channel,
+        revenue=revenue,
+        usage=usage,
+        limit=limit,
+    )
+
+
+@router.get("/analytics/operating-dashboard", dependencies=[Depends(admin_guard)])
+async def analytics_operating_dashboard(period: str = "today", db: AsyncSession = Depends(get_db)):
+    period, days, start_day, _since = _analytics_period(period)
+    cache_key = f"operating-dashboard:{period}"
+    now_ts = time.time()
+    cached = _analytics_dashboard_cache.get(cache_key)
+    if cached and now_ts - cached[0] < ANALYTICS_DASHBOARD_CACHE_TTL_SECONDS:
+        return cached[1]
+    overview = await analytics_overview(period=period, db=db)
+    growth = await analytics_growth(period=period, db=db)
+    revenue = await analytics_revenue_margin(period=period, db=db)
+    usage = await analytics_usage_structure(period=period, limit=10, db=db)
+    channel = await analytics_channel_health(period=period, db=db)
+    errors = await analytics_errors(period=period, limit=8, db=db)
+    low_balance = await analytics_low_balance_users(period="7d", limit=8, db=db)
+    actions = _build_action_items(
+        period=period,
+        days=days,
+        low_balance=low_balance,
+        errors=errors,
+        channel=channel,
+        revenue=revenue,
+        usage=usage,
+        limit=8,
+    )
+
+    revenue_judgement = (
+        "毛利可计算，关注毛利率变化"
+        if (revenue.get("source_quality") or {}).get("upstream_cost_available")
+        else "缺上游真实成本，无法判断毛利"
+    )
+    channel_judgement = (
+        "号池通道可由 route_reason 部分推断，需补稳定字段"
+        if (channel.get("source_quality") or {}).get("channel_type_available")
+        else "缺 channel_type，无法管理号池"
+    )
+    high_actions = [item for item in (actions.get("items") or []) if item.get("severity") == "high"]
+    judgement = {
+        "overall": (
+            f"{'有高优先级动作' if high_actions else '暂无高优先级异常'}；"
+            f"今日新增 {growth.get('new_users', 0)}，首充 {growth.get('first_paid_users', 0)}，"
+            f"消耗 {revenue.get('user_charge_cents', 0) / 100:.2f} 美元。"
+        ),
+        "growth": f"新增注册 {growth.get('new_users', 0)}，创建 Key {growth.get('new_api_key_users', 0)}，首次调用 {growth.get('first_call_users', 0)}，首充 {growth.get('first_paid_users', 0)}。",
+        "revenue": revenue_judgement,
+        "channel": channel_judgement,
+        "risk": f"今日动作 {len(actions.get('items') or [])} 条，其中高优先级 {len(high_actions)} 条。",
+    }
+    payload = {
+        "period": period,
+        "days": days,
+        "start_day": str(start_day),
+        "end_day": str(date.today()),
+        "generated_at": datetime.utcnow(),
+        "judgement": judgement,
+        "overview": overview,
+        "growth": growth,
+        "revenue_margin": revenue,
+        "usage_structure": usage,
+        "channel_health": channel,
+        "action_items": actions,
+        "errors": errors,
+        "low_balance": low_balance,
+    }
+    _analytics_dashboard_cache[cache_key] = (now_ts, payload)
+    return payload
 
 
 @router.get("/finance/summary", dependencies=[Depends(admin_guard)])
