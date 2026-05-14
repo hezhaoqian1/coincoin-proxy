@@ -1,4 +1,5 @@
 import os
+import asyncio
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -35,6 +36,21 @@ class _RecordingClient:
 
     async def post(self, url, **kwargs):
         self.calls.append({"url": url, **kwargs})
+        return self.responses.pop(0)
+
+
+class _DelayedRecordingClient(_RecordingClient):
+    def __init__(self, responses, *, delay_seconds=0.0, exc=None):
+        super().__init__(responses)
+        self.delay_seconds = delay_seconds
+        self.exc = exc
+
+    async def post(self, url, **kwargs):
+        self.calls.append({"url": url, **kwargs})
+        if self.delay_seconds:
+            await asyncio.sleep(self.delay_seconds)
+        if self.exc:
+            raise self.exc
         return self.responses.pop(0)
 
 
@@ -470,6 +486,134 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(client.calls[0]["json"]["stream"])
         add_usage.assert_awaited_once()
         self.assertEqual(add_usage.await_args.kwargs["cache_read_tokens"], 7)
+
+    async def test_messages_stream_kiro_go_bridge_sends_start_and_ping_while_waiting(self):
+        fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_kiro_stream_ping")
+        settings.claude_compat_provider = "kiro_go"
+        settings.claude_compat_base_url = "https://kiro-go.example"
+        settings.claude_compat_api_key = "kiro-key"
+        settings.claude_compat_auth_style = "bearer"
+        registry._initialized = False
+        registry.init_from_settings()
+        client = _DelayedRecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "chatcmpl_kiro_delayed",
+                        "object": "chat.completion",
+                        "created": 1700000000,
+                        "model": "claude-opus-4.7",
+                        "choices": [{"message": {"role": "assistant", "content": "OK"}, "finish_reason": "stop"}],
+                        "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7},
+                    }
+                )
+            ],
+            delay_seconds=0.03,
+        )
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_http_client", AsyncMock(return_value=client)),
+            patch.object(anthropic_module, "_kiro_go_bridge_ping_interval", return_value=0.01),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()),
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={
+                        "authorization": "Bearer sk_test",
+                        "anthropic-version": "2023-06-01",
+                    },
+                    json={
+                        "model": "claude-opus-4-7",
+                        "stream": True,
+                        "max_tokens": 64,
+                        "messages": [
+                            {"role": "user", "content": "Read a large file"},
+                            {
+                                "role": "assistant",
+                                "content": [
+                                    {
+                                        "type": "tool_use",
+                                        "id": "call_read_1",
+                                        "name": "Read",
+                                        "input": {"file_path": "big.txt"},
+                                    }
+                                ],
+                            },
+                            {
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "tool_result",
+                                        "tool_use_id": "call_read_1",
+                                        "content": "large file contents",
+                                    }
+                                ],
+                            },
+                        ],
+                        "tools": [
+                            {
+                                "name": "Read",
+                                "description": "Read a file",
+                                "input_schema": {
+                                    "type": "object",
+                                    "properties": {"file_path": {"type": "string"}},
+                                },
+                            }
+                        ],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.text
+        message_start_index = body.find("event: message_start")
+        ping_index = body.find("event: ping")
+        text_delta_index = body.find('"type":"text_delta"')
+        self.assertGreaterEqual(message_start_index, 0)
+        self.assertGreater(ping_index, message_start_index)
+        self.assertGreater(text_delta_index, ping_index)
+        self.assertIn("event: message_stop", body)
+        self.assertEqual(client.calls[0]["json"]["messages"][2]["content"], "large file contents")
+        self.assertGreaterEqual(client.calls[0]["timeout"].read, 300)
+
+    async def test_messages_stream_kiro_go_bridge_returns_sse_error_after_start(self):
+        fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_kiro_stream_error")
+        settings.claude_compat_provider = "kiro_go"
+        settings.claude_compat_base_url = "https://kiro-go.example"
+        settings.claude_compat_api_key = "kiro-key"
+        settings.claude_compat_auth_style = "bearer"
+        registry._initialized = False
+        registry.init_from_settings()
+        client = _DelayedRecordingClient([], exc=anthropic_module.httpx.ReadTimeout("boom"))
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_http_client", AsyncMock(return_value=client)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()) as add_usage,
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={
+                        "authorization": "Bearer sk_test",
+                        "anthropic-version": "2023-06-01",
+                    },
+                    json={
+                        "model": "claude-opus-4-7",
+                        "stream": True,
+                        "max_tokens": 64,
+                        "messages": [{"role": "user", "content": "Reply with exactly OK"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.text
+        self.assertIn("event: message_start", body)
+        self.assertIn("event: error", body)
+        self.assertIn('"type":"api_error"', body)
+        self.assertNotIn("event: message_stop", body)
+        add_usage.assert_not_awaited()
 
     async def test_messages_stream_kiro_go_tool_call_finishes_with_message_stop(self):
         fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_kiro_stream_tool")
