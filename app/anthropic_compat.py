@@ -1027,13 +1027,6 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
             anthropic_event_lines: List[str] = []
             saw_anthropic_event = False
 
-            for event in _ensure_anthropic_message_start(
-                stream_state,
-                display_model=display_model,
-                response_id="",
-            ):
-                yield event
-
             try:
                 stream_client = await get_stream_client()
                 req = stream_client.build_request(
@@ -1082,6 +1075,13 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                             timeout=_kiro_go_bridge_ping_interval(),
                         )
                     except asyncio.TimeoutError:
+                        if not stream_state.message_started and not saw_anthropic_event:
+                            for event in _ensure_anthropic_message_start(
+                                stream_state,
+                                display_model=display_model,
+                                response_id="",
+                            ):
+                                yield event
                         yield _anthropic_ping_bytes()
                         continue
 
