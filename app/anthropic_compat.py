@@ -886,14 +886,14 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
     if prompt_cache_key:
         openai_payload["prompt_cache_key"] = prompt_cache_key
 
-    if settings.model_cloak and display_model and not tools:
+    is_kiro_go = public_model.delivery_lane == CLAUDE_COMPAT_PROVIDER_KIRO_GO
+    if settings.model_cloak and display_model and not tools and not is_kiro_go:
         cloak = build_model_cloak(display_model, public_model)
         if messages and messages[0].get("role") == "system":
             messages[0]["content"] = str(messages[0].get("content") or "") + cloak
         else:
             openai_payload["messages"] = [{"role": "system", "content": cloak.strip()}] + messages
 
-    is_kiro_go = public_model.delivery_lane == CLAUDE_COMPAT_PROVIDER_KIRO_GO
     if is_kiro_go:
         upstream_url = f"{_normalize_openai_base_url(used_cfg.upstream_url)}/chat/completions"
         headers = _build_upstream_headers(used_cfg)
