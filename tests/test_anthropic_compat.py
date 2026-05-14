@@ -265,7 +265,7 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(prompt_cache_key.startswith("cc-"))
         self.assertEqual(len(prompt_cache_key), 35)
 
-    async def test_messages_can_route_to_kiro_go_native_claude_endpoint(self):
+    async def test_messages_can_route_to_kiro_go_chat_bridge(self):
         fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_kiro_native")
         settings.claude_compat_provider = "kiro_go"
         settings.claude_compat_base_url = "https://kiro-go.example"
@@ -277,19 +277,12 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
             [
                 _FakeUpstreamResponse(
                     {
-                        "id": "msg_kiro_native",
-                        "type": "message",
-                        "role": "assistant",
+                        "id": "chatcmpl_kiro_native",
+                        "object": "chat.completion",
+                        "created": 1700000000,
                         "model": "claude-opus-4.7",
-                        "content": [{"type": "text", "text": "OK"}],
-                        "stop_reason": "end_turn",
-                        "stop_sequence": None,
-                        "usage": {
-                            "input_tokens": 5,
-                            "output_tokens": 2,
-                            "cache_read_input_tokens": 7,
-                            "cache_creation_input_tokens": 0,
-                        },
+                        "choices": [{"message": {"role": "assistant", "content": "OK"}, "finish_reason": "stop"}],
+                        "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 14, "prompt_tokens_details": {"cached_tokens": 7}},
                     }
                 )
             ]
@@ -319,8 +312,9 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["model"], "claude-opus-4-7")
         self.assertEqual(body["content"][0]["text"], "OK")
         self.assertEqual(body["usage"]["cache_read_input_tokens"], 7)
-        self.assertEqual(client.calls[0]["url"], "https://kiro-go.example/v1/messages")
+        self.assertEqual(client.calls[0]["url"], "https://kiro-go.example/v1/chat/completions")
         self.assertEqual(client.calls[0]["json"]["model"], "claude-opus-4.7")
+        self.assertEqual(client.calls[0]["json"]["messages"][-1], {"role": "user", "content": "Reply with exactly OK"})
         self.assertEqual(client.calls[0]["headers"]["authorization"], "Bearer kiro-key")
         add_usage.assert_awaited_once()
         self.assertEqual(add_usage.await_args.kwargs["cache_read_tokens"], 7)
@@ -345,14 +339,12 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
             [
                 _FakeUpstreamResponse(
                     {
-                        "id": "msg_kiro_canonical",
-                        "type": "message",
-                        "role": "assistant",
+                        "id": "chatcmpl_kiro_canonical",
+                        "object": "chat.completion",
+                        "created": 1700000000,
                         "model": "claude-opus-4.7",
-                        "content": [{"type": "text", "text": "OK"}],
-                        "stop_reason": "end_turn",
-                        "stop_sequence": None,
-                        "usage": {"input_tokens": 5, "output_tokens": 2},
+                        "choices": [{"message": {"role": "assistant", "content": "OK"}, "finish_reason": "stop"}],
+                        "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7},
                     }
                 )
             ]
@@ -416,10 +408,13 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["model"], "claude-opus-4-7")
-        self.assertEqual(client.calls[0]["url"], "https://kiro-go.example/v1/messages")
+        self.assertEqual(client.calls[0]["url"], "https://kiro-go.example/v1/chat/completions")
         self.assertEqual(client.calls[0]["json"]["model"], "claude-opus-4.7")
+        upstream_messages = client.calls[0]["json"]["messages"]
+        self.assertEqual(upstream_messages[1]["tool_calls"][0]["function"]["name"], "Read")
+        self.assertEqual(upstream_messages[2], {"role": "tool", "tool_call_id": "call_read_1", "content": "file contents"})
 
-    async def test_messages_stream_can_route_to_kiro_go_native_claude_endpoint(self):
+    async def test_messages_stream_can_route_to_kiro_go_chat_bridge(self):
         fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_kiro_stream")
         settings.claude_compat_provider = "kiro_go"
         settings.claude_compat_base_url = "https://kiro-go.example"
@@ -427,30 +422,24 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         settings.claude_compat_auth_style = "bearer"
         registry._initialized = False
         registry.init_from_settings()
-        stream_client = _RecordingStreamClient(
+        client = _RecordingClient(
             [
-                _FakeEventStreamResponse(
-                    [
-                        'event: message_start',
-                        'data: {"type":"message_start","message":{"id":"msg_kiro_stream","type":"message","role":"assistant","model":"claude-opus-4.7","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":5,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}',
-                        'event: content_block_start',
-                        'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
-                        'event: content_block_delta',
-                        'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"OK"}}',
-                        'event: content_block_stop',
-                        'data: {"type":"content_block_stop","index":0}',
-                        'event: message_delta',
-                        'data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"input_tokens":5,"output_tokens":2,"cache_creation_input_tokens":0,"cache_read_input_tokens":7}}',
-                        'event: message_stop',
-                        'data: {"type":"message_stop"}',
-                    ]
+                _FakeUpstreamResponse(
+                    {
+                        "id": "chatcmpl_kiro_stream",
+                        "object": "chat.completion",
+                        "created": 1700000000,
+                        "model": "claude-opus-4.7",
+                        "choices": [{"message": {"role": "assistant", "content": "OK"}, "finish_reason": "stop"}],
+                        "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 14, "prompt_tokens_details": {"cached_tokens": 7}},
+                    }
                 )
             ]
         )
 
         with (
             patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
-            patch.object(anthropic_module, "get_stream_client", AsyncMock(return_value=stream_client)),
+            patch.object(anthropic_module, "get_http_client", AsyncMock(return_value=client)),
             patch.object(anthropic_module.usage_buffer, "add", AsyncMock()) as add_usage,
         ):
             async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
@@ -469,12 +458,100 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
                 )
 
         self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn("event: message_start", response.text)
         self.assertIn('"model":"claude-opus-4-7"', response.text)
+        self.assertIn('"type":"text_delta"', response.text)
+        self.assertIn("OK", response.text)
+        self.assertIn("event: message_delta", response.text)
+        self.assertIn("event: message_stop", response.text)
         self.assertIn('"cache_read_input_tokens":7', response.text)
-        self.assertEqual(stream_client.calls[0]["url"], "https://kiro-go.example/v1/messages")
-        self.assertEqual(stream_client.calls[0]["json"]["model"], "claude-opus-4.7")
+        self.assertEqual(client.calls[0]["url"], "https://kiro-go.example/v1/chat/completions")
+        self.assertEqual(client.calls[0]["json"]["model"], "claude-opus-4.7")
+        self.assertFalse(client.calls[0]["json"]["stream"])
         add_usage.assert_awaited_once()
         self.assertEqual(add_usage.await_args.kwargs["cache_read_tokens"], 7)
+
+    async def test_messages_stream_kiro_go_tool_call_finishes_with_message_stop(self):
+        fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_kiro_stream_tool")
+        settings.claude_compat_provider = "kiro_go"
+        settings.claude_compat_base_url = "https://kiro-go.example"
+        settings.claude_compat_api_key = "kiro-key"
+        settings.claude_compat_auth_style = "bearer"
+        registry._initialized = False
+        registry.init_from_settings()
+        client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "chatcmpl_kiro_tool",
+                        "object": "chat.completion",
+                        "created": 1700000000,
+                        "model": "claude-opus-4.7",
+                        "choices": [
+                            {
+                                "message": {
+                                    "role": "assistant",
+                                    "content": None,
+                                    "tool_calls": [
+                                        {
+                                            "id": "tooluse_123",
+                                            "type": "function",
+                                            "function": {"name": "Read", "arguments": "{\"file_path\":\"foo.txt\"}"},
+                                        }
+                                    ],
+                                },
+                                "finish_reason": "tool_calls",
+                            }
+                        ],
+                        "usage": {"prompt_tokens": 9, "completion_tokens": 4, "total_tokens": 13},
+                    }
+                )
+            ]
+        )
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_http_client", AsyncMock(return_value=client)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()),
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={
+                        "authorization": "Bearer sk_test",
+                        "anthropic-version": "2023-06-01",
+                    },
+                    json={
+                        "model": "claude-opus-4-7",
+                        "stream": True,
+                        "max_tokens": 64,
+                        "messages": [{"role": "user", "content": "Read foo.txt"}],
+                        "tools": [
+                            {
+                                "name": "Read",
+                                "description": "Read a file",
+                                "input_schema": {
+                                    "type": "object",
+                                    "properties": {"file_path": {"type": "string"}},
+                                },
+                            }
+                        ],
+                        "tool_choice": {"type": "tool", "name": "Read"},
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.text
+        self.assertIn('"type":"tool_use"', body)
+        self.assertIn('"name":"Read"', body)
+        self.assertIn('"type":"input_json_delta"', body)
+        self.assertIn('"stop_reason":"tool_use"', body)
+        self.assertIn("event: message_stop", body)
+        self.assertEqual(
+            client.calls[0]["json"]["tool_choice"],
+            {"type": "function", "function": {"name": "Read"}},
+        )
+        self.assertFalse(client.calls[0]["json"]["stream"])
 
     async def test_messages_uses_station_alias_and_retail_price(self):
         fake_user = SimpleNamespace(
