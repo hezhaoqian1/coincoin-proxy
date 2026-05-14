@@ -8,7 +8,10 @@ RUN apt-get update \
 
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt \
-    && npm install -g @slock-ai/daemon@0.47.0
+    && npm install -g @slock-ai/daemon@0.47.0 \
+    && printf '#!/bin/sh\nexec node /usr/local/lib/node_modules/@slock-ai/daemon/dist/cli/index.js "$@"\n' > /usr/local/bin/slock \
+    && chmod +x /usr/local/bin/slock \
+    && slock --help >/dev/null
 
 COPY report_bot.py ./
 
