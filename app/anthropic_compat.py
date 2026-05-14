@@ -281,6 +281,49 @@ def _build_anthropic_upstream_headers(cfg, request: Request) -> Dict[str, str]:
     return headers
 
 
+def _copy_anthropic_messages_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    copied: Dict[str, Any] = {}
+    for key in (
+        "model",
+        "messages",
+        "system",
+        "max_tokens",
+        "metadata",
+        "stop_sequences",
+        "stream",
+        "temperature",
+        "top_p",
+        "tools",
+        "tool_choice",
+        "thinking",
+        "service_tier",
+        "container",
+        "context_management",
+        "mcp_servers",
+        "cache_control",
+    ):
+        if key in payload:
+            copied[key] = payload[key]
+    return copied
+
+
+def _looks_like_anthropic_message_response(data: Any) -> bool:
+    return isinstance(data, dict) and str(data.get("type") or "").strip() == "message"
+
+
+def _anthropic_message_start_usage_from_usage(usage: Dict[str, Any]) -> Dict[str, int]:
+    input_tokens = extract_total_input_tokens(usage)
+    cache_read_tokens = extract_cache_read_tokens(usage)
+    cache_creation_tokens = extract_cache_creation_tokens(usage)
+    regular_input_tokens = max(0, input_tokens - cache_read_tokens - cache_creation_tokens)
+    return {
+        "input_tokens": regular_input_tokens,
+        "cache_creation_input_tokens": max(0, cache_creation_tokens),
+        "cache_read_input_tokens": max(0, cache_read_tokens),
+        "output_tokens": 0,
+    }
+
+
 def _mask_anthropic_message_model(payload: Dict[str, Any], display_model: str) -> Dict[str, Any]:
     if not isinstance(payload, dict):
         return payload
@@ -424,6 +467,72 @@ def _anthropic_stream_error_bytes(
     )
 
 
+def _update_state_from_anthropic_event(
+    state: _AnthropicStreamState,
+    *,
+    event_type: str,
+    event_payload: Dict[str, Any],
+) -> None:
+    if event_type == "message_start":
+        message = event_payload.get("message")
+        if isinstance(message, dict):
+            state.message_started = True
+            response_id = str(message.get("id") or "")
+            if response_id:
+                state.response_id = response_id
+            usage = message.get("usage")
+            if isinstance(usage, dict):
+                state.usage = {
+                    "input_tokens": int(usage.get("input_tokens") or 0),
+                    "output_tokens": int(usage.get("output_tokens") or 0),
+                    "cache_creation_input_tokens": int(usage.get("cache_creation_input_tokens") or 0),
+                    "cache_read_input_tokens": int(usage.get("cache_read_input_tokens") or 0),
+                }
+        return
+
+    if event_type == "message_delta":
+        delta = event_payload.get("delta")
+        if isinstance(delta, dict):
+            finish_reason = str(delta.get("stop_reason") or "")
+            if finish_reason:
+                state.finish_reason = finish_reason
+        usage = event_payload.get("usage")
+        if isinstance(usage, dict):
+            merged = dict(state.usage or {})
+            merged.update(usage)
+            state.usage = merged
+            state.message_delta_sent = True
+        return
+
+    if event_type == "message_stop":
+        state.message_stopped = True
+
+
+def _parse_anthropic_sse_event(raw_event: str) -> tuple[str, Optional[Dict[str, Any]]]:
+    event_type = ""
+    data_lines: List[str] = []
+    for raw_line in raw_event.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("event:"):
+            event_type = line[6:].strip()
+        elif line.startswith("data:"):
+            data_lines.append(line[5:].strip())
+    if not event_type or not data_lines:
+        return "", None
+    data_text = "\n".join(data_lines).strip()
+    if not data_text:
+        return event_type, {}
+    try:
+        payload = json.loads(data_text)
+    except json.JSONDecodeError:
+        return event_type, None
+    if not isinstance(payload, dict):
+        return event_type, None
+    return event_type, payload
+
+
 def _normalize_anthropic_stop_reason(finish_reason: str, saw_tool_call: bool) -> str:
     reason = str(finish_reason or "").strip()
     if saw_tool_call or reason == "tool_calls":
@@ -443,6 +552,7 @@ def _ensure_anthropic_message_start(
         return []
     state.message_started = True
     state.response_id = response_id or state.response_id or f"msg_coincoin_{int(time.time() * 1000)}"
+    usage = _anthropic_message_start_usage_from_usage(state.usage)
     payload = {
         "type": "message_start",
         "message": {
@@ -453,12 +563,7 @@ def _ensure_anthropic_message_start(
             "content": [],
             "stop_reason": None,
             "stop_sequence": None,
-            "usage": {
-                "input_tokens": 0,
-                "cache_creation_input_tokens": 0,
-                "cache_read_input_tokens": 0,
-                "output_tokens": 0,
-            },
+            "usage": usage,
         },
     }
     return [_anthropic_sse_bytes("message_start", payload)]
@@ -895,15 +1000,11 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
             openai_payload["messages"] = [{"role": "system", "content": cloak.strip()}] + messages
 
     if is_kiro_go:
-        upstream_url = f"{_normalize_openai_base_url(used_cfg.upstream_url)}/chat/completions"
-        headers = _build_upstream_headers(used_cfg)
-        upstream_payload = dict(openai_payload)
+        upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/v1/messages"
+        headers = _build_anthropic_upstream_headers(used_cfg, request)
+        upstream_payload = _copy_anthropic_messages_payload(payload)
         upstream_payload["model"] = _kiro_go_upstream_model(used_cfg.model_id)
-        for field in ("temperature", "top_p", "stop"):
-            if field in payload:
-                upstream_payload[field] = payload[field]
-        if "tool_choice" in payload:
-            upstream_payload["tool_choice"] = _anthropic_tool_choice_to_openai(payload.get("tool_choice"))
+        upstream_payload["stream"] = bool(payload.get("stream"))
     else:
         upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/chat/completions"
         headers = _build_anthropic_upstream_headers(used_cfg, request)
@@ -923,6 +1024,8 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
             reader_task: Optional[asyncio.Task] = None
             stream_failed = False
             upstream_request_id = ""
+            anthropic_event_lines: List[str] = []
+            saw_anthropic_event = False
 
             for event in _ensure_anthropic_message_start(
                 stream_state,
@@ -983,20 +1086,63 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                         continue
 
                     if item_type == "line":
+                        raw_line = str(item_value or "")
+                        if anthropic_event_lines or raw_line.startswith("event:"):
+                            if raw_line.startswith("event:"):
+                                saw_anthropic_event = True
+                            if raw_line == "":
+                                raw_event = "\n".join(anthropic_event_lines)
+                                event_type, payload_dict = _parse_anthropic_sse_event(raw_event)
+                                if event_type and payload_dict is not None:
+                                    should_forward_event = not (
+                                        event_type == "message_start" and stream_state.message_started
+                                    )
+                                    _update_state_from_anthropic_event(
+                                        stream_state,
+                                        event_type=event_type,
+                                        event_payload=payload_dict,
+                                    )
+                                    if should_forward_event:
+                                        yield (raw_event + "\n\n").encode("utf-8")
+                                anthropic_event_lines.clear()
+                                continue
+                            anthropic_event_lines.append(raw_line)
+                            continue
+                        if raw_line == "":
+                            continue
+                        if saw_anthropic_event:
+                            continue
                         for event in _translate_openai_chunk_to_anthropic_events(
                             stream_state,
                             display_model=display_model,
-                            raw_line=str(item_value or ""),
+                            raw_line=raw_line,
                         ):
                             yield event
                         continue
 
                     if item_type == "error":
+                        if anthropic_event_lines:
+                            anthropic_event_lines.clear()
                         yield _anthropic_stream_error_bytes("Upstream request failed")
                         stream_failed = True
                         return
 
                     if item_type == "eof":
+                        if anthropic_event_lines:
+                            raw_event = "\n".join(anthropic_event_lines)
+                            event_type, payload_dict = _parse_anthropic_sse_event(raw_event)
+                            if event_type and payload_dict is not None:
+                                should_forward_event = not (
+                                    event_type == "message_start" and stream_state.message_started
+                                )
+                                _update_state_from_anthropic_event(
+                                    stream_state,
+                                    event_type=event_type,
+                                    event_payload=payload_dict,
+                                )
+                                if should_forward_event:
+                                    yield (raw_event + "\n\n").encode("utf-8")
+                            anthropic_event_lines.clear()
                         break
             except (httpx.TimeoutException, httpx.RequestError):
                 yield _anthropic_stream_error_bytes("Upstream request failed")
@@ -1016,7 +1162,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                 if upstream is not None:
                     await upstream.aclose()
 
-            if not stream_failed and not stream_state.message_stopped:
+            if not stream_failed and not stream_state.message_stopped and stream_state.usage:
                 for event in _finalize_anthropic_stream(stream_state, display_model=display_model):
                     yield event
 
@@ -1141,7 +1287,10 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
             return anthropic_error(message or "Upstream request failed", error_type=error_type or "api_error", status_code=upstream.status_code)
         return anthropic_error("Upstream request failed", error_type="api_error", status_code=upstream.status_code)
 
-    if is_kiro_go:
+    if is_kiro_go and _looks_like_anthropic_message_response(data):
+        response_body = _mask_anthropic_message_model(data, display_model)
+        usage = response_body.get("usage") if isinstance(response_body.get("usage"), dict) else {}
+    elif is_kiro_go:
         content_blocks = _extract_anthropic_content_from_openai_chat_response(data)
         usage = _extract_usage_from_openai_chat_response(data)
         stop_reason = _extract_anthropic_stop_reason_from_openai_chat_response(data)
