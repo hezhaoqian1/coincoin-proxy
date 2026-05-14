@@ -677,6 +677,58 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(usage_kwargs["cache_read_tokens"], 7)
         self.assertEqual(usage_kwargs["cache_creation_tokens"], 8)
 
+    async def test_messages_stream_kiro_go_native_anthropic_sse_keeps_upstream_usage_in_message_start(self):
+        fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_kiro_stream_native_usage")
+        settings.claude_compat_provider = "kiro_go"
+        settings.claude_compat_base_url = "https://kiro-go.example"
+        settings.claude_compat_api_key = "kiro-key"
+        settings.claude_compat_auth_style = "bearer"
+        registry._initialized = False
+        registry.init_from_settings()
+        stream_client = _RecordingStreamClient(
+            [
+                _FakeAnthropicEventStreamResponse(
+                    [
+                        'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_native_stream_usage","type":"message","role":"assistant","model":"claude-opus-4.7","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":5,"cache_creation_input_tokens":8,"cache_read_input_tokens":7,"output_tokens":0}}}',
+                        'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
+                        'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"OK"}}',
+                        'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}',
+                        'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"input_tokens":5,"cache_creation_input_tokens":8,"cache_read_input_tokens":7,"output_tokens":2}}',
+                        'event: message_stop\ndata: {"type":"message_stop"}',
+                    ]
+                ),
+            ]
+        )
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_stream_client", AsyncMock(return_value=stream_client)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()),
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={
+                        "authorization": "Bearer sk_test",
+                        "anthropic-version": "2023-06-01",
+                    },
+                    json={
+                        "model": "claude-opus-4-7",
+                        "stream": True,
+                        "max_tokens": 64,
+                        "cache_control": {"type": "ephemeral"},
+                        "messages": [{"role": "user", "content": "Reply with exactly OK"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.text
+        self.assertIn(
+            '"usage":{"input_tokens":5,"cache_creation_input_tokens":8,"cache_read_input_tokens":7,"output_tokens":0}',
+            body,
+        )
+        self.assertEqual(body.count("event: message_start"), 1)
+
     async def test_messages_stream_kiro_go_bridge_sends_start_and_ping_while_waiting(self):
         fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_kiro_stream_ping")
         settings.claude_compat_provider = "kiro_go"
@@ -803,7 +855,6 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         body = response.text
-        self.assertIn("event: message_start", body)
         self.assertIn("event: error", body)
         self.assertIn('"type":"api_error"', body)
         self.assertNotIn("event: message_stop", body)
