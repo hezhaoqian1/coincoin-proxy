@@ -430,6 +430,53 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(upstream_messages[1]["tool_calls"][0]["function"]["name"], "Read")
         self.assertEqual(upstream_messages[2], {"role": "tool", "tool_call_id": "call_read_1", "content": "file contents"})
 
+    async def test_messages_kiro_go_skips_model_cloak_injection(self):
+        fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_kiro_cloak")
+        settings.claude_compat_provider = "kiro_go"
+        settings.claude_compat_base_url = "https://kiro-go.example"
+        settings.claude_compat_api_key = "kiro-key"
+        settings.claude_compat_auth_style = "bearer"
+        settings.model_cloak = True
+        registry._initialized = False
+        registry.init_from_settings()
+        client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "chatcmpl_kiro_cloak",
+                        "object": "chat.completion",
+                        "created": 1700000000,
+                        "model": "claude-opus-4.7",
+                        "choices": [{"message": {"role": "assistant", "content": "OK"}, "finish_reason": "stop"}],
+                        "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7},
+                    }
+                )
+            ]
+        )
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_http_client", AsyncMock(return_value=client)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()),
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={
+                        "authorization": "Bearer sk_test",
+                        "anthropic-version": "2023-06-01",
+                    },
+                    json={
+                        "model": "claude-opus-4-7",
+                        "max_tokens": 64,
+                        "messages": [{"role": "user", "content": "Reply with exactly OK"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        upstream_messages = client.calls[0]["json"]["messages"]
+        self.assertEqual(upstream_messages, [{"role": "user", "content": "Reply with exactly OK"}])
+
     async def test_messages_stream_can_route_to_kiro_go_chat_bridge(self):
         fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_kiro_stream")
         settings.claude_compat_provider = "kiro_go"
