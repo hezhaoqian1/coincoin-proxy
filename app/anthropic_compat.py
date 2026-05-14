@@ -5,6 +5,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +16,7 @@ from .prompt_cache import build_claude_code_prompt_cache_key
 from .proxy import (
     _build_upstream_headers,
     _KEY_ID_ATTR,
+    _normalize_openai_base_url,
     authenticate_user,
     authorize_request,
     extract_upstream_request_id,
@@ -244,6 +246,19 @@ def _anthropic_tools_to_openai_tools(payload: Dict[str, Any]) -> Optional[List[D
     return tools or None
 
 
+def _anthropic_tool_choice_to_openai(tool_choice: Any) -> Any:
+    if not isinstance(tool_choice, dict):
+        return tool_choice
+    choice_type = str(tool_choice.get("type") or "").strip()
+    if choice_type in {"auto", "any", "none"}:
+        return "required" if choice_type == "any" else choice_type
+    if choice_type == "tool":
+        name = str(tool_choice.get("name") or "").strip()
+        if name:
+            return {"type": "function", "function": {"name": name}}
+    return tool_choice
+
+
 def _build_anthropic_upstream_headers(cfg, request: Request) -> Dict[str, str]:
     headers = _build_upstream_headers(cfg)
     headers["content-type"] = "application/json"
@@ -372,6 +387,15 @@ def _elapsed_ms_since(start: float) -> int:
 def _anthropic_sse_bytes(event_type: str, payload: Dict[str, Any]) -> bytes:
     data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     return f"event: {event_type}\ndata: {data}\n\n".encode("utf-8")
+
+
+def _kiro_go_bridge_timeout() -> httpx.Timeout:
+    return httpx.Timeout(
+        connect=5.0,
+        read=float(settings.responses_stream_read_timeout),
+        write=60.0,
+        pool=60.0,
+    )
 
 
 def _normalize_anthropic_stop_reason(finish_reason: str, saw_tool_call: bool) -> str:
@@ -657,6 +681,67 @@ def _translate_openai_chunk_to_anthropic_events(
     return events
 
 
+def _openai_chat_response_to_stream_chunk(data: Dict[str, Any]) -> Dict[str, Any]:
+    choices = data.get("choices")
+    choice = choices[0] if isinstance(choices, list) and choices and isinstance(choices[0], dict) else {}
+    message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
+    delta: Dict[str, Any] = {}
+
+    content = message.get("content")
+    if isinstance(content, str) and content:
+        delta["content"] = content
+    elif isinstance(content, list):
+        text = "".join(str(block.get("text") or "") for block in content if isinstance(block, dict) and block.get("type") == "text")
+        if text:
+            delta["content"] = text
+
+    tool_calls = message.get("tool_calls")
+    if isinstance(tool_calls, list) and tool_calls:
+        normalized_tools: List[Dict[str, Any]] = []
+        for index, tool_call in enumerate(tool_calls):
+            if not isinstance(tool_call, dict):
+                continue
+            function = tool_call.get("function") if isinstance(tool_call.get("function"), dict) else {}
+            normalized_tools.append(
+                {
+                    "index": index,
+                    "id": str(tool_call.get("id") or f"call_{index}"),
+                    "type": "function",
+                    "function": {
+                        "name": str(function.get("name") or tool_call.get("name") or ""),
+                        "arguments": function.get("arguments") if isinstance(function.get("arguments"), str) else json.dumps(function.get("arguments") or {}, ensure_ascii=False),
+                    },
+                }
+            )
+        if normalized_tools:
+            delta["tool_calls"] = normalized_tools
+
+    finish_reason = choice.get("finish_reason") or choice.get("native_finish_reason") or "stop"
+    return {
+        "id": str(data.get("id") or ""),
+        "model": str(data.get("model") or ""),
+        "choices": [{"delta": delta, "finish_reason": finish_reason}],
+        "usage": data.get("usage") if isinstance(data.get("usage"), dict) else {},
+    }
+
+
+def _openai_chat_response_to_anthropic_events(
+    data: Dict[str, Any],
+    *,
+    display_model: str,
+) -> tuple[List[bytes], Dict[str, Any]]:
+    state = _AnthropicStreamState()
+    chunk = _openai_chat_response_to_stream_chunk(data)
+    raw_line = "data: " + json.dumps(chunk, ensure_ascii=False, separators=(",", ":"))
+    events = _translate_openai_chunk_to_anthropic_events(
+        state,
+        display_model=display_model,
+        raw_line=raw_line,
+    )
+    events.extend(_finalize_anthropic_stream(state, display_model=display_model))
+    return events, state.usage
+
+
 @router.get("/models")
 async def anthropic_models(request: Request):
     user_agent = request.headers.get("user-agent", "")
@@ -783,16 +868,102 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
 
     is_kiro_go = public_model.delivery_lane == CLAUDE_COMPAT_PROVIDER_KIRO_GO
     if is_kiro_go:
-        upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/v1/messages"
-        headers = _build_anthropic_upstream_headers(used_cfg, request)
-        upstream_payload = dict(payload)
+        upstream_url = f"{_normalize_openai_base_url(used_cfg.upstream_url)}/chat/completions"
+        headers = _build_upstream_headers(used_cfg)
+        upstream_payload = dict(openai_payload)
         upstream_payload["model"] = _kiro_go_upstream_model(used_cfg.model_id)
+        for field in ("temperature", "top_p", "stop"):
+            if field in payload:
+                upstream_payload[field] = payload[field]
+        if "tool_choice" in payload:
+            upstream_payload["tool_choice"] = _anthropic_tool_choice_to_openai(payload.get("tool_choice"))
     else:
         upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/chat/completions"
         headers = _build_anthropic_upstream_headers(used_cfg, request)
         upstream_payload = openai_payload
 
     request_t0 = time.monotonic()
+    if is_kiro_go and upstream_payload.get("stream"):
+        upstream_payload = dict(upstream_payload)
+        upstream_payload["stream"] = False
+        client = await get_http_client()
+        try:
+            upstream = await client.post(
+                upstream_url,
+                json=upstream_payload,
+                headers=headers,
+                timeout=_kiro_go_bridge_timeout(),
+            )
+        except (httpx.TimeoutException, httpx.RequestError):
+            return anthropic_error("Upstream request failed", error_type="api_error", status_code=502)
+
+        duration_ms = _elapsed_ms_since(request_t0)
+        upstream_request_id = extract_upstream_request_id(upstream.headers)
+        response_headers = filter_headers(dict(upstream.headers))
+        response_headers.pop("content-length", None)
+        response_headers.setdefault("cache-control", "no-cache")
+        response_headers.setdefault("x-accel-buffering", "no")
+        response_headers["content-type"] = "text/event-stream; charset=utf-8"
+        content_type = upstream.headers.get("content-type", "application/json")
+
+        if "application/json" not in content_type:
+            body = await upstream.aread()
+            return Response(content=body, status_code=upstream.status_code, headers=response_headers, media_type=content_type)
+
+        try:
+            data = upstream.json()
+        except Exception:
+            return anthropic_error("Upstream returned invalid JSON", error_type="api_error", status_code=502)
+
+        if upstream.status_code >= 400:
+            if isinstance(data, dict) and isinstance(data.get("error"), dict):
+                error_info = data["error"]
+                return anthropic_error(
+                    error_info.get("message") or "Upstream request failed",
+                    error_type=error_info.get("type") or "api_error",
+                    status_code=upstream.status_code,
+                )
+            return anthropic_error("Upstream request failed", error_type="api_error", status_code=upstream.status_code)
+
+        if not isinstance(data, dict):
+            return anthropic_error("Upstream returned invalid JSON", error_type="api_error", status_code=502)
+
+        stream_events, stream_usage = _openai_chat_response_to_anthropic_events(data, display_model=display_model)
+
+        async def iter_bytes():
+            for event in stream_events:
+                yield event
+            if stream_usage:
+                await usage_buffer.add(
+                    user.id,
+                    api_key_id=api_key_id,
+                    input_tokens=extract_total_input_tokens(stream_usage),
+                    output_tokens=int(stream_usage.get("completion_tokens") or stream_usage.get("output_tokens") or 0),
+                    cache_read_tokens=extract_cache_read_tokens(stream_usage),
+                    cache_creation_tokens=extract_cache_creation_tokens(stream_usage),
+                    requests=1,
+                    endpoint="messages",
+                    model=display_model,
+                    customer_model_alias=display_model,
+                    provider_model=public_model.provider_model or used_cfg.model_id,
+                    route_reason=used_route_reason,
+                    duration_ms=duration_ms,
+                    status_code=upstream.status_code,
+                    price_input_per_million=price_input_per_million,
+                    price_output_per_million=price_output_per_million,
+                    usage_unit_type="tokens",
+                    billable_sku=public_model.billable_sku or display_model,
+                    upstream_request_id=upstream_request_id,
+                    **station_usage_kwargs(station_model),
+                )
+
+        return StreamingResponse(
+            iter_bytes(),
+            status_code=upstream.status_code,
+            headers=response_headers,
+            media_type="text/event-stream",
+        )
+
     if upstream_payload.get("stream"):
         stream_client = await get_stream_client()
         req = stream_client.build_request("POST", upstream_url, json=upstream_payload, headers=headers)
@@ -804,109 +975,46 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
         stream_headers.setdefault("x-accel-buffering", "no")
         stream_headers["content-type"] = "text/event-stream; charset=utf-8"
 
-        if is_kiro_go:
-            stream_usage: Dict[str, Any] = {}
+        stream_state = _AnthropicStreamState()
 
-            async def iter_bytes():
-                try:
-                    async for line in upstream.aiter_lines():
-                        if not line:
-                            continue
-                        stripped = line.strip()
-                        if stripped.startswith("event:"):
-                            yield f"{line}\n".encode("utf-8")
-                            continue
-                        if stripped.startswith("data:"):
-                            payload_text = stripped[5:].strip()
-                            if payload_text and payload_text != "[DONE]":
-                                try:
-                                    event = json.loads(payload_text)
-                                except json.JSONDecodeError:
-                                    event = None
-                                if isinstance(event, dict):
-                                    event_type = str(event.get("type") or "")
-                                    if event_type == "message_start":
-                                        message = event.get("message")
-                                        if isinstance(message, dict):
-                                            message["model"] = display_model
-                                    elif event_type == "message_delta":
-                                        usage = event.get("usage")
-                                        if isinstance(usage, dict):
-                                            stream_usage.clear()
-                                            stream_usage.update(usage)
-                                    yield f"data: {json.dumps(event, ensure_ascii=False, separators=(',', ':'))}\n\n".encode("utf-8")
-                                    continue
-                            if payload_text == "[DONE]":
-                                yield b"data: [DONE]\n\n"
-                                continue
-                        yield f"{line}\n".encode("utf-8")
-                finally:
-                    duration_ms = _elapsed_ms_since(request_t0)
-                    if stream_usage:
-                        await usage_buffer.add(
-                            user.id,
-                            api_key_id=api_key_id,
-                            input_tokens=extract_total_input_tokens(stream_usage),
-                            output_tokens=int(stream_usage.get("completion_tokens") or stream_usage.get("output_tokens") or 0),
-                            cache_read_tokens=extract_cache_read_tokens(stream_usage),
-                            cache_creation_tokens=extract_cache_creation_tokens(stream_usage),
-                            requests=1,
-                            endpoint="messages",
-                            model=display_model,
-                            customer_model_alias=display_model,
-                            provider_model=public_model.provider_model or used_cfg.model_id,
-                            route_reason=used_route_reason,
-                            duration_ms=duration_ms,
-                            status_code=upstream.status_code,
-                            price_input_per_million=price_input_per_million,
-                            price_output_per_million=price_output_per_million,
-                            usage_unit_type="tokens",
-                            billable_sku=public_model.billable_sku or display_model,
-                            upstream_request_id=upstream_request_id,
-                            **station_usage_kwargs(station_model),
-                        )
-                    await upstream.aclose()
-        else:
-            stream_state = _AnthropicStreamState()
-
-            async def iter_bytes():
-                try:
-                    async for line in upstream.aiter_lines():
-                        for event in _translate_openai_chunk_to_anthropic_events(
-                            stream_state,
-                            display_model=display_model,
-                            raw_line=line,
-                        ):
-                            yield event
-                finally:
-                    if not stream_state.message_stopped:
-                        for event in _finalize_anthropic_stream(stream_state, display_model=display_model):
-                            yield event
-                    duration_ms = _elapsed_ms_since(request_t0)
-                    if stream_state.usage:
-                        await usage_buffer.add(
-                            user.id,
-                            api_key_id=api_key_id,
-                            input_tokens=extract_total_input_tokens(stream_state.usage),
-                            output_tokens=int(stream_state.usage.get("completion_tokens") or stream_state.usage.get("output_tokens") or 0),
-                            cache_read_tokens=extract_cache_read_tokens(stream_state.usage),
-                            cache_creation_tokens=extract_cache_creation_tokens(stream_state.usage),
-                            requests=1,
-                            endpoint="messages",
-                            model=display_model,
-                            customer_model_alias=display_model,
-                            provider_model=public_model.provider_model or used_cfg.model_id,
-                            route_reason=used_route_reason,
-                            duration_ms=duration_ms,
-                            status_code=upstream.status_code,
-                            price_input_per_million=price_input_per_million,
-                            price_output_per_million=price_output_per_million,
-                            usage_unit_type="tokens",
-                            billable_sku=public_model.billable_sku or display_model,
-                            upstream_request_id=upstream_request_id,
-                            **station_usage_kwargs(station_model),
-                        )
-                    await upstream.aclose()
+        async def iter_bytes():
+            try:
+                async for line in upstream.aiter_lines():
+                    for event in _translate_openai_chunk_to_anthropic_events(
+                        stream_state,
+                        display_model=display_model,
+                        raw_line=line,
+                    ):
+                        yield event
+            finally:
+                if not stream_state.message_stopped:
+                    for event in _finalize_anthropic_stream(stream_state, display_model=display_model):
+                        yield event
+                duration_ms = _elapsed_ms_since(request_t0)
+                if stream_state.usage:
+                    await usage_buffer.add(
+                        user.id,
+                        api_key_id=api_key_id,
+                        input_tokens=extract_total_input_tokens(stream_state.usage),
+                        output_tokens=int(stream_state.usage.get("completion_tokens") or stream_state.usage.get("output_tokens") or 0),
+                        cache_read_tokens=extract_cache_read_tokens(stream_state.usage),
+                        cache_creation_tokens=extract_cache_creation_tokens(stream_state.usage),
+                        requests=1,
+                        endpoint="messages",
+                        model=display_model,
+                        customer_model_alias=display_model,
+                        provider_model=public_model.provider_model or used_cfg.model_id,
+                        route_reason=used_route_reason,
+                        duration_ms=duration_ms,
+                        status_code=upstream.status_code,
+                        price_input_per_million=price_input_per_million,
+                        price_output_per_million=price_output_per_million,
+                        usage_unit_type="tokens",
+                        billable_sku=public_model.billable_sku or display_model,
+                        upstream_request_id=upstream_request_id,
+                        **station_usage_kwargs(station_model),
+                    )
+                await upstream.aclose()
 
         return StreamingResponse(
             iter_bytes(),
@@ -916,7 +1024,10 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
         )
 
     client = await get_http_client()
-    upstream = await client.post(upstream_url, json=upstream_payload, headers=headers)
+    try:
+        upstream = await client.post(upstream_url, json=upstream_payload, headers=headers)
+    except (httpx.TimeoutException, httpx.RequestError):
+        return anthropic_error("Upstream request failed", error_type="api_error", status_code=502)
     duration_ms = _elapsed_ms_since(request_t0)
     response_headers = filter_headers(dict(upstream.headers))
     response_headers.pop("content-length", None)
@@ -941,9 +1052,16 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
         return anthropic_error("Upstream request failed", error_type="api_error", status_code=upstream.status_code)
 
     if is_kiro_go:
-        data = _mask_anthropic_message_model(data, display_model)
-        usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
-        response_body = data
+        content_blocks = _extract_anthropic_content_from_openai_chat_response(data)
+        usage = _extract_usage_from_openai_chat_response(data)
+        stop_reason = _extract_anthropic_stop_reason_from_openai_chat_response(data)
+        response_body = _build_anthropic_response(
+            display_model=display_model,
+            message_content=content_blocks,
+            stop_reason=stop_reason,
+            usage=usage,
+            response_id=str(data.get("id") or ""),
+        )
     else:
         content_blocks = _extract_anthropic_content_from_openai_chat_response(data)
         usage = _extract_usage_from_openai_chat_response(data)
