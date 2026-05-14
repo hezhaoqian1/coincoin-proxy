@@ -54,7 +54,11 @@ def status_text(value: Any, fallback: str = "-") -> str:
 
 
 def load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
-    candidates = [
+    linux_cjk = [
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc" if bold else "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc" if bold else "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    ]
+    candidates = linux_cjk + [
         "/System/Library/Fonts/PingFang.ttc",
         "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
         "/Library/Fonts/Arial Unicode.ttf",
@@ -63,7 +67,7 @@ def load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
     for path in candidates:
         if Path(path).exists():
             try:
-                return ImageFont.truetype(path, size=size, index=1 if bold and path.endswith(".ttc") else 0)
+                return ImageFont.truetype(path, size=size, index=0)
             except Exception:
                 continue
     return ImageFont.load_default()
