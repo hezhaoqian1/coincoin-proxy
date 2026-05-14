@@ -492,6 +492,9 @@ export default function Dashboard() {
     })
     const [stationState, setStationState] = useState(null)
     const { confirmResult: orderConfirmed, dismiss: dismissOrder } = useOrderConfirm()
+    const orderAvailableUsd = orderConfirmed
+        ? Number(orderConfirmed.available_usd ?? orderConfirmed.new_balance_usd ?? 0)
+        : 0
 
     useEffect(() => {
         if (orderConfirmed) {
@@ -738,7 +741,7 @@ export default function Dashboard() {
                 {/* Auto-confirmed order banner */}
                 {orderConfirmed && (
                     <div className="low-balance-banner animate-fade-in" style={{ background: 'rgba(16,185,129,0.1)', borderColor: 'rgba(16,185,129,0.3)', color: 'var(--accent-emerald)' }}>
-                        <span>&#10003; 充值已到账。+${(orderConfirmed.added_cents / 100).toFixed(2)}，当前余额 ${orderConfirmed.new_balance_usd?.toFixed(2)}</span>
+                        <span>&#10003; 充值已到账。+${(orderConfirmed.added_cents / 100).toFixed(2)}，当前可用额度 ${orderAvailableUsd.toFixed(2)}</span>
                         <button className="btn btn-sm btn-secondary" onClick={dismissOrder}>知道了</button>
                     </div>
                 )}

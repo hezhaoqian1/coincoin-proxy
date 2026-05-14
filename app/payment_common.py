@@ -129,6 +129,9 @@ async def confirm_paid_order(
     add_cents = int(getattr(order, "add_balance_cents", 0) or 0)
     product = product_by_id(getattr(order, "product_id", "") or "")
     billing_action = "legacy_balance_credit"
+    subscription = None
+    traffic_pack = None
+    available_cents = None
     if product:
         try:
             result = await apply_payment_product(user=user, product=product, order_no=order_no, db=db)
@@ -136,12 +139,15 @@ async def confirm_paid_order(
             raise _translate_billing_error(exc) from exc
         add_cents = int(result.get("added_cents", add_cents) or 0)
         billing_action = str(result.get("billing_action") or product.kind)
+        subscription = result.get("subscription")
+        traffic_pack = result.get("traffic_pack")
     else:
         if add_cents <= 0:
             add_cents = rmb_to_cents(normalized_money)
             if add_cents <= 0:
                 raise PaymentConfirmError("invalid payment amount", status_code=400)
         user.balance += add_cents
+        available_cents = int(user.balance or 0)
 
     order.status = "confirmed"
     order.add_balance_cents = add_cents
@@ -174,4 +180,7 @@ async def confirm_paid_order(
         "amount_rmb": normalized_money,
         "added_cents": add_cents,
         "billing_action": billing_action,
+        "subscription": subscription,
+        "traffic_pack": traffic_pack,
+        "available_cents": available_cents,
     }

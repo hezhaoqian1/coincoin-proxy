@@ -248,6 +248,9 @@ class OrderConfirmResponse(BaseModel):
     added_cents: int = Field(description="充值金额（分）")
     new_balance: int = Field(description="充值后余额（分）")
     new_balance_usd: float
+    available_cents: Optional[int] = Field(default=None, description="充值后可用总额（分，含套餐、流量包、历史余额）")
+    available_usd: Optional[float] = Field(default=None, description="充值后可用总额（美元）")
+    billing_action: Optional[str] = Field(default=None, description="本次入账动作")
     message: str
 
 
