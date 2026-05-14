@@ -18,6 +18,7 @@ from PIL import Image, ImageDraw, ImageFont
 API_BASE = os.environ.get("COINCOIN_API_BASE", "https://clawfather.up.railway.app").rstrip("/")
 TARGET_CHANNEL = os.environ.get("SLOCK_REPORT_CHANNEL", "#coincoin数据")
 OUTPUT_DIR = Path(os.environ.get("REPORT_OUTPUT_DIR", Path(__file__).resolve().parent / "output"))
+LOG_TAIL_LIMIT = 2000
 
 
 def money(cents: Optional[int]) -> str:
@@ -718,12 +719,31 @@ def render_report(data: Dict[str, Any], output_path: Path) -> None:
 
 
 def upload_and_send(path: Path, summary: str, target: str) -> None:
-    upload = subprocess.run(
-        ["slock", "attachment", "upload", "--path", str(path.resolve()), "--channel", target, "--mime-type", "image/png"],
-        check=True,
-        capture_output=True,
-        text=True,
+    resolved_path = path.resolve()
+    print(
+        "slock upload context "
+        f"target={target} "
+        f"server_url_configured={bool(os.environ.get('SLOCK_SERVER_URL'))} "
+        f"report_channel_configured={bool(os.environ.get('SLOCK_REPORT_CHANNEL'))} "
+        f"agent_token_configured={bool(os.environ.get('SLOCK_AGENT_TOKEN'))} "
+        f"file_path={resolved_path} "
+        f"file_exists={resolved_path.exists()} "
+        f"file_size={resolved_path.stat().st_size if resolved_path.exists() else 0}"
     )
+    upload_cmd = ["slock", "attachment", "upload", "--path", str(resolved_path), "--channel", target, "--mime-type", "image/png"]
+    print(f"running slock command: {' '.join(upload_cmd)}")
+    upload = subprocess.run(upload_cmd, capture_output=True, text=True)
+    print(
+        "slock attachment upload result "
+        f"returncode={upload.returncode} "
+        f"stdout={upload.stdout[-LOG_TAIL_LIMIT:]} "
+        f"stderr={upload.stderr[-LOG_TAIL_LIMIT:]}"
+    )
+    if upload.returncode != 0:
+        raise RuntimeError(
+            "slock attachment upload failed "
+            f"returncode={upload.returncode} stdout={upload.stdout[-LOG_TAIL_LIMIT:]} stderr={upload.stderr[-LOG_TAIL_LIMIT:]}"
+        )
     attachment_id = None
     for token in upload.stdout.replace("(", " ").replace(")", " ").split():
         if len(token) == 36 and token.count("-") == 4:
@@ -731,12 +751,26 @@ def upload_and_send(path: Path, summary: str, target: str) -> None:
             break
     if not attachment_id:
         raise RuntimeError(f"Could not parse attachment id from upload output: {upload.stdout}")
-    subprocess.run(
-        ["slock", "message", "send", "--target", target, "--attachment-id", attachment_id],
+    send_cmd = ["slock", "message", "send", "--target", target, "--attachment-id", attachment_id]
+    print(f"running slock command: {' '.join(send_cmd)}")
+    send = subprocess.run(
+        send_cmd,
         input=summary,
-        check=True,
+        capture_output=True,
         text=True,
     )
+    print(
+        "slock message send result "
+        f"returncode={send.returncode} "
+        f"stdout={send.stdout[-LOG_TAIL_LIMIT:]} "
+        f"stderr={send.stderr[-LOG_TAIL_LIMIT:]}"
+    )
+    if send.returncode != 0:
+        raise RuntimeError(
+            "slock message send failed "
+            f"returncode={send.returncode} stdout={send.stdout[-LOG_TAIL_LIMIT:]} stderr={send.stderr[-LOG_TAIL_LIMIT:]}"
+        )
+    print(f"slock message sent target={target} attachment_id={attachment_id}")
 
 
 def build_summary(data: Dict[str, Any], dry_run: bool) -> str:
