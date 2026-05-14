@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from dataclasses import dataclass, field
@@ -392,9 +393,34 @@ def _anthropic_sse_bytes(event_type: str, payload: Dict[str, Any]) -> bytes:
 def _kiro_go_bridge_timeout() -> httpx.Timeout:
     return httpx.Timeout(
         connect=5.0,
-        read=float(settings.responses_stream_read_timeout),
+        read=max(300.0, float(settings.responses_stream_read_timeout)),
         write=60.0,
         pool=60.0,
+    )
+
+
+def _kiro_go_bridge_ping_interval() -> float:
+    return 15.0
+
+
+def _anthropic_ping_bytes() -> bytes:
+    return _anthropic_sse_bytes("ping", {"type": "ping"})
+
+
+def _anthropic_stream_error_bytes(
+    message: str,
+    *,
+    error_type: str = "api_error",
+) -> bytes:
+    return _anthropic_sse_bytes(
+        "error",
+        {
+            "type": "error",
+            "error": {
+                "type": error_type,
+                "message": message,
+            },
+        },
     )
 
 
@@ -729,8 +755,9 @@ def _openai_chat_response_to_anthropic_events(
     data: Dict[str, Any],
     *,
     display_model: str,
+    state: Optional[_AnthropicStreamState] = None,
 ) -> tuple[List[bytes], Dict[str, Any]]:
-    state = _AnthropicStreamState()
+    state = state or _AnthropicStreamState()
     chunk = _openai_chat_response_to_stream_chunk(data)
     raw_line = "data: " + json.dumps(chunk, ensure_ascii=False, separators=(",", ":"))
     events = _translate_openai_chunk_to_anthropic_events(
@@ -886,53 +913,90 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
     if is_kiro_go and upstream_payload.get("stream"):
         upstream_payload = dict(upstream_payload)
         upstream_payload["stream"] = False
-        client = await get_http_client()
-        try:
-            upstream = await client.post(
-                upstream_url,
-                json=upstream_payload,
-                headers=headers,
-                timeout=_kiro_go_bridge_timeout(),
-            )
-        except (httpx.TimeoutException, httpx.RequestError):
-            return anthropic_error("Upstream request failed", error_type="api_error", status_code=502)
-
-        duration_ms = _elapsed_ms_since(request_t0)
-        upstream_request_id = extract_upstream_request_id(upstream.headers)
-        response_headers = filter_headers(dict(upstream.headers))
-        response_headers.pop("content-length", None)
-        response_headers.setdefault("cache-control", "no-cache")
-        response_headers.setdefault("x-accel-buffering", "no")
-        response_headers["content-type"] = "text/event-stream; charset=utf-8"
-        content_type = upstream.headers.get("content-type", "application/json")
-
-        if "application/json" not in content_type:
-            body = await upstream.aread()
-            return Response(content=body, status_code=upstream.status_code, headers=response_headers, media_type=content_type)
-
-        try:
-            data = upstream.json()
-        except Exception:
-            return anthropic_error("Upstream returned invalid JSON", error_type="api_error", status_code=502)
-
-        if upstream.status_code >= 400:
-            if isinstance(data, dict) and isinstance(data.get("error"), dict):
-                error_info = data["error"]
-                return anthropic_error(
-                    error_info.get("message") or "Upstream request failed",
-                    error_type=error_info.get("type") or "api_error",
-                    status_code=upstream.status_code,
-                )
-            return anthropic_error("Upstream request failed", error_type="api_error", status_code=upstream.status_code)
-
-        if not isinstance(data, dict):
-            return anthropic_error("Upstream returned invalid JSON", error_type="api_error", status_code=502)
-
-        stream_events, stream_usage = _openai_chat_response_to_anthropic_events(data, display_model=display_model)
+        response_headers = {
+            "cache-control": "no-cache",
+            "x-accel-buffering": "no",
+            "content-type": "text/event-stream; charset=utf-8",
+        }
 
         async def iter_bytes():
-            for event in stream_events:
+            stream_state = _AnthropicStreamState()
+            for event in _ensure_anthropic_message_start(
+                stream_state,
+                display_model=display_model,
+                response_id="",
+            ):
                 yield event
+
+            task: Optional[asyncio.Task] = None
+            try:
+                client = await get_http_client()
+                task = asyncio.create_task(
+                    client.post(
+                        upstream_url,
+                        json=upstream_payload,
+                        headers=headers,
+                        timeout=_kiro_go_bridge_timeout(),
+                    )
+                )
+                while True:
+                    done, _ = await asyncio.wait({task}, timeout=_kiro_go_bridge_ping_interval())
+                    if done:
+                        break
+                    yield _anthropic_ping_bytes()
+
+                try:
+                    upstream = task.result()
+                except (httpx.TimeoutException, httpx.RequestError):
+                    yield _anthropic_stream_error_bytes("Upstream request failed")
+                    return
+
+                duration_ms = _elapsed_ms_since(request_t0)
+                upstream_request_id = extract_upstream_request_id(upstream.headers)
+                content_type = upstream.headers.get("content-type", "application/json")
+
+                if "application/json" not in content_type:
+                    yield _anthropic_stream_error_bytes("Upstream returned non-JSON response")
+                    return
+
+                try:
+                    data = upstream.json()
+                except Exception:
+                    yield _anthropic_stream_error_bytes("Upstream returned invalid JSON")
+                    return
+
+                if upstream.status_code >= 400:
+                    error_type = "api_error"
+                    message = "Upstream request failed"
+                    if isinstance(data, dict) and isinstance(data.get("error"), dict):
+                        error_info = data["error"]
+                        error_type = error_info.get("type") or error_type
+                        message = error_info.get("message") or message
+                    yield _anthropic_stream_error_bytes(str(message), error_type=str(error_type))
+                    return
+
+                if not isinstance(data, dict):
+                    yield _anthropic_stream_error_bytes("Upstream returned invalid JSON")
+                    return
+
+                stream_events, stream_usage = _openai_chat_response_to_anthropic_events(
+                    data,
+                    display_model=display_model,
+                    state=stream_state,
+                )
+                for event in stream_events:
+                    yield event
+            except Exception:
+                yield _anthropic_stream_error_bytes("Upstream request failed")
+                return
+            finally:
+                if task is not None and not task.done():
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+
             if stream_usage:
                 await usage_buffer.add(
                     user.id,
@@ -959,7 +1023,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
 
         return StreamingResponse(
             iter_bytes(),
-            status_code=upstream.status_code,
+            status_code=200,
             headers=response_headers,
             media_type="text/event-stream",
         )
