@@ -69,6 +69,14 @@ class _FakeEventStreamResponse:
         self._closed = True
 
 
+class _FakeAnthropicEventStreamResponse(_FakeEventStreamResponse):
+    async def aiter_lines(self):
+        for event in self._lines:
+            for line in event.splitlines():
+                yield line
+            yield ""
+
+
 class _RecordingStreamClient:
     def __init__(self, responses):
         self.responses = list(responses)
@@ -281,7 +289,7 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(prompt_cache_key.startswith("cc-"))
         self.assertEqual(len(prompt_cache_key), 35)
 
-    async def test_messages_can_route_to_kiro_go_chat_bridge(self):
+    async def test_messages_can_route_to_kiro_go_native_messages_path(self):
         fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_kiro_native")
         settings.claude_compat_provider = "kiro_go"
         settings.claude_compat_base_url = "https://kiro-go.example"
@@ -328,12 +336,77 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["model"], "claude-opus-4-7")
         self.assertEqual(body["content"][0]["text"], "OK")
         self.assertEqual(body["usage"]["cache_read_input_tokens"], 7)
-        self.assertEqual(client.calls[0]["url"], "https://kiro-go.example/v1/chat/completions")
+        self.assertEqual(client.calls[0]["url"], "https://kiro-go.example/v1/messages")
         self.assertEqual(client.calls[0]["json"]["model"], "claude-opus-4.7")
         self.assertEqual(client.calls[0]["json"]["messages"][-1], {"role": "user", "content": "Reply with exactly OK"})
         self.assertEqual(client.calls[0]["headers"]["authorization"], "Bearer kiro-key")
+        self.assertNotIn("prompt_cache_key", client.calls[0]["json"])
         add_usage.assert_awaited_once()
         self.assertEqual(add_usage.await_args.kwargs["cache_read_tokens"], 7)
+
+    async def test_messages_can_passthrough_kiro_go_native_anthropic_message(self):
+        fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_kiro_native_message")
+        settings.claude_compat_provider = "kiro_go"
+        settings.claude_compat_base_url = "https://kiro-go.example"
+        settings.claude_compat_api_key = "kiro-key"
+        settings.claude_compat_auth_style = "bearer"
+        registry._initialized = False
+        registry.init_from_settings()
+        client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "msg_kiro_native",
+                        "type": "message",
+                        "role": "assistant",
+                        "model": "claude-opus-4.7",
+                        "content": [{"type": "text", "text": "OK"}],
+                        "stop_reason": "end_turn",
+                        "stop_sequence": None,
+                        "usage": {
+                            "input_tokens": 5,
+                            "output_tokens": 2,
+                            "cache_read_input_tokens": 7,
+                            "cache_creation_input_tokens": 8,
+                        },
+                    }
+                )
+            ]
+        )
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_http_client", AsyncMock(return_value=client)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()) as add_usage,
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={
+                        "authorization": "Bearer sk_test",
+                        "anthropic-version": "2023-06-01",
+                    },
+                    json={
+                        "model": "claude-opus-4-7",
+                        "max_tokens": 64,
+                        "cache_control": {"type": "ephemeral"},
+                        "messages": [{"role": "user", "content": "Reply with exactly OK"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertEqual(body["model"], "claude-opus-4-7")
+        self.assertEqual(body["usage"]["input_tokens"], 5)
+        self.assertEqual(body["usage"]["cache_read_input_tokens"], 7)
+        self.assertEqual(body["usage"]["cache_creation_input_tokens"], 8)
+        self.assertEqual(client.calls[0]["url"], "https://kiro-go.example/v1/messages")
+        self.assertEqual(client.calls[0]["json"]["cache_control"], {"type": "ephemeral"})
+        add_usage.assert_awaited_once()
+        usage_kwargs = add_usage.await_args.kwargs
+        self.assertEqual(usage_kwargs["input_tokens"], 20)
+        self.assertEqual(usage_kwargs["cache_read_tokens"], 7)
+        self.assertEqual(usage_kwargs["cache_creation_tokens"], 8)
 
     async def test_messages_canonicalizes_kiro_go_model_at_final_hop(self):
         fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_kiro_canonical")
@@ -424,11 +497,23 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["model"], "claude-opus-4-7")
-        self.assertEqual(client.calls[0]["url"], "https://kiro-go.example/v1/chat/completions")
+        self.assertEqual(client.calls[0]["url"], "https://kiro-go.example/v1/messages")
         self.assertEqual(client.calls[0]["json"]["model"], "claude-opus-4.7")
         upstream_messages = client.calls[0]["json"]["messages"]
-        self.assertEqual(upstream_messages[1]["tool_calls"][0]["function"]["name"], "Read")
-        self.assertEqual(upstream_messages[2], {"role": "tool", "tool_call_id": "call_read_1", "content": "file contents"})
+        self.assertEqual(upstream_messages[1]["content"][0]["name"], "Read")
+        self.assertEqual(
+            upstream_messages[2],
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "call_read_1",
+                        "content": "file contents",
+                    }
+                ],
+            },
+        )
 
     async def test_messages_kiro_go_skips_model_cloak_injection(self):
         fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_kiro_cloak")
@@ -477,7 +562,7 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         upstream_messages = client.calls[0]["json"]["messages"]
         self.assertEqual(upstream_messages, [{"role": "user", "content": "Reply with exactly OK"}])
 
-    async def test_messages_stream_can_route_to_kiro_go_chat_bridge(self):
+    async def test_messages_stream_can_route_to_kiro_go_native_messages_path(self):
         fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_kiro_stream")
         settings.claude_compat_provider = "kiro_go"
         settings.claude_compat_base_url = "https://kiro-go.example"
@@ -525,11 +610,72 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("event: message_delta", response.text)
         self.assertIn("event: message_stop", response.text)
         self.assertIn('"cache_read_input_tokens":7', response.text)
-        self.assertEqual(stream_client.calls[0]["url"], "https://kiro-go.example/v1/chat/completions")
+        self.assertEqual(stream_client.calls[0]["url"], "https://kiro-go.example/v1/messages")
         self.assertEqual(stream_client.calls[0]["json"]["model"], "claude-opus-4.7")
         self.assertTrue(stream_client.calls[0]["json"]["stream"])
         add_usage.assert_awaited_once()
         self.assertEqual(add_usage.await_args.kwargs["cache_read_tokens"], 7)
+
+    async def test_messages_stream_can_passthrough_kiro_go_native_anthropic_sse(self):
+        fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_kiro_stream_native")
+        settings.claude_compat_provider = "kiro_go"
+        settings.claude_compat_base_url = "https://kiro-go.example"
+        settings.claude_compat_api_key = "kiro-key"
+        settings.claude_compat_auth_style = "bearer"
+        registry._initialized = False
+        registry.init_from_settings()
+        stream_client = _RecordingStreamClient(
+            [
+                _FakeAnthropicEventStreamResponse(
+                    [
+                        'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_native_stream","type":"message","role":"assistant","model":"claude-opus-4.7","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":5,"cache_creation_input_tokens":8,"cache_read_input_tokens":7,"output_tokens":0}}}',
+                        'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
+                        'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"OK"}}',
+                        'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}',
+                        'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"input_tokens":5,"cache_creation_input_tokens":8,"cache_read_input_tokens":7,"output_tokens":2}}',
+                        'event: message_stop\ndata: {"type":"message_stop"}',
+                    ]
+                ),
+            ]
+        )
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_stream_client", AsyncMock(return_value=stream_client)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()) as add_usage,
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={
+                        "authorization": "Bearer sk_test",
+                        "anthropic-version": "2023-06-01",
+                    },
+                    json={
+                        "model": "claude-opus-4-7",
+                        "stream": True,
+                        "max_tokens": 64,
+                        "cache_control": {"type": "ephemeral"},
+                        "messages": [{"role": "user", "content": "Reply with exactly OK"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.text
+        self.assertIn("event: message_start", body)
+        self.assertEqual(body.count("event: message_start"), 1)
+        self.assertIn('"input_tokens":5', body)
+        self.assertIn('"cache_read_input_tokens":7', body)
+        self.assertIn('"cache_creation_input_tokens":8', body)
+        self.assertIn("event: message_delta", body)
+        self.assertIn("event: message_stop", body)
+        self.assertEqual(stream_client.calls[0]["url"], "https://kiro-go.example/v1/messages")
+        self.assertEqual(stream_client.calls[0]["json"]["cache_control"], {"type": "ephemeral"})
+        add_usage.assert_awaited_once()
+        usage_kwargs = add_usage.await_args.kwargs
+        self.assertEqual(usage_kwargs["input_tokens"], 20)
+        self.assertEqual(usage_kwargs["cache_read_tokens"], 7)
+        self.assertEqual(usage_kwargs["cache_creation_tokens"], 8)
 
     async def test_messages_stream_kiro_go_bridge_sends_start_and_ping_while_waiting(self):
         fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_kiro_stream_ping")
@@ -618,7 +764,10 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(text_delta_index, message_start_index)
         self.assertGreater(message_stop_index, ping_index)
         self.assertIn("event: message_stop", body)
-        self.assertEqual(stream_client.calls[0]["json"]["messages"][2]["content"], "large file contents")
+        self.assertEqual(
+            stream_client.calls[0]["json"]["messages"][2]["content"][0]["content"],
+            "large file contents",
+        )
         self.assertGreaterEqual(stream_client.calls[0]["timeout"].read, 300)
 
     async def test_messages_stream_kiro_go_bridge_returns_sse_error_after_start(self):
@@ -719,10 +868,7 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"type":"input_json_delta"', body)
         self.assertIn('"stop_reason":"tool_use"', body)
         self.assertIn("event: message_stop", body)
-        self.assertEqual(
-            stream_client.calls[0]["json"]["tool_choice"],
-            {"type": "function", "function": {"name": "Read"}},
-        )
+        self.assertEqual(stream_client.calls[0]["json"]["tool_choice"], {"type": "tool", "name": "Read"})
         self.assertTrue(stream_client.calls[0]["json"]["stream"])
 
     async def test_messages_uses_station_alias_and_retail_price(self):
