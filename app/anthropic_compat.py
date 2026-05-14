@@ -911,8 +911,6 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
 
     request_t0 = time.monotonic()
     if is_kiro_go and upstream_payload.get("stream"):
-        upstream_payload = dict(upstream_payload)
-        upstream_payload["stream"] = False
         response_headers = {
             "cache-control": "no-cache",
             "x-accel-buffering": "no",
@@ -921,6 +919,11 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
 
         async def iter_bytes():
             stream_state = _AnthropicStreamState()
+            upstream = None
+            reader_task: Optional[asyncio.Task] = None
+            stream_failed = False
+            upstream_request_id = ""
+
             for event in _ensure_anthropic_message_start(
                 stream_state,
                 display_model=display_model,
@@ -928,98 +931,121 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
             ):
                 yield event
 
-            task: Optional[asyncio.Task] = None
             try:
-                client = await get_http_client()
-                task = asyncio.create_task(
-                    client.post(
-                        upstream_url,
-                        json=upstream_payload,
-                        headers=headers,
-                        timeout=_kiro_go_bridge_timeout(),
-                    )
+                stream_client = await get_stream_client()
+                req = stream_client.build_request(
+                    "POST",
+                    upstream_url,
+                    json=upstream_payload,
+                    headers=headers,
+                    timeout=_kiro_go_bridge_timeout(),
                 )
-                while True:
-                    done, _ = await asyncio.wait({task}, timeout=_kiro_go_bridge_ping_interval())
-                    if done:
-                        break
-                    yield _anthropic_ping_bytes()
-
-                try:
-                    upstream = task.result()
-                except (httpx.TimeoutException, httpx.RequestError):
-                    yield _anthropic_stream_error_bytes("Upstream request failed")
-                    return
-
-                duration_ms = _elapsed_ms_since(request_t0)
+                upstream = await stream_client.send(req, stream=True)
                 upstream_request_id = extract_upstream_request_id(upstream.headers)
-                content_type = upstream.headers.get("content-type", "application/json")
-
-                if "application/json" not in content_type:
-                    yield _anthropic_stream_error_bytes("Upstream returned non-JSON response")
-                    return
-
-                try:
-                    data = upstream.json()
-                except Exception:
-                    yield _anthropic_stream_error_bytes("Upstream returned invalid JSON")
-                    return
 
                 if upstream.status_code >= 400:
                     error_type = "api_error"
                     message = "Upstream request failed"
-                    if isinstance(data, dict) and isinstance(data.get("error"), dict):
-                        error_info = data["error"]
-                        error_type = error_info.get("type") or error_type
-                        message = error_info.get("message") or message
-                    yield _anthropic_stream_error_bytes(str(message), error_type=str(error_type))
+                    content_type = upstream.headers.get("content-type", "")
+                    if "application/json" in content_type:
+                        try:
+                            data = json.loads((await upstream.aread()).decode("utf-8"))
+                        except Exception:
+                            data = None
+                        if isinstance(data, dict) and isinstance(data.get("error"), dict):
+                            error_info = data["error"]
+                            error_type = str(error_info.get("type") or error_type)
+                            message = str(error_info.get("message") or message)
+                    yield _anthropic_stream_error_bytes(message, error_type=error_type)
+                    stream_failed = True
                     return
 
-                if not isinstance(data, dict):
-                    yield _anthropic_stream_error_bytes("Upstream returned invalid JSON")
-                    return
+                queue: asyncio.Queue = asyncio.Queue()
 
-                stream_events, stream_usage = _openai_chat_response_to_anthropic_events(
-                    data,
-                    display_model=display_model,
-                    state=stream_state,
-                )
-                for event in stream_events:
-                    yield event
+                async def _pump_lines() -> None:
+                    try:
+                        async for line in upstream.aiter_lines():
+                            await queue.put(("line", line))
+                        await queue.put(("eof", None))
+                    except Exception as exc:
+                        await queue.put(("error", exc))
+
+                reader_task = asyncio.create_task(_pump_lines())
+
+                while True:
+                    try:
+                        item_type, item_value = await asyncio.wait_for(
+                            queue.get(),
+                            timeout=_kiro_go_bridge_ping_interval(),
+                        )
+                    except asyncio.TimeoutError:
+                        yield _anthropic_ping_bytes()
+                        continue
+
+                    if item_type == "line":
+                        for event in _translate_openai_chunk_to_anthropic_events(
+                            stream_state,
+                            display_model=display_model,
+                            raw_line=str(item_value or ""),
+                        ):
+                            yield event
+                        continue
+
+                    if item_type == "error":
+                        yield _anthropic_stream_error_bytes("Upstream request failed")
+                        stream_failed = True
+                        return
+
+                    if item_type == "eof":
+                        break
+            except (httpx.TimeoutException, httpx.RequestError):
+                yield _anthropic_stream_error_bytes("Upstream request failed")
+                stream_failed = True
+                return
             except Exception:
                 yield _anthropic_stream_error_bytes("Upstream request failed")
+                stream_failed = True
                 return
             finally:
-                if task is not None and not task.done():
-                    task.cancel()
+                if reader_task is not None and not reader_task.done():
+                    reader_task.cancel()
                     try:
-                        await task
+                        await reader_task
                     except asyncio.CancelledError:
                         pass
+                if upstream is not None:
+                    await upstream.aclose()
 
-            if stream_usage:
-                await usage_buffer.add(
-                    user.id,
-                    api_key_id=api_key_id,
-                    input_tokens=extract_total_input_tokens(stream_usage),
-                    output_tokens=int(stream_usage.get("completion_tokens") or stream_usage.get("output_tokens") or 0),
-                    cache_read_tokens=extract_cache_read_tokens(stream_usage),
-                    cache_creation_tokens=extract_cache_creation_tokens(stream_usage),
-                    requests=1,
-                    endpoint="messages",
-                    model=display_model,
-                    customer_model_alias=display_model,
-                    provider_model=public_model.provider_model or used_cfg.model_id,
-                    route_reason=used_route_reason,
-                    duration_ms=duration_ms,
-                    status_code=upstream.status_code,
-                    price_input_per_million=price_input_per_million,
-                    price_output_per_million=price_output_per_million,
-                    usage_unit_type="tokens",
-                    billable_sku=public_model.billable_sku or display_model,
-                    upstream_request_id=upstream_request_id,
-                    **station_usage_kwargs(station_model),
-                )
+            if not stream_failed and not stream_state.message_stopped:
+                for event in _finalize_anthropic_stream(stream_state, display_model=display_model):
+                    yield event
+
+            if stream_failed or not stream_state.usage:
+                return
+
+            duration_ms = _elapsed_ms_since(request_t0)
+            await usage_buffer.add(
+                user.id,
+                api_key_id=api_key_id,
+                input_tokens=extract_total_input_tokens(stream_state.usage),
+                output_tokens=int(stream_state.usage.get("completion_tokens") or stream_state.usage.get("output_tokens") or 0),
+                cache_read_tokens=extract_cache_read_tokens(stream_state.usage),
+                cache_creation_tokens=extract_cache_creation_tokens(stream_state.usage),
+                requests=1,
+                endpoint="messages",
+                model=display_model,
+                customer_model_alias=display_model,
+                provider_model=public_model.provider_model or used_cfg.model_id,
+                route_reason=used_route_reason,
+                duration_ms=duration_ms,
+                status_code=upstream.status_code if upstream is not None else 200,
+                price_input_per_million=price_input_per_million,
+                price_output_per_million=price_output_per_million,
+                usage_unit_type="tokens",
+                billable_sku=public_model.billable_sku or display_model,
+                upstream_request_id=upstream_request_id,
+                **station_usage_kwargs(station_model),
+            )
 
         return StreamingResponse(
             iter_bytes(),
