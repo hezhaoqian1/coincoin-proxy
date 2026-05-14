@@ -3,7 +3,7 @@ FROM python:3.12-slim
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends nodejs npm \
+    && apt-get install -y --no-install-recommends nodejs npm fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./
