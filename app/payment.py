@@ -22,7 +22,7 @@ from .epay import (
     verify_epay_callback_params,
 )
 from .billing import BillingError, product_by_id, validate_product_purchase
-from .billing import get_available_balance_cents, serialize_billing_state
+from .billing import available_subscription_cents, get_available_balance_cents, serialize_billing_state
 from .models import PaymentOrder
 from .payment_common import PaymentConfirmError, confirm_paid_order, quote_payment_cents
 from .proxy import authenticate_user
@@ -105,6 +105,7 @@ async def _confirm_with_query_fallback(order_no: str, db: AsyncSession):
 def _response_from_confirm_result(result: dict, message: str) -> OrderConfirmResponse:
     user = result["user"]
     order = result["order"]
+    available_cents = result.get("available_cents")
     return OrderConfirmResponse(
         success=True,
         order_no=order.order_no,
@@ -112,8 +113,29 @@ def _response_from_confirm_result(result: dict, message: str) -> OrderConfirmRes
         added_cents=result["added_cents"],
         new_balance=user.balance,
         new_balance_usd=user.balance / 100,
+        available_cents=available_cents,
+        available_usd=(available_cents / 100) if available_cents is not None else None,
+        billing_action=result.get("billing_action"),
         message=message,
     )
+
+
+async def _attach_available_balance(result: dict, db: AsyncSession) -> dict:
+    user = result.get("user")
+    if not user:
+        return result
+    if result.get("available_cents") is not None:
+        return result
+    legacy_balance = int(getattr(user, "balance", 0) or 0)
+    subscription_remaining = available_subscription_cents(result.get("subscription"))
+    traffic_pack = result.get("traffic_pack")
+    traffic_remaining = int(getattr(traffic_pack, "remaining_cents", 0) or 0) if traffic_pack else 0
+    if subscription_remaining or traffic_remaining:
+        result["available_cents"] = subscription_remaining + traffic_remaining + legacy_balance
+        return result
+    snapshot = await get_available_balance_cents(db, user)
+    result["available_cents"] = int(snapshot.get("available_cents", legacy_balance))
+    return result
 
 
 def _payment_order_payload(order: PaymentOrder) -> dict:
@@ -274,8 +296,9 @@ async def confirm_order(
             "user": cached,
             "amount_rmb": payment_order.amount_rmb,
             "added_cents": payment_order.add_balance_cents,
+            "billing_action": "already_confirmed",
         }
-        return _response_from_confirm_result(result, "order already confirmed")
+        return _response_from_confirm_result(await _attach_available_balance(result, db), "order already confirmed")
 
     if payload.proof_url:
         try:
@@ -309,7 +332,7 @@ async def confirm_order(
             logger.exception("failed to create station commission entry for %s", payload.order_no)
 
         message = "order already confirmed" if result.get("already_confirmed") else "recharge success"
-        return _response_from_confirm_result(result, message)
+        return _response_from_confirm_result(await _attach_available_balance(result, db), message)
 
     try:
         result = await _confirm_with_query_fallback(payload.order_no, db)
@@ -324,4 +347,4 @@ async def confirm_order(
     except Exception:
         logger.exception("failed to create station commission entry for %s", payload.order_no)
     message = "order already confirmed" if result.get("already_confirmed") else "recharge success"
-    return _response_from_confirm_result(result, message)
+    return _response_from_confirm_result(await _attach_available_balance(result, db), message)

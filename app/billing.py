@@ -346,7 +346,7 @@ async def _apply_addon_product(
         product_id=product.id,
         balance_after_cents=product.balance_cents,
     ))
-    return {"billing_action": "traffic_pack_grant", "added_cents": product.balance_cents, "traffic_pack": pack}
+    return {"billing_action": "traffic_pack_grant", "added_cents": product.balance_cents, "subscription": sub, "traffic_pack": pack}
 
 
 def available_subscription_cents(sub: UserSubscription | None) -> int:

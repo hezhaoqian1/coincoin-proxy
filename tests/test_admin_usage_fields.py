@@ -977,6 +977,86 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(order.trade_no, "2026032622080275954")
         self.assertEqual(fake_db.commits, 1)
 
+    async def test_confirm_order_reports_available_balance_for_monthly_product(self) -> None:
+        payment_module.settings.epay_api_url = "https://code.nxslq.top/"
+        payment_module.settings.epay_pid = "177938431"
+        payment_module.settings.epay_key = "j9J4loEx5Qy"
+
+        user = SimpleNamespace(id="u_1", balance=500, referred_by=None, status="active")
+        order = SimpleNamespace(
+            id="po_1",
+            order_no="CC_test_order",
+            user_id="u_1",
+            amount_rmb="129.00",
+            status="pending",
+            add_balance_cents=38000,
+            product_id="monthly_basic",
+            station_id=None,
+            trade_no=None,
+            confirmed_at=None,
+        )
+        fake_db = _FakeDB(
+            execute_results=[
+                _FakeEntityResult(order),
+                _FakeEntityResult(order),
+                _FakeEntityResult(user),
+                _FakeEntityResult(None),
+                _FakeEntityResult(None),
+                _FakeScalarOneResult(None),
+                _FakeAllResult([]),
+                _FakeAllResult([]),
+                _FakeAllResult([]),
+                _FakeAllResult([]),
+                _FakeEntityResult(None),
+                _FakeScalarsResult([]),
+                _FakeEntityResult(None),
+                _FakeEntityResult(None),
+                _FakeAllResult([]),
+            ]
+        )
+
+        async def fake_get_db():
+            yield fake_db
+
+        async def fake_authenticate_user(_request, _db):
+            return user
+
+        async def fake_allow(_key, _limit):
+            return True
+
+        original_authenticate_user = payment_module.authenticate_user
+        original_allow = payment_module.rate_limiter.allow
+        payment_module.authenticate_user = fake_authenticate_user
+        payment_module.rate_limiter.allow = fake_allow
+        app.dependency_overrides[payment_module.get_db] = fake_get_db
+
+        transport = httpx.ASGITransport(app=app)
+        try:
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                response = await client.post(
+                    "/v1/orders/confirm",
+                    json={
+                        "order_no": "CC_test_order",
+                        "proof_url": "https://bird-alipay.up.railway.app/pay/return?order_no=CC_test_order"
+                        "&pid=177938431&trade_no=2026032622080275954&out_trade_no=CC_test_order"
+                        "&type=alipay&name=%E5%9F%BA%E7%A1%80%E6%9C%88%E5%8D%A1&money=129.00&trade_status=TRADE_SUCCESS"
+                        "&sign=b91a51dbc8d12a0208a8d51a8b8e2a8f&sign_type=MD5",
+                    },
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                )
+        finally:
+            payment_module.authenticate_user = original_authenticate_user
+            payment_module.rate_limiter.allow = original_allow
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["billing_action"], "subscription_start")
+        self.assertEqual(payload["new_balance"], 500)
+        self.assertEqual(payload["available_cents"], 38500)
+        self.assertEqual(payload["available_usd"], 385.0)
+        self.assertEqual(payload["added_cents"], 38000)
+        self.assertEqual(fake_db.commits, 1)
+
     async def test_confirm_order_keeps_stored_pending_balance_quote(self) -> None:
         payment_module.settings.epay_api_url = "https://code.nxslq.top/"
         payment_module.settings.epay_pid = "177938431"

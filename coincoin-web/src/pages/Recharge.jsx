@@ -483,6 +483,9 @@ export default function Recharge() {
                         <p style={{ fontSize: '1.1rem', marginBottom: 'var(--space-md)' }}>
                             {formatUsd(payResult.added_cents)} 可用额度已到账。
                         </p>
+                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', marginBottom: 'var(--space-sm)' }}>
+                            当前可用额度 {formatUsd(payResult.available_cents ?? payResult.new_balance)}
+                        </p>
                         <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: 'var(--space-md)' }}>
                             {autoRedirect} 秒后自动跳转到概览页...
                         </p>
