@@ -1334,11 +1334,11 @@
         <div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap">
           <div>
             <h1 class="page-title">公司经营驾驶舱</h1>
-            <p class="page-desc">每天回答增长、收入毛利、使用结构、号池健康和今日动作，不只展示数据。</p>
+            <p class="page-desc">按当前周期回答增长、收入毛利、使用结构、号池健康和动作项，不只展示数据。</p>
           </div>
           <div class="filter-bar">
             <select id="analyticsPeriod" class="form-select" style="width:140px" onchange="loadAnalytics()">
-              <option value="today">今天</option>
+              <option value="today">近 24 小时</option>
               <option value="7d">近 7 天</option>
               <option value="30d">近 30 天</option>
             </select>
@@ -1348,7 +1348,7 @@
 
         <div class="card" style="margin-bottom:24px;border-color:rgba(99,102,241,0.24)">
           <div class="card-header">
-            <span class="card-title">今日经营结论</span>
+            <span class="card-title" id="analyticsJudgementTitle">经营结论</span>
             <span class="text-sm text-muted" id="analyticsGeneratedAt">-</span>
           </div>
           <div class="card-body">
@@ -1363,7 +1363,7 @@
                 </div>
               </div>
               <div>
-                <div class="card-title" style="margin-bottom:12px">今日必须处理</div>
+                <div class="card-title" id="analyticsActionTitle" style="margin-bottom:12px">必须处理</div>
                 <div id="analyticsActionItems" class="monitoring-action-list"></div>
               </div>
             </div>
@@ -1402,7 +1402,7 @@
                 <div class="monitoring-layer-metric"><div class="monitoring-layer-metric-label">创建 Key</div><div class="monitoring-layer-metric-value" id="analyticsNewKeys">-</div></div>
                 <div class="monitoring-layer-metric"><div class="monitoring-layer-metric-label">首次调用</div><div class="monitoring-layer-metric-value" id="analyticsFirstCalls">-</div></div>
                 <div class="monitoring-layer-metric"><div class="monitoring-layer-metric-label">首充用户</div><div class="monitoring-layer-metric-value" id="analyticsFirstPaid">-</div></div>
-                <div class="monitoring-layer-metric"><div class="monitoring-layer-metric-label">今日活跃</div><div class="monitoring-layer-metric-value" id="analyticsActiveUsers">-</div></div>
+                <div class="monitoring-layer-metric"><div class="monitoring-layer-metric-label" id="analyticsActiveUsersLabel">周期活跃</div><div class="monitoring-layer-metric-value" id="analyticsActiveUsers">-</div></div>
                 <div class="monitoring-layer-metric"><div class="monitoring-layer-metric-label">7日留存</div><div class="monitoring-layer-metric-value" id="analyticsRetention">-</div></div>
               </div>
               <div class="monitoring-layer-foot" id="analyticsGrowthNotes"></div>
@@ -2891,10 +2891,17 @@
         const errors = dashboard.errors || {};
         const low = dashboard.low_balance || {};
         const judgement = dashboard.judgement || {};
+        const periodLabel = dashboard.period_label || overview.period_label || (period === 'today' ? '近24小时' : `近 ${dashboard.days || ''} 天`);
+        const periodRange = overview.start_day && overview.end_day
+          ? (overview.start_day === overview.end_day ? overview.start_day : `${overview.start_day} 至 ${overview.end_day}`)
+          : '';
 
         const cache = dashboard.cache || {};
         const cacheText = cache.cache_hit ? `缓存命中，TTL ${cache.cache_ttl_seconds || 60}s` : `实时聚合，缓存 ${cache.cache_ttl_seconds || 60}s`;
-        document.getElementById('analyticsGeneratedAt').textContent = dashboard.generated_at ? `生成 ${formatDateFull(dashboard.generated_at)} · ${cacheText}` : cacheText;
+        document.getElementById('analyticsGeneratedAt').textContent = dashboard.generated_at ? `${periodLabel}${periodRange ? `（${periodRange}）` : ''} · 生成 ${formatDateFull(dashboard.generated_at)} · ${cacheText}` : `${periodLabel} · ${cacheText}`;
+        document.getElementById('analyticsJudgementTitle').textContent = `${periodLabel}经营结论`;
+        document.getElementById('analyticsActionTitle').textContent = `${periodLabel}必须处理`;
+        document.getElementById('analyticsActiveUsersLabel').textContent = `${periodLabel}活跃`;
         document.getElementById('analyticsOverallJudgement').textContent = judgement.overall || '-';
         document.getElementById('analyticsGrowthJudgement').textContent = judgement.growth || '-';
         document.getElementById('analyticsRevenueJudgement').textContent = judgement.revenue || '-';

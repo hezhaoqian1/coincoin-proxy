@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "slock-29749713-rolling-24h",
+  "taskIntentRef": "docs/aegis/work/2026-05-15-rolling-24h-dashboard/task-intent-draft.json",
+  "baselineRefs": [
+    "docs/aegis/plans/2026-05-13-operating-dashboard-v2.md"
+  ],
+  "scopeStatus": "verified-by-focused-tests",
+  "compatStatus": "today-remains-supported-and-24h-alias-added",
+  "retirementStatus": "natural-day-current-period-retired-for-dashboard-api-and-report",
+  "newRiskSignals": [
+    "Cross-endpoint analytics contract change; must keep 7d trend and low-balance behavior stable."
+  ],
+  "decision": "needs-baseline-readback"
+}

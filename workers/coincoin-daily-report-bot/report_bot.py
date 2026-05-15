@@ -216,7 +216,7 @@ def fetch_report_data(token: str) -> Dict[str, Any]:
     overview = dashboard.get("overview") or {}
     fill_positive_balance_users(overview)
     dashboard["overview"] = overview
-    dashboard["top_users"] = fetch_json("/admin/analytics/top-users?period=7d&metric=cost_cents&limit=10", token)
+    dashboard["top_users"] = fetch_json("/admin/analytics/top-users?period=today&metric=cost_cents&limit=10", token)
     dashboard["trend"] = fetch_trend_data(token)
     return dashboard
 
@@ -274,7 +274,7 @@ def curated_actions(data: Dict[str, Any]) -> List[Dict[str, Any]]:
                 "account_pool_requests": account_pool.get("requests"),
                 "user_charge_cents": revenue.get("user_charge_cents"),
             },
-            "suggested_action": "今天补 upstream_cost 写入/回填，至少让 account_pool 能算收入、成本和毛利。",
+            "suggested_action": "补 upstream_cost 写入/回填，至少让 account_pool 能算收入、成本和毛利。",
         })
 
     if int(growth.get("new_users") or 0) == 0 and int(growth.get("first_call_users") or 0) > 0:
@@ -282,14 +282,14 @@ def curated_actions(data: Dict[str, Any]) -> List[Dict[str, Any]]:
             "severity": "high",
             "type": "growth_gap",
             "owner": "product",
-            "title": "今日没有新增接入，消耗来自存量用户",
+            "title": "近24小时没有新增接入，消耗来自存量用户",
             "evidence": {
                 "new_users": growth.get("new_users"),
                 "new_api_key_users": growth.get("new_api_key_users"),
                 "first_call_users": growth.get("first_call_users"),
                 "first_paid_users": growth.get("first_paid_users"),
             },
-            "suggested_action": "检查注册到 API Key/首充漏斗，今天明确拉新或转化动作。",
+            "suggested_action": "检查注册到 API Key/首充漏斗，明确拉新或转化动作。",
         })
 
     high_latency = next(
@@ -332,7 +332,7 @@ def curated_actions(data: Dict[str, Any]) -> List[Dict[str, Any]]:
                 "balance_cents": real_low_balance.get("balance_cents"),
                 "estimated_days_remaining": real_low_balance.get("estimated_days_remaining"),
             },
-            "suggested_action": "今天联系真实高消耗用户充值或确认企业方案。",
+            "suggested_action": "联系真实高消耗用户充值或确认企业方案。",
         })
 
     for item in actions:
@@ -351,6 +351,21 @@ def positive_balance_users_label(overview: Dict[str, Any]) -> Tuple[str, str]:
         if key in overview:
             return intfmt(overview.get(key)), "当前有可用余额的用户"
     return "待补", "当前接口仅有总注册用户，需补有余额用户聚合"
+
+
+def period_label(data: Dict[str, Any]) -> str:
+    overview = data.get("overview") or {}
+    label = overview.get("period_label") or data.get("period_label")
+    return str(label or "近24小时")
+
+
+def period_range(data: Dict[str, Any]) -> str:
+    overview = data.get("overview") or {}
+    start = overview.get("start_day") or data.get("start_day")
+    end = overview.get("end_day") or data.get("end_day")
+    if start and end and start != end:
+        return f"{start} 至 {end}"
+    return str(start or end or "-")
 
 
 def draw_text(draw: ImageDraw.ImageDraw, xy, text: str, font, fill="#111827", max_width: Optional[int] = None):
@@ -558,12 +573,14 @@ def render_report(data: Dict[str, Any], output_path: Path) -> None:
     account_pool = channel.get("account_pool") or {}
     action_rows_data = curated_actions(data)
     account_pool_share_text = pct(account_pool.get("request_share")) if account_pool else "缺字段"
+    current_period_label = period_label(data)
+    current_period_range = period_range(data)
     if int(growth.get("new_users") or 0) == 0 and int(growth.get("first_call_users") or 0) > 0:
-        growth_text = "今日没有新增接入，消耗来自存量用户，需看拉新/转化。"
+        growth_text = f"{current_period_label}没有新增接入，消耗来自存量用户，需看拉新/转化。"
     else:
         growth_text = status_text(judgement.get("growth"))
     channel_text = (
-        f"号池占比 {account_pool_share_text}，但缺真实成本，今天无法判断是否赚钱。"
+        f"号池占比 {account_pool_share_text}，但缺真实成本，{current_period_label}无法判断是否赚钱。"
         if account_pool and not margin_available
         else status_text(judgement.get("channel"))
     )
@@ -574,12 +591,11 @@ def render_report(data: Dict[str, Any], output_path: Path) -> None:
     draw.rectangle((0, 0, 1600, 180), fill="#111827")
     draw_text(draw, (64, 42), "CoinCoin 公司经营驾驶舱", FONT_TITLE, fill="#ffffff")
     generated = datetime.now().strftime("%Y-%m-%d %H:%M")
-    period = f"{overview.get('start_day', '')} 至 {overview.get('end_day', '')}"
-    draw_text(draw, (66, 108), f"数据周期：{period} · 生成时间：{generated}", FONT_BODY, fill="#cbd5e1")
+    draw_text(draw, (66, 108), f"数据周期：{current_period_label}（{current_period_range}）· 生成时间：{generated}", FONT_BODY, fill="#cbd5e1")
     draw_text(draw, (1240, 58), "Asia/Singapore 08:00", FONT_BODY, fill="#93c5fd")
 
     draw.rounded_rectangle((64, 210, 1536, 620), radius=18, fill="#ffffff", outline="#dbeafe", width=2)
-    draw_text(draw, (96, 238), "今日经营结论", FONT_H2, fill="#111827")
+    draw_text(draw, (96, 238), f"{current_period_label}经营结论", FONT_H2, fill="#111827")
     draw_text(draw, (96, 278), status_text(judgement.get("overall")), FONT_BODY, fill="#111827", max_width=1340)
     conclusion_row(draw, (96, 332, 1504, 390), "增长", growth_text, "#eef2ff", "#c7d2fe")
     conclusion_row(draw, (96, 402, 1504, 460), "收入", status_text(judgement.get("revenue")), "#ecfdf5", "#bbf7d0")
@@ -589,7 +605,7 @@ def render_report(data: Dict[str, Any], output_path: Path) -> None:
     cards = [
         ("有余额用户", balance_user_value, balance_user_subtitle, "#7c3aed"),
         ("新增 / Key / 首调", f"{intfmt(growth.get('new_users'))} / {intfmt(growth.get('new_api_key_users'))} / {intfmt(growth.get('first_call_users'))}", "注册、接入意图、真实激活", "#2563eb"),
-        ("实付入账", money(revenue.get("paid_cents") or overview.get("paid_cents")), "今日真实支付入账", "#059669"),
+        ("实付入账", money(revenue.get("paid_cents") or overview.get("paid_cents")), f"{current_period_label}真实支付入账", "#059669"),
         ("用户侧消耗", money(revenue.get("user_charge_cents") or overview.get("user_charge_cents")), "按 CoinCoin API 价格扣费", "#dc2626"),
         ("真实毛利", money(revenue.get("gross_margin_cents")) if margin_available else "无法判断", "缺 upstream_cost 时不能算利润", "#ea580c"),
         ("号池占比", pct(account_pool.get("request_share")) if account_pool else "缺字段", "由 route_reason 推断，需补 channel_type", "#0f766e"),
@@ -603,7 +619,7 @@ def render_report(data: Dict[str, Any], output_path: Path) -> None:
         card(draw, (x0 + col * (cw + gap), y0 + row * (ch + 28), x0 + col * (cw + gap) + cw, y0 + row * (ch + 28) + ch), *item)
 
     y = 1010
-    draw_text(draw, (64, y), "今日必须处理", FONT_H2)
+    draw_text(draw, (64, y), f"{current_period_label}必须处理", FONT_H2)
     action_rows = []
     for idx, item in enumerate(action_rows_data[:4], start=1):
         action_rows.append([
@@ -706,7 +722,7 @@ def render_report(data: Dict[str, Any], output_path: Path) -> None:
     draw_text(draw, (64, y), "错误概览", FONT_H2)
     y += 44
     draw.rounded_rectangle((64, y, 1536, y + 190), radius=18, fill="#ffffff", outline="#e5e7eb", width=2)
-    draw_text(draw, (96, y + 30), f"今日总请求：{intfmt(errors.get('total_requests'))}", FONT_BODY)
+    draw_text(draw, (96, y + 30), f"{current_period_label}总请求：{intfmt(errors.get('total_requests'))}", FONT_BODY)
     draw_text(draw, (96, y + 68), f"失败请求：{intfmt(errors.get('failed_requests'))}", FONT_BODY)
     draw_text(draw, (96, y + 106), f"错误率：{pct(float(errors.get('error_rate') or 0))}", FONT_BODY)
     recent = errors.get("recent") or []
@@ -791,13 +807,13 @@ def build_summary(data: Dict[str, Any], dry_run: bool) -> str:
     margin_text = money(revenue.get("gross_margin_cents")) if (revenue.get("source_quality") or {}).get("upstream_cost_available") else "无法判断"
     return (
         f"{prefix}CoinCoin 公司经营驾驶舱\\n"
-        f"周期：{overview.get('start_day')} 至 {overview.get('end_day')}\\n"
+        f"周期：{period_label(data)}（{period_range(data)}）\\n"
         f"判断：{judgement.get('overall', '-')}\\n"
         f"实付入账：{money(revenue.get('paid_cents') or overview.get('paid_cents'))}；用户侧消耗：{money(revenue.get('user_charge_cents') or overview.get('user_charge_cents'))}；真实毛利：{margin_text}；"
         f"有余额用户：{balance_user_value}\\n"
-        f"请求数：{intfmt(overview.get('requests_total'))}；今日活跃：{intfmt(overview.get('active_users_period'))}；"
+        f"请求数：{intfmt(overview.get('requests_total'))}；近24小时活跃：{intfmt(overview.get('active_users_period'))}；"
         f"错误率：{pct(float(errors.get('error_rate') or 0))}\\n"
-        f"今日动作：{action_text}"
+        f"近24小时动作：{action_text}"
     )
 
 
