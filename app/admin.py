@@ -206,6 +206,8 @@ def admin_guard(request: Request):
 
 def _analytics_period(period: str) -> Tuple[str, int, date, datetime]:
     normalized = (period or "today").strip().lower()
+    if normalized == "24h":
+        normalized = "today"
     days_by_period = {
         "today": 1,
         "7d": 7,
@@ -218,6 +220,27 @@ def _analytics_period(period: str) -> Tuple[str, int, date, datetime]:
     start_day = end_day - timedelta(days=days - 1)
     since = datetime.utcnow() - timedelta(days=days)
     return normalized, days, start_day, since
+
+
+def _analytics_period_fields(period: str, days: int, start_day: date, since: datetime, *, end_at: Optional[datetime] = None) -> dict:
+    end_at = end_at or datetime.utcnow()
+    if period == "today":
+        return {
+            "period_label": "近24小时",
+            "window_hours": 24,
+            "window_start": since,
+            "window_end": end_at,
+            "start_day": str(since.date()),
+            "end_day": str(end_at.date()),
+        }
+    return {
+        "period_label": f"近{days}天",
+        "window_hours": days * 24,
+        "window_start": _period_start_datetime(start_day),
+        "window_end": end_at,
+        "start_day": str(start_day),
+        "end_day": str(end_at.date()),
+    }
 
 
 def _row_value(row, key: str, default=0):
@@ -442,7 +465,7 @@ def _build_action_items(
                     "avg_daily_cost_cents": user.get("avg_daily_cost_cents"),
                     "estimated_days_remaining": days_remaining,
                 },
-                "suggested_action": "今天联系用户充值或确认是否需要企业方案。",
+                "suggested_action": "尽快联系用户充值或确认是否需要企业方案。",
             })
 
     if int(revenue.get("paid_cents") or 0) <= 500 and int(revenue.get("user_charge_cents") or 0) >= 5000:
@@ -450,13 +473,13 @@ def _build_action_items(
             "severity": "high",
             "type": "growth_conversion_gap",
             "owner": "product",
-            "title": "今日消耗主要来自存量用户，新接入/首充不足",
+            "title": "近24小时消耗主要来自存量用户，新接入/首充不足",
             "evidence": {
                 "paid_cents": revenue.get("paid_cents"),
                 "user_charge_cents": revenue.get("user_charge_cents"),
                 "period": period,
             },
-            "suggested_action": "检查注册到首充漏斗和拉新渠道；确认今天是否需要运营触达高消耗未续费用户。",
+            "suggested_action": "检查注册到首充漏斗和拉新渠道；确认是否需要运营触达高消耗未续费用户。",
         })
 
     if float(errors.get("error_rate") or 0) > 0.05 or int(errors.get("failed_requests") or 0) >= 10:
@@ -516,7 +539,7 @@ def _build_action_items(
             "severity": "high",
             "type": "missing_upstream_cost",
             "owner": "tech",
-            "title": "缺上游真实成本，无法判断今天是否赚钱",
+            "title": "缺上游真实成本，无法判断近24小时是否赚钱",
             "evidence": {
                 "user_charge_cents": revenue.get("user_charge_cents"),
                 "upstream_cost_cents": revenue.get("upstream_cost_cents"),
@@ -539,7 +562,7 @@ def _build_action_items(
             "severity": "medium",
             "type": "weak_cash_in",
             "owner": "ops",
-            "title": "今天有消耗但没有实付入账",
+            "title": "近24小时有消耗但没有实付入账",
             "evidence": {
                 "paid_cents": revenue.get("paid_cents"),
                 "user_charge_cents": revenue.get("user_charge_cents"),
@@ -1254,37 +1277,53 @@ async def summary_metrics(db: AsyncSession = Depends(get_db)):
 
 @router.get("/analytics/overview", dependencies=[Depends(admin_guard)])
 async def analytics_overview(period: str = "today", db: AsyncSession = Depends(get_db)):
-    period, days, start_day, _since = _analytics_period(period)
+    period, days, start_day, since = _analytics_period(period)
+    end_at = datetime.utcnow()
     total_users = await db.scalar(select(func.count()).select_from(User))
     active_users = await db.scalar(select(func.count()).select_from(User).where(User.status == "active"))
     positive_balance_users = await _positive_balance_users_count(db)
     paid_cents = await db.scalar(
         select(func.coalesce(func.sum(PaymentOrder.add_balance_cents), 0)).where(
             PaymentOrder.status == "confirmed",
-            func.date(PaymentOrder.confirmed_at) >= start_day,
+            PaymentOrder.confirmed_at >= (since if period == "today" else _period_start_datetime(start_day)),
         )
     )
-    usage_row = (
-        await db.execute(
-            select(
-                func.count(func.distinct(UsageDaily.user_id)).label("active_users"),
-                func.coalesce(func.sum(UsageDaily.requests_total), 0).label("requests_total"),
-                func.coalesce(func.sum(UsageDaily.input_tokens), 0).label("input_tokens"),
-                func.coalesce(func.sum(UsageDaily.output_tokens), 0).label("output_tokens"),
-                func.coalesce(func.sum(UsageDaily.tokens_total), 0).label("tokens_total"),
-                func.coalesce(func.sum(UsageDaily.images_total), 0).label("images_total"),
-                func.coalesce(func.sum(UsageDaily.cost_cents), 0).label("cost_cents"),
-            ).where(UsageDaily.day >= start_day)
-        )
-    ).first()
+    if period == "today":
+        request_charge = _request_user_charge_expr()
+        usage_row = (
+            await db.execute(
+                select(
+                    func.count(func.distinct(RequestLog.user_id)).label("active_users"),
+                    func.count(RequestLog.id).label("requests_total"),
+                    func.coalesce(func.sum(RequestLog.input_tokens), 0).label("input_tokens"),
+                    func.coalesce(func.sum(RequestLog.output_tokens), 0).label("output_tokens"),
+                    func.coalesce(func.sum(RequestLog.input_tokens + RequestLog.output_tokens), 0).label("tokens_total"),
+                    func.coalesce(func.sum(RequestLog.image_count), 0).label("images_total"),
+                    func.coalesce(func.sum(request_charge), 0).label("cost_cents"),
+                ).where(RequestLog.created_at >= since)
+            )
+        ).first()
+    else:
+        usage_row = (
+            await db.execute(
+                select(
+                    func.count(func.distinct(UsageDaily.user_id)).label("active_users"),
+                    func.coalesce(func.sum(UsageDaily.requests_total), 0).label("requests_total"),
+                    func.coalesce(func.sum(UsageDaily.input_tokens), 0).label("input_tokens"),
+                    func.coalesce(func.sum(UsageDaily.output_tokens), 0).label("output_tokens"),
+                    func.coalesce(func.sum(UsageDaily.tokens_total), 0).label("tokens_total"),
+                    func.coalesce(func.sum(UsageDaily.images_total), 0).label("images_total"),
+                    func.coalesce(func.sum(UsageDaily.cost_cents), 0).label("cost_cents"),
+                ).where(UsageDaily.day >= start_day)
+            )
+        ).first()
 
     user_charge_cents = int(_row_value(usage_row, "cost_cents", 0) or 0)
     paid_cents = int(paid_cents or 0)
     return {
         "period": period,
         "days": days,
-        "start_day": str(start_day),
-        "end_day": str(date.today()),
+        **_analytics_period_fields(period, days, start_day, since, end_at=end_at),
         "total_users": int(total_users or 0),
         "active_users": int(active_users or 0),
         "positive_balance_users": positive_balance_users,
@@ -1311,41 +1350,74 @@ async def analytics_top_users(
     limit: int = 20,
     db: AsyncSession = Depends(get_db),
 ):
-    period, days, start_day, _since = _analytics_period(period)
+    period, days, start_day, since = _analytics_period(period)
     limit = max(1, min(limit, 100))
-    metric_map = {
-        "cost_cents": func.coalesce(func.sum(UsageDaily.cost_cents), 0),
-        "requests_total": func.coalesce(func.sum(UsageDaily.requests_total), 0),
-        "tokens_total": func.coalesce(func.sum(UsageDaily.tokens_total), 0),
-        "images_total": func.coalesce(func.sum(UsageDaily.images_total), 0),
-    }
-    order_metric = metric_map.get(metric)
-    if order_metric is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unsupported metric")
-    result = await db.execute(
-        select(
-            User.id.label("user_id"),
-            User.username.label("username"),
-            User.email.label("email"),
-            User.external_id.label("external_id"),
-            User.balance.label("balance"),
-            func.coalesce(func.sum(UsageDaily.requests_total), 0).label("requests_total"),
-            func.coalesce(func.sum(UsageDaily.input_tokens), 0).label("input_tokens"),
-            func.coalesce(func.sum(UsageDaily.output_tokens), 0).label("output_tokens"),
-            func.coalesce(func.sum(UsageDaily.tokens_total), 0).label("tokens_total"),
-            func.coalesce(func.sum(UsageDaily.images_total), 0).label("images_total"),
-            func.coalesce(func.sum(UsageDaily.cost_cents), 0).label("cost_cents"),
+    if period == "today":
+        request_charge = _request_user_charge_expr()
+        metric_map = {
+            "cost_cents": func.coalesce(func.sum(request_charge), 0),
+            "requests_total": func.count(RequestLog.id),
+            "tokens_total": func.coalesce(func.sum(RequestLog.input_tokens + RequestLog.output_tokens), 0),
+            "images_total": func.coalesce(func.sum(RequestLog.image_count), 0),
+        }
+        order_metric = metric_map.get(metric)
+        if order_metric is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unsupported metric")
+        result = await db.execute(
+            select(
+                User.id.label("user_id"),
+                User.username.label("username"),
+                User.email.label("email"),
+                User.external_id.label("external_id"),
+                User.balance.label("balance"),
+                func.count(RequestLog.id).label("requests_total"),
+                func.coalesce(func.sum(RequestLog.input_tokens), 0).label("input_tokens"),
+                func.coalesce(func.sum(RequestLog.output_tokens), 0).label("output_tokens"),
+                func.coalesce(func.sum(RequestLog.input_tokens + RequestLog.output_tokens), 0).label("tokens_total"),
+                func.coalesce(func.sum(RequestLog.image_count), 0).label("images_total"),
+                func.coalesce(func.sum(request_charge), 0).label("cost_cents"),
+            )
+            .join(User, RequestLog.user_id == User.id)
+            .where(RequestLog.created_at >= since)
+            .group_by(User.id, User.username, User.email, User.external_id, User.balance)
+            .order_by(order_metric.desc())
+            .limit(limit)
         )
-        .join(User, UsageDaily.user_id == User.id)
-        .where(UsageDaily.day >= start_day)
-        .group_by(User.id, User.username, User.email, User.external_id, User.balance)
-        .order_by(order_metric.desc())
-        .limit(limit)
-    )
+    else:
+        metric_map = {
+            "cost_cents": func.coalesce(func.sum(UsageDaily.cost_cents), 0),
+            "requests_total": func.coalesce(func.sum(UsageDaily.requests_total), 0),
+            "tokens_total": func.coalesce(func.sum(UsageDaily.tokens_total), 0),
+            "images_total": func.coalesce(func.sum(UsageDaily.images_total), 0),
+        }
+        order_metric = metric_map.get(metric)
+        if order_metric is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unsupported metric")
+        result = await db.execute(
+            select(
+                User.id.label("user_id"),
+                User.username.label("username"),
+                User.email.label("email"),
+                User.external_id.label("external_id"),
+                User.balance.label("balance"),
+                func.coalesce(func.sum(UsageDaily.requests_total), 0).label("requests_total"),
+                func.coalesce(func.sum(UsageDaily.input_tokens), 0).label("input_tokens"),
+                func.coalesce(func.sum(UsageDaily.output_tokens), 0).label("output_tokens"),
+                func.coalesce(func.sum(UsageDaily.tokens_total), 0).label("tokens_total"),
+                func.coalesce(func.sum(UsageDaily.images_total), 0).label("images_total"),
+                func.coalesce(func.sum(UsageDaily.cost_cents), 0).label("cost_cents"),
+            )
+            .join(User, UsageDaily.user_id == User.id)
+            .where(UsageDaily.day >= start_day)
+            .group_by(User.id, User.username, User.email, User.external_id, User.balance)
+            .order_by(order_metric.desc())
+            .limit(limit)
+        )
     rows = result.all()
     return {
         "period": period,
         "days": days,
+        **_analytics_period_fields(period, days, start_day, since),
         "metric": metric,
         "limit": limit,
         "data": [
@@ -1507,7 +1579,8 @@ async def analytics_errors(
 @router.get("/analytics/growth", dependencies=[Depends(admin_guard)])
 async def analytics_growth(period: str = "today", db: AsyncSession = Depends(get_db)):
     period, days, start_day, since = _analytics_period(period)
-    start_dt = _period_start_datetime(start_day)
+    end_at = datetime.utcnow()
+    start_dt = since if period == "today" else _period_start_datetime(start_day)
     today_day = date.today()
     seven_days_ago = today_day - timedelta(days=7)
     new_users = await db.scalar(select(func.count(User.id)).where(User.created_at >= start_dt))
@@ -1523,19 +1596,35 @@ async def analytics_growth(period: str = "today", db: AsyncSession = Depends(get
             PaymentOrder.confirmed_at >= start_dt,
         )
     )
-    daily_usage_rows = (
-        await db.execute(
-            select(
-                UsageDaily.day.label("day"),
-                func.count(func.distinct(UsageDaily.user_id)).label("active_users"),
-                func.coalesce(func.sum(UsageDaily.requests_total), 0).label("requests_total"),
-                func.coalesce(func.sum(UsageDaily.cost_cents), 0).label("user_charge_cents"),
+    if period == "today":
+        request_charge = _request_user_charge_expr()
+        daily_usage_rows = (
+            await db.execute(
+                select(
+                    func.date(RequestLog.created_at).label("day"),
+                    func.count(func.distinct(RequestLog.user_id)).label("active_users"),
+                    func.count(RequestLog.id).label("requests_total"),
+                    func.coalesce(func.sum(request_charge), 0).label("user_charge_cents"),
+                )
+                .where(RequestLog.created_at >= start_dt)
+                .group_by(func.date(RequestLog.created_at))
+                .order_by(func.date(RequestLog.created_at))
             )
-            .where(UsageDaily.day >= start_day)
-            .group_by(UsageDaily.day)
-            .order_by(UsageDaily.day)
-        )
-    ).all()
+        ).all()
+    else:
+        daily_usage_rows = (
+            await db.execute(
+                select(
+                    UsageDaily.day.label("day"),
+                    func.count(func.distinct(UsageDaily.user_id)).label("active_users"),
+                    func.coalesce(func.sum(UsageDaily.requests_total), 0).label("requests_total"),
+                    func.coalesce(func.sum(UsageDaily.cost_cents), 0).label("user_charge_cents"),
+                )
+                .where(UsageDaily.day >= start_day)
+                .group_by(UsageDaily.day)
+                .order_by(UsageDaily.day)
+            )
+        ).all()
     new_user_rows = (
         await db.execute(
             select(func.date(User.created_at).label("day"), func.count(User.id).label("new_users"))
@@ -1615,8 +1704,7 @@ async def analytics_growth(period: str = "today", db: AsyncSession = Depends(get
     return {
         "period": period,
         "days": days,
-        "start_day": str(start_day),
-        "end_day": str(today_day),
+        **_analytics_period_fields(period, days, start_day, since, end_at=end_at),
         "new_users": int(new_users or 0),
         "new_positive_balance_users": None,
         "positive_balance_users": await _positive_balance_users_count(db),
@@ -1639,6 +1727,8 @@ async def analytics_growth(period: str = "today", db: AsyncSession = Depends(get
 @router.get("/analytics/revenue-margin", dependencies=[Depends(admin_guard)])
 async def analytics_revenue_margin(period: str = "today", db: AsyncSession = Depends(get_db)):
     period, days, start_day, since = _analytics_period(period)
+    end_at = datetime.utcnow()
+    paid_since = since if period == "today" else _period_start_datetime(start_day)
     request_charge = _request_user_charge_expr()
     upstream_cost = _request_upstream_cost_expr()
     paid_rows = (
@@ -1648,7 +1738,7 @@ async def analytics_revenue_margin(period: str = "today", db: AsyncSession = Dep
                 func.coalesce(func.sum(PaymentOrder.add_balance_cents), 0).label("paid_cents"),
                 func.count(func.distinct(PaymentOrder.user_id)).label("paid_users"),
             )
-            .where(PaymentOrder.status == "confirmed", PaymentOrder.confirmed_at >= _period_start_datetime(start_day))
+            .where(PaymentOrder.status == "confirmed", PaymentOrder.confirmed_at >= paid_since)
             .group_by(func.date(PaymentOrder.confirmed_at))
             .order_by(func.date(PaymentOrder.confirmed_at))
         )
@@ -1682,10 +1772,8 @@ async def analytics_revenue_margin(period: str = "today", db: AsyncSession = Dep
             )
         )
     ) or 0
-    day_map: dict[str, dict] = {}
-    for offset in range(days):
-        day = (start_day + timedelta(days=offset)).isoformat()
-        day_map[day] = {
+    def empty_revenue_day(day: str) -> dict:
+        return {
             "day": day,
             "paid_cents": 0,
             "paid_users": 0,
@@ -1695,18 +1783,19 @@ async def analytics_revenue_margin(period: str = "today", db: AsyncSession = Dep
             "gross_margin_rate": 0,
             "requests_total": 0,
         }
+
+    day_map: dict[str, dict] = {}
+    for offset in range(days):
+        day = (start_day + timedelta(days=offset)).isoformat()
+        day_map[day] = empty_revenue_day(day)
     for row in paid_rows:
         day = _date_key(_row_value(row, "day"))
-        if day not in day_map:
-            continue
-        item = day_map[day]
+        item = day_map.setdefault(day, empty_revenue_day(day))
         item["paid_cents"] = int(_row_value(row, "paid_cents", 0) or 0)
         item["paid_users"] = int(_row_value(row, "paid_users", 0) or 0)
     for row in request_rows:
         day = _date_key(_row_value(row, "day"))
-        if day not in day_map:
-            continue
-        item = day_map[day]
+        item = day_map.setdefault(day, empty_revenue_day(day))
         charge = int(_row_value(row, "user_charge_cents", 0) or 0)
         cost = int(_row_value(row, "upstream_cost_cents", 0) or 0)
         item.update({
@@ -1724,6 +1813,7 @@ async def analytics_revenue_margin(period: str = "today", db: AsyncSession = Dep
     return {
         "period": period,
         "days": days,
+        **_analytics_period_fields(period, days, start_day, since, end_at=end_at),
         "paid_cents": paid_cents,
         "user_charge_cents": user_charge_cents,
         "upstream_cost_cents": upstream_cost_cents,
@@ -1903,6 +1993,7 @@ async def analytics_action_items(
 @router.get("/analytics/operating-dashboard", dependencies=[Depends(admin_guard)])
 async def analytics_operating_dashboard(period: str = "today", db: AsyncSession = Depends(get_db)):
     period, days, start_day, _since = _analytics_period(period)
+    end_at = datetime.utcnow()
     cache_key = f"operating-dashboard:{period}"
     now_ts = time.time()
     cached = _analytics_dashboard_cache.get(cache_key)
@@ -1936,12 +2027,12 @@ async def analytics_operating_dashboard(period: str = "today", db: AsyncSession 
     account_pool = channel.get("account_pool") or {}
     account_pool_share = _safe_rate(account_pool.get("requests", 0), channel.get("total_requests", 0))
     channel_judgement = (
-        f"号池占比 {account_pool_share * 100:.1f}%，但缺真实成本，今天无法判断是否赚钱"
+        f"号池占比 {account_pool_share * 100:.1f}%，但缺真实成本，近24小时无法判断是否赚钱"
         if account_pool
         else "缺 channel_type，无法管理号池"
     )
     growth_judgement = (
-        "今日没有新增接入，消耗来自存量用户，需看拉新/转化"
+        "近24小时没有新增接入，消耗来自存量用户，需看拉新/转化"
         if int(growth.get("new_users") or 0) == 0 and int(growth.get("first_call_users") or 0) > 0
         else f"新增注册 {growth.get('new_users', 0)}，创建 Key {growth.get('new_api_key_users', 0)}，首次调用 {growth.get('first_call_users', 0)}，首充 {growth.get('first_paid_users', 0)}。"
     )
@@ -1949,19 +2040,18 @@ async def analytics_operating_dashboard(period: str = "today", db: AsyncSession 
     judgement = {
         "overall": (
             f"{'有高优先级动作' if high_actions else '暂无高优先级异常'}；"
-            f"今日新增 {growth.get('new_users', 0)}，首充 {growth.get('first_paid_users', 0)}，"
+            f"近24小时新增 {growth.get('new_users', 0)}，首充 {growth.get('first_paid_users', 0)}，"
             f"消耗 {revenue.get('user_charge_cents', 0) / 100:.2f} 美元。"
         ),
         "growth": growth_judgement,
         "revenue": revenue_judgement,
         "channel": channel_judgement,
-        "risk": f"今日动作 {len(actions.get('items') or [])} 条，其中高优先级 {len(high_actions)} 条。",
+        "risk": f"近24小时动作 {len(actions.get('items') or [])} 条，其中高优先级 {len(high_actions)} 条。",
     }
     payload = {
         "period": period,
         "days": days,
-        "start_day": str(start_day),
-        "end_day": str(date.today()),
+        **_analytics_period_fields(period, days, start_day, _since, end_at=end_at),
         "generated_at": datetime.utcnow(),
         "judgement": judgement,
         "overview": overview,

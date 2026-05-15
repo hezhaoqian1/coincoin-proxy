@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "affectedLayers": [
+    "admin analytics API, report worker"
+  ],
+  "owners": [
+    "app/admin.py and workers/coincoin-daily-report-bot/report_bot.py"
+  ],
+  "invariants": [
+    "Current-period dashboard metrics represent the most recent 24 hours; trend remains daily 7d context; no secrets printed."
+  ],
+  "compatBoundary": "Existing period values today/7d/30d remain accepted; today changes semantics to rolling 24h and responses include label/window metadata.",
+  "nonGoals": [
+    "No redesign of dashboard layout, no new upstream-cost implementation, no channel-type data model change."
+  ]
+}

@@ -489,8 +489,8 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["paid_today_cents"], 999)
         self.assertEqual(payload["consumed_today_cents"], 321)
 
-    async def test_admin_analytics_overview_uses_existing_daily_aggregates(self) -> None:
-        usage_row = SimpleNamespace(
+    async def test_admin_analytics_overview_today_uses_rolling_24h_request_logs(self) -> None:
+        request_row = SimpleNamespace(
             active_users=3,
             requests_total=45,
             input_tokens=1000,
@@ -501,8 +501,8 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         )
         admin_module._analytics_balance_cache.clear()
         fake_db = _FakeDB(
-            execute_results=[_FakeSummaryResult(usage_row)],
-            scalar_results=[12, 10, 4, 999],
+            execute_results=[_FakeSummaryResult(request_row)],
+            scalar_results=[12, 10, 999],
         )
 
         async def fake_get_db():
@@ -511,14 +511,17 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         app.dependency_overrides[admin_module.get_db] = fake_get_db
         app.dependency_overrides[admin_module.admin_guard] = lambda: None
 
-        transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-            response = await client.get("/admin/analytics/overview?period=today")
+        with patch.object(admin_module, "_positive_balance_users_count", AsyncMock(return_value=4)):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                response = await client.get("/admin/analytics/overview?period=today")
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
         self.assertEqual(payload["period"], "today")
+        self.assertEqual(payload["period_label"], "近24小时")
         self.assertEqual(payload["days"], 1)
+        self.assertEqual(payload["window_hours"], 24)
         self.assertEqual(payload["total_users"], 12)
         self.assertEqual(payload["active_users"], 10)
         self.assertEqual(payload["positive_balance_users"], 4)
@@ -530,6 +533,80 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["user_charge_cents"], 321)
         self.assertEqual(payload["paid_cents"], 999)
         self.assertEqual(payload["net_cashflow_cents"], 678)
+        overview_query = str(fake_db.queries[-1].compile())
+        self.assertIn("coincoin_request_logs", overview_query)
+        self.assertIn("created_at >=", overview_query)
+        self.assertNotIn("coincoin_usage_daily", overview_query)
+
+    async def test_admin_analytics_top_users_today_uses_rolling_24h_request_logs(self) -> None:
+        row = SimpleNamespace(
+            user_id="u_1",
+            username="alice",
+            email="alice@example.com",
+            external_id="ext_alice",
+            balance=4321,
+            requests_total=9,
+            input_tokens=100,
+            output_tokens=50,
+            tokens_total=150,
+            images_total=2,
+            cost_cents=88,
+        )
+        fake_db = _FakeDB(execute_results=[_FakeAllResult([row])])
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get("/admin/analytics/top-users?period=today&metric=cost_cents&limit=5")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["period"], "today")
+        self.assertEqual(payload["period_label"], "近24小时")
+        self.assertEqual(payload["window_hours"], 24)
+        self.assertEqual(payload["data"][0]["user_id"], "u_1")
+        self.assertEqual(payload["data"][0]["cost_cents"], 88)
+        query_text = str(fake_db.queries[-1].compile())
+        self.assertIn("coincoin_request_logs", query_text)
+        self.assertIn("created_at >=", query_text)
+        self.assertNotIn("coincoin_usage_daily", query_text)
+
+    async def test_admin_revenue_margin_today_keeps_previous_day_rows_inside_24h_window(self) -> None:
+        fake_db = _FakeDB(
+            execute_results=[
+                _FakeAllResult([
+                    SimpleNamespace(day=date(2026, 5, 14), paid_cents=400, paid_users=1),
+                    SimpleNamespace(day=date(2026, 5, 15), paid_cents=600, paid_users=1),
+                ]),
+                _FakeAllResult([
+                    SimpleNamespace(day=date(2026, 5, 14), user_charge_cents=300, upstream_cost_cents=120, requests_total=3),
+                    SimpleNamespace(day=date(2026, 5, 15), user_charge_cents=700, upstream_cost_cents=230, requests_total=7),
+                ]),
+            ],
+            scalar_results=[50, 80],
+        )
+
+        payload = await admin_module.analytics_revenue_margin(period="today", db=fake_db)
+
+        self.assertEqual(payload["period"], "today")
+        self.assertEqual(payload["period_label"], "近24小时")
+        self.assertEqual(payload["window_hours"], 24)
+        self.assertEqual(payload["paid_cents"], 1000)
+        self.assertEqual(payload["user_charge_cents"], 1000)
+        self.assertEqual(payload["upstream_cost_cents"], 350)
+        self.assertEqual(payload["gross_margin_cents"], 650)
+        self.assertEqual(payload["package_consumption_cents"], 50)
+        self.assertEqual(payload["failed_payment_cents"], 80)
+        self.assertEqual({item["day"] for item in payload["daily"]}, {"2026-05-14", "2026-05-15"})
+        self.assertEqual(sum(item["requests_total"] for item in payload["daily"]), 10)
+        query_text = "\n".join(str(query.compile()) for query in fake_db.queries)
+        self.assertIn("coincoin_payment_orders.confirmed_at >=", query_text)
+        self.assertIn("coincoin_request_logs.created_at >=", query_text)
 
     async def test_admin_analytics_top_users_returns_ranked_usage_rows(self) -> None:
         row = SimpleNamespace(
