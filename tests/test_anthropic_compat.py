@@ -922,6 +922,64 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stream_client.calls[0]["json"]["tool_choice"], {"type": "tool", "name": "Read"})
         self.assertTrue(stream_client.calls[0]["json"]["stream"])
 
+    async def test_messages_stream_kiro_go_passthrough_schedules_usage_write_after_stream(self):
+        fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_kiro_stream_usage_task")
+        settings.claude_compat_provider = "kiro_go"
+        settings.claude_compat_base_url = "https://kiro-go.example"
+        settings.claude_compat_api_key = "kiro-key"
+        settings.claude_compat_auth_style = "bearer"
+        registry._initialized = False
+        registry.init_from_settings()
+        stream_client = _RecordingStreamClient(
+            [
+                _FakeAnthropicEventStreamResponse(
+                    [
+                        'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_native_stream_task","type":"message","role":"assistant","model":"claude-opus-4.7","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":5,"cache_creation_input_tokens":8,"cache_read_input_tokens":7,"output_tokens":0}}}',
+                        'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
+                        'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"OK"}}',
+                        'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}',
+                        'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"input_tokens":5,"cache_creation_input_tokens":8,"cache_read_input_tokens":7,"output_tokens":2}}',
+                        'event: message_stop\ndata: {"type":"message_stop"}',
+                    ]
+                ),
+            ]
+        )
+
+        real_create_task = asyncio.create_task
+        scheduled = []
+
+        def _capture_task(coro):
+            task = real_create_task(coro)
+            scheduled.append(task)
+            return task
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_stream_client", AsyncMock(return_value=stream_client)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()) as add_usage,
+            patch.object(anthropic_module.asyncio, "create_task", side_effect=_capture_task),
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={
+                        "authorization": "Bearer sk_test",
+                        "anthropic-version": "2023-06-01",
+                    },
+                    json={
+                        "model": "claude-opus-4-7",
+                        "stream": True,
+                        "max_tokens": 64,
+                        "messages": [{"role": "user", "content": "Reply with exactly OK"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn("event: message_stop", response.text)
+        self.assertGreaterEqual(len(scheduled), 1)
+        await asyncio.gather(*scheduled)
+        add_usage.assert_awaited_once()
+
     async def test_messages_uses_station_alias_and_retail_price(self):
         fake_user = SimpleNamespace(
             id="u_station_child",

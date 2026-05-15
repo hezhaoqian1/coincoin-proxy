@@ -1170,7 +1170,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                 return
 
             duration_ms = _elapsed_ms_since(request_t0)
-            await usage_buffer.add(
+            asyncio.create_task(usage_buffer.add(
                 user.id,
                 api_key_id=api_key_id,
                 input_tokens=extract_total_input_tokens(stream_state.usage),
@@ -1191,7 +1191,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                 billable_sku=public_model.billable_sku or display_model,
                 upstream_request_id=upstream_request_id,
                 **station_usage_kwargs(station_model),
-            )
+            ))
 
         return StreamingResponse(
             iter_bytes(),
@@ -1228,7 +1228,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                         yield event
                 duration_ms = _elapsed_ms_since(request_t0)
                 if stream_state.usage:
-                    await usage_buffer.add(
+                    asyncio.create_task(usage_buffer.add(
                         user.id,
                         api_key_id=api_key_id,
                         input_tokens=extract_total_input_tokens(stream_state.usage),
@@ -1249,7 +1249,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                         billable_sku=public_model.billable_sku or display_model,
                         upstream_request_id=upstream_request_id,
                         **station_usage_kwargs(station_model),
-                    )
+                    ))
                 await upstream.aclose()
 
         return StreamingResponse(
