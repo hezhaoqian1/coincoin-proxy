@@ -664,6 +664,8 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         body = response.text
         self.assertIn("event: message_start", body)
         self.assertEqual(body.count("event: message_start"), 1)
+        self.assertIn('"model":"claude-opus-4-7"', body)
+        self.assertNotIn('"model":"claude-opus-4.7"', body)
         self.assertIn('"input_tokens":5', body)
         self.assertIn('"cache_read_input_tokens":7', body)
         self.assertIn('"cache_creation_input_tokens":8', body)

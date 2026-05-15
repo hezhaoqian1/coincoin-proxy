@@ -467,6 +467,20 @@ def _anthropic_stream_error_bytes(
     )
 
 
+def _mask_anthropic_sse_event_model(raw_event: str, display_model: str) -> str:
+    event_type, payload = _parse_anthropic_sse_event(raw_event)
+    if event_type != "message_start" or not isinstance(payload, dict):
+        return raw_event
+    message = payload.get("message")
+    if not isinstance(message, dict):
+        return raw_event
+    if message.get("model") in (None, ""):
+        return raw_event
+    message["model"] = display_model
+    data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    return f"event: {event_type}\ndata: {data}"
+
+
 def _update_state_from_anthropic_event(
     state: _AnthropicStreamState,
     *,
@@ -1103,6 +1117,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                                         event_payload=payload_dict,
                                     )
                                     if should_forward_event:
+                                        raw_event = _mask_anthropic_sse_event_model(raw_event, display_model)
                                         yield (raw_event + "\n\n").encode("utf-8")
                                 anthropic_event_lines.clear()
                                 continue
@@ -1141,6 +1156,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                                     event_payload=payload_dict,
                                 )
                                 if should_forward_event:
+                                    raw_event = _mask_anthropic_sse_event_model(raw_event, display_model)
                                     yield (raw_event + "\n\n").encode("utf-8")
                             anthropic_event_lines.clear()
                         break
