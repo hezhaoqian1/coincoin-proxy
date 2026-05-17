@@ -40,6 +40,8 @@ function mergeProduct(apiProduct, fallbackProduct) {
     const action = apiProduct.purchase_action || 'purchase'
     const actionFeature = action === 'upgrade'
         ? `本周期补差价 ¥${trimMoney(payMoney)}，到期时间不变`
+        : action === 'reset'
+            ? '本期额度已用完，购买后立即重置并开启新 30 天周期'
         : action === 'renew'
             ? '同档购买只续费 30 天，不重置当前用量'
             : isMonthly
@@ -416,7 +418,7 @@ export default function Recharge() {
                         <span className="recharge-kicker">Monthly</span>
                         <h3>月付套餐</h3>
                     </div>
-                    <p>同一时间只有一个有效套餐；同档购买只续费，高档购买按剩余天数补差升级。</p>
+                    <p>同一时间只有一个有效套餐；同档未用完只续费，用完后可立即重置；高档购买按剩余天数补差升级。</p>
                 </div>
                 <div className="recharge-plans recharge-monthly-plans stagger-children">
                     {monthlyProducts.map((plan, i) => (
@@ -471,7 +473,7 @@ export default function Recharge() {
 
                 <div className="pricing-policy-note glass-card animate-fade-in-up" style={{ animationDelay: '300ms' }}>
                     <strong>购买规则</strong>
-                    <p>套餐额度每 30 天重置且不结转；同档购买只续费；高档购买补差升级；低档购买无效；流量包 180 天有效，套餐过期后暂停使用。</p>
+                    <p>套餐额度每 30 天重置且不结转；同档未用完只续费，用完后购买会立即重置；高档购买补差升级；低档购买无效；流量包 180 天有效，套餐过期后暂停使用。</p>
                 </div>
 
                 <div id="recharge-section-orders" className="recharge-anchor"></div>

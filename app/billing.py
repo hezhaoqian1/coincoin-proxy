@@ -39,12 +39,12 @@ class PaymentProduct:
 
 
 PAYMENT_PRODUCTS: tuple[PaymentProduct, ...] = (
-    PaymentProduct("monthly_light", "monthly", "轻量月卡", "29.90", 7500, rank=1),
-    PaymentProduct("monthly_basic", "monthly", "基础月卡", "129.00", 38000, rank=2),
-    PaymentProduct("monthly_flagship", "monthly", "旗舰月卡", "299.00", 100000, rank=3),
-    PaymentProduct("addon_boost", "addon", "补量包", "99.00", 28000, min_plan_rank=1),
-    PaymentProduct("addon_project", "addon", "项目包", "299.00", 110000, min_plan_rank=2),
-    PaymentProduct("addon_ultra", "addon", "超大包", "499.00", 200000, min_plan_rank=3),
+    PaymentProduct("monthly_light", "monthly", "轻量月卡", "49.90", 8000, rank=1),
+    PaymentProduct("monthly_basic", "monthly", "基础月卡", "199.00", 40000, rank=2),
+    PaymentProduct("monthly_flagship", "monthly", "旗舰月卡", "399.00", 100000, rank=3),
+    PaymentProduct("addon_boost", "addon", "补量包", "149.00", 30000, min_plan_rank=1),
+    PaymentProduct("addon_project", "addon", "项目包", "399.00", 100000, min_plan_rank=2),
+    PaymentProduct("addon_ultra", "addon", "超大包", "699.00", 200000, min_plan_rank=3),
 )
 
 PRODUCTS_BY_ID: dict[str, PaymentProduct] = {product.id: product for product in PAYMENT_PRODUCTS}
@@ -279,6 +279,25 @@ async def _apply_monthly_product(
         raise BillingError("cannot purchase a lower tier while a higher subscription is active", status_code=409)
 
     if product.rank == current_rank:
+        if available_subscription_cents(sub) <= 0:
+            sub.plan_id = product.id
+            sub.status = "active"
+            sub.period_start = now
+            sub.paid_until = now + timedelta(days=BILLING_PERIOD_DAYS)
+            sub.period_end = _period_end_from(now, sub.paid_until)
+            sub.quota_cents = product.balance_cents
+            sub.used_cents = 0
+            db.add(_ledger(
+                user_id=user.id,
+                entry_type="subscription_reset",
+                amount_cents=product.balance_cents,
+                source_type="payment_order",
+                source_id=order_no,
+                product_id=product.id,
+                balance_after_cents=available_subscription_cents(sub),
+            ))
+            return {"billing_action": "subscription_reset", "added_cents": product.balance_cents, "subscription": sub}
+
         sub.paid_until = (sub.paid_until or now) + timedelta(days=BILLING_PERIOD_DAYS)
         if sub.period_end:
             sub.period_end = _period_end_from(sub.period_start or now, sub.paid_until)
@@ -584,7 +603,7 @@ def serialize_product(
         current_product = MONTHLY_BY_ID.get(getattr(sub, "plan_id", None))
         current_product_rank = current_product.rank if current_product else 0
         if product.rank == current_product_rank:
-            purchase_action = "renew"
+            purchase_action = "reset" if available_subscription_cents(sub) <= 0 else "renew"
         elif product.rank > current_product_rank:
             purchase_action = "upgrade"
         elif product.rank < current_product_rank:

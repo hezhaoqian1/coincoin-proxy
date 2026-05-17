@@ -59,7 +59,7 @@ class SubscriptionBillingTests(unittest.IsolatedAsyncioTestCase):
         sub = result["subscription"]
         self.assertEqual(result["billing_action"], "subscription_start")
         self.assertEqual(sub.plan_id, "monthly_basic")
-        self.assertEqual(sub.quota_cents, 38000)
+        self.assertEqual(sub.quota_cents, 40000)
         self.assertEqual(sub.used_cents, 0)
         self.assertEqual(sub.period_start, now)
         self.assertEqual(sub.period_end, now + timedelta(days=30))
@@ -76,7 +76,7 @@ class SubscriptionBillingTests(unittest.IsolatedAsyncioTestCase):
             period_start=datetime(2026, 5, 1, 12, 0, 0),
             period_end=datetime(2026, 5, 31, 12, 0, 0),
             paid_until=datetime(2026, 5, 31, 12, 0, 0),
-            quota_cents=38000,
+            quota_cents=40000,
             used_cents=12000,
         )
         user = SimpleNamespace(id="u_1", balance=0, referred_by=None, status="active")
@@ -92,9 +92,60 @@ class SubscriptionBillingTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["billing_action"], "subscription_renew")
         self.assertEqual(sub.used_cents, 12000)
-        self.assertEqual(sub.quota_cents, 38000)
+        self.assertEqual(sub.quota_cents, 40000)
         self.assertEqual(sub.paid_until, datetime(2026, 6, 30, 12, 0, 0))
         self.assertEqual(sub.period_end, datetime(2026, 5, 31, 12, 0, 0))
+
+    async def test_same_tier_purchase_resets_current_period_when_quota_is_depleted(self):
+        now = datetime(2026, 5, 10, 12, 0, 0)
+        sub = SimpleNamespace(
+            id="sub_1",
+            user_id="u_1",
+            plan_id="monthly_basic",
+            status="active",
+            period_start=datetime(2026, 5, 1, 12, 0, 0),
+            period_end=datetime(2026, 5, 31, 12, 0, 0),
+            paid_until=datetime(2026, 5, 31, 12, 0, 0),
+            quota_cents=40000,
+            used_cents=40000,
+        )
+        user = SimpleNamespace(id="u_1", balance=0, referred_by=None, status="active")
+        db = _FakeDB(execute_results=[_EntityResult(sub)])
+
+        result = await apply_payment_product(
+            user=user,
+            product=MONTHLY_BY_ID["monthly_basic"],
+            order_no="CC_reset",
+            db=db,
+            now=now,
+        )
+
+        self.assertEqual(result["billing_action"], "subscription_reset")
+        self.assertEqual(sub.used_cents, 0)
+        self.assertEqual(sub.quota_cents, 40000)
+        self.assertEqual(sub.period_start, now)
+        self.assertEqual(sub.period_end, now + timedelta(days=30))
+        self.assertEqual(sub.paid_until, now + timedelta(days=30))
+
+    def test_serialize_marks_same_tier_purchase_as_reset_when_quota_is_depleted(self):
+        now = datetime(2026, 5, 10, 12, 0, 0)
+        sub = SimpleNamespace(
+            id="sub_1",
+            user_id="u_1",
+            plan_id="monthly_basic",
+            status="active",
+            period_start=datetime(2026, 5, 1, 12, 0, 0),
+            period_end=datetime(2026, 5, 31, 12, 0, 0),
+            paid_until=datetime(2026, 5, 31, 12, 0, 0),
+            quota_cents=40000,
+            used_cents=40000,
+        )
+        user = SimpleNamespace(id="u_1", balance=0, referred_by=None, status="active")
+        snapshot = serialize_billing_state(sub, [], user, now=now)
+        basic = next(item for item in snapshot["products"]["monthly"] if item["id"] == "monthly_basic")
+
+        self.assertEqual(basic["purchase_action"], "reset")
+        self.assertEqual(basic["pay_money"], "199.00")
 
     async def test_lower_tier_purchase_is_rejected(self):
         now = datetime(2026, 5, 10, 12, 0, 0)
@@ -115,7 +166,7 @@ class SubscriptionBillingTests(unittest.IsolatedAsyncioTestCase):
             await validate_product_purchase(
                 user_id="u_1",
                 product=MONTHLY_BY_ID["monthly_light"],
-                money="29.90",
+                money="49.90",
                 db=db,
                 now=now,
             )
@@ -130,7 +181,7 @@ class SubscriptionBillingTests(unittest.IsolatedAsyncioTestCase):
             period_start=datetime(2026, 5, 1, 12, 0, 0),
             period_end=datetime(2026, 5, 31, 12, 0, 0),
             paid_until=datetime(2026, 5, 31, 12, 0, 0),
-            quota_cents=7500,
+            quota_cents=8000,
             used_cents=2500,
         )
         user = SimpleNamespace(id="u_1", balance=0, referred_by=None, status="active")
@@ -138,18 +189,18 @@ class SubscriptionBillingTests(unittest.IsolatedAsyncioTestCase):
         basic = next(item for item in snapshot["products"]["monthly"] if item["id"] == "monthly_basic")
 
         self.assertEqual(basic["purchase_action"], "upgrade")
-        self.assertEqual(basic["pay_money"], "66.07")
+        self.assertEqual(basic["pay_money"], "99.40")
 
         db = _FakeDB(execute_results=[_EntityResult(sub)])
         normalized_money = await validate_product_purchase(
             user_id="u_1",
             product=MONTHLY_BY_ID["monthly_basic"],
-            money="66.07",
+            money="99.40",
             db=db,
             now=now,
         )
 
-        self.assertEqual(normalized_money, "66.07")
+        self.assertEqual(normalized_money, "99.40")
 
     async def test_addon_requires_active_subscription_and_grants_180_days(self):
         now = datetime(2026, 5, 10, 12, 0, 0)
@@ -190,8 +241,8 @@ class SubscriptionBillingTests(unittest.IsolatedAsyncioTestCase):
             period_start=datetime(2026, 5, 1, 12, 0, 0),
             period_end=datetime(2026, 5, 31, 12, 0, 0),
             paid_until=datetime(2026, 5, 31, 12, 0, 0),
-            quota_cents=7500,
-            used_cents=7000,
+            quota_cents=8000,
+            used_cents=7500,
         )
         pack = SimpleNamespace(
             id="tp_1",
@@ -210,7 +261,7 @@ class SubscriptionBillingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["subscription_cents"], 500)
         self.assertEqual(result["traffic_pack_cents"], 800)
         self.assertEqual(result["legacy_cents"], 300)
-        self.assertEqual(sub.used_cents, 7500)
+        self.assertEqual(sub.used_cents, 8000)
         self.assertEqual(pack.remaining_cents, 0)
         self.assertEqual(pack.status, "depleted")
         self.assertEqual(user.balance, 700)
@@ -225,7 +276,7 @@ class SubscriptionBillingTests(unittest.IsolatedAsyncioTestCase):
             period_start=datetime(2026, 5, 1, 12, 0, 0),
             period_end=datetime(2026, 5, 31, 12, 0, 0),
             paid_until=datetime(2026, 5, 31, 12, 0, 0),
-            quota_cents=38000,
+            quota_cents=40000,
             used_cents=1000,
         )
         active_pack = SimpleNamespace(
@@ -233,7 +284,7 @@ class SubscriptionBillingTests(unittest.IsolatedAsyncioTestCase):
             user_id="u_1",
             product_id="addon_boost",
             status="active",
-            original_cents=28000,
+            original_cents=30000,
             remaining_cents=12000,
             expires_at=datetime(2026, 8, 1, 0, 0, 0),
             created_at=datetime(2026, 5, 2, 0, 0, 0),
@@ -243,7 +294,7 @@ class SubscriptionBillingTests(unittest.IsolatedAsyncioTestCase):
             user_id="u_1",
             product_id="addon_project",
             status="depleted",
-            original_cents=110000,
+            original_cents=100000,
             remaining_cents=0,
             expires_at=datetime(2026, 7, 1, 0, 0, 0),
             created_at=datetime(2026, 5, 1, 0, 0, 0),
