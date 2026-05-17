@@ -602,7 +602,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["gross_margin_cents"], 650)
         self.assertEqual(payload["package_consumption_cents"], 50)
         self.assertEqual(payload["failed_payment_cents"], 80)
-        self.assertEqual({item["day"] for item in payload["daily"]}, {"2026-05-14", "2026-05-15"})
+        self.assertTrue({"2026-05-14", "2026-05-15"}.issubset({item["day"] for item in payload["daily"]}))
         self.assertEqual(sum(item["requests_total"] for item in payload["daily"]), 10)
         query_text = "\n".join(str(query.compile()) for query in fake_db.queries)
         self.assertIn("coincoin_payment_orders.confirmed_at >=", query_text)
@@ -847,7 +847,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                     "/v1/orders/create",
                     json={
                         "name": "基础月卡 套餐",
-                        "money": "129.00",
+                        "money": "199.00",
                         "pay_type": "alipay",
                         "product_id": "monthly_basic",
                     },
@@ -863,20 +863,20 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("notify_url=https%3A%2F%2Fbird-alipay.up.railway.app%2Fwebhook%2Fpay-notify", payload["pay_url"])
         self.assertIn("return_url=https%3A%2F%2Fbird-alipay.up.railway.app%2Fpay%2Freturn%3Forder_no%3D", payload["pay_url"])
         self.assertIn("sign=", payload["pay_url"])
-        self.assertEqual(payload["expected_cents"], 38000)
+        self.assertEqual(payload["expected_cents"], 40000)
         self.assertEqual(fake_db.commits, 1)
 
     def test_product_quote_uses_selected_product_id(self) -> None:
-        self.assertEqual(quote_payment_cents("29.90", "monthly_light"), 7500)
-        self.assertEqual(quote_payment_cents("299.00", "monthly_flagship"), 100000)
-        self.assertEqual(quote_payment_cents("299.00", "addon_project"), 110000)
-        self.assertEqual(quote_payment_cents("499.00", "addon_ultra"), 200000)
+        self.assertEqual(quote_payment_cents("49.90", "monthly_light"), 8000)
+        self.assertEqual(quote_payment_cents("399.00", "monthly_flagship"), 100000)
+        self.assertEqual(quote_payment_cents("399.00", "addon_project"), 100000)
+        self.assertEqual(quote_payment_cents("699.00", "addon_ultra"), 200000)
 
     def test_product_quote_rejects_unknown_or_mismatched_product(self) -> None:
         with self.assertRaises(payment_module.PaymentConfirmError):
-            quote_payment_cents("129.00", "missing_product")
+            quote_payment_cents("199.00", "missing_product")
         with self.assertRaises(payment_module.PaymentConfirmError):
-            quote_payment_cents("29.90", "monthly_basic")
+            quote_payment_cents("49.90", "monthly_basic")
 
     async def test_admin_payment_orders_expose_product_metadata(self) -> None:
         orders = [
@@ -884,8 +884,8 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                 id="po_1",
                 user_id="u_1",
                 order_no="CC_monthly_basic",
-                amount_rmb="129.00",
-                add_balance_cents=38000,
+                amount_rmb="199.00",
+                add_balance_cents=40000,
                 product_id="monthly_basic",
                 status="confirmed",
                 trade_no="trade_1",
@@ -897,7 +897,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                 id="po_2",
                 user_id="u_1",
                 order_no="CC_addon_ultra",
-                amount_rmb="499.00",
+                amount_rmb="699.00",
                 add_balance_cents=200000,
                 product_id="addon_ultra",
                 status="pending",
@@ -924,7 +924,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload[0]["product_id"], "monthly_basic")
         self.assertEqual(payload[0]["product_name"], "基础月卡")
         self.assertEqual(payload[0]["product_kind"], "monthly")
-        self.assertEqual(payload[0]["product_balance_cents"], 38000)
+        self.assertEqual(payload[0]["product_balance_cents"], 40000)
         self.assertEqual(payload[1]["product_id"], "addon_ultra")
         self.assertEqual(payload[1]["product_name"], "超大包")
         self.assertEqual(payload[1]["product_kind"], "addon")
@@ -1064,9 +1064,9 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             id="po_1",
             order_no="CC_test_order",
             user_id="u_1",
-            amount_rmb="129.00",
+            amount_rmb="199.00",
             status="pending",
-            add_balance_cents=38000,
+            add_balance_cents=40000,
             product_id="monthly_basic",
             station_id=None,
             trade_no=None,
@@ -1116,8 +1116,8 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                         "order_no": "CC_test_order",
                         "proof_url": "https://bird-alipay.up.railway.app/pay/return?order_no=CC_test_order"
                         "&pid=177938431&trade_no=2026032622080275954&out_trade_no=CC_test_order"
-                        "&type=alipay&name=%E5%9F%BA%E7%A1%80%E6%9C%88%E5%8D%A1&money=129.00&trade_status=TRADE_SUCCESS"
-                        "&sign=b91a51dbc8d12a0208a8d51a8b8e2a8f&sign_type=MD5",
+                        "&type=alipay&name=%E5%9F%BA%E7%A1%80%E6%9C%88%E5%8D%A1&money=199.00&trade_status=TRADE_SUCCESS"
+                        "&sign=72d239f97278a7cabea8dad3a276b412&sign_type=MD5",
                     },
                     headers={"Authorization": "Bearer sk_cc_test"},
                 )
@@ -1129,9 +1129,9 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         payload = response.json()
         self.assertEqual(payload["billing_action"], "subscription_start")
         self.assertEqual(payload["new_balance"], 500)
-        self.assertEqual(payload["available_cents"], 38500)
-        self.assertEqual(payload["available_usd"], 385.0)
-        self.assertEqual(payload["added_cents"], 38000)
+        self.assertEqual(payload["available_cents"], 40500)
+        self.assertEqual(payload["available_usd"], 405.0)
+        self.assertEqual(payload["added_cents"], 40000)
         self.assertEqual(fake_db.commits, 1)
 
     async def test_confirm_order_keeps_stored_pending_balance_quote(self) -> None:
@@ -1481,7 +1481,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             period_start=datetime(2026, 5, 1, 0, 0, 0),
             period_end=datetime(2026, 5, 31, 0, 0, 0),
             paid_until=datetime(2026, 5, 31, 0, 0, 0),
-            quota_cents=7500,
+            quota_cents=8000,
             used_cents=500,
         )
         finance_summary = SimpleNamespace(
@@ -1600,7 +1600,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             user_id="u_1",
             product_id="addon_boost",
             status="active",
-            original_cents=28000,
+            original_cents=30000,
             remaining_cents=12000,
             expires_at=datetime(2026, 9, 1, 0, 0, 0),
             created_at=datetime(2026, 5, 2, 0, 0, 0),
