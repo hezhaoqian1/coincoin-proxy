@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { describePublicModel, getBalance, getCachedInputPricePerMillion } from '../api/client'
+import { describePublicModel, getBalance, getCachedInputPricePerMillion, hasModelPricingMultiplier } from '../api/client'
 import AppShell from '../components/AppShell'
 import { useAuth } from '../hooks/useAuth'
 import { usePublicModels } from '../hooks/usePublicModels'
@@ -110,6 +110,13 @@ function formatImagePrice(cents) {
     const value = Number(cents || 0)
     if (!value) return '后台配置'
     return `$${(value / 100).toFixed(3)} / image`
+}
+
+function formatMultiplier(model) {
+    if (!hasModelPricingMultiplier(model)) return '默认'
+    const modelRatio = Number(model.coincoin_model_multiplier || 1).toFixed(2)
+    const outputRatio = Number(model.coincoin_output_multiplier || 1).toFixed(2)
+    return `${modelRatio}x · out ${outputRatio}x`
 }
 
 function getOfficialPricing(model) {
@@ -579,6 +586,7 @@ function ModelsAndPricing({ textModels, imageModels, defaultTextModel, defaultIm
                             <th>输入价格</th>
                             <th>输出价格</th>
                             <th>缓存读取</th>
+                            <th>倍率</th>
                             <th>官方对标</th>
                             <th>描述</th>
                             <th>状态</th>
@@ -599,6 +607,10 @@ function ModelsAndPricing({ textModels, imageModels, defaultTextModel, defaultIm
                                     <td className="price-cell">{formatUsdPerMillion(model.coincoin_price_input_per_million)}</td>
                                     <td className="price-cell">{formatUsdPerMillion(model.coincoin_price_output_per_million)}</td>
                                     <td className="price-cell">{formatUsdPerMillion(getCachedInputPricePerMillion(model), 3)}</td>
+                                    <td className="price-cell">
+                                        <span>{formatMultiplier(model)}</span>
+                                        {hasModelPricingMultiplier(model) && <small>基础 {formatUsdPerMillion(model.coincoin_base_price_input_per_million)}</small>}
+                                    </td>
                                     <td>
                                         {official ? (
                                             <div className="official-price-cell">
@@ -629,6 +641,7 @@ function ModelsAndPricing({ textModels, imageModels, defaultTextModel, defaultIm
                         <tr>
                             <th>模型名称</th>
                             <th>图片价格</th>
+                            <th>倍率</th>
                             <th>官方对标</th>
                             <th>描述</th>
                             <th>状态</th>
@@ -646,6 +659,7 @@ function ModelsAndPricing({ textModels, imageModels, defaultTextModel, defaultIm
                                         </div>
                                     </td>
                                     <td className="price-cell">{formatImagePrice(model.coincoin_price_per_image_cents)}</td>
+                                    <td className="price-cell">{formatMultiplier(model)}</td>
                                     <td>
                                         {official ? (
                                             <div className="official-price-cell">

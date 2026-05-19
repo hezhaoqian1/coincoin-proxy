@@ -131,6 +131,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         epay_module.settings.epay_site_name = "CoinCoin"
         admin_module._settings.model_alias_overrides_path = ""
         model_registry.clear_runtime_alias_overrides()
+        model_registry.clear_runtime_pricing_overrides()
         model_registry._initialized = False
 
     async def test_daily_usage_exposes_image_totals(self) -> None:
@@ -1772,6 +1773,105 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                 admin_module._settings.model_alias_overrides_path = originals["model_alias_overrides_path"]
                 app.dependency_overrides.pop(admin_module.get_db, None)
                 model_registry._initialized = False
+
+    async def test_admin_model_pricing_update_persists_db_override_and_refreshes_registry(self) -> None:
+        catalog = {
+            "default_text_model": "priced-a",
+            "models": [
+                {
+                    "id": "priced-a",
+                    "owned_by": "coincoin",
+                    "provider_name": "Google",
+                    "provider_model": "gemini-2.5-flash",
+                    "capabilities": ["chat/completions", "responses"],
+                    "routing_mode": "direct",
+                    "delivery_lane": "cpa_gemini",
+                    "upstream_model": "gemini-2.5-flash",
+                    "upstream_url": "https://gemini.example/v1",
+                    "api_key": "gemini-key",
+                    "auth_style": "bearer",
+                    "price_input_per_million": 100,
+                    "price_output_per_million": 200,
+                    "billable_sku": "priced-a-text",
+                }
+            ],
+        }
+        originals = {
+            "model_catalog_json": admin_module._settings.model_catalog_json,
+            "model_alias_overrides_path": admin_module._settings.model_alias_overrides_path,
+        }
+
+        class _PricingDB:
+            def __init__(self) -> None:
+                self.rows = []
+                self.added = []
+                self.commits = 0
+                self.execute_count = 0
+
+            async def execute(self, _query):
+                self.execute_count += 1
+                if self.execute_count in {1, 3}:
+                    return _FakeScalarsResult(self.rows)
+                if self.execute_count == 2:
+                    return _FakeEntityResult(None)
+                raise AssertionError("unexpected execute call")
+
+            def add(self, obj):
+                self.added.append(obj)
+                self.rows.append(obj)
+
+            async def commit(self):
+                self.commits += 1
+
+        fake_db = _PricingDB()
+
+        async def fake_get_db():
+            yield fake_db
+
+        try:
+            admin_module._settings.model_catalog_json = json.dumps(catalog)
+            admin_module._settings.model_alias_overrides_path = ""
+            model_registry._initialized = False
+            model_registry.init_from_settings()
+            app.dependency_overrides[admin_module.get_db] = fake_get_db
+            app.dependency_overrides[admin_module.admin_guard] = lambda: None
+
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                response = await client.patch(
+                    "/admin/model-pricing/priced-a",
+                    json={
+                        "model_multiplier": 1.5,
+                        "output_multiplier": 2,
+                        "cache_read_multiplier": 0.25,
+                    },
+                )
+
+            self.assertEqual(response.status_code, 200, response.text)
+            payload = response.json()
+            self.assertEqual(payload["id"], "priced-a")
+            self.assertTrue(payload["override_active"])
+            self.assertEqual(payload["model_multiplier"], 1.5)
+            self.assertEqual(payload["output_multiplier"], 2)
+            self.assertEqual(payload["cache_read_multiplier"], 0.25)
+            self.assertEqual(payload["price_input_per_million"], 150)
+            self.assertEqual(payload["price_output_per_million"], 600)
+
+            self.assertEqual(len(fake_db.added), 1)
+            self.assertEqual(fake_db.added[0].model_id, "priced-a")
+            self.assertEqual(fake_db.added[0].pricing_mode, "multiplier")
+            self.assertEqual(fake_db.added[0].price_version, 1)
+            self.assertEqual(fake_db.commits, 1)
+
+            resolved = model_registry.resolve_public_model("priced-a", "responses")
+            self.assertEqual(resolved.public_model.price_input_per_million, 150)
+            self.assertEqual(resolved.public_model.price_output_per_million, 600)
+        finally:
+            admin_module._settings.model_catalog_json = originals["model_catalog_json"]
+            admin_module._settings.model_alias_overrides_path = originals["model_alias_overrides_path"]
+            app.dependency_overrides.pop(admin_module.get_db, None)
+            model_registry.clear_runtime_pricing_overrides()
+            model_registry._initialized = False
 
     async def test_admin_model_alias_update_rejects_arbitrary_upstream_model(self) -> None:
         catalog = {

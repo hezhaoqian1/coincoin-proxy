@@ -93,6 +93,7 @@ def calculate_cost_cents(
     cached_tokens: int = 0,
     price_input_per_million: int = 0,
     price_output_per_million: int = 0,
+    cached_price_input_per_million: Optional[float] = None,
 ) -> float:
     """计算消费金额（单位：分，保留小数精度）
     
@@ -121,7 +122,10 @@ def calculate_cost_cents(
         ct = it
 
     non_cached = max(0, it - ct)
-    cached_price_in = price_in * discount
+    if cached_price_input_per_million is None:
+        cached_price_in = price_in * discount
+    else:
+        cached_price_in = max(0.0, float(cached_price_input_per_million or 0.0))
     input_cost = (non_cached * price_in + ct * cached_price_in) / 1_000_000
     output_cost = (int(output_tokens or 0) * price_out) / 1_000_000
     return input_cost + output_cost
@@ -216,6 +220,15 @@ class UsageBuffer:
         wholesale_cost_cents_override: Optional[float] = None,
         retail_charge_cents_override: Optional[float] = None,
         price_version: int = 0,
+        pricing_mode: str = "",
+        model_multiplier: float = 1.0,
+        output_multiplier: float = 1.0,
+        cache_read_multiplier: float = 0.0,
+        image_multiplier: float = 1.0,
+        base_price_input_per_million: int = 0,
+        base_price_output_per_million: int = 0,
+        base_price_per_image_cents: float = 0.0,
+        effective_cached_input_per_million: float = 0.0,
     ) -> None:
         """添加使用量（高性能，不阻塞请求）
         
@@ -256,6 +269,7 @@ class UsageBuffer:
                     cached_tokens=cache_read_tokens or cached_tokens,
                     price_input_per_million=price_input_per_million,
                     price_output_per_million=price_output_per_million,
+                    cached_price_input_per_million=effective_cached_input_per_million or None,
                 )
         else:
             cost_cents = float(cost_cents_override)
@@ -332,6 +346,15 @@ class UsageBuffer:
                 "wholesale_cost_cents": round(wholesale_cost_cents),
                 "retail_charge_cents": round(retail_charge_cents),
                 "price_version": int(price_version or 0),
+                "pricing_mode": (pricing_mode or "")[:32],
+                "model_multiplier": float(model_multiplier or 0.0),
+                "output_multiplier": float(output_multiplier or 0.0),
+                "cache_read_multiplier": float(cache_read_multiplier or 0.0),
+                "image_multiplier": float(image_multiplier or 0.0),
+                "base_price_input_per_million": int(base_price_input_per_million or 0),
+                "base_price_output_per_million": int(base_price_output_per_million or 0),
+                "base_price_per_image_cents": float(base_price_per_image_cents or 0.0),
+                "effective_cached_input_per_million": float(effective_cached_input_per_million or 0.0),
                 "cost_cents": round(cost_cents),
                 "duration_ms": int(duration_ms),
                 "status_code": int(status_code),
@@ -522,6 +545,15 @@ async def flush_once() -> None:
                         wholesale_cost_cents=log.get("wholesale_cost_cents", 0),
                         retail_charge_cents=log.get("retail_charge_cents", log["cost_cents"]),
                         price_version=log.get("price_version", 0),
+                        pricing_mode=log.get("pricing_mode", ""),
+                        model_multiplier=log.get("model_multiplier", 1.0),
+                        output_multiplier=log.get("output_multiplier", 1.0),
+                        cache_read_multiplier=log.get("cache_read_multiplier", 0.0),
+                        image_multiplier=log.get("image_multiplier", 1.0),
+                        base_price_input_per_million=log.get("base_price_input_per_million", 0),
+                        base_price_output_per_million=log.get("base_price_output_per_million", 0),
+                        base_price_per_image_cents=log.get("base_price_per_image_cents", 0.0),
+                        effective_cached_input_per_million=log.get("effective_cached_input_per_million", 0.0),
                         cost_cents=log["cost_cents"],
                         duration_ms=log["duration_ms"],
                         status_code=log["status_code"],

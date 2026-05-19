@@ -33,7 +33,7 @@ from .router import (
     build_model_cloak,
     registry as model_registry,
 )
-from .station_runtime import resolve_station_model_for_user, station_usage_kwargs
+from .station_runtime import resolve_station_model_for_user, usage_pricing_kwargs
 from .usage_buffer import (
     extract_cache_creation_tokens,
     extract_cache_read_tokens,
@@ -1206,7 +1206,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                 usage_unit_type="tokens",
                 billable_sku=public_model.billable_sku or display_model,
                 upstream_request_id=upstream_request_id,
-                **station_usage_kwargs(station_model),
+                **usage_pricing_kwargs(public_model, station_model),
             ))
 
         return StreamingResponse(
@@ -1264,7 +1264,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                         usage_unit_type="tokens",
                         billable_sku=public_model.billable_sku or display_model,
                         upstream_request_id=upstream_request_id,
-                        **station_usage_kwargs(station_model),
+                        **usage_pricing_kwargs(public_model, station_model),
                     ))
                 await upstream.aclose()
 
@@ -1349,7 +1349,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
         usage_unit_type="tokens",
         billable_sku=public_model.billable_sku or display_model,
         upstream_request_id=upstream_request_id,
-        **station_usage_kwargs(station_model),
+        **usage_pricing_kwargs(public_model, station_model),
     )
 
     return JSONResponse(content=response_body, status_code=upstream.status_code, headers=response_headers)

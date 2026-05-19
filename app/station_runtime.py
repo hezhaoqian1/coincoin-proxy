@@ -180,6 +180,35 @@ def station_usage_kwargs(station_model: StationResolvedModel | None) -> dict:
     }
 
 
+def public_model_pricing_kwargs(public_model: Any) -> dict:
+    if public_model is None:
+        return {}
+    return {
+        "pricing_mode": getattr(public_model, "pricing_mode", "") or "",
+        "model_multiplier": getattr(public_model, "model_multiplier", 1.0) or 1.0,
+        "output_multiplier": getattr(public_model, "output_multiplier", 1.0) or 1.0,
+        "cache_read_multiplier": getattr(public_model, "cache_read_multiplier", 0.0) or 0.0,
+        "image_multiplier": getattr(public_model, "image_multiplier", 1.0) or 1.0,
+        "base_price_input_per_million": getattr(public_model, "base_price_input_per_million", 0) or 0,
+        "base_price_output_per_million": getattr(public_model, "base_price_output_per_million", 0) or 0,
+        "base_price_per_image_cents": getattr(public_model, "base_price_per_image_cents", 0.0) or 0.0,
+        "effective_cached_input_per_million": getattr(public_model, "effective_cached_input_per_million", 0.0) or 0.0,
+        "price_version": getattr(public_model, "price_version", 0) or 0,
+    }
+
+
+def usage_pricing_kwargs(public_model: Any, station_model: StationResolvedModel | None = None) -> dict:
+    """Merge pricing audit fields for request logging.
+
+    Station pricebook versions keep their existing RequestLog.price_version
+    meaning, so station metadata intentionally wins over the public model
+    pricing version when both are present.
+    """
+    payload = public_model_pricing_kwargs(public_model)
+    payload.update(station_usage_kwargs(station_model))
+    return payload
+
+
 def calculate_station_wholesale_cost(
     *,
     station_model: StationResolvedModel | None,

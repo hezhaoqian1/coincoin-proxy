@@ -31,6 +31,7 @@ from .payment import router as payment_router
 from .config import settings
 from .db import Base, engine
 from .model_alias_overrides import get_model_alias_override_db_state, refresh_model_alias_registry_from_db
+from .model_pricing_overrides import get_model_pricing_override_db_state, refresh_model_pricing_registry_from_db
 from .system_settings import get_runtime_system_settings_db_state, refresh_runtime_system_settings_from_db
 from .usage_buffer import flush_loop, flush_once
 from .reconcile import reconcile_loop
@@ -119,6 +120,15 @@ async def _run_migrations(conn):
         ("coincoin_request_logs", "wholesale_cost_cents", "BIGINT DEFAULT 0"),
         ("coincoin_request_logs", "retail_charge_cents", "BIGINT DEFAULT 0"),
         ("coincoin_request_logs", "price_version", "BIGINT DEFAULT 0"),
+        ("coincoin_request_logs", "pricing_mode", "VARCHAR(32) DEFAULT ''"),
+        ("coincoin_request_logs", "model_multiplier", "DOUBLE DEFAULT 1"),
+        ("coincoin_request_logs", "output_multiplier", "DOUBLE DEFAULT 1"),
+        ("coincoin_request_logs", "cache_read_multiplier", "DOUBLE DEFAULT 0"),
+        ("coincoin_request_logs", "image_multiplier", "DOUBLE DEFAULT 1"),
+        ("coincoin_request_logs", "base_price_input_per_million", "BIGINT DEFAULT 0"),
+        ("coincoin_request_logs", "base_price_output_per_million", "BIGINT DEFAULT 0"),
+        ("coincoin_request_logs", "base_price_per_image_cents", "DOUBLE DEFAULT 0"),
+        ("coincoin_request_logs", "effective_cached_input_per_million", "DOUBLE DEFAULT 0"),
         ("coincoin_station_payout_batches", "payment_reference", "VARCHAR(128) DEFAULT ''"),
         ("coincoin_station_payout_batches", "payment_screenshot_url", "VARCHAR(512) DEFAULT ''"),
         ("coincoin_station_payout_batches", "payment_note", "TEXT NULL"),
@@ -352,6 +362,21 @@ async def _run_migrations(conn):
         )
         """,
         """
+        CREATE TABLE coincoin_model_pricing_overrides (
+            model_id VARCHAR(128) PRIMARY KEY,
+            model_multiplier DOUBLE DEFAULT 1,
+            output_multiplier DOUBLE DEFAULT 1,
+            cache_read_multiplier DOUBLE DEFAULT 0,
+            image_multiplier DOUBLE DEFAULT 1,
+            pricing_mode VARCHAR(32) DEFAULT 'multiplier',
+            price_version BIGINT DEFAULT 1,
+            updated_by VARCHAR(64) DEFAULT '',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX ix_model_pricing_overrides_updated_at (updated_at)
+        )
+        """,
+        """
         CREATE TABLE coincoin_station_aliases (
             id VARCHAR(32) PRIMARY KEY,
             station_id VARCHAR(32) NOT NULL,
@@ -501,6 +526,24 @@ async def model_alias_override_refresh_loop(interval_seconds: int):
         await asyncio.sleep(max(1, int(interval_seconds or 10)))
 
 
+async def model_pricing_override_refresh_loop(interval_seconds: int):
+    from .db import SessionLocal
+
+    logger = logging.getLogger("coincoin.model_pricing_overrides")
+    last_state = None
+    while True:
+        try:
+            async with SessionLocal() as db:
+                state = await get_model_pricing_override_db_state(db)
+                if state != last_state:
+                    await refresh_model_pricing_registry_from_db(db)
+                    last_state = state
+                    logger.info("refreshed model pricing overrides from database count=%s", state[0])
+        except Exception as exc:
+            logger.warning("failed to refresh model pricing overrides from database: %s", exc)
+        await asyncio.sleep(max(1, int(interval_seconds or 10)))
+
+
 async def runtime_system_settings_refresh_loop(interval_seconds: int):
     from .db import SessionLocal
 
@@ -531,6 +574,7 @@ async def lifespan(app: FastAPI):
         async with SessionLocal() as db:
             await refresh_runtime_system_settings_from_db(db)
             await refresh_model_alias_registry_from_db(db)
+            await refresh_model_pricing_registry_from_db(db)
     except Exception as exc:
         logging.getLogger("coincoin.model_alias_overrides").warning(
             "initial database runtime refresh failed: %s", exc
@@ -544,6 +588,9 @@ async def lifespan(app: FastAPI):
     alias_override_task = asyncio.create_task(
         model_alias_override_refresh_loop(settings.model_alias_overrides_refresh_interval)
     )
+    pricing_override_task = asyncio.create_task(
+        model_pricing_override_refresh_loop(settings.model_alias_overrides_refresh_interval)
+    )
     image_job_task = None
     if settings.image_jobs_enabled:
         image_job_task = asyncio.create_task(image_job_loop(settings.image_job_poll_interval))
@@ -556,6 +603,7 @@ async def lifespan(app: FastAPI):
         reconcile_task.cancel()
         runtime_system_settings_task.cancel()
         alias_override_task.cancel()
+        pricing_override_task.cancel()
         if image_job_task is not None:
             image_job_task.cancel()
         await flush_once()

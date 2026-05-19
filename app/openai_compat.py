@@ -32,7 +32,7 @@ from .router import (
     registry as model_registry,
 )
 from .schemas import BalanceResponse, ReferralCodeUpdateRequest
-from .station_runtime import resolve_station_model_for_user, station_usage_kwargs, user_station_context
+from .station_runtime import resolve_station_model_for_user, usage_pricing_kwargs, user_station_context
 from .usage_buffer import (
     china_today,
     extract_cache_creation_tokens,
@@ -106,7 +106,11 @@ def _serialize_public_model(public_model) -> Dict[str, Any]:
         default_for.append("embedding")
     if public_model.public_id == model_registry.default_image_model_id:
         default_for.append("image")
-    cached_input_price = round(float(public_model.price_input_per_million or 0) * float(settings.cache_discount_rate or 0), 4)
+    explicit_cached_price = getattr(public_model, "effective_cached_input_per_million", None)
+    cached_input_price = round(
+        float(explicit_cached_price if explicit_cached_price is not None else float(public_model.price_input_per_million or 0) * float(settings.cache_discount_rate or 0)),
+        4,
+    )
     return {
         "id": public_model.public_id,
         "object": "model",
@@ -122,6 +126,15 @@ def _serialize_public_model(public_model) -> Dict[str, Any]:
         "coincoin_price_cached_input_per_million": cached_input_price,
         "coincoin_price_output_per_million": public_model.price_output_per_million,
         "coincoin_price_per_image_cents": public_model.price_per_image_cents,
+        "coincoin_base_price_input_per_million": getattr(public_model, "base_price_input_per_million", 0),
+        "coincoin_base_price_output_per_million": getattr(public_model, "base_price_output_per_million", 0),
+        "coincoin_base_price_per_image_cents": getattr(public_model, "base_price_per_image_cents", 0.0),
+        "coincoin_pricing_mode": getattr(public_model, "pricing_mode", "explicit_price"),
+        "coincoin_model_multiplier": getattr(public_model, "model_multiplier", 1.0),
+        "coincoin_output_multiplier": getattr(public_model, "output_multiplier", 1.0),
+        "coincoin_cache_read_multiplier": getattr(public_model, "cache_read_multiplier", 0.0),
+        "coincoin_image_multiplier": getattr(public_model, "image_multiplier", 1.0),
+        "coincoin_price_version": getattr(public_model, "price_version", 0),
     }
 
 
@@ -960,7 +973,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                             usage_unit_type="tokens",
                             billable_sku=public_model.billable_sku or display_model,
                             upstream_request_id=extract_upstream_request_id(upstream.headers),
-                            **station_usage_kwargs(station_model),
+                            **usage_pricing_kwargs(public_model, station_model),
                         ))
 
             return StreamingResponse(
@@ -1021,7 +1034,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
             usage_unit_type="tokens",
             billable_sku=public_model.billable_sku or display_model,
             upstream_request_id=upstream_request_id,
-            **station_usage_kwargs(station_model),
+            **usage_pricing_kwargs(public_model, station_model),
         )
 
         data["model"] = display_model
@@ -1482,7 +1495,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                         usage_unit_type="tokens",
                         billable_sku=public_model.billable_sku or display_model,
                         upstream_request_id=extract_upstream_request_id(upstream.headers),
-                        **station_usage_kwargs(station_model),
+                        **usage_pricing_kwargs(public_model, station_model),
                     ))
         stream_headers = filter_headers(dict(upstream.headers))
         stream_headers.pop("content-length", None)
@@ -1622,7 +1635,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
             usage_unit_type="tokens",
             billable_sku=public_model.billable_sku or display_model,
             upstream_request_id=upstream_request_id,
-            **station_usage_kwargs(station_model),
+            **usage_pricing_kwargs(public_model, station_model),
         )
     else:
         import logging
@@ -1736,7 +1749,7 @@ async def _proxy_gemini_cpa_chat_completions(
             usage_unit_type="tokens",
             billable_sku=public_model.billable_sku or display_model,
             upstream_request_id=upstream_request_id,
-            **station_usage_kwargs(station_model),
+            **usage_pricing_kwargs(public_model, station_model),
         )
 
     if upstream.status_code >= 400:
@@ -1843,7 +1856,7 @@ async def embeddings(request: Request, db: AsyncSession = Depends(get_db)):
             usage_unit_type="tokens",
             billable_sku=public_model.billable_sku or display_model,
             upstream_request_id=upstream_request_id,
-            **station_usage_kwargs(station_model),
+            **usage_pricing_kwargs(public_model, station_model),
         )
 
     if isinstance(data, dict):

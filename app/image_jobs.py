@@ -18,6 +18,7 @@ from .db import SessionLocal, get_db
 from . import gemini_cpa
 from .models import ImageJob
 from .router import registry as model_registry
+from .station_runtime import public_model_pricing_kwargs
 from .usage_buffer import usage_buffer
 from .proxy import (
     _build_upstream_headers,
@@ -317,6 +318,7 @@ async def _process_image_edit_job(job_id: str) -> None:
         upstream_request_id=upstream_request_id,
         image_count=1,
         price_per_image_cents=public_model.price_per_image_cents,
+        **public_model_pricing_kwargs(public_model),
     )
     await _mark_job_completed(
         job_id,

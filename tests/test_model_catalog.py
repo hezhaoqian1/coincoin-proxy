@@ -208,6 +208,8 @@ class ModelCatalogTests(unittest.TestCase):
                         "upstream_url": "https://gemini-cpa.example/v1",
                         "api_key": "gemini-cpa-key",
                         "auth_style": "bearer",
+                        "price_input_per_million": 10,
+                        "price_output_per_million": 40,
                         "billable_sku": "gemini-fast-text",
                         "metadata": {"provider_platform": "cpa_gemini"},
                     },
@@ -237,6 +239,7 @@ class ModelCatalogTests(unittest.TestCase):
         for key, value in self._originals.items():
             setattr(settings, key, value)
         registry.clear_runtime_alias_overrides()
+        registry.clear_runtime_pricing_overrides()
         registry._initialized = False
 
     def test_default_text_model_keeps_legacy_public_alias(self) -> None:
@@ -265,6 +268,72 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertEqual(resolved.execution_profile, "cpa_gemini_direct")
         self.assertEqual(resolved.execution_pool, "cpa_gemini_direct_pool")
         self.assertEqual(resolved.route_reason, "catalog:gemini-fast:cpa_gemini")
+
+    def test_public_model_pricing_multiplier_compiles_effective_prices(self) -> None:
+        settings.model_catalog_json = json.dumps(
+            {
+                "default_text_model": "priced-fast",
+                "models": [
+                    {
+                        "id": "priced-fast",
+                        "owned_by": "coincoin",
+                        "provider_model": "gemini-2.5-flash",
+                        "capabilities": ["chat/completions", "responses"],
+                        "routing_mode": "direct",
+                        "delivery_lane": "cpa_gemini",
+                        "upstream_model": "gemini-2.5-flash",
+                        "upstream_url": "https://gemini-cpa.example/v1",
+                        "api_key": "gemini-cpa-key",
+                        "auth_style": "bearer",
+                        "price_input_per_million": 100,
+                        "price_output_per_million": 200,
+                        "pricing": {
+                            "model_multiplier": 1.5,
+                            "output_multiplier": 2,
+                            "cache_read_multiplier": 0.2,
+                            "price_version": 7,
+                        },
+                    }
+                ],
+            }
+        )
+        registry._initialized = False
+        registry.init_from_settings()
+
+        public_model = registry.get_public_model("priced-fast")
+
+        self.assertEqual(public_model.base_price_input_per_million, 100)
+        self.assertEqual(public_model.base_price_output_per_million, 200)
+        self.assertEqual(public_model.price_input_per_million, 150)
+        self.assertEqual(public_model.price_output_per_million, 600)
+        self.assertEqual(public_model.model_multiplier, 1.5)
+        self.assertEqual(public_model.output_multiplier, 2)
+        self.assertEqual(public_model.cache_read_multiplier, 0.2)
+        self.assertEqual(public_model.price_version, 7)
+
+    def test_runtime_pricing_override_changes_effective_prices_without_alias_route(self) -> None:
+        registry.set_runtime_pricing_overrides(
+            {
+                "gemini-fast": {
+                    "model_multiplier": 2,
+                    "output_multiplier": 1.5,
+                    "cache_read_multiplier": 0.25,
+                    "price_version": 3,
+                }
+            },
+            version=3,
+        )
+        registry._initialized = False
+
+        resolved = registry.resolve_public_model("gemini-fast", "responses")
+
+        self.assertEqual(resolved.public_model.price_input_per_million, 20)
+        self.assertEqual(resolved.public_model.price_output_per_million, 120)
+        self.assertEqual(resolved.public_model.model_multiplier, 2)
+        self.assertEqual(resolved.public_model.output_multiplier, 1.5)
+        self.assertEqual(resolved.public_model.cache_read_multiplier, 0.25)
+        self.assertEqual(resolved.public_model.price_version, 3)
+        self.assertEqual(resolved.public_model.provider_model, "gemini-2.5-flash")
 
     def test_runtime_alias_override_changes_upstream_without_editing_catalog(self) -> None:
         with tempfile.NamedTemporaryFile("w", encoding="utf-8") as override_file:

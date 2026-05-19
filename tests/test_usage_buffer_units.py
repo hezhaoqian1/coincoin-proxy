@@ -109,6 +109,42 @@ class UsageBufferUnitsTests(unittest.TestCase):
         self.assertEqual(request_logs[0]["cache_read_tokens"], 500_000)
         self.assertEqual(request_logs[0]["cache_creation_tokens"], 0)
 
+    def test_cached_tokens_can_use_model_specific_effective_price(self) -> None:
+        original_rate = settings.cache_discount_rate
+        settings.cache_discount_rate = 0.1
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        buffer = UsageBuffer()
+
+        async def scenario():
+            await buffer.add(
+                "u_cached_override",
+                input_tokens=1_000_000,
+                output_tokens=0,
+                cached_tokens=500_000,
+                requests=1,
+                endpoint="responses",
+                model="priced-fast",
+                customer_model_alias="priced-fast",
+                provider_model="gemini-2.5-flash",
+                usage_unit_type="tokens",
+                billable_sku="priced-fast-text",
+                price_input_per_million=100,
+                price_output_per_million=0,
+                effective_cached_input_per_million=25,
+            )
+            return await buffer.snapshot_and_reset()
+
+        try:
+            _, usage_by_user, request_logs = loop.run_until_complete(scenario())
+        finally:
+            settings.cache_discount_rate = original_rate
+            asyncio.set_event_loop(None)
+            loop.close()
+
+        self.assertAlmostEqual(usage_by_user["u_cached_override"]["cost_cents_f"], 62.5)
+        self.assertEqual(request_logs[0]["effective_cached_input_per_million"], 25)
+
     def test_cache_creation_tokens_are_tracked_without_extra_charge(self) -> None:
         original_rate = settings.cache_discount_rate
         settings.cache_discount_rate = 0.1
@@ -246,6 +282,53 @@ class UsageBufferUnitsTests(unittest.TestCase):
         self.assertEqual(request_logs[0]["provider_model"], "gemini-2.5-flash")
         self.assertEqual(request_logs[0]["usage_unit_type"], "tokens")
         self.assertEqual(request_logs[0]["usage_unit_count"], 1_500_000)
+
+    def test_records_pricing_snapshot_for_multiplier_audit(self) -> None:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        buffer = UsageBuffer()
+
+        async def scenario():
+            await buffer.add(
+                "u_pricing",
+                input_tokens=1_000_000,
+                output_tokens=1_000_000,
+                requests=1,
+                endpoint="responses",
+                model="priced-fast",
+                customer_model_alias="priced-fast",
+                provider_model="gemini-2.5-flash",
+                usage_unit_type="tokens",
+                billable_sku="priced-fast-text",
+                price_input_per_million=150,
+                price_output_per_million=600,
+                pricing_mode="multiplier",
+                model_multiplier=1.5,
+                output_multiplier=2,
+                cache_read_multiplier=0.2,
+                image_multiplier=1,
+                base_price_input_per_million=100,
+                base_price_output_per_million=200,
+                effective_cached_input_per_million=30,
+                price_version=7,
+            )
+            return await buffer.snapshot_and_reset()
+
+        try:
+            _, usage_by_user, request_logs = loop.run_until_complete(scenario())
+        finally:
+            asyncio.set_event_loop(None)
+            loop.close()
+
+        self.assertEqual(round(usage_by_user["u_pricing"]["cost_cents_f"]), 750)
+        self.assertEqual(request_logs[0]["pricing_mode"], "multiplier")
+        self.assertEqual(request_logs[0]["model_multiplier"], 1.5)
+        self.assertEqual(request_logs[0]["output_multiplier"], 2)
+        self.assertEqual(request_logs[0]["cache_read_multiplier"], 0.2)
+        self.assertEqual(request_logs[0]["base_price_input_per_million"], 100)
+        self.assertEqual(request_logs[0]["base_price_output_per_million"], 200)
+        self.assertEqual(request_logs[0]["effective_cached_input_per_million"], 30)
+        self.assertEqual(request_logs[0]["price_version"], 7)
 
 
 if __name__ == "__main__":
