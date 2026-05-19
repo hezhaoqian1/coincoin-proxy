@@ -1155,6 +1155,10 @@
             <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h10M4 17h10M18 5l3 2-3 2M18 15l3 2-3 2"/></svg>
             模型路由
           </div>
+          <div class="nav-item" data-page="model-pricing">
+            <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 19V5m0 14h16M8 16V9m4 7V7m4 9v-4"/></svg>
+            模型定价
+          </div>
           <div class="nav-item" data-page="stations">
             <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 21h18M5 21V7l8-4 6 3v15M9 10h1m3 0h1M9 14h1m3 0h1M9 18h1m3 0h1"/></svg>
             站长管理
@@ -1603,6 +1607,41 @@
                   </tr>
                 </thead>
                 <tbody id="modelAliasesBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- =============== Model Pricing =============== -->
+      <div id="page-model-pricing" class="page">
+        <div class="page-header">
+          <h1 class="page-title">模型定价</h1>
+          <p class="page-desc">这里调整平台公开模型的计费倍率。模型路由不变，用户看到的价格和实际扣费会按这里的倍率重新计算。</p>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <span class="card-title">平台模型倍率</span>
+              <div class="text-sm text-muted" id="modelPricingSummary">加载中...</div>
+            </div>
+            <button class="btn btn-secondary" onclick="loadModelPricing()">刷新</button>
+          </div>
+          <div class="card-body flush">
+            <div class="table-wrapper">
+              <table>
+                <thead>
+                  <tr>
+                    <th>模型</th>
+                    <th>通道</th>
+                    <th>基础价</th>
+                    <th>倍率</th>
+                    <th>实际价</th>
+                    <th>版本</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="modelPricingBody"></tbody>
               </table>
             </div>
           </div>
@@ -2156,6 +2195,48 @@
     </div>
   </div>
 
+  <!-- Model Pricing Modal -->
+  <div id="modelPricingModal" class="modal-overlay">
+    <div class="modal" style="max-width:620px">
+      <div class="modal-header">
+        <span class="modal-title" id="modelPricingModalTitle">调整模型倍率</span>
+        <button class="modal-close" onclick="closeModal('modelPricingModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">当前价格</label>
+          <div id="modelPricingCurrent" class="code-display" style="white-space:normal;word-break:break-word"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px">
+          <div class="form-group">
+            <label class="form-label">模型倍率</label>
+            <input type="number" id="modelPricingModelMultiplier" class="form-input" min="0" step="0.01" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">输出倍率</label>
+            <input type="number" id="modelPricingOutputMultiplier" class="form-input" min="0" step="0.01" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">缓存读取倍率</label>
+            <input type="number" id="modelPricingCacheMultiplier" class="form-input" min="0" step="0.01" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">图片倍率</label>
+            <input type="number" id="modelPricingImageMultiplier" class="form-input" min="0" step="0.01" />
+          </div>
+        </div>
+        <div class="form-help">实际文本输入价 = 基础输入价 × 模型倍率；实际输出价 = 基础输出价 × 模型倍率 × 输出倍率。</div>
+      </div>
+      <div class="modal-footer" style="justify-content:space-between">
+        <button class="btn btn-danger" onclick="clearModelPricingOverride()">恢复默认定价</button>
+        <div class="flex gap-2">
+          <button class="btn btn-secondary" onclick="closeModal('modelPricingModal')">取消</button>
+          <button class="btn btn-primary" onclick="saveModelPricingOverride()">保存倍率</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Generate Codes Modal -->
   <div id="generateCodesModal" class="modal-overlay">
     <div class="modal">
@@ -2476,6 +2557,8 @@
     let stationPayoutBatchCache = [];
     let modelAliasCache = [];
     let currentModelAliasId = null;
+    let modelPricingCache = [];
+    let currentModelPricingId = null;
     let claudeCompatSettingsCache = null;
     const ADMIN_TRAFFIC_PACK_VALID_DAYS = 180;
     const ADMIN_MONTHLY_PRODUCTS = [
@@ -2506,6 +2589,7 @@
         'finance-summary': loadFinanceSummary,
         keys: loadAllKeys,
         'model-aliases': loadModelAliases,
+        'model-pricing': loadModelPricing,
         stations: loadStations,
         'station-applications': loadStationApplications,
         'station-commission': loadStationCommissionLedger,
@@ -3395,6 +3479,138 @@
         return `<div>${escapeHtml(provider)}</div><div class="text-sm text-muted">当前实际转发模型</div>`;
       }
       return `<div>${escapeHtml(provider)}</div><div class="text-sm text-muted">实际请求名：${escapeHtml(upstream)}</div>`;
+    }
+
+    function formatAdminCents(cents, precision = 2) {
+      const value = Number(cents || 0);
+      if (!value) return '-';
+      return `$${(value / 100).toFixed(precision)}`;
+    }
+
+    function formatAdminImageCents(cents) {
+      const value = Number(cents || 0);
+      if (!value) return '-';
+      return `$${(value / 100).toFixed(3)}`;
+    }
+
+    function renderPricingBase(model) {
+      if ((model.capabilities || []).some(cap => String(cap).startsWith('images/'))) {
+        return `<div>${formatAdminImageCents(model.base_price_per_image_cents)} / image</div>`;
+      }
+      return `<div>入 ${formatAdminCents(model.base_price_input_per_million)} / 1M</div><div class="text-sm text-muted">出 ${formatAdminCents(model.base_price_output_per_million)} / 1M</div>`;
+    }
+
+    function renderPricingEffective(model) {
+      if ((model.capabilities || []).some(cap => String(cap).startsWith('images/'))) {
+        return `<div>${formatAdminImageCents(model.price_per_image_cents)} / image</div>`;
+      }
+      return `<div>入 ${formatAdminCents(model.price_input_per_million)} / 1M</div><div class="text-sm text-muted">缓存 ${formatAdminCents(model.effective_cached_input_per_million, 3)} · 出 ${formatAdminCents(model.price_output_per_million)} / 1M</div>`;
+    }
+
+    function renderPricingMultipliers(model) {
+      return `<div>模型 ${Number(model.model_multiplier || 1).toFixed(2)}x · 输出 ${Number(model.output_multiplier || 1).toFixed(2)}x</div><div class="text-sm text-muted">缓存 ${Number(model.cache_read_multiplier || 0).toFixed(2)}x · 图片 ${Number(model.image_multiplier || 1).toFixed(2)}x</div>`;
+    }
+
+    async function loadModelPricing() {
+      try {
+        const r = await fetch('/admin/model-pricing', { headers: adminHeaders() });
+        if (!r.ok) return toast('加载模型定价失败', 'error');
+        const d = await r.json();
+        modelPricingCache = d.models || [];
+        const body = document.getElementById('modelPricingBody');
+        document.getElementById('modelPricingSummary').textContent = `${modelPricingCache.length} 个公开模型，${d.override_count || 0} 个使用自定义倍率`;
+        if (!modelPricingCache.length) {
+          body.innerHTML = '<tr><td colspan="7"><div class="empty-state"><div class="empty-state-icon">M</div><h3>暂无模型定价</h3><p>公开目录加载后会显示在这里</p></div></td></tr>';
+          return;
+        }
+        body.innerHTML = modelPricingCache.map(model => `
+          <tr>
+            <td><strong>${escapeHtml(model.id)}</strong><div class="text-sm text-muted">${escapeHtml(model.billable_sku || '-')}</div></td>
+            <td><div>${escapeHtml(renderAliasDeliveryLane(model.delivery_lane || '-'))}</div><div class="text-sm text-muted">${escapeHtml(model.provider_model || model.provider_name || '-')}</div></td>
+            <td>${renderPricingBase(model)}</td>
+            <td>${renderPricingMultipliers(model)}</td>
+            <td>${renderPricingEffective(model)}</td>
+            <td><span class="badge ${model.override_active ? 'badge-info' : 'badge-success'}">${model.override_active ? `v${model.price_version || 0}` : '默认'}</span></td>
+            <td><button class="btn btn-sm btn-secondary" onclick="openModelPricingModal('${escapeHtml(model.id)}')">调整</button></td>
+          </tr>
+        `).join('');
+      } catch (e) {
+        console.error(e);
+        toast('加载模型定价失败', 'error');
+      }
+    }
+
+    async function openModelPricingModal(modelId) {
+      currentModelPricingId = modelId;
+      try {
+        const r = await fetch(`/admin/model-pricing/${encodeURIComponent(modelId)}`, { headers: adminHeaders() });
+        const model = await r.json();
+        if (!r.ok) return toast(model.detail || '加载失败', 'error');
+        document.getElementById('modelPricingModalTitle').textContent = `调整 ${model.id}`;
+        document.getElementById('modelPricingCurrent').innerHTML = `
+          <div><strong>基础价：</strong>${renderPricingBase(model)}</div>
+          <div style="margin-top:6px"><strong>当前实际价：</strong>${renderPricingEffective(model)}</div>
+          <div class="text-sm text-muted" style="margin-top:6px">当前倍率：${renderPricingMultipliers(model)}</div>
+        `;
+        document.getElementById('modelPricingModelMultiplier').value = Number(model.model_multiplier || 1);
+        document.getElementById('modelPricingOutputMultiplier').value = Number(model.output_multiplier || 1);
+        document.getElementById('modelPricingCacheMultiplier').value = Number(model.cache_read_multiplier || 0);
+        document.getElementById('modelPricingImageMultiplier').value = Number(model.image_multiplier || 1);
+        openModal('modelPricingModal');
+      } catch (e) {
+        console.error(e);
+        toast('加载失败', 'error');
+      }
+    }
+
+    function readPricingNumber(id) {
+      const value = Number(document.getElementById(id).value);
+      return Number.isFinite(value) && value >= 0 ? value : null;
+    }
+
+    async function saveModelPricingOverride() {
+      if (!currentModelPricingId) return;
+      const payload = {
+        model_multiplier: readPricingNumber('modelPricingModelMultiplier'),
+        output_multiplier: readPricingNumber('modelPricingOutputMultiplier'),
+        cache_read_multiplier: readPricingNumber('modelPricingCacheMultiplier'),
+        image_multiplier: readPricingNumber('modelPricingImageMultiplier')
+      };
+      if (Object.values(payload).some(value => value === null)) return toast('倍率必须是非负数字', 'error');
+      try {
+        const r = await fetch(`/admin/model-pricing/${encodeURIComponent(currentModelPricingId)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+          body: JSON.stringify(payload)
+        });
+        const d = await r.json();
+        if (!r.ok) return toast(d.detail || '保存失败', 'error');
+        closeModal('modelPricingModal');
+        toast('模型定价已更新', 'success');
+        loadModelPricing();
+        loadOpsHealth();
+      } catch (e) {
+        console.error(e);
+        toast('保存失败', 'error');
+      }
+    }
+
+    async function clearModelPricingOverride() {
+      if (!currentModelPricingId || !confirm(`恢复 ${currentModelPricingId} 的默认定价？`)) return;
+      try {
+        const r = await fetch(`/admin/model-pricing/${encodeURIComponent(currentModelPricingId)}`, {
+          method: 'DELETE',
+          headers: adminHeaders()
+        });
+        const d = await r.json();
+        if (!r.ok) return toast(d.detail || '恢复失败', 'error');
+        closeModal('modelPricingModal');
+        toast('已恢复默认定价', 'success');
+        loadModelPricing();
+      } catch (e) {
+        console.error(e);
+        toast('恢复失败', 'error');
+      }
     }
 
     function renderClaudeCompatProviderLabel(provider) {

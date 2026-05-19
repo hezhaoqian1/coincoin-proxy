@@ -30,7 +30,7 @@ from .security import extract_api_key, hash_key
 from .station_runtime import (
     resolve_station_model_for_user,
     station_context_for_user,
-    station_usage_kwargs,
+    usage_pricing_kwargs,
 )
 from .router import (
     CLAUDE_COMPAT_PROVIDER_KIRO_GO,
@@ -1886,7 +1886,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                             usage_unit_type="tokens",
                             billable_sku=public_model.billable_sku or display_model,
                             upstream_request_id=extract_upstream_request_id(upstream.headers),
-                            **station_usage_kwargs(station_model),
+                            **usage_pricing_kwargs(public_model, station_model),
                         ))
 
             return StreamingResponse(
@@ -1967,7 +1967,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             usage_unit_type="tokens",
             billable_sku=public_model.billable_sku or display_model,
             upstream_request_id=upstream_request_id,
-            **station_usage_kwargs(station_model),
+            **usage_pricing_kwargs(public_model, station_model),
         )
         return JSONResponse(content=response_payload, status_code=upstream.status_code, headers=response_headers)
 
@@ -2223,7 +2223,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                         usage_unit_type="tokens",
                         billable_sku=public_model.billable_sku or display_model,
                         upstream_request_id=upstream_request_id,
-                        **station_usage_kwargs(station_model),
+                        **usage_pricing_kwargs(public_model, station_model),
                     ))
 
         stream_headers = filter_headers(dict(upstream.headers))
@@ -2417,7 +2417,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             usage_unit_type="tokens",
             billable_sku=public_model.billable_sku or display_model,
             upstream_request_id=upstream_request_id,
-            **station_usage_kwargs(station_model),
+            **usage_pricing_kwargs(public_model, station_model),
         )
     elif isinstance(data, (dict, str)):
         logger.error("upstream error %s: %s", upstream.status_code, str(data)[:500])
@@ -2583,7 +2583,7 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
                 upstream_request_id=upstream_request_id,
                 image_count=image_count,
                 price_per_image_cents=price_per_image_cents,
-                **station_usage_kwargs(station_model),
+                **usage_pricing_kwargs(public_model, station_model),
             )
             return _stream_upstream_response(
                 upstream,
@@ -2661,7 +2661,7 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
             upstream_request_id=upstream_request_id,
             image_count=image_count,
             price_per_image_cents=price_per_image_cents,
-            **station_usage_kwargs(station_model),
+            **usage_pricing_kwargs(public_model, station_model),
         )
     elif isinstance(data, (dict, str)):
         logger.error("image upstream error %s: %s", upstream.status_code, str(data)[:500])
@@ -2819,7 +2819,7 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
                 upstream_request_id=upstream_request_id,
                 image_count=image_count,
                 price_per_image_cents=price_per_image_cents,
-                **station_usage_kwargs(station_model),
+                **usage_pricing_kwargs(public_model, station_model),
             )
             return _stream_upstream_response(
                 upstream,
@@ -3011,7 +3011,7 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
                 upstream_request_id=upstream_request_id,
                 image_count=image_count,
                 price_per_image_cents=price_per_image_cents,
-                **station_usage_kwargs(station_model),
+                **usage_pricing_kwargs(public_model, station_model),
             )
             return _stream_upstream_response(
                 upstream,
@@ -3060,7 +3060,7 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
             upstream_request_id=upstream_request_id,
             image_count=image_count,
             price_per_image_cents=price_per_image_cents,
-            **station_usage_kwargs(station_model),
+            **usage_pricing_kwargs(public_model, station_model),
         )
     elif isinstance(data, (dict, str)):
         logger.error("image edit upstream error %s: %s", upstream.status_code, str(data)[:500])

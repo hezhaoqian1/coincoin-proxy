@@ -684,6 +684,13 @@ export function getCachedInputPricePerMillion(model) {
     return input > 0 ? input * 0.1 : 0
 }
 
+export function hasModelPricingMultiplier(model) {
+    return Number(model?.coincoin_model_multiplier || 1) !== 1
+        || Number(model?.coincoin_output_multiplier || 1) !== 1
+        || Number(model?.coincoin_image_multiplier || 1) !== 1
+        || model?.coincoin_pricing_mode === 'multiplier'
+}
+
 export function formatModelPrice(model) {
     if (isImageCapableModel(model)) {
         const cents = model?.coincoin_price_per_image_cents || 0

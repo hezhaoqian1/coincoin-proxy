@@ -22,6 +22,7 @@ from .models import (
     ApiKey,
     BillingLedgerEntry,
     ModelAliasOverride,
+    ModelPricingOverride,
     SystemSetting,
     PaymentOrder,
     RechargeLog,
@@ -46,9 +47,10 @@ from .schemas import (
     AdminKeyUpdate, AdminPaymentManualConfirmRequest, AdminSubscriptionAdjustRequest,
     AdminTrafficPackGrantRequest, AdminTrafficPackUpdateRequest, AdminUserPasswordResetRequest,
     AdminUserPasswordResetResponse, AdminUserUpdate,
-    AdminClaudeCompatSettingsUpdate, AdminModelAliasUpdate, AnnouncementCreate, AnnouncementUpdate,
+    AdminClaudeCompatSettingsUpdate, AdminModelAliasUpdate, AdminModelPricingUpdate, AnnouncementCreate, AnnouncementUpdate,
     RedemptionGenerateRequest, RedemptionGenerateResponse,
 )
+from .model_pricing_overrides import refresh_model_pricing_registry_from_db
 from .system_settings import (
     CLAUDE_COMPAT_PROVIDER_KEY,
     apply_runtime_system_setting,
@@ -198,6 +200,35 @@ def _matching_target_by_models(alias_id: str, provider_model: str, upstream_mode
         if candidate_provider == provider_model and candidate_upstream == upstream_model:
             return candidate
     return None
+
+
+def _pricing_payload(model_id: str):
+    model = model_registry.get_public_model(model_id)
+    if not model:
+        return None
+    return {
+        "id": model.public_id,
+        "owned_by": model.owned_by,
+        "provider_name": model.provider_name,
+        "provider_model": model.provider_model,
+        "delivery_lane": model.delivery_lane,
+        "capabilities": list(model.capabilities),
+        "billable_sku": model.billable_sku,
+        "base_price_input_per_million": model.base_price_input_per_million,
+        "base_price_output_per_million": model.base_price_output_per_million,
+        "base_price_per_image_cents": model.base_price_per_image_cents,
+        "price_input_per_million": model.price_input_per_million,
+        "price_output_per_million": model.price_output_per_million,
+        "price_per_image_cents": model.price_per_image_cents,
+        "effective_cached_input_per_million": model.effective_cached_input_per_million,
+        "pricing_mode": model.pricing_mode,
+        "model_multiplier": model.model_multiplier,
+        "output_multiplier": model.output_multiplier,
+        "cache_read_multiplier": model.cache_read_multiplier,
+        "image_multiplier": model.image_multiplier,
+        "price_version": model.price_version,
+        "override_active": model.public_id in model_registry.pricing_overrides,
+    }
 
 
 def admin_guard(request: Request):
@@ -734,6 +765,74 @@ async def clear_model_alias_override(alias_id: str, db: AsyncSession = Depends(g
     payload = _alias_payload(alias_id)
     if not payload:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="alias not found")
+    return payload
+
+
+@router.get("/model-pricing", dependencies=[Depends(admin_guard)])
+async def list_model_pricing(db: AsyncSession = Depends(get_db)):
+    await refresh_model_pricing_registry_from_db(db)
+    models = [_pricing_payload(model.public_id) for model in model_registry.list_public_models()]
+    models = [model for model in models if model is not None]
+    return {
+        "models": models,
+        "override_count": sum(1 for item in models if item.get("override_active")),
+    }
+
+
+@router.get("/model-pricing/{model_id}", dependencies=[Depends(admin_guard)])
+async def get_model_pricing(model_id: str, db: AsyncSession = Depends(get_db)):
+    await refresh_model_pricing_registry_from_db(db)
+    payload = _pricing_payload(model_id)
+    if not payload:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="model not found")
+    return payload
+
+
+@router.patch("/model-pricing/{model_id}", dependencies=[Depends(admin_guard)])
+async def update_model_pricing(model_id: str, payload: AdminModelPricingUpdate, db: AsyncSession = Depends(get_db)):
+    await refresh_model_pricing_registry_from_db(db)
+    if not model_registry.get_public_model(model_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="model not found")
+    if not payload.model_fields_set:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="no pricing fields provided")
+
+    existing = (
+        await db.execute(select(ModelPricingOverride).where(ModelPricingOverride.model_id == model_id))
+    ).scalar_one_or_none()
+    if existing is None:
+        existing = ModelPricingOverride(model_id=model_id)
+        db.add(existing)
+    if payload.model_multiplier is not None:
+        existing.model_multiplier = float(payload.model_multiplier)
+    if payload.output_multiplier is not None:
+        existing.output_multiplier = float(payload.output_multiplier)
+    if payload.cache_read_multiplier is not None:
+        existing.cache_read_multiplier = float(payload.cache_read_multiplier)
+    if payload.image_multiplier is not None:
+        existing.image_multiplier = float(payload.image_multiplier)
+    existing.pricing_mode = "multiplier"
+    existing.price_version = int(existing.price_version or 0) + 1
+    existing.updated_by = "admin"
+    await db.commit()
+    await refresh_model_pricing_registry_from_db(db)
+    updated = _pricing_payload(model_id)
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="pricing update failed")
+    return updated
+
+
+@router.delete("/model-pricing/{model_id}", dependencies=[Depends(admin_guard)])
+async def clear_model_pricing(model_id: str, db: AsyncSession = Depends(get_db)):
+    existing = (
+        await db.execute(select(ModelPricingOverride).where(ModelPricingOverride.model_id == model_id))
+    ).scalar_one_or_none()
+    if existing is not None:
+        await db.delete(existing)
+        await db.commit()
+    await refresh_model_pricing_registry_from_db(db)
+    payload = _pricing_payload(model_id)
+    if not payload:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="model not found")
     return payload
 
 

@@ -167,6 +167,15 @@ class AdminModelAliasUpdate(BaseModel):
     enabled: Optional[bool] = None
 
 
+class AdminModelPricingUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    model_multiplier: Optional[float] = Field(default=None, ge=0)
+    output_multiplier: Optional[float] = Field(default=None, ge=0)
+    cache_read_multiplier: Optional[float] = Field(default=None, ge=0)
+    image_multiplier: Optional[float] = Field(default=None, ge=0)
+
+
 class AdminClaudeCompatSettingsUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

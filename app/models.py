@@ -114,6 +114,15 @@ class RequestLog(Base):
     wholesale_cost_cents: Mapped[int] = mapped_column(BigInteger, default=0)
     retail_charge_cents: Mapped[int] = mapped_column(BigInteger, default=0)
     price_version: Mapped[int] = mapped_column(BigInteger, default=0)
+    pricing_mode: Mapped[str] = mapped_column(String(32), default="")
+    model_multiplier: Mapped[float] = mapped_column(Float, default=1.0)
+    output_multiplier: Mapped[float] = mapped_column(Float, default=1.0)
+    cache_read_multiplier: Mapped[float] = mapped_column(Float, default=0.0)
+    image_multiplier: Mapped[float] = mapped_column(Float, default=1.0)
+    base_price_input_per_million: Mapped[int] = mapped_column(BigInteger, default=0)
+    base_price_output_per_million: Mapped[int] = mapped_column(BigInteger, default=0)
+    base_price_per_image_cents: Mapped[float] = mapped_column(Float, default=0.0)
+    effective_cached_input_per_million: Mapped[float] = mapped_column(Float, default=0.0)
     cost_cents: Mapped[int] = mapped_column(BigInteger, default=0)  # 费用（分）
     duration_ms: Mapped[int] = mapped_column(BigInteger, default=0)  # 响应耗时（毫秒）
     status_code: Mapped[int] = mapped_column(BigInteger, default=200)  # 上游响应状态码
@@ -247,6 +256,24 @@ class ModelAliasOverride(Base):
     provider_model: Mapped[str] = mapped_column(String(128), default="")
     upstream_model: Mapped[str] = mapped_column(String(128), default="")
     enabled: Mapped[int] = mapped_column(BigInteger, default=1)
+    updated_by: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), index=True
+    )
+
+
+class ModelPricingOverride(Base):
+    """Runtime public-model pricing override. Hot request path reads an in-memory snapshot."""
+    __tablename__ = "coincoin_model_pricing_overrides"
+
+    model_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    model_multiplier: Mapped[float] = mapped_column(Float, default=1.0)
+    output_multiplier: Mapped[float] = mapped_column(Float, default=1.0)
+    cache_read_multiplier: Mapped[float] = mapped_column(Float, default=0.0)
+    image_multiplier: Mapped[float] = mapped_column(Float, default=1.0)
+    pricing_mode: Mapped[str] = mapped_column(String(32), default="multiplier")
+    price_version: Mapped[int] = mapped_column(BigInteger, default=1)
     updated_by: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

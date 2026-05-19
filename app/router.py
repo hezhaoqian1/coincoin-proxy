@@ -39,9 +39,19 @@ class PublicModelConfig:
     upstream_url: str = ""
     api_key: str = ""
     auth_style: str = "bearer"
+    base_price_input_per_million: int = 0
+    base_price_output_per_million: int = 0
+    base_price_per_image_cents: float = 0.0
     price_input_per_million: int = 0
     price_output_per_million: int = 0
     price_per_image_cents: float = 0.0
+    effective_cached_input_per_million: float = 0.0
+    pricing_mode: str = "explicit_price"
+    model_multiplier: float = 1.0
+    output_multiplier: float = 1.0
+    cache_read_multiplier: float = 0.0
+    image_multiplier: float = 1.0
+    price_version: int = 0
     billable_sku: str = ""
     created: int = 1700000000
     strip_unsupported: bool = False
@@ -195,6 +205,11 @@ def _as_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def _non_negative_float(value: Any, default: float = 1.0) -> float:
+    parsed = _as_float(value, default)
+    return parsed if parsed >= 0 else default
+
+
 def _lookup_placeholder(name: str, default: str = "") -> str:
     env_value = os.getenv(name)
     if env_value not in (None, ""):
@@ -337,6 +352,10 @@ class ModelRegistry:
         self._runtime_alias_override_version: int = 0
         self._raw_public_models: Dict[str, Dict[str, Any]] = {}
         self._alias_override_state: Tuple[str, int] = ("", -1)
+        self.pricing_overrides: Dict[str, Dict[str, Any]] = {}
+        self._runtime_pricing_overrides: Optional[Dict[str, Dict[str, Any]]] = None
+        self._runtime_pricing_override_version: int = 0
+        self._pricing_override_state: Tuple[str, int] = ("", -1)
         self._runtime_system_settings: Optional[Dict[str, Any]] = None
         self._runtime_system_settings_version: int = 0
         self._system_settings_state_snapshot: Tuple[str, int] = ("env", 0)
@@ -349,6 +368,7 @@ class ModelRegistry:
         self._init_legacy_backends()
         self._init_public_catalog()
         self._alias_override_state = self._current_alias_override_state()
+        self._pricing_override_state = self._current_pricing_override_state()
         self._system_settings_state_snapshot = self._current_system_settings_state()
         self._initialized = True
 
@@ -502,6 +522,11 @@ class ModelRegistry:
             return {}
         return _safe_alias_overrides(_resolve_placeholders(_load_json_file(_catalog_path(raw_path))))
 
+    def _load_pricing_overrides(self) -> Dict[str, Dict[str, Any]]:
+        if self._runtime_pricing_overrides is not None:
+            return {key: dict(value or {}) for key, value in self._runtime_pricing_overrides.items()}
+        return {}
+
     def _apply_alias_overrides(self, raw_models: List[Any]) -> List[Any]:
         self.alias_overrides = self._load_alias_overrides()
         if not self.alias_overrides:
@@ -516,6 +541,51 @@ class ModelRegistry:
             override = self.alias_overrides.get(public_id)
             result.append({**raw, **override} if override else raw)
         return result
+
+    def _pricing_for_raw_model(self, public_id: str, raw: Dict[str, Any]) -> Dict[str, Any]:
+        pricing = raw.get("pricing") if isinstance(raw.get("pricing"), dict) else {}
+        override = self.pricing_overrides.get(public_id) or {}
+        return {**pricing, **override}
+
+    def _compile_prices(self, public_id: str, raw: Dict[str, Any], routing_mode: str) -> Dict[str, Any]:
+        default_price_input = settings.price_input_per_million if routing_mode == "legacy_auto" else 0
+        default_price_output = settings.price_output_per_million if routing_mode == "legacy_auto" else 0
+        base_input = _as_int(raw.get("price_input_per_million"), default_price_input)
+        base_output = _as_int(raw.get("price_output_per_million"), default_price_output)
+        base_image = _as_float(raw.get("price_per_image_cents"), 0.0)
+        pricing = self._pricing_for_raw_model(public_id, raw)
+
+        model_multiplier = _non_negative_float(pricing.get("model_multiplier"), 1.0)
+        output_multiplier = _non_negative_float(pricing.get("output_multiplier"), 1.0)
+        cache_default = _as_float(getattr(settings, "cache_discount_rate", 0.0), 0.0)
+        cache_read_multiplier = _non_negative_float(pricing.get("cache_read_multiplier"), cache_default)
+        image_multiplier = _non_negative_float(pricing.get("image_multiplier"), 1.0)
+        has_multiplier = any(
+            key in pricing
+            for key in ("model_multiplier", "output_multiplier", "cache_read_multiplier", "image_multiplier")
+        )
+        pricing_mode = str(pricing.get("pricing_mode") or ("multiplier" if has_multiplier else "explicit_price")).strip() or "explicit_price"
+
+        effective_input = round(base_input * model_multiplier)
+        effective_output = round(base_output * model_multiplier * output_multiplier)
+        effective_image = base_image * image_multiplier
+        effective_cached = round(effective_input * cache_read_multiplier, 4)
+
+        return {
+            "base_price_input_per_million": base_input,
+            "base_price_output_per_million": base_output,
+            "base_price_per_image_cents": base_image,
+            "price_input_per_million": effective_input,
+            "price_output_per_million": effective_output,
+            "price_per_image_cents": effective_image,
+            "effective_cached_input_per_million": effective_cached,
+            "pricing_mode": pricing_mode,
+            "model_multiplier": model_multiplier,
+            "output_multiplier": output_multiplier,
+            "cache_read_multiplier": cache_read_multiplier,
+            "image_multiplier": image_multiplier,
+            "price_version": _as_int(pricing.get("price_version"), 0),
+        }
 
     def _build_public_model(self, raw: Dict[str, Any]) -> Optional[PublicModelConfig]:
         public_id = str(raw.get("id") or "").strip()
@@ -564,8 +634,7 @@ class ModelRegistry:
                 metadata = {**metadata, "claude_compat_provider": CLAUDE_COMPAT_PROVIDER_KIRO_GO}
             else:
                 metadata = {**metadata, "claude_compat_provider": CLAUDE_COMPAT_PROVIDER_UPSTREAM_DIRECT}
-        default_price_input = settings.price_input_per_million if routing_mode == "legacy_auto" else 0
-        default_price_output = settings.price_output_per_million if routing_mode == "legacy_auto" else 0
+        prices = self._compile_prices(public_id, raw, routing_mode)
 
         return PublicModelConfig(
             public_id=public_id,
@@ -579,9 +648,19 @@ class ModelRegistry:
             upstream_url=upstream_url,
             api_key=api_key,
             auth_style=auth_style,
-            price_input_per_million=_as_int(raw.get("price_input_per_million"), default_price_input),
-            price_output_per_million=_as_int(raw.get("price_output_per_million"), default_price_output),
-            price_per_image_cents=_as_float(raw.get("price_per_image_cents"), 0.0),
+            base_price_input_per_million=prices["base_price_input_per_million"],
+            base_price_output_per_million=prices["base_price_output_per_million"],
+            base_price_per_image_cents=prices["base_price_per_image_cents"],
+            price_input_per_million=prices["price_input_per_million"],
+            price_output_per_million=prices["price_output_per_million"],
+            price_per_image_cents=prices["price_per_image_cents"],
+            effective_cached_input_per_million=prices["effective_cached_input_per_million"],
+            pricing_mode=prices["pricing_mode"],
+            model_multiplier=prices["model_multiplier"],
+            output_multiplier=prices["output_multiplier"],
+            cache_read_multiplier=prices["cache_read_multiplier"],
+            image_multiplier=prices["image_multiplier"],
+            price_version=prices["price_version"],
             billable_sku=str(raw.get("billable_sku") or public_id).strip() or public_id,
             created=_as_int(raw.get("created"), 1700000000),
             strip_unsupported=_as_bool(raw.get("strip_unsupported"), False),
@@ -597,6 +676,7 @@ class ModelRegistry:
         raw_models = document.get("models")
         if not isinstance(raw_models, list):
             raw_models = []
+        self.pricing_overrides = self._load_pricing_overrides()
         raw_models = self._apply_alias_overrides(raw_models)
 
         for raw in raw_models:
@@ -674,6 +754,7 @@ class ModelRegistry:
         if (
             not self._initialized
             or self._alias_override_state != self._current_alias_override_state()
+            or self._pricing_override_state != self._current_pricing_override_state()
             or self._system_settings_state_snapshot != self._current_system_settings_state()
         ):
             self.init_from_settings()
@@ -689,6 +770,11 @@ class ModelRegistry:
             return (str(path), path.stat().st_mtime_ns)
         except OSError:
             return (str(path), -1)
+
+    def _current_pricing_override_state(self) -> Tuple[str, int]:
+        if self._runtime_pricing_overrides is not None:
+            return ("runtime", self._runtime_pricing_override_version)
+        return ("", -1)
 
     def _system_settings_state(self) -> Tuple[str, int]:
         if self._runtime_system_settings is not None:
@@ -706,6 +792,20 @@ class ModelRegistry:
     def clear_runtime_alias_overrides(self) -> None:
         self._runtime_alias_overrides = None
         self._runtime_alias_override_version = 0
+        self._initialized = False
+
+    def set_runtime_pricing_overrides(self, overrides: Dict[str, Dict[str, Any]], version: int = 0) -> None:
+        self._runtime_pricing_overrides = {
+            str(key or "").strip(): dict(value or {})
+            for key, value in (overrides or {}).items()
+            if str(key or "").strip()
+        }
+        self._runtime_pricing_override_version = int(version or 0)
+        self._initialized = False
+
+    def clear_runtime_pricing_overrides(self) -> None:
+        self._runtime_pricing_overrides = None
+        self._runtime_pricing_override_version = 0
         self._initialized = False
 
     def set_runtime_system_settings(self, runtime_settings: Dict[str, Any], version: int = 0) -> None:
@@ -778,6 +878,19 @@ class ModelRegistry:
                 "upstream_model": (model.upstream_model if model else str(raw.get("upstream_model") or "")),
                 "capabilities": list(capabilities),
                 "billable_sku": (model.billable_sku if model else str(raw.get("billable_sku") or model_id)),
+                "base_price_input_per_million": (model.base_price_input_per_million if model else _as_int(raw.get("price_input_per_million"), 0)),
+                "base_price_output_per_million": (model.base_price_output_per_million if model else _as_int(raw.get("price_output_per_million"), 0)),
+                "base_price_per_image_cents": (model.base_price_per_image_cents if model else _as_float(raw.get("price_per_image_cents"), 0.0)),
+                "price_input_per_million": (model.price_input_per_million if model else _as_int(raw.get("price_input_per_million"), 0)),
+                "price_output_per_million": (model.price_output_per_million if model else _as_int(raw.get("price_output_per_million"), 0)),
+                "price_per_image_cents": (model.price_per_image_cents if model else _as_float(raw.get("price_per_image_cents"), 0.0)),
+                "effective_cached_input_per_million": (model.effective_cached_input_per_million if model else 0.0),
+                "pricing_mode": (model.pricing_mode if model else "explicit_price"),
+                "model_multiplier": (model.model_multiplier if model else 1.0),
+                "output_multiplier": (model.output_multiplier if model else 1.0),
+                "cache_read_multiplier": (model.cache_read_multiplier if model else _as_float(getattr(settings, "cache_discount_rate", 0.0), 0.0)),
+                "image_multiplier": (model.image_multiplier if model else 1.0),
+                "price_version": (model.price_version if model else 0),
             }
             aliases.append(alias)
         return aliases
