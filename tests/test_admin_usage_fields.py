@@ -716,6 +716,98 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["by_model"][0]["model"], "gpt-5.4")
         self.assertEqual(payload["recent"][0]["user"], "alice")
 
+    async def test_admin_model_latency_diagnostics_breaks_down_slow_model(self) -> None:
+        summary = SimpleNamespace(
+            min_latency_ms=1200,
+            avg_latency_ms=53712,
+            max_latency_ms=90000,
+            tokens=1054898,
+            user_charge_cents=197,
+        )
+        user_row = SimpleNamespace(
+            user_id="u_slow",
+            username="slow-user",
+            email=None,
+            external_id=None,
+            requests=2,
+            avg_latency_ms=60000,
+            max_latency_ms=90000,
+            user_charge_cents=120,
+        )
+        route_row = SimpleNamespace(
+            route_reason="catalog:gpt-5.3-codex:legacy_explicit",
+            requests=2,
+            avg_latency_ms=60000,
+            max_latency_ms=90000,
+            failed_requests=0,
+        )
+        endpoint_row = SimpleNamespace(
+            endpoint="responses",
+            requests=2,
+            avg_latency_ms=60000,
+            max_latency_ms=90000,
+        )
+        hourly_row = SimpleNamespace(
+            hour="2026-05-24 00:00:00",
+            requests=2,
+            avg_latency_ms=60000,
+            max_latency_ms=90000,
+        )
+        slow_log = SimpleNamespace(
+            created_at=datetime(2026, 5, 24, 0, 10, 0),
+            user_id="u_slow",
+            endpoint="responses",
+            model="gpt-5.3-codex",
+            provider_model="gpt-5.3-codex",
+            customer_model_alias="gpt-5.3-codex",
+            billable_sku="legacy-gpt-5.3-codex-text",
+            duration_ms=90000,
+            status_code=200,
+            route_reason="catalog:gpt-5.3-codex:legacy_explicit",
+            input_tokens=1000,
+            output_tokens=200,
+            cost_cents=120,
+            upstream_request_id="req_slow",
+        )
+        user = SimpleNamespace(username="slow-user", email=None, external_id=None, id="u_slow")
+        fake_db = _FakeDB(
+            execute_results=[
+                _FakeSummaryResult(summary),
+                _FakeAllResult([(1200,), (60000,), (90000,)]),
+                _FakeAllResult([user_row]),
+                _FakeAllResult([route_row]),
+                _FakeAllResult([endpoint_row]),
+                _FakeAllResult([(slow_log, user)]),
+                _FakeAllResult([(slow_log, user)]),
+                _FakeAllResult([hourly_row]),
+            ],
+            scalar_results=[3, 0, 3, 2, 1],
+        )
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get(
+                "/admin/model-latency-diagnostics?period=today&model=gpt-5.3-codex&limit=5"
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["model"], "gpt-5.3-codex")
+        self.assertEqual(payload["period_label"], "近24小时")
+        self.assertEqual(payload["summary"]["requests"], 3)
+        self.assertEqual(payload["summary"]["avg_latency_ms"], 53712)
+        self.assertEqual(payload["summary"]["p95_latency_ms"], 90000)
+        self.assertEqual(payload["summary"]["slow_counts"]["ge_60s"], 1)
+        self.assertEqual(payload["by_user"][0]["display_name"], "slow-user")
+        self.assertEqual(payload["by_route"][0]["route_reason"], "catalog:gpt-5.3-codex:legacy_explicit")
+        self.assertEqual(payload["slow_requests"][0]["upstream_request_id"], "req_slow")
+
     async def test_manual_payment_confirm_credits_pending_order_from_proof_url(self) -> None:
         admin_module._settings.epay_api_url = "https://code.nxslq.top/"
         admin_module._settings.epay_pid = "177938431"
