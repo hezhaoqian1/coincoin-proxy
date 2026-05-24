@@ -1996,6 +1996,254 @@ async def analytics_usage_structure(
     }
 
 
+@router.get("/model-latency-diagnostics", dependencies=[Depends(admin_guard)])
+async def analytics_model_latency_diagnostics(
+    model: str,
+    period: str = "today",
+    limit: int = 20,
+    db: AsyncSession = Depends(get_db),
+):
+    period, days, start_day, since = _analytics_period(period)
+    model = (model or "").strip()
+    if not model:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="model is required")
+    limit = max(1, min(limit, 100))
+    match_condition = (
+        (RequestLog.model == model)
+        | (RequestLog.provider_model == model)
+        | (RequestLog.customer_model_alias == model)
+        | (RequestLog.billable_sku == model)
+    )
+    filtered = (RequestLog.created_at >= since, match_condition)
+
+    total = int(
+        await db.scalar(
+            select(func.count()).select_from(RequestLog).where(*filtered)
+        )
+        or 0
+    )
+    failed = int(
+        await db.scalar(
+            select(func.count()).select_from(RequestLog).where(*filtered, RequestLog.status_code >= 400)
+        )
+        or 0
+    )
+    summary = (
+        await db.execute(
+            select(
+                func.coalesce(func.min(RequestLog.duration_ms), 0).label("min_latency_ms"),
+                func.coalesce(func.avg(RequestLog.duration_ms), 0).label("avg_latency_ms"),
+                func.coalesce(func.max(RequestLog.duration_ms), 0).label("max_latency_ms"),
+                func.coalesce(func.sum(RequestLog.input_tokens + RequestLog.output_tokens), 0).label("tokens"),
+                func.coalesce(func.sum(RequestLog.cost_cents), 0).label("user_charge_cents"),
+            ).where(*filtered)
+        )
+    ).first()
+
+    latency_points = [
+        int(row[0] or 0)
+        for row in (
+            await db.execute(
+                select(RequestLog.duration_ms)
+                .where(*filtered)
+                .order_by(RequestLog.duration_ms.asc())
+            )
+        ).all()
+    ]
+
+    def percentile(values: list[int], pct: float) -> Optional[int]:
+        if not values:
+            return None
+        index = min(len(values) - 1, max(0, int(round((len(values) - 1) * pct))))
+        return values[index]
+
+    slow_thresholds = [
+        ("ge_12s", 12000),
+        ("ge_30s", 30000),
+        ("ge_60s", 60000),
+    ]
+    slow_counts = {
+        key: int(
+            await db.scalar(
+                select(func.count()).select_from(RequestLog).where(*filtered, RequestLog.duration_ms >= threshold)
+            )
+            or 0
+        )
+        for key, threshold in slow_thresholds
+    }
+
+    user_rows = (
+        await db.execute(
+            select(
+                RequestLog.user_id.label("user_id"),
+                User.username.label("username"),
+                User.email.label("email"),
+                User.external_id.label("external_id"),
+                func.count(RequestLog.id).label("requests"),
+                func.coalesce(func.avg(RequestLog.duration_ms), 0).label("avg_latency_ms"),
+                func.coalesce(func.max(RequestLog.duration_ms), 0).label("max_latency_ms"),
+                func.coalesce(func.sum(RequestLog.cost_cents), 0).label("user_charge_cents"),
+            )
+            .join(User, RequestLog.user_id == User.id)
+            .where(*filtered)
+            .group_by(RequestLog.user_id, User.username, User.email, User.external_id)
+            .order_by(func.avg(RequestLog.duration_ms).desc())
+            .limit(limit)
+        )
+    ).all()
+
+    route_rows = (
+        await db.execute(
+            select(
+                RequestLog.route_reason.label("route_reason"),
+                func.count(RequestLog.id).label("requests"),
+                func.coalesce(func.avg(RequestLog.duration_ms), 0).label("avg_latency_ms"),
+                func.coalesce(func.max(RequestLog.duration_ms), 0).label("max_latency_ms"),
+                func.coalesce(func.sum(case((RequestLog.status_code >= 400, 1), else_=0)), 0).label("failed_requests"),
+            )
+            .where(*filtered)
+            .group_by(RequestLog.route_reason)
+            .order_by(func.count(RequestLog.id).desc())
+            .limit(limit)
+        )
+    ).all()
+
+    endpoint_rows = (
+        await db.execute(
+            select(
+                RequestLog.endpoint.label("endpoint"),
+                func.count(RequestLog.id).label("requests"),
+                func.coalesce(func.avg(RequestLog.duration_ms), 0).label("avg_latency_ms"),
+                func.coalesce(func.max(RequestLog.duration_ms), 0).label("max_latency_ms"),
+            )
+            .where(*filtered)
+            .group_by(RequestLog.endpoint)
+            .order_by(func.count(RequestLog.id).desc())
+            .limit(limit)
+        )
+    ).all()
+
+    recent_rows = (
+        await db.execute(
+            select(RequestLog, User)
+            .join(User, RequestLog.user_id == User.id)
+            .where(*filtered)
+            .order_by(RequestLog.created_at.desc())
+            .limit(limit)
+        )
+    ).all()
+    slow_rows = (
+        await db.execute(
+            select(RequestLog, User)
+            .join(User, RequestLog.user_id == User.id)
+            .where(*filtered)
+            .order_by(RequestLog.duration_ms.desc())
+            .limit(limit)
+        )
+    ).all()
+
+    hourly_rows = (
+        await db.execute(
+            select(
+                func.date_format(RequestLog.created_at, "%Y-%m-%d %H:00:00").label("hour"),
+                func.count(RequestLog.id).label("requests"),
+                func.coalesce(func.avg(RequestLog.duration_ms), 0).label("avg_latency_ms"),
+                func.coalesce(func.max(RequestLog.duration_ms), 0).label("max_latency_ms"),
+            )
+            .where(*filtered)
+            .group_by(func.date_format(RequestLog.created_at, "%Y-%m-%d %H:00:00"))
+            .order_by(func.date_format(RequestLog.created_at, "%Y-%m-%d %H:00:00").desc())
+            .limit(24)
+        )
+    ).all()
+
+    def serialize_log(row) -> dict:
+        log, user = row
+        return {
+            "created_at": log.created_at,
+            "user_id": log.user_id,
+            "user": _display_name(user.username, getattr(user, "email", None), user.external_id, user.id),
+            "endpoint": log.endpoint,
+            "model": getattr(log, "customer_model_alias", "") or log.model,
+            "provider_model": getattr(log, "provider_model", "") or log.model,
+            "billable_sku": getattr(log, "billable_sku", "") or log.model,
+            "duration_ms": log.duration_ms,
+            "status_code": log.status_code,
+            "route_reason": getattr(log, "route_reason", ""),
+            "input_tokens": log.input_tokens,
+            "output_tokens": log.output_tokens,
+            "cost_cents": log.cost_cents,
+            "upstream_request_id": getattr(log, "upstream_request_id", ""),
+        }
+
+    return {
+        "period": period,
+        "days": days,
+        **_analytics_period_fields(period, days, start_day, since),
+        "model": model,
+        "summary": {
+            "requests": total,
+            "failed_requests": failed,
+            "failure_rate": _safe_rate(failed, total),
+            "min_latency_ms": int(float(_row_value(summary, "min_latency_ms", 0) or 0)),
+            "avg_latency_ms": int(float(_row_value(summary, "avg_latency_ms", 0) or 0)),
+            "p50_latency_ms": percentile(latency_points, 0.50),
+            "p90_latency_ms": percentile(latency_points, 0.90),
+            "p95_latency_ms": percentile(latency_points, 0.95),
+            "max_latency_ms": int(float(_row_value(summary, "max_latency_ms", 0) or 0)),
+            "tokens": int(_row_value(summary, "tokens", 0) or 0),
+            "user_charge_cents": int(_row_value(summary, "user_charge_cents", 0) or 0),
+            "slow_counts": slow_counts,
+        },
+        "by_user": [
+            {
+                "user_id": _row_value(row, "user_id", ""),
+                "display_name": _display_name(
+                    _row_value(row, "username", None),
+                    _row_value(row, "email", None),
+                    _row_value(row, "external_id", None),
+                    _row_value(row, "user_id", ""),
+                ),
+                "requests": int(_row_value(row, "requests", 0) or 0),
+                "avg_latency_ms": int(float(_row_value(row, "avg_latency_ms", 0) or 0)),
+                "max_latency_ms": int(float(_row_value(row, "max_latency_ms", 0) or 0)),
+                "user_charge_cents": int(_row_value(row, "user_charge_cents", 0) or 0),
+            }
+            for row in user_rows
+        ],
+        "by_route": [
+            {
+                "route_reason": _row_value(row, "route_reason", "") or "-",
+                "requests": int(_row_value(row, "requests", 0) or 0),
+                "avg_latency_ms": int(float(_row_value(row, "avg_latency_ms", 0) or 0)),
+                "max_latency_ms": int(float(_row_value(row, "max_latency_ms", 0) or 0)),
+                "failed_requests": int(_row_value(row, "failed_requests", 0) or 0),
+            }
+            for row in route_rows
+        ],
+        "by_endpoint": [
+            {
+                "endpoint": _row_value(row, "endpoint", "") or "-",
+                "requests": int(_row_value(row, "requests", 0) or 0),
+                "avg_latency_ms": int(float(_row_value(row, "avg_latency_ms", 0) or 0)),
+                "max_latency_ms": int(float(_row_value(row, "max_latency_ms", 0) or 0)),
+            }
+            for row in endpoint_rows
+        ],
+        "hourly": [
+            {
+                "hour": _row_value(row, "hour", ""),
+                "requests": int(_row_value(row, "requests", 0) or 0),
+                "avg_latency_ms": int(float(_row_value(row, "avg_latency_ms", 0) or 0)),
+                "max_latency_ms": int(float(_row_value(row, "max_latency_ms", 0) or 0)),
+            }
+            for row in hourly_rows
+        ],
+        "slow_requests": [serialize_log(row) for row in slow_rows],
+        "recent_requests": [serialize_log(row) for row in recent_rows],
+    }
+
+
 @router.get("/analytics/channel-health", dependencies=[Depends(admin_guard)])
 async def analytics_channel_health(period: str = "today", db: AsyncSession = Depends(get_db)):
     period, days, _start_day, since = _analytics_period(period)
