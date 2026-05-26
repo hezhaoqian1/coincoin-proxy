@@ -55,6 +55,7 @@ _CONTENT_KEYS = frozenset({
     "text", "content", "output", "arguments", "instructions",
     "description", "name", "url", "title",
 })
+_PROTOCOL_ENCRYPTED_KEYS = frozenset({"encrypted_content"})
 
 
 def _is_encrypted_blob(v: str) -> bool:
@@ -95,6 +96,8 @@ def _sanitize_encrypted_ids(payload: dict) -> None:
             to_delete: list[str] = []
             for k, v in obj.items():
                 if isinstance(v, str) and _is_encrypted_blob(v):
+                    if k in _PROTOCOL_ENCRYPTED_KEYS:
+                        continue
                     if k in _CONTENT_KEYS:
                         obj[k] = ""
                     elif k == "call_id":
