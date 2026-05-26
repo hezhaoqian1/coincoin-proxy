@@ -1177,6 +1177,61 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(upstream_client.calls[0]["json"]["reasoning"]["effort"], "high")
         add_usage.assert_awaited_once()
 
+    async def test_responses_preserves_reasoning_encrypted_content_upstream(self) -> None:
+        encrypted_content = "gAAAAAB_reasoning_state"
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "resp_reasoning_state",
+                        "status": "completed",
+                        "output": [
+                            {
+                                "type": "message",
+                                "role": "assistant",
+                                "content": [{"type": "output_text", "text": "OK"}],
+                            }
+                        ],
+                        "usage": {"input_tokens": 3, "output_tokens": 1, "total_tokens": 4},
+                    }
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(proxy_module.usage_buffer, "add", AsyncMock()):
+                response = await client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={
+                        "model": "gpt-5.3-codex",
+                        "input": [
+                            {
+                                "type": "message",
+                                "role": "user",
+                                "content": [{"type": "input_text", "text": "Reply with only: OK"}],
+                            },
+                            {
+                                "id": "rs_gAAAAAB_internal_reasoning_id",
+                                "type": "reasoning",
+                                "summary": [],
+                                "encrypted_content": encrypted_content,
+                                "status": "completed",
+                            },
+                        ],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        upstream_input = upstream_client.calls[0]["json"]["input"]
+        self.assertEqual(upstream_input[1]["encrypted_content"], encrypted_content)
+        self.assertNotIn("id", upstream_input[1])
+
     async def test_responses_gpt_5_4_with_tools_collapses_stream_tool_calls(self) -> None:
         settings.router_enabled = False
         settings.primary_auth_style = "bearer"

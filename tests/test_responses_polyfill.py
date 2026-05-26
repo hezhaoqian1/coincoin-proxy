@@ -5,10 +5,36 @@ from app.proxy import (
     _apply_previous_response_polyfill,
     _expand_previous_response_input,
     _normalize_responses_input_items,
+    _sanitize_encrypted_ids,
 )
 
 
 class ResponsesPolyfillTests(unittest.TestCase):
+    def test_sanitize_encrypted_ids_preserves_reasoning_encrypted_content(self):
+        reasoning_blob = "gAAAAAB_reasoning_state"
+        compaction_blob = "gBAAAAA_compaction_state"
+        payload = {
+            "input": [
+                {
+                    "id": "rs_gAAAAAB_internal_reasoning_id",
+                    "type": "reasoning",
+                    "summary": [],
+                    "encrypted_content": reasoning_blob,
+                    "status": "completed",
+                },
+                {
+                    "id": "compaction_1",
+                    "type": "compaction",
+                    "encrypted_content": compaction_blob,
+                },
+            ]
+        }
+
+        _sanitize_encrypted_ids(payload)
+
+        self.assertEqual(payload["input"][0]["encrypted_content"], reasoning_blob)
+        self.assertEqual(payload["input"][1]["encrypted_content"], compaction_blob)
+
     def test_normalizes_string_input_to_message_item(self):
         items = _normalize_responses_input_items("hello openclaw")
 
