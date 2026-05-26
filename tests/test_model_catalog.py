@@ -20,6 +20,7 @@ LEGACY_PUBLIC_TEXT_MODELS = [
     "gpt-5.2",
     "gpt-5.2-codex",
     "gpt-5.3-codex",
+    "codex-auto-review",
     "gpt-5.4-mini",
     "gpt-5-codex",
     "gpt-5-codex-mini",
@@ -35,6 +36,7 @@ LEGACY_PUBLIC_TEXT_PRICES = {
     "gpt-5.2": (175, 1400),
     "gpt-5.2-codex": (175, 1400),
     "gpt-5.3-codex": (175, 1400),
+    "codex-auto-review": (500, 3000),
     "gpt-5.4-mini": (75, 450),
     "gpt-5-codex": (175, 1400),
     "gpt-5-codex-mini": (75, 450),
@@ -63,13 +65,26 @@ def _legacy_text_model(model_id: str) -> dict:
             "legacy_default_slot": "cheap",
             "honor_tool_routing": True,
         }
-    elif model_id in {"gpt-5.2-codex", "gpt-5.3-codex"}:
+    elif model_id in {"gpt-5.2-codex", "gpt-5.3-codex", "codex-auto-review"}:
         model["metadata"] = {
             "execution_profile": "legacy_coding",
             "execution_pool": "cpa_coding_pool",
             "legacy_default_slot": "premium",
             "honor_tool_routing": False,
         }
+        if model_id == "codex-auto-review":
+            model["created"] = 1776902400
+            model["metadata"].update(
+                {
+                    "display_name": "Codex Auto Review",
+                    "version": "Codex Auto Review",
+                    "description": "Automatic approval review model for Codex.",
+                    "context_length": 272000,
+                    "max_completion_tokens": 128000,
+                    "supported_parameters": ["tools"],
+                    "thinking": {"levels": ["low", "medium", "high", "xhigh"]},
+                }
+            )
     return model
 
 
@@ -599,6 +614,25 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertEqual(resolved.execution_pool, "cpa_coding_pool")
         self.assertEqual(resolved.backend.model_id, "gpt-5.3-codex")
         self.assertEqual(resolved.route_reason, "catalog:gpt-5.3-codex:legacy_explicit")
+        self.assertTrue(resolved.lock_model_selection)
+
+    def test_codex_auto_review_uses_cpa_model_id_and_coding_profile(self) -> None:
+        resolved = registry.resolve_public_model(
+            "codex-auto-review",
+            "responses",
+            messages=[{"role": "user", "content": "hello"}],
+            tools=[{"type": "function", "function": {"name": "approve", "parameters": {}}}],
+        )
+
+        self.assertEqual(resolved.public_model.public_id, "codex-auto-review")
+        self.assertEqual(resolved.public_model.provider_model, "codex-auto-review")
+        self.assertEqual(resolved.public_model.created, 1776902400)
+        self.assertEqual(resolved.public_model.metadata["supported_parameters"], ["tools"])
+        self.assertEqual(resolved.public_model.metadata["thinking"]["levels"], ["low", "medium", "high", "xhigh"])
+        self.assertEqual(resolved.execution_profile, "legacy_coding")
+        self.assertEqual(resolved.execution_pool, "cpa_coding_pool")
+        self.assertEqual(resolved.backend.model_id, "codex-auto-review")
+        self.assertEqual(resolved.route_reason, "catalog:codex-auto-review:legacy_explicit")
         self.assertTrue(resolved.lock_model_selection)
 
     def test_catalog_lists_all_expected_legacy_gpt_aliases(self) -> None:

@@ -142,6 +142,34 @@
       }
     },
     {
+      "id": "codex-auto-review",
+      "owned_by": "openai",
+      "provider_name": "OpenAI",
+      "provider_model": "codex-auto-review",
+      "created": 1776902400,
+      "capabilities": ["chat/completions", "responses"],
+      "routing_mode": "legacy_auto",
+      "delivery_lane": "legacy",
+      "price_input_per_million": "${COINCOIN_PRICE_INPUT_PER_MILLION:-500}",
+      "price_output_per_million": "${COINCOIN_PRICE_OUTPUT_PER_MILLION:-3000}",
+      "billable_sku": "legacy-codex-auto-review-text",
+      "metadata": {
+        "display_name": "Codex Auto Review",
+        "version": "Codex Auto Review",
+        "description": "Automatic approval review model for Codex.",
+        "context_length": 272000,
+        "max_completion_tokens": 128000,
+        "supported_parameters": ["tools"],
+        "thinking": {
+          "levels": ["low", "medium", "high", "xhigh"]
+        },
+        "execution_profile": "legacy_coding",
+        "execution_pool": "cpa_coding_pool",
+        "legacy_default_slot": "premium",
+        "honor_tool_routing": false
+      }
+    },
+    {
       "id": "gpt-5.4-mini",
       "owned_by": "openai",
       "provider_name": "OpenAI",

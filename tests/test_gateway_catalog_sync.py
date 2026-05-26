@@ -56,6 +56,7 @@ OFFICIAL_DEFAULT_TEXT_PRICES = {
     "gpt-5.2": (175, 1400),
     "gpt-5.2-codex": (175, 1400),
     "gpt-5.3-codex": (175, 1400),
+    "codex-auto-review": FIXED_TEXT_PRICE,
     "gpt-5.4-mini": CHEAP_TEXT_PRICE,
     "gpt-5.5": FIXED_TEXT_PRICE,
     "claude-opus-4-7": CLAUDE_OPUS_PRICE,
@@ -221,7 +222,7 @@ class GatewayCatalogSyncTests(unittest.TestCase):
             if isinstance(item, dict) and item.get("id")
         }
 
-        for model_id in ("gpt-5.2-codex", "gpt-5.3-codex"):
+        for model_id in ("gpt-5.2-codex", "gpt-5.3-codex", "codex-auto-review"):
             with self.subTest(model=model_id):
                 model = public_models[model_id]
                 metadata = model.get("metadata") or {}
@@ -229,6 +230,13 @@ class GatewayCatalogSyncTests(unittest.TestCase):
                 self.assertEqual(model.get("delivery_lane"), "legacy")
                 self.assertEqual(metadata.get("execution_profile"), "legacy_coding")
                 self.assertEqual(metadata.get("execution_pool"), "cpa_coding_pool")
+
+        codex_auto_review = public_models["codex-auto-review"]
+        self.assertEqual(codex_auto_review.get("provider_model"), "codex-auto-review")
+        self.assertEqual(codex_auto_review.get("created"), 1776902400)
+        metadata = codex_auto_review.get("metadata") or {}
+        self.assertEqual(metadata.get("supported_parameters"), ["tools"])
+        self.assertEqual(metadata.get("thinking"), {"levels": ["low", "medium", "high", "xhigh"]})
 
     def test_text_models_match_native_cpa_gemini_shape(self) -> None:
         for model in self.cpa_gemini_models:
