@@ -20,6 +20,7 @@ LEGACY_PUBLIC_TEXT_MODELS = [
     "gpt-5.2",
     "gpt-5.2-codex",
     "gpt-5.3-codex",
+    "gpt-5.3-codex-spark",
     "codex-auto-review",
     "gpt-5.4-mini",
     "gpt-5-codex",
@@ -36,6 +37,7 @@ LEGACY_PUBLIC_TEXT_PRICES = {
     "gpt-5.2": (175, 1400),
     "gpt-5.2-codex": (175, 1400),
     "gpt-5.3-codex": (175, 1400),
+    "gpt-5.3-codex-spark": (175, 1400),
     "codex-auto-review": (500, 3000),
     "gpt-5.4-mini": (75, 450),
     "gpt-5-codex": (175, 1400),
@@ -65,13 +67,26 @@ def _legacy_text_model(model_id: str) -> dict:
             "legacy_default_slot": "cheap",
             "honor_tool_routing": True,
         }
-    elif model_id in {"gpt-5.2-codex", "gpt-5.3-codex", "codex-auto-review"}:
+    elif model_id in {"gpt-5.2-codex", "gpt-5.3-codex", "gpt-5.3-codex-spark", "codex-auto-review"}:
         model["metadata"] = {
             "execution_profile": "legacy_coding",
             "execution_pool": "cpa_coding_pool",
             "legacy_default_slot": "premium",
             "honor_tool_routing": False,
         }
+        if model_id == "gpt-5.3-codex-spark":
+            model["created"] = 1770912000
+            model["metadata"].update(
+                {
+                    "display_name": "GPT 5.3 Codex Spark",
+                    "version": "gpt-5.3",
+                    "description": "Ultra-fast coding model.",
+                    "context_length": 128000,
+                    "max_completion_tokens": 128000,
+                    "supported_parameters": ["tools"],
+                    "thinking": {"levels": ["low", "medium", "high", "xhigh"]},
+                }
+            )
         if model_id == "codex-auto-review":
             model["created"] = 1776902400
             model["metadata"].update(
@@ -615,6 +630,27 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertEqual(resolved.backend.model_id, "gpt-5.3-codex")
         self.assertEqual(resolved.route_reason, "catalog:gpt-5.3-codex:legacy_explicit")
         self.assertTrue(resolved.lock_model_selection)
+
+    def test_gpt_5_3_codex_spark_uses_coding_profile_and_admin_route_candidates(self) -> None:
+        resolved = registry.resolve_public_model(
+            "gpt-5.3-codex-spark",
+            "responses",
+            messages=[{"role": "user", "content": "hello"}],
+            tools=None,
+        )
+
+        self.assertEqual(resolved.public_model.public_id, "gpt-5.3-codex-spark")
+        self.assertEqual(resolved.public_model.provider_model, "gpt-5.3-codex-spark")
+        self.assertEqual(resolved.public_model.metadata["display_name"], "GPT 5.3 Codex Spark")
+        self.assertEqual(resolved.public_model.metadata["context_length"], 128000)
+        self.assertEqual(resolved.execution_profile, "legacy_coding")
+        self.assertEqual(resolved.execution_pool, "cpa_coding_pool")
+        self.assertEqual(resolved.backend.model_id, "gpt-5.3-codex-spark")
+        self.assertEqual(resolved.route_reason, "catalog:gpt-5.3-codex-spark:legacy_explicit")
+        self.assertTrue(resolved.lock_model_selection)
+
+        candidate_ids = {item["id"] for item in registry.candidate_alias_targets("gpt-5.3-codex")}
+        self.assertIn("gpt-5.3-codex-spark", candidate_ids)
 
     def test_codex_auto_review_uses_cpa_model_id_and_coding_profile(self) -> None:
         resolved = registry.resolve_public_model(
