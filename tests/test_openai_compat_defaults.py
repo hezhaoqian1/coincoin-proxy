@@ -24,6 +24,7 @@ LEGACY_PUBLIC_TEXT_MODELS = [
     "gpt-5.2",
     "gpt-5.2-codex",
     "gpt-5.3-codex",
+    "gpt-5.3-codex-spark",
     "codex-auto-review",
     "gpt-5.4-mini",
     "gpt-5-codex",
@@ -40,6 +41,7 @@ LEGACY_PUBLIC_TEXT_PRICES = {
     "gpt-5.2": (175, 1400),
     "gpt-5.2-codex": (175, 1400),
     "gpt-5.3-codex": (175, 1400),
+    "gpt-5.3-codex-spark": (175, 1400),
     "codex-auto-review": (500, 3000),
     "gpt-5.4-mini": (75, 450),
     "gpt-5-codex": (175, 1400),
@@ -69,13 +71,26 @@ def _legacy_text_model(model_id: str) -> dict:
             "legacy_default_slot": "cheap",
             "honor_tool_routing": True,
         }
-    elif model_id in {"gpt-5.2-codex", "gpt-5.3-codex", "codex-auto-review"}:
+    elif model_id in {"gpt-5.2-codex", "gpt-5.3-codex", "gpt-5.3-codex-spark", "codex-auto-review"}:
         model["metadata"] = {
             "execution_profile": "legacy_coding",
             "execution_pool": "cpa_coding_pool",
             "legacy_default_slot": "premium",
             "honor_tool_routing": False,
         }
+        if model_id == "gpt-5.3-codex-spark":
+            model["created"] = 1770912000
+            model["metadata"].update(
+                {
+                    "display_name": "GPT 5.3 Codex Spark",
+                    "version": "gpt-5.3",
+                    "description": "Ultra-fast coding model.",
+                    "context_length": 128000,
+                    "max_completion_tokens": 128000,
+                    "supported_parameters": ["tools"],
+                    "thinking": {"levels": ["low", "medium", "high", "xhigh"]},
+                }
+            )
         if model_id == "codex-auto-review":
             model["created"] = 1776902400
             model["metadata"].update(
@@ -593,6 +608,42 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["model"], "gpt-5.4-mini")
         self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-5.4-mini")
+        self.assertEqual(upstream_client.calls[0]["url"], "https://legacy.example/v1/responses")
+
+    async def test_responses_explicit_gpt_5_3_codex_spark_alias_keeps_public_model_name(self) -> None:
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "resp_legacy_spark_alias",
+                        "output": [
+                            {
+                                "type": "message",
+                                "content": [{"type": "output_text", "text": "OK"}],
+                            }
+                        ],
+                        "usage": {"input_tokens": 3, "output_tokens": 1, "total_tokens": 4},
+                    }
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ):
+                response = await client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"model": "gpt-5.3-codex-spark", "input": "Reply with only: OK"},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["model"], "gpt-5.3-codex-spark")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-5.3-codex-spark")
         self.assertEqual(upstream_client.calls[0]["url"], "https://legacy.example/v1/responses")
 
     async def test_responses_explicit_legacy_alias_does_not_fallback_to_a_different_model(self) -> None:
@@ -2513,6 +2564,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                 "gpt-5.2",
                 "gpt-5.2-codex",
                 "gpt-5.3-codex",
+                "gpt-5.3-codex-spark",
                 "codex-auto-review",
                 "gpt-5.4-mini",
                 "gpt-5-codex",
@@ -2531,26 +2583,30 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("coincoin_provider_model", payload["data"][0])
         self.assertNotIn("coincoin_provider", payload["data"][0])
         self.assertEqual(payload["data"][8]["coincoin_billable_sku"], "gpt-5.2-codex")
-        self.assertEqual(payload["data"][10]["id"], "codex-auto-review")
-        self.assertEqual(payload["data"][10]["created"], 1776902400)
-        self.assertEqual(payload["data"][10]["coincoin_billable_sku"], "codex-auto-review")
-        self.assertEqual(payload["data"][10]["coincoin_delivery_lane"], "legacy")
-        self.assertEqual(payload["data"][10]["coincoin_metadata"]["supported_parameters"], ["tools"])
-        self.assertEqual(payload["data"][10]["coincoin_metadata"]["thinking"]["levels"], ["low", "medium", "high", "xhigh"])
-        self.assertEqual(payload["data"][14]["coincoin_capabilities"], ["embeddings"])
-        self.assertEqual(payload["data"][14]["coincoin_billable_sku"], "azure-text-embedding-3-small")
-        self.assertEqual(payload["data"][14]["coincoin_default_for"], ["embedding"])
-        self.assertEqual(payload["data"][14]["coincoin_delivery_lane"], "upstream_direct")
-        self.assertEqual(payload["data"][15]["coincoin_capabilities"], ["images/generations", "images/edits"])
-        self.assertEqual(payload["data"][15]["coincoin_billable_sku"], "openai-image")
-        self.assertEqual(payload["data"][15]["coincoin_default_for"], ["image"])
+        self.assertEqual(payload["data"][10]["id"], "gpt-5.3-codex-spark")
+        self.assertEqual(payload["data"][10]["created"], 1770912000)
+        self.assertEqual(payload["data"][10]["coincoin_metadata"]["display_name"], "GPT 5.3 Codex Spark")
+        self.assertEqual(payload["data"][10]["coincoin_metadata"]["context_length"], 128000)
+        self.assertEqual(payload["data"][11]["id"], "codex-auto-review")
+        self.assertEqual(payload["data"][11]["created"], 1776902400)
+        self.assertEqual(payload["data"][11]["coincoin_billable_sku"], "codex-auto-review")
+        self.assertEqual(payload["data"][11]["coincoin_delivery_lane"], "legacy")
+        self.assertEqual(payload["data"][11]["coincoin_metadata"]["supported_parameters"], ["tools"])
+        self.assertEqual(payload["data"][11]["coincoin_metadata"]["thinking"]["levels"], ["low", "medium", "high", "xhigh"])
+        self.assertEqual(payload["data"][15]["coincoin_capabilities"], ["embeddings"])
+        self.assertEqual(payload["data"][15]["coincoin_billable_sku"], "azure-text-embedding-3-small")
+        self.assertEqual(payload["data"][15]["coincoin_default_for"], ["embedding"])
         self.assertEqual(payload["data"][15]["coincoin_delivery_lane"], "upstream_direct")
-        self.assertEqual(payload["data"][16]["coincoin_capabilities"], ["chat/completions", "responses"])
-        self.assertEqual(payload["data"][16]["coincoin_billable_sku"], "gemini-fast")
-        self.assertEqual(payload["data"][16]["coincoin_delivery_lane"], "cpa_gemini")
-        self.assertEqual(payload["data"][17]["coincoin_capabilities"], ["images/generations", "images/edits"])
-        self.assertEqual(payload["data"][17]["coincoin_default_for"], [])
+        self.assertEqual(payload["data"][16]["coincoin_capabilities"], ["images/generations", "images/edits"])
+        self.assertEqual(payload["data"][16]["coincoin_billable_sku"], "openai-image")
+        self.assertEqual(payload["data"][16]["coincoin_default_for"], ["image"])
+        self.assertEqual(payload["data"][16]["coincoin_delivery_lane"], "upstream_direct")
+        self.assertEqual(payload["data"][17]["coincoin_capabilities"], ["chat/completions", "responses"])
+        self.assertEqual(payload["data"][17]["coincoin_billable_sku"], "gemini-fast")
         self.assertEqual(payload["data"][17]["coincoin_delivery_lane"], "cpa_gemini")
+        self.assertEqual(payload["data"][18]["coincoin_capabilities"], ["images/generations", "images/edits"])
+        self.assertEqual(payload["data"][18]["coincoin_default_for"], [])
+        self.assertEqual(payload["data"][18]["coincoin_delivery_lane"], "cpa_gemini")
 
     async def test_models_endpoint_returns_station_scoped_aliases_for_station_key(self) -> None:
         station_models = [

@@ -56,6 +56,7 @@ OFFICIAL_DEFAULT_TEXT_PRICES = {
     "gpt-5.2": (175, 1400),
     "gpt-5.2-codex": (175, 1400),
     "gpt-5.3-codex": (175, 1400),
+    "gpt-5.3-codex-spark": (175, 1400),
     "codex-auto-review": FIXED_TEXT_PRICE,
     "gpt-5.4-mini": CHEAP_TEXT_PRICE,
     "gpt-5.5": FIXED_TEXT_PRICE,
@@ -222,7 +223,7 @@ class GatewayCatalogSyncTests(unittest.TestCase):
             if isinstance(item, dict) and item.get("id")
         }
 
-        for model_id in ("gpt-5.2-codex", "gpt-5.3-codex", "codex-auto-review"):
+        for model_id in ("gpt-5.2-codex", "gpt-5.3-codex", "gpt-5.3-codex-spark", "codex-auto-review"):
             with self.subTest(model=model_id):
                 model = public_models[model_id]
                 metadata = model.get("metadata") or {}
@@ -235,6 +236,15 @@ class GatewayCatalogSyncTests(unittest.TestCase):
         self.assertEqual(codex_auto_review.get("provider_model"), "codex-auto-review")
         self.assertEqual(codex_auto_review.get("created"), 1776902400)
         metadata = codex_auto_review.get("metadata") or {}
+        self.assertEqual(metadata.get("supported_parameters"), ["tools"])
+        self.assertEqual(metadata.get("thinking"), {"levels": ["low", "medium", "high", "xhigh"]})
+
+        codex_spark = public_models["gpt-5.3-codex-spark"]
+        self.assertEqual(codex_spark.get("provider_model"), "gpt-5.3-codex-spark")
+        self.assertEqual(codex_spark.get("created"), 1770912000)
+        metadata = codex_spark.get("metadata") or {}
+        self.assertEqual(metadata.get("display_name"), "GPT 5.3 Codex Spark")
+        self.assertEqual(metadata.get("context_length"), 128000)
         self.assertEqual(metadata.get("supported_parameters"), ["tools"])
         self.assertEqual(metadata.get("thinking"), {"levels": ["low", "medium", "high", "xhigh"]})
 
