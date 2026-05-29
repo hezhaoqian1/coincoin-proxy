@@ -19,7 +19,7 @@ import urllib.request
 from typing import Any
 
 
-DEFAULT_IMAGE_URL = "/wechat-group-coincoin-2026-05-26.png"
+DEFAULT_IMAGE_URL = "/wechat-group-coincoin-2026-05-26.png?v=20260529-1"
 ANNOUNCEMENT_TEMPLATE: dict[str, Any] = {
     "title": "进群再领 $15",
     "content": (
