@@ -210,6 +210,23 @@ class ModelCatalogTests(unittest.TestCase):
                         "billable_sku": "openai-image",
                     },
                     {
+                        "id": "claude-opus-4-8",
+                        "owned_by": "coincoin",
+                        "provider_name": "",
+                        "provider_model": "${COINCOIN_FIXED_MODEL}",
+                        "capabilities": ["chat/completions", "responses"],
+                        "routing_mode": "direct",
+                        "delivery_lane": "upstream_direct",
+                        "upstream_model": "${COINCOIN_FIXED_MODEL}",
+                        "upstream_url": "https://legacy-claude.example/v1",
+                        "api_key": "legacy-claude-key",
+                        "auth_style": "bearer",
+                        "price_input_per_million": 500,
+                        "price_output_per_million": 2500,
+                        "billable_sku": "claude-code-compat-text",
+                        "metadata": {"compat_family": "claude-code"},
+                    },
+                    {
                         "id": "claude-opus-4-7",
                         "owned_by": "coincoin",
                         "provider_name": "",
@@ -394,14 +411,46 @@ class ModelCatalogTests(unittest.TestCase):
         registry._initialized = False
         registry.init_from_settings()
 
-        resolved = registry.resolve_public_model("claude-opus-4-7", "responses")
+        resolved = registry.resolve_public_model("claude-opus-4-8", "responses")
 
         self.assertEqual(resolved.public_model.delivery_lane, "kiro_go")
-        self.assertEqual(resolved.backend.model_id, "claude-opus-4.7")
+        self.assertEqual(resolved.backend.model_id, "gpt-5.4")
         self.assertEqual(resolved.backend.upstream_url, "https://kiro-go.example")
         self.assertEqual(resolved.backend.api_key, "kiro-key")
         self.assertEqual(resolved.backend.auth_style, "bearer")
-        self.assertEqual(resolved.route_reason, "catalog:claude-opus-4-7:kiro_go")
+        self.assertEqual(resolved.route_reason, "catalog:claude-opus-4-8:kiro_go")
+
+    def test_claude_opus_short_alias_keeps_existing_kiro_go_model(self) -> None:
+        catalog = json.loads(settings.model_catalog_json)
+        catalog["models"].append(
+            {
+                "id": "opus",
+                "owned_by": "coincoin",
+                "provider_name": "",
+                "provider_model": "gpt-5.4",
+                "capabilities": ["chat/completions", "responses"],
+                "routing_mode": "direct",
+                "delivery_lane": "upstream_direct",
+                "upstream_model": "gpt-5.4",
+                "upstream_url": "https://legacy-claude.example/v1",
+                "api_key": "legacy-claude-key",
+                "auth_style": "bearer",
+                "price_input_per_million": 500,
+                "price_output_per_million": 2500,
+                "billable_sku": "claude-code-compat-text",
+                "metadata": {"compat_family": "claude-code"},
+            }
+        )
+        settings.model_catalog_json = json.dumps(catalog)
+        settings.claude_compat_provider = "kiro_go"
+        registry._initialized = False
+        registry.init_from_settings()
+
+        resolved = registry.resolve_public_model("opus", "responses")
+
+        self.assertEqual(resolved.public_model.delivery_lane, "kiro_go")
+        self.assertEqual(resolved.backend.model_id, "claude-opus-4.7")
+        self.assertEqual(resolved.route_reason, "catalog:opus:kiro_go")
 
     def test_explicit_kiro_public_model_aliases_resolve_when_enabled(self) -> None:
         settings.model_catalog_json = json.dumps(

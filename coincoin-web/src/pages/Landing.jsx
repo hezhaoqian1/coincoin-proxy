@@ -52,7 +52,7 @@ const HERO_LANES = [
     {
         client: 'Claude Code',
         endpoint: 'root',
-        model: 'claude-opus-4-7',
+        model: 'claude-opus-4-8',
         tone: 'cyan',
     },
     {
@@ -77,7 +77,7 @@ model = "opus"
 # Claude Code
 ANTHROPIC_BASE_URL = "https://your-domain"
 ANTHROPIC_AUTH_TOKEN = "sk_cc_xxxxx"
-model = "claude-opus-4-7"`
+model = "claude-opus-4-8"`
 
 const FAQS = [
     {

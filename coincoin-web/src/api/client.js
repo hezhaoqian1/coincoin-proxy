@@ -582,6 +582,8 @@ export async function getAnnouncements() {
 
 export const PUBLIC_MODEL_CATALOG_FALLBACK = [
     { id: 'opus', object: 'model', owned_by: 'coincoin', coincoin_capabilities: ['chat/completions', 'responses'], coincoin_billable_sku: 'claude-code-compat-text', coincoin_routing_mode: 'direct', coincoin_default_for: ['text'], coincoin_metadata: { tier: 'stable' }, coincoin_price_input_per_million: 500, coincoin_price_cached_input_per_million: 50, coincoin_price_output_per_million: 2500, coincoin_price_per_image_cents: 0 },
+    { id: 'claude-opus-4-8', object: 'model', owned_by: 'coincoin', coincoin_capabilities: ['chat/completions', 'responses'], coincoin_billable_sku: 'claude-code-compat-text', coincoin_routing_mode: 'direct', coincoin_delivery_lane: 'upstream_direct', coincoin_default_for: [], coincoin_metadata: { tier: 'stable', upstream_model: 'gpt-5.5', official_price_source: 'Anthropic Claude pricing' }, coincoin_price_input_per_million: 500, coincoin_price_cached_input_per_million: 50, coincoin_price_output_per_million: 2500, coincoin_price_per_image_cents: 0 },
+    { id: 'claude-opus-4.8', object: 'model', owned_by: 'coincoin', coincoin_capabilities: ['chat/completions', 'responses'], coincoin_billable_sku: 'claude-code-compat-text', coincoin_routing_mode: 'direct', coincoin_delivery_lane: 'upstream_direct', coincoin_default_for: [], coincoin_metadata: { tier: 'stable', upstream_model: 'gpt-5.5', official_price_source: 'Anthropic Claude pricing' }, coincoin_price_input_per_million: 500, coincoin_price_cached_input_per_million: 50, coincoin_price_output_per_million: 2500, coincoin_price_per_image_cents: 0 },
     { id: 'sonnet', object: 'model', owned_by: 'coincoin', coincoin_capabilities: ['chat/completions', 'responses'], coincoin_billable_sku: 'claude-code-compat-text', coincoin_routing_mode: 'direct', coincoin_default_for: [], coincoin_metadata: { tier: 'stable' }, coincoin_price_input_per_million: 300, coincoin_price_cached_input_per_million: 30, coincoin_price_output_per_million: 1500, coincoin_price_per_image_cents: 0 },
     { id: 'haiku', object: 'model', owned_by: 'coincoin', coincoin_capabilities: ['chat/completions', 'responses'], coincoin_billable_sku: 'claude-code-compat-text', coincoin_routing_mode: 'direct', coincoin_default_for: [], coincoin_metadata: { tier: 'stable' }, coincoin_price_input_per_million: 100, coincoin_price_cached_input_per_million: 10, coincoin_price_output_per_million: 500, coincoin_price_per_image_cents: 0 },
     { id: 'gpt-5.5', object: 'model', owned_by: 'openai', coincoin_capabilities: ['chat/completions', 'responses'], coincoin_billable_sku: 'legacy-gpt-5.5-text', coincoin_routing_mode: 'legacy_auto', coincoin_default_for: [], coincoin_metadata: {}, coincoin_price_input_per_million: 500, coincoin_price_cached_input_per_million: 50, coincoin_price_output_per_million: 3000, coincoin_price_per_image_cents: 0 },
@@ -653,7 +655,7 @@ export function describePublicModel(model) {
         if (id.includes('preview')) return '图片生成预览模型，适合视觉创作和风格探索'
         return '图片模型，支持文生图和图生图，适合营销图、插画和快速视觉草稿'
     }
-    if (['opus', 'claude-opus-4-7', 'best', 'default', 'opus[1m]', 'opusplan'].includes(id)) {
+    if (['opus', 'claude-opus-4-8', 'claude-opus-4-7', 'best', 'default', 'opus[1m]', 'opusplan'].includes(id)) {
         return '高质量文本模型，适合复杂代码生成、重构和 agent 工作流'
     }
     if (['sonnet', 'haiku', 'claude-sonnet-4-6', 'claude-haiku-4-5', 'claude-haiku-4-5-20251001', 'sonnet[1m]'].includes(id)) {
