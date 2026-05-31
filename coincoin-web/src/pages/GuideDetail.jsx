@@ -106,6 +106,7 @@ export default function GuideDetail() {
 
     const key = effectiveApiKey || ''
     const codingModel = textModels.find((model) => model.id === 'opus')
+        || textModels.find((model) => model.id === 'claude-opus-4-8')
         || textModels.find((model) => model.id === 'claude-opus-4-7')
         || defaultTextModel
         || models[0]
@@ -289,7 +290,7 @@ export ANTHROPIC_BASE_URL="${SITE_ROOT}"
 export ANTHROPIC_AUTH_TOKEN="${snippetKey}"
 export ANTHROPIC_MODEL="${defaultClaudeModel}"
 export ANTHROPIC_DEFAULT_SONNET_MODEL="${defaultClaudeModel}"
-export ANTHROPIC_DEFAULT_OPUS_MODEL="claude-opus-4-7"
+export ANTHROPIC_DEFAULT_OPUS_MODEL="claude-opus-4-8"
 export ANTHROPIC_DEFAULT_HAIKU_MODEL="claude-haiku-4-5"
 EOF
 

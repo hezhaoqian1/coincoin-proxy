@@ -42,7 +42,20 @@ const TAB_KEY_BY_INDEX = ['quickstart', 'models', 'api', 'snippets']
 
 const GEMINI_OFFICIAL_PRICE_SOURCE = 'Google Gemini API pricing · checked 2026-05-09'
 const OPENAI_IMAGE_OFFICIAL_PRICE_SOURCE = 'OpenAI image generation pricing · checked 2026-05-09'
+const CLAUDE_OFFICIAL_PRICE_SOURCE = 'Anthropic Claude pricing · checked 2026-05-31'
 const OFFICIAL_PRICING = {
+    'claude-opus-4-8': {
+        providerModel: 'Claude Opus 4.8 alias',
+        input: '$5.00 / 1M input tokens',
+        output: '$25.00 / 1M output tokens',
+        source: CLAUDE_OFFICIAL_PRICE_SOURCE,
+    },
+    'claude-opus-4.8': {
+        providerModel: 'Claude Opus 4.8 alias',
+        input: '$5.00 / 1M input tokens',
+        output: '$25.00 / 1M output tokens',
+        source: CLAUDE_OFFICIAL_PRICE_SOURCE,
+    },
     'gpt-image-2': {
         providerModel: 'GPT Image 2',
         image: '$0.053 / image · medium 1024x1024 reference',
@@ -410,7 +423,7 @@ wire_api = "responses"`}</pre>
             <h3>Claude Code</h3>
             <pre className="code-block">{`export ANTHROPIC_BASE_URL="${SITE}"
 export ANTHROPIC_AUTH_TOKEN="sk_cc_xxxxx"
-claude --model claude-opus-4-7`}</pre>
+claude --model claude-opus-4-8`}</pre>
 
             <h3>第三方客户端配置</h3>
             <div className="config-table">
@@ -438,7 +451,7 @@ claude --model claude-opus-4-7`}</pre>
                         <td>Claude Code</td>
                         <td><span className="badge badge-success">一等支持</span></td>
                         <td><code>ANTHROPIC_BASE_URL=root</code></td>
-                        <td>官方 Claude CLI 直接走 Anthropic 兼容面，模型可选 <code>claude-opus-4-7</code>、<code>claude-sonnet-4-6</code>、<code>opus</code>、<code>sonnet</code>。</td>
+                        <td>官方 Claude CLI 直接走 Anthropic 兼容面，模型可选 <code>claude-opus-4-8</code>、<code>claude-sonnet-4-6</code>、<code>opus</code>、<code>sonnet</code>。</td>
                     </tr>
                     <tr>
                         <td>Codex CLI</td>
@@ -573,10 +586,10 @@ function ModelsAndPricing({ textModels, imageModels, defaultTextModel, defaultIm
             <div className="official-price-callout">
                 <div>
                     <span className="docs-shell-kicker">Official Benchmark</span>
-                    <strong>Gemini 价格按 Google Gemini API 官方价格写入默认目录</strong>
+                    <strong>公开模型价格按官方价格写入默认目录</strong>
                     <p>页面展示的价格来自 <code>/v1/models</code>；生产环境如果配置了价格环境变量，会以线上返回值为准。</p>
                 </div>
-                <a href="https://ai.google.dev/gemini-api/docs/pricing" target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm">查看官方价格</a>
+                <a href="https://platform.claude.com/docs/en/about-claude/models/overview" target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm">查看 Claude 价格</a>
             </div>
             <div className="pricing-table-wrap">
                 <table className="data-table pricing-table pricing-table-text">
@@ -980,15 +993,15 @@ wire_api = "responses"`}</pre>
             <h3>Claude Code</h3>
             <pre className="code-block">{`export ANTHROPIC_BASE_URL="${SITE}"
 export ANTHROPIC_AUTH_TOKEN="sk_cc_xxxxx"
-export ANTHROPIC_MODEL="claude-opus-4-7"
-export ANTHROPIC_DEFAULT_OPUS_MODEL="claude-opus-4-7"
+export ANTHROPIC_MODEL="claude-opus-4-8"
+export ANTHROPIC_DEFAULT_OPUS_MODEL="claude-opus-4-8"
 export ANTHROPIC_DEFAULT_SONNET_MODEL="claude-sonnet-4-6"
 export ANTHROPIC_DEFAULT_HAIKU_MODEL="claude-haiku-4-5"
 
-claude --model claude-opus-4-7`}</pre>
+claude --model claude-opus-4-8`}</pre>
             <ul className="doc-list">
                 <li>这里的 <code>ANTHROPIC_BASE_URL</code> 必须填站点根地址，不能带 <code>/v1</code>。</li>
-                <li>常用文本模型可直接填写 <code>opus</code>、<code>sonnet</code> 或 <code>haiku</code>；需要兼容 Claude Code 默认模型名时，也可以填写 <code>claude-opus-4-7</code>、<code>claude-sonnet-4-6</code>、<code>claude-haiku-4-5</code>。</li>
+                <li>常用文本模型可直接填写 <code>opus</code>、<code>sonnet</code> 或 <code>haiku</code>；需要兼容 Claude Code 默认模型名时，也可以填写 <code>claude-opus-4-8</code>、<code>claude-sonnet-4-6</code>、<code>claude-haiku-4-5</code>。</li>
                 <li>如果之前用过 <code>/login</code> 托管登录，先执行一次 <code>/logout</code>，避免本地登录态和环境变量打架。</li>
             </ul>
 

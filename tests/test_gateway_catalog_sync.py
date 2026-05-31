@@ -21,6 +21,8 @@ CLAUDE_SONNET_OUTPUT_PRICE_PLACEHOLDER = "${COINCOIN_CLAUDE_SONNET_OUTPUT_PRICE:
 CLAUDE_HAIKU_INPUT_PRICE_PLACEHOLDER = "${COINCOIN_CLAUDE_HAIKU_INPUT_PRICE:-100}"
 CLAUDE_HAIKU_OUTPUT_PRICE_PLACEHOLDER = "${COINCOIN_CLAUDE_HAIKU_OUTPUT_PRICE:-500}"
 CLAUDE_OPUS_ALIASES = {
+    "claude-opus-4-8",
+    "claude-opus-4.8",
     "claude-opus-4-7",
     "claude-opus-4.7",
     "claude-opus-4.6",
@@ -60,6 +62,8 @@ OFFICIAL_DEFAULT_TEXT_PRICES = {
     "codex-auto-review": FIXED_TEXT_PRICE,
     "gpt-5.4-mini": CHEAP_TEXT_PRICE,
     "gpt-5.5": FIXED_TEXT_PRICE,
+    "claude-opus-4-8": CLAUDE_OPUS_PRICE,
+    "claude-opus-4.8": CLAUDE_OPUS_PRICE,
     "claude-opus-4-7": CLAUDE_OPUS_PRICE,
     "claude-opus-4.7": CLAUDE_OPUS_PRICE,
     "claude-opus-4.6": CLAUDE_OPUS_PRICE,
