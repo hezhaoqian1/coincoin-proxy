@@ -3,8 +3,10 @@ import secrets
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
+from urllib.parse import urlsplit, urlunsplit
 
+import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy import case, func, select
@@ -336,6 +338,184 @@ def _validate_model_channel_route(public_model_id: str, endpoint: str = "") -> N
     endpoint = (endpoint or "").strip()
     if endpoint and endpoint not in (model.capabilities or ()):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="endpoint is not supported by public model")
+
+
+def _provider_channel_auth_headers(channel: ProviderChannel) -> dict[str, str]:
+    raw_key = _recover_raw_key(getattr(channel, "encrypted_api_key", None))
+    if not raw_key:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="provider channel api key is not configured")
+    headers = {"accept": "application/json"}
+    if (getattr(channel, "auth_style", "") or "bearer") == "azure":
+        headers["api-key"] = raw_key
+    else:
+        headers["authorization"] = f"Bearer {raw_key}"
+    return headers
+
+
+def _provider_channel_models_url_candidates(base_url: str) -> list[tuple[str, str]]:
+    cleaned = str(base_url or "").strip().rstrip("/")
+    if not cleaned:
+        return []
+    candidates = [(f"{cleaned}/models", cleaned)]
+    parsed = urlsplit(cleaned)
+    path = parsed.path.rstrip("/")
+    if not path.endswith("/v1"):
+        normalized_path = f"{path}/v1" if path else "/v1"
+        normalized_base = urlunsplit((parsed.scheme, parsed.netloc, normalized_path, parsed.query, parsed.fragment)).rstrip("/")
+        candidates.append((f"{normalized_base}/models", normalized_base))
+    result = []
+    seen = set()
+    for url, recommended_base_url in candidates:
+        if url in seen:
+            continue
+        seen.add(url)
+        result.append((url, recommended_base_url))
+    return result
+
+
+def _upstream_model_items(payload: Any) -> list[dict]:
+    raw_items = []
+    if isinstance(payload, dict):
+        for key in ("data", "models", "items"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                raw_items = value
+                break
+    elif isinstance(payload, list):
+        raw_items = payload
+
+    models = []
+    seen = set()
+    for item in raw_items:
+        if isinstance(item, dict):
+            model_id = str(item.get("id") or item.get("model") or item.get("name") or "").strip()
+            owned_by = str(item.get("owned_by") or item.get("owner") or "").strip()
+            created = item.get("created")
+            object_type = str(item.get("object") or "model").strip()
+        else:
+            model_id = str(item or "").strip()
+            owned_by = ""
+            created = None
+            object_type = "model"
+        if not model_id or model_id in seen:
+            continue
+        seen.add(model_id)
+        models.append({
+            "id": model_id,
+            "object": object_type,
+            "owned_by": owned_by,
+            "created": created,
+        })
+    return models[:500]
+
+
+def _admin_public_model_options() -> list[dict]:
+    model_registry.ensure_initialized()
+    return [
+        {
+            "id": model.public_id,
+            "owned_by": model.owned_by,
+            "provider_name": model.provider_name,
+            "provider_model": model.provider_model,
+            "upstream_model": model.upstream_model,
+            "delivery_lane": model.delivery_lane,
+            "capabilities": list(model.capabilities or ()),
+        }
+        for model in model_registry.list_public_models()
+    ]
+
+
+def _attach_public_model_suggestions(models: list[dict]) -> tuple[list[dict], list[dict]]:
+    public_models = _admin_public_model_options()
+    public_ids = {item["id"] for item in public_models}
+    provider_to_public = {
+        str(item.get("provider_model") or "").strip(): item["id"]
+        for item in public_models
+        if str(item.get("provider_model") or "").strip()
+    }
+    upstream_to_public = {
+        str(item.get("upstream_model") or "").strip(): item["id"]
+        for item in public_models
+        if str(item.get("upstream_model") or "").strip()
+    }
+    enriched = []
+    for model in models:
+        model_id = str(model.get("id") or "").strip()
+        suggested = ""
+        if model_id in public_ids:
+            suggested = model_id
+        elif model_id in upstream_to_public:
+            suggested = upstream_to_public[model_id]
+        elif model_id in provider_to_public:
+            suggested = provider_to_public[model_id]
+        enriched.append({**model, "suggested_public_model_id": suggested})
+    return enriched, public_models
+
+
+async def _provider_channel_models_payload(channel: ProviderChannel) -> dict:
+    headers = _provider_channel_auth_headers(channel)
+    attempts = []
+    last_error = ""
+    timeout = httpx.Timeout(connect=5.0, read=15.0, write=5.0, pool=5.0)
+    async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+        for url, recommended_base_url in _provider_channel_models_url_candidates(getattr(channel, "base_url", "")):
+            started = time.perf_counter()
+            try:
+                response = await client.get(url, headers=headers)
+                latency_ms = int((time.perf_counter() - started) * 1000)
+                attempt = {
+                    "url": url,
+                    "status_code": response.status_code,
+                    "latency_ms": latency_ms,
+                }
+                attempts.append(attempt)
+                if 200 <= int(response.status_code) < 300:
+                    try:
+                        raw_payload = response.json()
+                    except ValueError:
+                        last_error = "upstream returned non-json models payload"
+                        attempt["error"] = last_error
+                        continue
+                    models, public_models = _attach_public_model_suggestions(_upstream_model_items(raw_payload))
+                    return {
+                        "ok": True,
+                        "channel_id": channel.id,
+                        "channel_name": channel.name,
+                        "models_url": url,
+                        "recommended_base_url": recommended_base_url,
+                        "status_code": response.status_code,
+                        "latency_ms": latency_ms,
+                        "model_count": len(models),
+                        "models": models,
+                        "public_models": public_models,
+                        "attempts": attempts,
+                    }
+                last_error = f"upstream returned HTTP {response.status_code}"
+                attempt["error"] = last_error
+            except httpx.TimeoutException:
+                latency_ms = int((time.perf_counter() - started) * 1000)
+                last_error = "upstream models request timed out"
+                attempts.append({"url": url, "status_code": 0, "latency_ms": latency_ms, "error": last_error})
+            except httpx.RequestError as exc:
+                latency_ms = int((time.perf_counter() - started) * 1000)
+                last_error = str(exc)[:256] or "upstream models request failed"
+                attempts.append({"url": url, "status_code": 0, "latency_ms": latency_ms, "error": last_error})
+
+    models, public_models = _attach_public_model_suggestions([])
+    return {
+        "ok": False,
+        "channel_id": channel.id,
+        "channel_name": channel.name,
+        "models_url": "",
+        "recommended_base_url": str(getattr(channel, "base_url", "") or "").strip().rstrip("/"),
+        "status_code": int((attempts[-1] or {}).get("status_code") or 0) if attempts else 0,
+        "latency_ms": int((attempts[-1] or {}).get("latency_ms") or 0) if attempts else 0,
+        "model_count": 0,
+        "models": models,
+        "public_models": public_models,
+        "attempts": attempts,
+        "error": last_error or "no upstream models endpoint candidate",
+    }
 
 
 def _add_system_channel_model(groups: dict, key: str, payload: dict, public_model) -> None:
@@ -1145,6 +1325,35 @@ async def get_provider_channel(channel_id: str, db: AsyncSession = Depends(get_d
     route_count = await db.scalar(select(func.count(ModelChannelRoute.id)).where(ModelChannelRoute.channel_id == channel_id)) or 0
     runtime_state = await db.get(ProviderChannelRuntimeState, channel_id)
     return _provider_channel_payload(channel, route_count=int(route_count or 0), runtime_state=runtime_state)
+
+
+@router.post("/provider-channels/{channel_id}/test-connection", dependencies=[Depends(admin_guard)])
+async def test_provider_channel_connection(channel_id: str, db: AsyncSession = Depends(get_db)):
+    channel = await db.get(ProviderChannel, channel_id)
+    if channel is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="provider channel not found")
+    payload = await _provider_channel_models_payload(channel)
+    return {
+        "ok": payload.get("ok", False),
+        "channel_id": payload.get("channel_id", channel_id),
+        "channel_name": payload.get("channel_name", ""),
+        "models_url": payload.get("models_url", ""),
+        "recommended_base_url": payload.get("recommended_base_url", ""),
+        "status_code": payload.get("status_code", 0),
+        "latency_ms": payload.get("latency_ms", 0),
+        "model_count": payload.get("model_count", 0),
+        "sample_models": (payload.get("models") or [])[:8],
+        "attempts": payload.get("attempts") or [],
+        "error": payload.get("error", ""),
+    }
+
+
+@router.get("/provider-channels/{channel_id}/upstream-models", dependencies=[Depends(admin_guard)])
+async def list_provider_channel_upstream_models(channel_id: str, db: AsyncSession = Depends(get_db)):
+    channel = await db.get(ProviderChannel, channel_id)
+    if channel is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="provider channel not found")
+    return await _provider_channel_models_payload(channel)
 
 
 @router.patch("/provider-channels/{channel_id}", dependencies=[Depends(admin_guard)])

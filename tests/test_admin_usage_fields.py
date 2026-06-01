@@ -263,6 +263,113 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             app.dependency_overrides.pop(admin_module.get_db, None)
             model_registry._initialized = False
 
+    async def test_provider_channel_upstream_models_uses_v1_fallback_and_masks_key(self) -> None:
+        channel = SimpleNamespace(
+            id="ch_sub2api",
+            name="Sub2API",
+            base_url="https://sub2api.example",
+            encrypted_api_key=admin_module.encrypt_api_key("sk-test-secret"),
+            auth_style="bearer",
+        )
+
+        class _GetDB:
+            async def get(self, model, key):
+                if model is admin_module.ProviderChannel and key == channel.id:
+                    return channel
+                return None
+
+        class _Response:
+            def __init__(self, status_code, payload):
+                self.status_code = status_code
+                self._payload = payload
+
+            def json(self):
+                return self._payload
+
+        calls = []
+
+        class _Client:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return None
+
+            async def get(self, url, headers):
+                calls.append((url, dict(headers)))
+                if url == "https://sub2api.example/models":
+                    return _Response(404, {"error": "not found"})
+                return _Response(
+                    200,
+                    {
+                        "data": [
+                            {"id": "gpt-5.3-codex", "object": "model", "owned_by": "sub2api"},
+                            {"id": "claude-sonnet-4.6", "object": "model", "owned_by": "sub2api"},
+                        ]
+                    },
+                )
+
+        with patch.object(admin_module.httpx, "AsyncClient", _Client):
+            payload = await admin_module.list_provider_channel_upstream_models(channel.id, db=_GetDB())
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["models_url"], "https://sub2api.example/v1/models")
+        self.assertEqual(payload["recommended_base_url"], "https://sub2api.example/v1")
+        self.assertEqual([item["id"] for item in payload["models"]], ["gpt-5.3-codex", "claude-sonnet-4.6"])
+        self.assertEqual(calls[0][1]["authorization"], "Bearer sk-test-secret")
+        self.assertEqual(calls[1][1]["authorization"], "Bearer sk-test-secret")
+        self.assertNotIn("sk-test-secret", json.dumps(payload))
+
+    async def test_provider_channel_connection_uses_api_key_auth_style(self) -> None:
+        channel = SimpleNamespace(
+            id="ch_azure",
+            name="Azure-style",
+            base_url="https://azure.example/openai/v1",
+            encrypted_api_key=admin_module.encrypt_api_key("sk-azure-secret"),
+            auth_style="azure",
+        )
+
+        class _GetDB:
+            async def get(self, model, key):
+                if model is admin_module.ProviderChannel and key == channel.id:
+                    return channel
+                return None
+
+        class _Response:
+            status_code = 200
+
+            def json(self):
+                return {"data": [{"id": "gpt-5.4", "object": "model"}]}
+
+        calls = []
+
+        class _Client:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return None
+
+            async def get(self, url, headers):
+                calls.append((url, dict(headers)))
+                return _Response()
+
+        with patch.object(admin_module.httpx, "AsyncClient", _Client):
+            payload = await admin_module.test_provider_channel_connection(channel.id, db=_GetDB())
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["model_count"], 1)
+        self.assertEqual(payload["sample_models"][0]["id"], "gpt-5.4")
+        self.assertEqual(calls[0][0], "https://azure.example/openai/v1/models")
+        self.assertEqual(calls[0][1]["api-key"], "sk-azure-secret")
+        self.assertNotIn("sk-azure-secret", json.dumps(payload))
+
     async def test_request_logs_expose_provider_alias_and_usage_units(self) -> None:
         log = SimpleNamespace(
             created_at=datetime(2026, 3, 25, 12, 34, 56),
