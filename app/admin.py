@@ -1555,8 +1555,21 @@ async def _monitor_timeline_map(db: AsyncSession, monitors: list[ProviderChannel
 
 
 @router.get("/provider-channel-monitors", dependencies=[Depends(admin_guard)])
-async def list_provider_channel_monitors(period: str = "7d", db: AsyncSession = Depends(get_db)):
+async def list_provider_channel_monitors(
+    period: str = "7d",
+    search: str = "",
+    status_filter: str = "",
+    provider: str = "",
+    channel_id: str = "",
+    db: AsyncSession = Depends(get_db),
+):
     normalized, days = _monitor_period_days(period)
+    search = (search or "").strip().lower()
+    status_filter = (status_filter or "").strip().lower()
+    provider = (provider or "").strip().lower()
+    channel_id = (channel_id or "").strip()
+    if status_filter and status_filter not in {"active", "disabled"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unsupported monitor status")
     rows = (
         await db.execute(
             select(ProviderChannelMonitor, ProviderChannel)
@@ -1564,6 +1577,29 @@ async def list_provider_channel_monitors(period: str = "7d", db: AsyncSession = 
             .order_by(ProviderChannelMonitor.status.asc(), ProviderChannelMonitor.name.asc(), ProviderChannelMonitor.created_at.desc())
         )
     ).all()
+    if status_filter:
+        rows = [row for row in rows if str(row[0].status or "").strip().lower() == status_filter]
+    if provider:
+        rows = [row for row in rows if provider in str((row[1].provider_platform if row[1] else "") or "").lower()]
+    if channel_id:
+        rows = [row for row in rows if str(row[0].channel_id or "") == channel_id]
+    if search:
+        def _matches_monitor(row: tuple[ProviderChannelMonitor, Optional[ProviderChannel]]) -> bool:
+            monitor, channel = row
+            haystack = " ".join([
+                monitor.id or "",
+                monitor.name or "",
+                monitor.channel_id or "",
+                monitor.endpoint or "",
+                monitor.primary_model or "",
+                monitor.extra_models or "",
+                channel.name if channel else "",
+                channel.provider_platform if channel else "",
+                channel.base_url if channel else "",
+            ]).lower()
+            return search in haystack
+
+        rows = [row for row in rows if _matches_monitor(row)]
     monitors = [row[0] for row in rows]
     availability = await monitor_availability_rows(db, window_days=days)
     timelines = await _monitor_timeline_map(db, monitors, limit=60)
@@ -1578,7 +1614,15 @@ async def list_provider_channel_monitors(period: str = "7d", db: AsyncSession = 
                 timeline=timelines.get(monitor.id, []),
             )
         )
-    return {"period": normalized, "window_days": days, "items": items}
+    summary = {
+        "total": len(items),
+        "active": sum(1 for item in items if item.get("status") == "active"),
+        "disabled": sum(1 for item in items if item.get("status") == "disabled"),
+        "operational": sum(1 for item in items if item.get("last_status") == "operational"),
+        "degraded": sum(1 for item in items if item.get("last_status") == "degraded"),
+        "failed": sum(1 for item in items if item.get("last_status") in {"failed", "error"}),
+    }
+    return {"period": normalized, "window_days": days, "summary": summary, "items": items}
 
 
 @router.post("/provider-channel-monitors", dependencies=[Depends(admin_guard)])

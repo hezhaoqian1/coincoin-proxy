@@ -194,6 +194,12 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("主动监控", admin_html)
         self.assertIn("/admin/provider-channel-monitors", admin_html)
         self.assertIn("data-monitor-period", admin_html)
+        self.assertIn("providerChannelMonitorSearch", admin_html)
+        self.assertIn("providerChannelMonitorStatusFilter", admin_html)
+        self.assertIn("providerChannelMonitorRunModal", admin_html)
+        self.assertIn("providerChannelMonitorHistoryModal", admin_html)
+        self.assertIn("setProviderChannelMonitorStatus", admin_html)
+        self.assertIn("openProviderChannelMonitorHistory", admin_html)
         self.assertIn("createMonitorFromDiscoveredModel", admin_html)
 
     async def test_provider_channels_includes_system_default_channels(self) -> None:
@@ -382,6 +388,31 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             channel_type="openai_compatible",
             base_url="https://sub2api.example/v1",
         )
+        other_monitor = SimpleNamespace(
+            id="cmon_other",
+            channel_id="ch_other",
+            name="Other disabled",
+            endpoint="responses",
+            primary_model="gpt-5.5",
+            extra_models="[]",
+            status="disabled",
+            interval_seconds=60,
+            timeout_seconds=30,
+            last_checked_at=None,
+            last_status="",
+            last_latency_ms=0,
+            last_ping_latency_ms=0,
+            last_message="",
+            created_at=datetime(2026, 6, 1, 11, 0, 0),
+            updated_at=datetime(2026, 6, 1, 11, 0, 0),
+        )
+        other_channel = SimpleNamespace(
+            id="ch_other",
+            name="Other",
+            provider_platform="newapi",
+            channel_type="openai_compatible",
+            base_url="https://other.example/v1",
+        )
         availability_row = SimpleNamespace(
             monitor_id="cmon_primary",
             model="gpt-5.3-codex",
@@ -407,7 +438,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         )
         fake_db = _FakeDB(
             execute_results=[
-                _FakeAllResult([(monitor, channel)]),
+                _FakeAllResult([(monitor, channel), (other_monitor, other_channel)]),
                 _FakeAllResult([availability_row]),
                 _FakeScalarsResult([history]),
             ]
@@ -421,11 +452,17 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
 
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-            response = await client.get("/admin/provider-channel-monitors?period=15d")
+            response = await client.get(
+                "/admin/provider-channel-monitors?period=15d&search=north&status_filter=active&provider=sub2api&channel_id=ch_primary"
+            )
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
         self.assertEqual(payload["period"], "15d")
+        self.assertEqual(payload["summary"]["total"], 1)
+        self.assertEqual(payload["summary"]["active"], 1)
+        self.assertEqual(payload["summary"]["operational"], 1)
+        self.assertEqual(len(payload["items"]), 1)
         item = payload["items"][0]
         self.assertEqual(item["id"], "cmon_primary")
         self.assertEqual(item["channel_name"], "North Star")
