@@ -269,7 +269,7 @@ async def _apply_monthly_product(
             source_type="payment_order",
             source_id=order_no,
             product_id=product.id,
-            balance_after_cents=available_subscription_cents(sub),
+            balance_after_cents=available_subscription_cents(sub, now),
         ))
         return {"billing_action": "subscription_start", "added_cents": product.balance_cents, "subscription": sub}
 
@@ -279,7 +279,7 @@ async def _apply_monthly_product(
         raise BillingError("cannot purchase a lower tier while a higher subscription is active", status_code=409)
 
     if product.rank == current_rank:
-        if available_subscription_cents(sub) <= 0:
+        if available_subscription_cents(sub, now) <= 0:
             sub.plan_id = product.id
             sub.status = "active"
             sub.period_start = now
@@ -294,7 +294,7 @@ async def _apply_monthly_product(
                 source_type="payment_order",
                 source_id=order_no,
                 product_id=product.id,
-                balance_after_cents=available_subscription_cents(sub),
+                balance_after_cents=available_subscription_cents(sub, now),
             ))
             return {"billing_action": "subscription_reset", "added_cents": product.balance_cents, "subscription": sub}
 
@@ -308,7 +308,7 @@ async def _apply_monthly_product(
             source_type="payment_order",
             source_id=order_no,
             product_id=product.id,
-            balance_after_cents=available_subscription_cents(sub),
+            balance_after_cents=available_subscription_cents(sub, now),
         ))
         return {"billing_action": "subscription_renew", "added_cents": 0, "subscription": sub}
 
@@ -319,13 +319,13 @@ async def _apply_monthly_product(
     db.add(_ledger(
         user_id=user.id,
         entry_type="subscription_upgrade",
-        amount_cents=max(0, available_subscription_cents(sub)),
+        amount_cents=max(0, available_subscription_cents(sub, now)),
         source_type="payment_order",
         source_id=order_no,
         product_id=product.id,
-        balance_after_cents=available_subscription_cents(sub),
+        balance_after_cents=available_subscription_cents(sub, now),
     ))
-    return {"billing_action": "subscription_upgrade", "added_cents": max(0, available_subscription_cents(sub)), "subscription": sub}
+    return {"billing_action": "subscription_upgrade", "added_cents": max(0, available_subscription_cents(sub, now)), "subscription": sub}
 
 
 async def _apply_addon_product(
@@ -368,8 +368,8 @@ async def _apply_addon_product(
     return {"billing_action": "traffic_pack_grant", "added_cents": product.balance_cents, "subscription": sub, "traffic_pack": pack}
 
 
-def available_subscription_cents(sub: UserSubscription | None) -> int:
-    if not active_subscription(sub):
+def available_subscription_cents(sub: UserSubscription | None, now: datetime | None = None) -> int:
+    if not active_subscription(sub, now):
         return 0
     return max(0, int(getattr(sub, "quota_cents", 0) or 0) - int(getattr(sub, "used_cents", 0) or 0))
 
@@ -416,7 +416,7 @@ async def get_available_balance_cents(
     sub = await get_subscription(db, user.id)
     changed = normalize_subscription_period(sub, current)
     packs = await active_traffic_packs(db, user.id, current)
-    subscription_remaining = available_subscription_cents(sub)
+    subscription_remaining = available_subscription_cents(sub, current)
     traffic_remaining = sum(max(0, int(pack.remaining_cents or 0)) for pack in packs) if active_subscription(sub, current) else 0
     legacy_balance = int(user.balance or 0)
     available = subscription_remaining + traffic_remaining + legacy_balance - int(pending_cost_cents or 0)
@@ -453,7 +453,7 @@ async def debit_usage_cents(
     if sub:
         normalize_subscription_period(sub, current)
     if active_subscription(sub, current):
-        take = min(available_subscription_cents(sub), remaining)
+        take = min(available_subscription_cents(sub, current), remaining)
         if take > 0:
             sub.used_cents = int(sub.used_cents or 0) + take
             remaining -= take
@@ -465,7 +465,7 @@ async def debit_usage_cents(
                 source_type="usage",
                 source_id=source_id,
                 product_id=sub.plan_id,
-                balance_after_cents=available_subscription_cents(sub),
+                balance_after_cents=available_subscription_cents(sub, current),
             ))
 
         packs = await active_traffic_packs_for_update(db, user.id, current)
@@ -512,7 +512,7 @@ async def debit_usage_cents(
 def serialize_billing_state(sub: UserSubscription | None, packs: list[TrafficPackBalance], user: User, now: datetime | None = None) -> dict:
     current = now or utcnow()
     subscription_active = active_subscription(sub, current)
-    subscription_remaining = available_subscription_cents(sub)
+    subscription_remaining = available_subscription_cents(sub, current)
     active_packs = [
         pack for pack in packs
         if getattr(pack, "status", "") == "active"
@@ -603,7 +603,7 @@ def serialize_product(
         current_product = MONTHLY_BY_ID.get(getattr(sub, "plan_id", None))
         current_product_rank = current_product.rank if current_product else 0
         if product.rank == current_product_rank:
-            purchase_action = "reset" if available_subscription_cents(sub) <= 0 else "renew"
+            purchase_action = "reset" if available_subscription_cents(sub, current) <= 0 else "renew"
         elif product.rank > current_product_rank:
             purchase_action = "upgrade"
         elif product.rank < current_product_rank:
