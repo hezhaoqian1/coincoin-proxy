@@ -757,8 +757,17 @@ class ModelRegistry:
         public_model: PublicModelConfig,
         backend: ModelConfig,
         endpoint: str,
+        *,
+        exclude_channel_ids: Tuple[str, ...] = (),
+        fallback_from_channel_id: str = "",
+        route_attempt: int = 0,
     ) -> Optional[ModelConfig]:
-        choice = channel_router.select_for_model(public_model, backend, endpoint)
+        choice = channel_router.select_for_model(
+            public_model,
+            backend,
+            endpoint,
+            exclude_channel_ids=exclude_channel_ids,
+        )
         if choice is None:
             return None
         return ModelConfig(
@@ -776,11 +785,115 @@ class ModelRegistry:
             provider_account_fingerprint=choice.provider_account_fingerprint,
             transform_profile=choice.transform_profile,
             cost_tier=choice.cost_tier,
-            route_attempt=choice.route_attempt,
+            fallback_from_channel_id=fallback_from_channel_id,
+            route_attempt=route_attempt if route_attempt > 0 else choice.route_attempt,
             channel_priority=choice.priority,
             channel_weight=choice.weight,
             allowed_fails=choice.allowed_fails,
             cooldown_seconds=choice.cooldown_seconds,
+        )
+
+    def resolve_channel_fallback(
+        self,
+        public_model: PublicModelConfig,
+        previous_backend: ModelConfig,
+        endpoint: str,
+        *,
+        exclude_channel_ids: Tuple[str, ...] = (),
+    ) -> Optional[ModelConfig]:
+        previous_channel_id = (previous_backend.channel_id or "").strip()
+        if not previous_channel_id:
+            return None
+        excluded = tuple(dict.fromkeys(
+            item for item in (*exclude_channel_ids, previous_channel_id) if item
+        ))
+        return self._apply_channel_route(
+            public_model,
+            previous_backend,
+            endpoint,
+            exclude_channel_ids=excluded,
+            fallback_from_channel_id=previous_channel_id,
+            route_attempt=int(previous_backend.route_attempt or 0) + 1,
+        )
+
+    def resolve_system_fallback(
+        self,
+        public_model: PublicModelConfig,
+        previous_backend: ModelConfig,
+        endpoint: str,
+        messages: Optional[List[dict]] = None,
+        tools: Optional[list] = None,
+        *,
+        lock_model_selection: bool = False,
+    ) -> Optional[ResolvedModel]:
+        previous_channel_id = (previous_backend.channel_id or "").strip()
+        if not previous_channel_id or previous_channel_id.startswith("system:"):
+            return None
+
+        execution_profile = self._resolve_execution_profile(public_model, endpoint)
+        if endpoint in EMBEDDING_ENDPOINTS:
+            backend = self.get(EMBEDDING)
+            route_reason = f"catalog:{public_model.public_id}:embedding:system_fallback"
+        elif public_model.routing_mode == "legacy_auto":
+            explicit_backend = self._build_explicit_legacy_backend(public_model) if lock_model_selection else None
+            if explicit_backend is not None:
+                backend = explicit_backend
+                route_reason = f"catalog:{public_model.public_id}:legacy_explicit:system_fallback"
+            else:
+                backend, inner_reason = resolve(messages or [], tools, execution_profile=execution_profile)
+                route_reason = f"catalog:{public_model.public_id}:{inner_reason}:system_fallback"
+        else:
+            backend = ModelConfig(
+                model_id=public_model.upstream_model,
+                upstream_url=public_model.upstream_url,
+                api_key=public_model.api_key,
+                price_input_per_million=public_model.price_input_per_million,
+                price_output_per_million=public_model.price_output_per_million,
+                strip_unsupported=public_model.strip_unsupported,
+                auth_style=public_model.auth_style,
+            )
+            route_reason = f"catalog:{public_model.public_id}:{public_model.delivery_lane}:system_fallback"
+
+        if not (backend.upstream_url and backend.api_key and backend.model_id):
+            return None
+
+        if public_model.routing_mode == "legacy_auto":
+            system_channel_id = "system:legacy_cpa"
+            system_channel_type = "account_pool"
+            system_platform = "legacy_cpa"
+        elif public_model.delivery_lane == "cpa_gemini":
+            system_channel_id = ""
+            system_channel_type = "account_pool"
+            system_platform = "cpa_gemini"
+        else:
+            system_channel_id = f"system:{public_model.delivery_lane or 'catalog'}"[:32]
+            system_channel_type = "openai_compatible"
+            system_platform = public_model.delivery_lane or "catalog"
+
+        backend = ModelConfig(
+            model_id=backend.model_id,
+            upstream_url=backend.upstream_url,
+            api_key=backend.api_key,
+            price_input_per_million=backend.price_input_per_million,
+            price_output_per_million=backend.price_output_per_million,
+            strip_unsupported=backend.strip_unsupported or public_model.strip_unsupported,
+            auth_style=backend.auth_style,
+            channel_id=system_channel_id,
+            channel_type=system_channel_type,
+            provider_platform=system_platform,
+            provider_account_fingerprint=backend.provider_account_fingerprint,
+            transform_profile=backend.transform_profile,
+            cost_tier=backend.cost_tier,
+            fallback_from_channel_id=previous_channel_id,
+            route_attempt=int(previous_backend.route_attempt or 0) + 1,
+        )
+        return ResolvedModel(
+            public_model=public_model,
+            backend=backend,
+            execution_profile=execution_profile.profile_id,
+            execution_pool=execution_profile.pool_id,
+            route_reason=route_reason,
+            lock_model_selection=lock_model_selection,
         )
 
     def _resolved_with_channel_route(

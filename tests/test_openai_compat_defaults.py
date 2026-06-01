@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 
+from app.channel_router import ModelChannelRouteSnapshot, ProviderChannelSnapshot, channel_router
 from app.config import settings
 from app.main import app
 from app.router import registry
@@ -161,6 +162,9 @@ class _FakeEventStreamResponse:
     async def aiter_lines(self):
         for line in self._lines:
             yield line
+
+    async def aiter_bytes(self):
+        yield self.text.encode("utf-8")
 
     async def aclose(self) -> None:
         self._closed = True
@@ -351,6 +355,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         )
         registry._initialized = False
         registry.init_from_settings()
+        channel_router.clear_snapshot()
         self.fake_user = SimpleNamespace(id="u_test")
 
         async def fake_get_db():
@@ -433,6 +438,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
     def tearDown(self) -> None:
         for key, value in self._originals.items():
             setattr(settings, key, value)
+        channel_router.clear_snapshot()
         registry._initialized = False
         app.dependency_overrides.pop(proxy_module.get_db, None)
         app.dependency_overrides.pop(openai_module.get_db, None)
@@ -733,6 +739,313 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(upstream_client.calls), 1)
         self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-5.3-codex")
         self.assertEqual(upstream_client.calls[0]["url"], "https://legacy.example/v1/responses")
+
+    async def test_responses_provider_channel_falls_back_to_next_channel_on_retryable_status(self) -> None:
+        channel_router.set_snapshot(
+            [
+                ProviderChannelSnapshot(
+                    channel_id="ch_test_primary",
+                    provider_platform="sub2api",
+                    base_url="https://primary-channel.example/v1",
+                    api_key="primary-key",
+                    auth_style="bearer",
+                    priority=0,
+                    allowed_fails=1,
+                    cooldown_seconds=30,
+                ),
+                ProviderChannelSnapshot(
+                    channel_id="ch_test_backup",
+                    provider_platform="new_api",
+                    base_url="https://backup-channel.example/v1",
+                    api_key="backup-key",
+                    auth_style="bearer",
+                    priority=10,
+                ),
+            ],
+            [
+                ModelChannelRouteSnapshot(
+                    route_id="mcr_test_primary",
+                    public_model_id="gpt-5.3-codex",
+                    endpoint="responses",
+                    channel_id="ch_test_primary",
+                ),
+                ModelChannelRouteSnapshot(
+                    route_id="mcr_test_backup",
+                    public_model_id="gpt-5.3-codex",
+                    endpoint="responses",
+                    channel_id="ch_test_backup",
+                ),
+            ],
+        )
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {"error": {"message": "primary failed", "type": "server_error"}},
+                    status_code=500,
+                ),
+                _FakeUpstreamResponse(
+                    {
+                        "id": "resp_channel_fallback",
+                        "output": [
+                            {
+                                "type": "message",
+                                "content": [{"type": "output_text", "text": "OK"}],
+                            }
+                        ],
+                        "usage": {"input_tokens": 3, "output_tokens": 1, "total_tokens": 4},
+                    }
+                ),
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(proxy_module.usage_buffer, "add", AsyncMock()) as add_usage:
+                response = await client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"model": "gpt-5.3-codex", "input": "Reply with only: OK"},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(len(upstream_client.calls), 2)
+        self.assertEqual(upstream_client.calls[0]["url"], "https://primary-channel.example/v1/responses")
+        self.assertEqual(upstream_client.calls[0]["headers"]["authorization"], "Bearer primary-key")
+        self.assertEqual(upstream_client.calls[1]["url"], "https://backup-channel.example/v1/responses")
+        self.assertEqual(upstream_client.calls[1]["headers"]["authorization"], "Bearer backup-key")
+        add_usage.assert_awaited_once()
+        usage_kwargs = add_usage.await_args.kwargs
+        self.assertEqual(usage_kwargs["route_reason"], "channel_fallback:500")
+        self.assertEqual(usage_kwargs["channel_id"], "ch_test_backup")
+        self.assertEqual(usage_kwargs["fallback_from_channel_id"], "ch_test_primary")
+        self.assertEqual(usage_kwargs["route_attempt"], 1)
+
+    async def test_responses_provider_channel_falls_back_to_system_catalog_when_no_peer_route(self) -> None:
+        channel_router.set_snapshot(
+            [
+                ProviderChannelSnapshot(
+                    channel_id="ch_test_primary",
+                    provider_platform="sub2api",
+                    base_url="https://primary-channel.example/v1",
+                    api_key="primary-key",
+                    auth_style="bearer",
+                    priority=0,
+                    allowed_fails=1,
+                    cooldown_seconds=30,
+                ),
+            ],
+            [
+                ModelChannelRouteSnapshot(
+                    route_id="mcr_test_primary",
+                    public_model_id="gpt-5.3-codex",
+                    endpoint="responses",
+                    channel_id="ch_test_primary",
+                ),
+            ],
+        )
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {"error": {"message": "primary failed", "type": "server_error"}},
+                    status_code=500,
+                ),
+                _FakeUpstreamResponse(
+                    {
+                        "id": "resp_system_fallback",
+                        "output": [
+                            {
+                                "type": "message",
+                                "content": [{"type": "output_text", "text": "OK"}],
+                            }
+                        ],
+                        "usage": {"input_tokens": 3, "output_tokens": 1, "total_tokens": 4},
+                    }
+                ),
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(proxy_module.usage_buffer, "add", AsyncMock()) as add_usage:
+                response = await client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"model": "gpt-5.3-codex", "input": "Reply with only: OK"},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(len(upstream_client.calls), 2)
+        self.assertEqual(upstream_client.calls[0]["url"], "https://primary-channel.example/v1/responses")
+        self.assertEqual(upstream_client.calls[1]["url"], "https://legacy.example/v1/responses")
+        self.assertEqual(upstream_client.calls[1]["headers"]["api-key"], "legacy-key")
+        self.assertEqual(upstream_client.calls[1]["json"]["model"], "gpt-5.3-codex")
+        add_usage.assert_awaited_once()
+        usage_kwargs = add_usage.await_args.kwargs
+        self.assertEqual(usage_kwargs["route_reason"], "system_fallback:500")
+        self.assertEqual(usage_kwargs["channel_id"], "system:legacy_cpa")
+        self.assertEqual(usage_kwargs["channel_type"], "account_pool")
+        self.assertEqual(usage_kwargs["provider_platform"], "legacy_cpa")
+        self.assertEqual(usage_kwargs["fallback_from_channel_id"], "ch_test_primary")
+        self.assertEqual(usage_kwargs["route_attempt"], 1)
+
+    async def test_responses_stream_provider_channel_falls_back_to_next_channel_on_retryable_status(self) -> None:
+        channel_router.set_snapshot(
+            [
+                ProviderChannelSnapshot(
+                    channel_id="ch_stream_primary",
+                    provider_platform="sub2api",
+                    base_url="https://primary-channel.example/v1",
+                    api_key="primary-key",
+                    auth_style="bearer",
+                    priority=0,
+                    allowed_fails=1,
+                    cooldown_seconds=30,
+                ),
+                ProviderChannelSnapshot(
+                    channel_id="ch_stream_backup",
+                    provider_platform="new_api",
+                    base_url="https://backup-channel.example/v1",
+                    api_key="backup-key",
+                    auth_style="bearer",
+                    priority=10,
+                ),
+            ],
+            [
+                ModelChannelRouteSnapshot(
+                    route_id="mcr_stream_primary",
+                    public_model_id="gpt-5.3-codex",
+                    endpoint="responses",
+                    channel_id="ch_stream_primary",
+                ),
+                ModelChannelRouteSnapshot(
+                    route_id="mcr_stream_backup",
+                    public_model_id="gpt-5.3-codex",
+                    endpoint="responses",
+                    channel_id="ch_stream_backup",
+                ),
+            ],
+        )
+        upstream_client = _RecordingStreamClient(
+            [
+                _FakeUpstreamResponse(
+                    {"error": {"message": "primary failed", "type": "server_error"}},
+                    status_code=500,
+                ),
+                _FakeEventStreamResponse(
+                    [
+                        'data: {"type":"response.created","response":{"id":"resp_stream_channel_fallback","status":"in_progress","model":"gpt-5.3-codex","output":[]}}',
+                        'data: {"type":"response.output_text.delta","delta":"OK"}',
+                        'data: {"type":"response.completed","response":{"id":"resp_stream_channel_fallback","status":"completed","model":"gpt-5.3-codex","output":[{"type":"message","content":[{"type":"output_text","text":"OK"}]}],"usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}}}',
+                        "data: [DONE]",
+                    ]
+                ),
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_stream_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(proxy_module.usage_buffer, "add", AsyncMock()) as add_usage:
+                response = await client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"model": "gpt-5.3-codex", "input": "Reply with only: OK", "stream": True},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn("response.output_text.delta", response.text)
+        self.assertEqual(len(upstream_client.calls), 2)
+        self.assertEqual(upstream_client.calls[0]["url"], "https://primary-channel.example/v1/responses")
+        self.assertEqual(upstream_client.calls[0]["headers"]["authorization"], "Bearer primary-key")
+        self.assertEqual(upstream_client.calls[1]["url"], "https://backup-channel.example/v1/responses")
+        self.assertEqual(upstream_client.calls[1]["headers"]["authorization"], "Bearer backup-key")
+        add_usage.assert_awaited_once()
+        usage_kwargs = add_usage.await_args.kwargs
+        self.assertEqual(usage_kwargs["route_reason"], "channel_fallback:500")
+        self.assertEqual(usage_kwargs["endpoint"], "responses:stream")
+        self.assertEqual(usage_kwargs["channel_id"], "ch_stream_backup")
+        self.assertEqual(usage_kwargs["fallback_from_channel_id"], "ch_stream_primary")
+        self.assertEqual(usage_kwargs["route_attempt"], 1)
+
+    async def test_responses_stream_provider_channel_falls_back_to_system_catalog_when_no_peer_route(self) -> None:
+        channel_router.set_snapshot(
+            [
+                ProviderChannelSnapshot(
+                    channel_id="ch_stream_primary",
+                    provider_platform="sub2api",
+                    base_url="https://primary-channel.example/v1",
+                    api_key="primary-key",
+                    auth_style="bearer",
+                    priority=0,
+                    allowed_fails=1,
+                    cooldown_seconds=30,
+                ),
+            ],
+            [
+                ModelChannelRouteSnapshot(
+                    route_id="mcr_stream_primary",
+                    public_model_id="gpt-5.3-codex",
+                    endpoint="responses",
+                    channel_id="ch_stream_primary",
+                ),
+            ],
+        )
+        upstream_client = _RecordingStreamClient(
+            [
+                _FakeUpstreamResponse(
+                    {"error": {"message": "primary failed", "type": "server_error"}},
+                    status_code=500,
+                ),
+                _FakeEventStreamResponse(
+                    [
+                        'data: {"type":"response.created","response":{"id":"resp_stream_system_fallback","status":"in_progress","model":"gpt-5.3-codex","output":[]}}',
+                        'data: {"type":"response.output_text.delta","delta":"OK"}',
+                        'data: {"type":"response.completed","response":{"id":"resp_stream_system_fallback","status":"completed","model":"gpt-5.3-codex","output":[{"type":"message","content":[{"type":"output_text","text":"OK"}]}],"usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}}}',
+                        "data: [DONE]",
+                    ]
+                ),
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_stream_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(proxy_module.usage_buffer, "add", AsyncMock()) as add_usage:
+                response = await client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"model": "gpt-5.3-codex", "input": "Reply with only: OK", "stream": True},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn("response.output_text.delta", response.text)
+        self.assertEqual(len(upstream_client.calls), 2)
+        self.assertEqual(upstream_client.calls[0]["url"], "https://primary-channel.example/v1/responses")
+        self.assertEqual(upstream_client.calls[1]["url"], "https://legacy.example/v1/responses")
+        self.assertEqual(upstream_client.calls[1]["headers"]["api-key"], "legacy-key")
+        self.assertEqual(upstream_client.calls[1]["json"]["model"], "gpt-5.3-codex")
+        add_usage.assert_awaited_once()
+        usage_kwargs = add_usage.await_args.kwargs
+        self.assertEqual(usage_kwargs["route_reason"], "system_fallback:500")
+        self.assertEqual(usage_kwargs["endpoint"], "responses:stream")
+        self.assertEqual(usage_kwargs["channel_id"], "system:legacy_cpa")
+        self.assertEqual(usage_kwargs["provider_platform"], "legacy_cpa")
+        self.assertEqual(usage_kwargs["fallback_from_channel_id"], "ch_stream_primary")
+        self.assertEqual(usage_kwargs["route_attempt"], 1)
 
     async def test_responses_claude_code_alias_adds_prompt_cache_key(self) -> None:
         self._add_claude_code_model()

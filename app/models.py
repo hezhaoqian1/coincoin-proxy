@@ -366,6 +366,73 @@ class ProviderChannelRuntimeState(Base):
     )
 
 
+class ProviderChannelMonitor(Base):
+    """Active probe configuration for a provider channel."""
+    __tablename__ = "coincoin_provider_channel_monitors"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    channel_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_provider_channels.id"), index=True)
+    name: Mapped[str] = mapped_column(String(128), default="")
+    endpoint: Mapped[str] = mapped_column(String(64), default="responses", index=True)
+    primary_model: Mapped[str] = mapped_column(String(128), default="")
+    extra_models: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(16), default="active", index=True)
+    interval_seconds: Mapped[int] = mapped_column(BigInteger, default=300)
+    timeout_seconds: Mapped[int] = mapped_column(BigInteger, default=30)
+    last_checked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    last_status: Mapped[str] = mapped_column(String(16), default="")
+    last_latency_ms: Mapped[int] = mapped_column(BigInteger, default=0)
+    last_ping_latency_ms: Mapped[int] = mapped_column(BigInteger, default=0)
+    last_message: Mapped[str] = mapped_column(String(512), default="")
+    created_by: Mapped[str] = mapped_column(String(64), default="admin")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), index=True
+    )
+
+
+class ProviderChannelMonitorHistory(Base):
+    """Active probe history. One row per monitor/model/check."""
+    __tablename__ = "coincoin_provider_channel_monitor_history"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    monitor_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_provider_channel_monitors.id"), index=True)
+    channel_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_provider_channels.id"), index=True)
+    model: Mapped[str] = mapped_column(String(128), default="", index=True)
+    status: Mapped[str] = mapped_column(String(16), default="error", index=True)
+    latency_ms: Mapped[int] = mapped_column(BigInteger, default=0)
+    ping_latency_ms: Mapped[int] = mapped_column(BigInteger, default=0)
+    status_code: Mapped[int] = mapped_column(BigInteger, default=0)
+    message: Mapped[str] = mapped_column(String(512), default="")
+    checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class ProviderChannelMonitorDailyRollup(Base):
+    """Daily rollup for active probe availability windows."""
+    __tablename__ = "coincoin_provider_channel_monitor_daily"
+    __table_args__ = (
+        Index("ix_channel_monitor_daily_unique", "monitor_id", "model", "bucket_date", unique=True),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    monitor_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_provider_channel_monitors.id"), index=True)
+    channel_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_provider_channels.id"), index=True)
+    model: Mapped[str] = mapped_column(String(128), default="", index=True)
+    bucket_date: Mapped[date] = mapped_column(Date, index=True)
+    total_checks: Mapped[int] = mapped_column(BigInteger, default=0)
+    operational_count: Mapped[int] = mapped_column(BigInteger, default=0)
+    degraded_count: Mapped[int] = mapped_column(BigInteger, default=0)
+    failed_count: Mapped[int] = mapped_column(BigInteger, default=0)
+    error_count: Mapped[int] = mapped_column(BigInteger, default=0)
+    sum_latency_ms: Mapped[int] = mapped_column(BigInteger, default=0)
+    count_latency: Mapped[int] = mapped_column(BigInteger, default=0)
+    sum_ping_latency_ms: Mapped[int] = mapped_column(BigInteger, default=0)
+    count_ping_latency: Mapped[int] = mapped_column(BigInteger, default=0)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), index=True
+    )
+
+
 class ReferralReward(Base):
     """邀请奖励记录 — 记录邀请人和朋友各自拿到的 API 额度。"""
     __tablename__ = "coincoin_referral_rewards"

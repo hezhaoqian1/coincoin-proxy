@@ -81,6 +81,54 @@ class ChannelRouterTests(unittest.TestCase):
 
         self.assertEqual(choice.channel_id, "ch_backup")
 
+    def test_excluded_channel_is_not_reselected_for_same_request_fallback(self) -> None:
+        router = ChannelRouter()
+        router.set_snapshot(
+            [
+                ProviderChannelSnapshot(channel_id="ch_primary", base_url="https://primary.example", api_key="primary", priority=0),
+                ProviderChannelSnapshot(channel_id="ch_peer", base_url="https://peer.example", api_key="peer", priority=0),
+                ProviderChannelSnapshot(channel_id="ch_backup", base_url="https://backup.example", api_key="backup", priority=5),
+            ],
+            [
+                ModelChannelRouteSnapshot(route_id="r_primary", public_model_id="demo-model", channel_id="ch_primary"),
+                ModelChannelRouteSnapshot(route_id="r_peer", public_model_id="demo-model", channel_id="ch_peer"),
+                ModelChannelRouteSnapshot(route_id="r_backup", public_model_id="demo-model", channel_id="ch_backup"),
+            ],
+        )
+
+        choice = router.select_for_model(
+            self._public(),
+            self._backend(),
+            "responses",
+            exclude_channel_ids=("ch_primary",),
+        )
+
+        self.assertIsNotNone(choice)
+        self.assertEqual(choice.channel_id, "ch_peer")
+
+    def test_excluded_best_tier_falls_to_next_priority(self) -> None:
+        router = ChannelRouter()
+        router.set_snapshot(
+            [
+                ProviderChannelSnapshot(channel_id="ch_primary", base_url="https://primary.example", api_key="primary", priority=0),
+                ProviderChannelSnapshot(channel_id="ch_backup", base_url="https://backup.example", api_key="backup", priority=5),
+            ],
+            [
+                ModelChannelRouteSnapshot(route_id="r_primary", public_model_id="demo-model", channel_id="ch_primary"),
+                ModelChannelRouteSnapshot(route_id="r_backup", public_model_id="demo-model", channel_id="ch_backup"),
+            ],
+        )
+
+        choice = router.select_for_model(
+            self._public(),
+            self._backend(),
+            "responses",
+            exclude_channel_ids=("ch_primary",),
+        )
+
+        self.assertIsNotNone(choice)
+        self.assertEqual(choice.channel_id, "ch_backup")
+
 
 class RegistryChannelRouteTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -175,6 +223,31 @@ class RegistryChannelRouteTests(unittest.TestCase):
         self.assertEqual(resolved.backend.model_id, "db-upstream-model")
         self.assertEqual(resolved.backend.upstream_url, "https://db-route.example/v1")
         self.assertIn(":channel:ch_db", resolved.route_reason)
+
+    def test_registry_resolves_channel_fallback_with_attempt_metadata(self) -> None:
+        channel_router.set_snapshot(
+            [
+                ProviderChannelSnapshot(channel_id="ch_primary", base_url="https://primary.example/v1", api_key="primary", priority=0),
+                ProviderChannelSnapshot(channel_id="ch_backup", base_url="https://backup.example/v1", api_key="backup", priority=5),
+            ],
+            [
+                ModelChannelRouteSnapshot(route_id="mcr_primary", public_model_id="demo-model", endpoint="responses", channel_id="ch_primary"),
+                ModelChannelRouteSnapshot(route_id="mcr_backup", public_model_id="demo-model", endpoint="responses", channel_id="ch_backup"),
+            ],
+        )
+
+        resolved = registry.resolve_public_model("demo-model", "responses")
+        fallback = registry.resolve_channel_fallback(
+            resolved.public_model,
+            resolved.backend,
+            "responses",
+            exclude_channel_ids=(resolved.backend.channel_id,),
+        )
+
+        self.assertIsNotNone(fallback)
+        self.assertEqual(fallback.channel_id, "ch_backup")
+        self.assertEqual(fallback.fallback_from_channel_id, "ch_primary")
+        self.assertEqual(fallback.route_attempt, 1)
 
     def test_registry_keeps_catalog_route_when_no_db_route_exists(self) -> None:
         resolved = registry.resolve_public_model("demo-model", "responses")

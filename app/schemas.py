@@ -244,6 +244,32 @@ class AdminModelChannelRouteUpdate(BaseModel):
     notes: Optional[str] = Field(default=None, max_length=2048)
 
 
+class AdminProviderChannelMonitorCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    channel_id: str = Field(..., min_length=1, max_length=32)
+    name: str = Field(default="", max_length=128)
+    endpoint: str = Field(default="responses", pattern=r"^(responses|chat/completions)$")
+    primary_model: str = Field(..., min_length=1, max_length=128)
+    extra_models: List[str] = Field(default_factory=list, max_length=16)
+    status: str = Field(default="active", pattern=r"^(active|disabled)$")
+    interval_seconds: int = Field(default=300, ge=15, le=3600)
+    timeout_seconds: int = Field(default=30, ge=5, le=180)
+
+
+class AdminProviderChannelMonitorUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    channel_id: Optional[str] = Field(default=None, min_length=1, max_length=32)
+    name: Optional[str] = Field(default=None, max_length=128)
+    endpoint: Optional[str] = Field(default=None, pattern=r"^(responses|chat/completions)$")
+    primary_model: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    extra_models: Optional[List[str]] = Field(default=None, max_length=16)
+    status: Optional[str] = Field(default=None, pattern=r"^(active|disabled)$")
+    interval_seconds: Optional[int] = Field(default=None, ge=15, le=3600)
+    timeout_seconds: Optional[int] = Field(default=None, ge=5, le=180)
+
+
 class AdminClaudeCompatSettingsUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
