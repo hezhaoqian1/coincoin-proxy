@@ -559,6 +559,62 @@
     .badge-info { background: var(--accent-subtle); color: var(--accent-hover); }
     .badge-info::before { background: var(--accent); }
 
+    .channel-stability-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 12px;
+    }
+
+    .channel-stability-card {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px;
+      background: var(--bg-secondary);
+      min-width: 0;
+    }
+
+    .channel-stability-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .channel-stability-metrics {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin: 12px 0;
+    }
+
+    .channel-stability-metric {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px;
+      background: var(--bg-primary);
+      min-width: 0;
+    }
+
+    .stability-bars {
+      display: grid;
+      grid-template-columns: repeat(30, minmax(4px, 1fr));
+      gap: 3px;
+      align-items: end;
+      min-height: 28px;
+    }
+
+    .stability-bar {
+      height: 20px;
+      border-radius: 2px;
+      background: var(--bg-tertiary);
+    }
+
+    .stability-bar.ok { background: var(--success); }
+    .stability-bar.fallback { background: var(--accent); }
+    .stability-bar.failed { background: var(--error); }
+    .stability-bar.idle { background: var(--border); }
+
     /* Progress */
     .progress {
       height: 6px;
@@ -1686,6 +1742,56 @@
         <div class="card" style="margin-bottom:20px">
           <div class="card-header">
             <div>
+              <span class="card-title">渠道稳定性</span>
+              <div class="text-sm text-muted" id="providerChannelStabilitySummary">真实请求聚合，展示可用率、延迟和 fallback 流向</div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button class="btn btn-secondary btn-sm" data-stability-period="7d" onclick="setProviderChannelStabilityPeriod('7d')">7天</button>
+              <button class="btn btn-secondary btn-sm" data-stability-period="15d" onclick="setProviderChannelStabilityPeriod('15d')">15天</button>
+              <button class="btn btn-secondary btn-sm" data-stability-period="30d" onclick="setProviderChannelStabilityPeriod('30d')">30天</button>
+              <button class="btn btn-secondary btn-sm" onclick="loadProviderChannelStability()">刷新</button>
+            </div>
+          </div>
+          <div class="card-body">
+            <div id="providerChannelStabilityGrid" class="channel-stability-grid"></div>
+          </div>
+        </div>
+        <div class="card" style="margin-bottom:20px">
+          <div class="card-header">
+            <div>
+              <span class="card-title">主动监控</span>
+              <div class="text-sm text-muted" id="providerChannelMonitorSummary">按渠道定期主动探测模型，可手动 run now。</div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button class="btn btn-secondary btn-sm" data-monitor-period="7d" onclick="setProviderChannelMonitorPeriod('7d')">7天</button>
+              <button class="btn btn-secondary btn-sm" data-monitor-period="15d" onclick="setProviderChannelMonitorPeriod('15d')">15天</button>
+              <button class="btn btn-secondary btn-sm" data-monitor-period="30d" onclick="setProviderChannelMonitorPeriod('30d')">30天</button>
+              <button class="btn btn-secondary btn-sm" onclick="loadProviderChannelMonitors()">刷新</button>
+              <button class="btn btn-primary btn-sm" onclick="openProviderChannelMonitorModal()">+ 新增监控</button>
+            </div>
+          </div>
+          <div class="card-body flush">
+            <div class="table-wrapper">
+              <table>
+                <thead>
+                  <tr>
+                    <th>监控</th>
+                    <th>渠道</th>
+                    <th>模型</th>
+                    <th>状态</th>
+                    <th>窗口表现</th>
+                    <th>最近</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="providerChannelMonitorsBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <div class="card" style="margin-bottom:20px">
+          <div class="card-header">
+            <div>
               <span class="card-title">Provider Channels</span>
               <div class="text-sm text-muted" id="providerChannelSummary">加载中...</div>
             </div>
@@ -2190,7 +2296,7 @@
           <div class="card-body flush">
             <div class="table-wrapper">
               <table>
-                <thead><tr><th>时间</th><th>用户</th><th>状态</th><th>端点</th><th>模型</th><th>耗时</th><th>Route</th></tr></thead>
+                <thead><tr><th>时间</th><th>用户</th><th>状态</th><th>端点</th><th>模型</th><th>耗时</th><th>Route / Channel</th></tr></thead>
                 <tbody id="opsHealthRecent"></tbody>
               </table>
             </div>
@@ -2219,7 +2325,7 @@
 
   <!-- Request Logs Modal -->
   <div id="logsModal" class="modal-overlay">
-    <div class="modal" style="max-width:900px">
+    <div class="modal" style="max-width:1100px">
       <div class="modal-header">
         <span class="modal-title" id="logsModalTitle">请求日志</span>
         <button class="modal-close" onclick="closeModal('logsModal')">&times;</button>
@@ -2227,7 +2333,7 @@
       <div class="modal-body" style="padding:0;max-height:520px;overflow-y:auto">
         <table>
           <thead>
-            <tr><th>时间</th><th>接口</th><th>别名</th><th>上游模型</th><th>用量</th><th>缓存</th><th>SKU</th><th>费用</th><th>延迟</th><th>状态</th></tr>
+            <tr><th>时间</th><th>接口</th><th>别名</th><th>上游模型</th><th>用量</th><th>缓存</th><th>SKU</th><th>费用</th><th>延迟</th><th>状态</th><th>Route / Channel</th></tr>
           </thead>
           <tbody id="logsBody"></tbody>
         </table>
@@ -2369,6 +2475,39 @@
       <div class="modal-footer">
         <button class="btn btn-secondary" onclick="closeModal('providerChannelModal')">取消</button>
         <button class="btn btn-primary" onclick="saveProviderChannel()">保存渠道</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Provider Channel Monitor Modal -->
+  <div id="providerChannelMonitorModal" class="modal-overlay">
+    <div class="modal" style="max-width:720px">
+      <div class="modal-header">
+        <span class="modal-title" id="providerChannelMonitorModalTitle">新增主动监控</span>
+        <button class="modal-close" onclick="closeModal('providerChannelMonitorModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="providerChannelMonitorId" />
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">名称</label><input id="providerChannelMonitorName" class="form-input" placeholder="北极星 gpt-5.3-codex" /></div>
+          <div class="form-group"><label class="form-label">渠道</label><select id="providerChannelMonitorChannel" class="form-select"></select></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">Endpoint</label><select id="providerChannelMonitorEndpoint" class="form-select"><option value="responses">responses</option><option value="chat/completions">chat/completions</option></select></div>
+          <div class="form-group"><label class="form-label">状态</label><select id="providerChannelMonitorStatus" class="form-select"><option value="active">active</option><option value="disabled">disabled</option></select></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">主模型</label><input id="providerChannelMonitorPrimaryModel" class="form-input" placeholder="gpt-5.3-codex" /></div>
+          <div class="form-group"><label class="form-label">额外模型</label><input id="providerChannelMonitorExtraModels" class="form-input" placeholder="gpt-5.4,gpt-5.5" /></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">检测间隔秒</label><input id="providerChannelMonitorInterval" type="number" min="15" max="3600" class="form-input" value="300" /></div>
+          <div class="form-group"><label class="form-label">超时秒</label><input id="providerChannelMonitorTimeout" type="number" min="5" max="180" class="form-input" value="30" /></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('providerChannelMonitorModal')">取消</button>
+        <button class="btn btn-primary" onclick="saveProviderChannelMonitor()">保存监控</button>
       </div>
     </div>
   </div>
@@ -2766,6 +2905,10 @@
     let providerChannelCache = [];
     let defaultProviderChannelCache = [];
     let modelChannelRouteCache = [];
+    let providerChannelStabilityCache = [];
+    let providerChannelStabilityPeriod = '7d';
+    let providerChannelMonitorCache = [];
+    let providerChannelMonitorPeriod = '7d';
     let currentProviderChannelModelsChannelId = '';
     let providerChannelModelsCache = [];
     let providerChannelModelsPublicCache = [];
@@ -4018,6 +4161,218 @@
       return Number.isFinite(value) ? value : null;
     }
 
+    function providerChannelHealthBadge(status) {
+      const normalized = String(status || 'idle');
+      const labels = {
+        operational: '稳定',
+        degraded: '波动',
+        failed: '失败',
+        cooling: '冷却',
+        idle: '暂无流量'
+      };
+      const cls = normalized === 'operational'
+        ? 'badge-success'
+        : (normalized === 'failed' ? 'badge-error' : (normalized === 'idle' ? 'badge-info' : 'badge-warning'));
+      return `<span class="badge ${cls}">${escapeHtml(labels[normalized] || normalized)}</span>`;
+    }
+
+    function renderProviderChannelStability(payload = {}) {
+      const items = payload.items || [];
+      providerChannelStabilityCache = items;
+      const summary = payload.summary || {};
+      const summaryEl = document.getElementById('providerChannelStabilitySummary');
+      if (summaryEl) {
+        summaryEl.textContent = `${payload.period || providerChannelStabilityPeriod} · ${formatNum(summary.requests || 0)} req · 可用率 ${formatPct(summary.availability_rate || 0)} · fallback ${formatNum(summary.fallback_out_requests || 0)}`;
+      }
+      document.querySelectorAll('[data-stability-period]').forEach(btn => {
+        const active = btn.getAttribute('data-stability-period') === (payload.period || providerChannelStabilityPeriod);
+        btn.classList.toggle('btn-primary', active);
+        btn.classList.toggle('btn-secondary', !active);
+      });
+      const grid = document.getElementById('providerChannelStabilityGrid');
+      if (!grid) return;
+      grid.innerHTML = items.length ? items.map(item => {
+        const recent = (item.recent || []).slice(-30);
+        const padded = Array(Math.max(0, 30 - recent.length)).fill({ status: 'idle' }).concat(recent);
+        const bars = padded.map(point => {
+          const status = ['ok', 'fallback', 'failed'].includes(point.status) ? point.status : 'idle';
+          const title = point.status === 'idle'
+            ? 'no request'
+            : `${point.status_code || '-'} · ${formatLatency(point.latency_ms || 0)} · ${formatDate(point.at)}`;
+          return `<span class="stability-bar ${escapeHtml(status)}" title="${escapeHtml(title)}"></span>`;
+        }).join('');
+        return `
+          <div class="channel-stability-card">
+            <div class="channel-stability-head">
+              <div style="min-width:0">
+                <strong>${escapeHtml(item.name || item.channel_id)}</strong>
+                <div class="text-sm text-muted">${escapeHtml(item.provider_platform || item.channel_type || '-')} · ${escapeHtml(item.channel_id || '-')}</div>
+              </div>
+              ${providerChannelHealthBadge(item.health_status)}
+            </div>
+            <div class="channel-stability-metrics">
+              <div class="channel-stability-metric"><div class="text-sm text-muted">可用率</div><strong>${formatPct(item.availability_rate || 0)}</strong></div>
+              <div class="channel-stability-metric"><div class="text-sm text-muted">平均延迟</div><strong>${formatLatency(item.avg_latency_ms || 0)}</strong></div>
+              <div class="channel-stability-metric"><div class="text-sm text-muted">请求</div><strong>${formatNum(item.requests || 0)}</strong></div>
+            </div>
+            <div class="stability-bars" aria-label="recent channel stability">${bars}</div>
+            <div class="text-sm text-muted" style="margin-top:10px">
+              失败 ${formatNum(item.failed_requests || 0)} · 流入 ${formatNum(item.fallback_in_requests || 0)} · 流出 ${formatNum(item.fallback_out_requests || 0)} · 最近 ${formatDate(item.last_seen_at)}
+            </div>
+          </div>
+        `;
+      }).join('') : '<div class="empty-state" style="grid-column:1/-1"><div class="empty-state-icon">S</div><h3>暂无渠道请求</h3><p>渠道产生真实请求后会展示稳定性</p></div>';
+    }
+
+    async function loadProviderChannelStability(showError = true) {
+      try {
+        const r = await fetch(`/admin/provider-channels/stability?period=${encodeURIComponent(providerChannelStabilityPeriod)}&limit=60`, { headers: adminHeaders() });
+        if (!r.ok) {
+          if (showError) toast('加载渠道稳定性失败', 'error');
+          return;
+        }
+        renderProviderChannelStability(await r.json());
+      } catch (e) {
+        console.error(e);
+        if (showError) toast('加载渠道稳定性失败', 'error');
+      }
+    }
+
+    function setProviderChannelStabilityPeriod(period) {
+      providerChannelStabilityPeriod = period || '7d';
+      loadProviderChannelStability();
+    }
+
+    function renderMonitorTimeline(points = []) {
+      const recent = (points || []).slice(-30);
+      const padded = Array(Math.max(0, 30 - recent.length)).fill({ status: 'idle' }).concat(recent);
+      return `<div class="stability-bars">${padded.map(point => {
+        const status = point.status === 'operational' ? 'ok' : (point.status === 'degraded' ? 'fallback' : (point.status === 'failed' || point.status === 'error' ? 'failed' : 'idle'));
+        const title = point.status === 'idle'
+          ? 'no probe'
+          : `${point.status || '-'} · HTTP ${point.status_code || '-'} · ${formatLatency(point.latency_ms || 0)} · ${formatDate(point.checked_at)}`;
+        return `<span class="stability-bar ${escapeHtml(status)}" title="${escapeHtml(title)}"></span>`;
+      }).join('')}</div>`;
+    }
+
+    async function loadProviderChannelMonitors(showError = true) {
+      try {
+        const r = await fetch(`/admin/provider-channel-monitors?period=${encodeURIComponent(providerChannelMonitorPeriod)}`, { headers: adminHeaders() });
+        if (!r.ok) {
+          if (showError) toast('加载主动监控失败', 'error');
+          return;
+        }
+        const payload = await r.json();
+        providerChannelMonitorCache = payload.items || [];
+        const body = document.getElementById('providerChannelMonitorsBody');
+        const period = payload.period || providerChannelMonitorPeriod;
+        document.getElementById('providerChannelMonitorSummary').textContent = `${providerChannelMonitorCache.length} 个主动监控 · ${period}`;
+        document.querySelectorAll('[data-monitor-period]').forEach(btn => {
+          const active = btn.getAttribute('data-monitor-period') === period;
+          btn.classList.toggle('btn-primary', active);
+          btn.classList.toggle('btn-secondary', !active);
+        });
+        body.innerHTML = providerChannelMonitorCache.length ? providerChannelMonitorCache.map(item => `
+          <tr>
+            <td><strong>${escapeHtml(item.name || item.id)}</strong><div class="text-sm text-muted">${escapeHtml(item.id)} · every ${Number(item.interval_seconds || 0)}s</div></td>
+            <td><div>${escapeHtml(item.channel_name || item.channel_id)}</div><div class="text-sm text-muted">${escapeHtml(item.provider_platform || '-')} · ${escapeHtml(item.base_url || '')}</div></td>
+            <td><div>${escapeHtml(item.primary_model || '-')}</div><div class="text-sm text-muted">${escapeHtml((item.extra_models || []).join(', ') || item.endpoint || '-')}</div></td>
+            <td>${providerChannelHealthBadge(item.last_status || 'idle')}<div class="text-sm text-muted">${escapeHtml(item.last_message || '')}</div></td>
+            <td><div>${formatPct(item.availability_rate || 0)} · ${formatNum(item.total_checks || 0)} checks</div><div class="text-sm text-muted">avg ${formatLatency(item.avg_latency_ms || item.last_latency_ms || 0)} · ping ${formatLatency(item.avg_ping_latency_ms || item.last_ping_latency_ms || 0)}</div></td>
+            <td>${renderMonitorTimeline(item.timeline || [])}</td>
+            <td><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-sm btn-secondary" onclick="openProviderChannelMonitorModal('${escapeHtml(item.id)}')">编辑</button><button class="btn btn-sm btn-secondary" onclick="runProviderChannelMonitor('${escapeHtml(item.id)}')">Run now</button><button class="btn btn-sm btn-danger" onclick="deleteProviderChannelMonitor('${escapeHtml(item.id)}')">删除</button></div></td>
+          </tr>
+        `).join('') : '<tr><td colspan="7"><div class="empty-state"><div class="empty-state-icon">M</div><h3>暂无主动监控</h3><p>给重要渠道添加主动监控后会展示探测历史</p></div></td></tr>';
+      } catch (e) {
+        console.error(e);
+        if (showError) toast('加载主动监控失败', 'error');
+      }
+    }
+
+    function setProviderChannelMonitorPeriod(period) {
+      providerChannelMonitorPeriod = period || '7d';
+      loadProviderChannelMonitors();
+    }
+
+    function fillProviderChannelMonitorOptions(selectedId = '') {
+      const select = document.getElementById('providerChannelMonitorChannel');
+      select.innerHTML = providerChannelCache.map(channel => `<option value="${escapeHtml(channel.id)}" ${channel.id === selectedId ? 'selected' : ''}>${escapeHtml(renderProviderChannelOption(channel))}</option>`).join('');
+    }
+
+    function openProviderChannelMonitorModal(monitorId = '', defaults = {}) {
+      const monitor = providerChannelMonitorCache.find(item => item.id === monitorId) || defaults || {};
+      document.getElementById('providerChannelMonitorModalTitle').textContent = monitorId ? `编辑 ${monitor.name || monitorId}` : '新增主动监控';
+      document.getElementById('providerChannelMonitorId').value = monitorId || '';
+      fillProviderChannelMonitorOptions(monitor.channel_id || currentProviderChannelModelsChannelId || '');
+      document.getElementById('providerChannelMonitorName').value = monitor.name || '';
+      document.getElementById('providerChannelMonitorEndpoint').value = monitor.endpoint || 'responses';
+      document.getElementById('providerChannelMonitorStatus').value = monitor.status || 'active';
+      document.getElementById('providerChannelMonitorPrimaryModel').value = monitor.primary_model || monitor.model || '';
+      document.getElementById('providerChannelMonitorExtraModels').value = (monitor.extra_models || []).join(',');
+      document.getElementById('providerChannelMonitorInterval').value = Number(monitor.interval_seconds || 300);
+      document.getElementById('providerChannelMonitorTimeout').value = Number(monitor.timeout_seconds || 30);
+      openModal('providerChannelMonitorModal');
+    }
+
+    async function saveProviderChannelMonitor() {
+      const monitorId = document.getElementById('providerChannelMonitorId').value;
+      const payload = {
+        channel_id: document.getElementById('providerChannelMonitorChannel').value,
+        name: document.getElementById('providerChannelMonitorName').value.trim(),
+        endpoint: document.getElementById('providerChannelMonitorEndpoint').value,
+        primary_model: document.getElementById('providerChannelMonitorPrimaryModel').value.trim(),
+        extra_models: splitCsv(document.getElementById('providerChannelMonitorExtraModels').value),
+        status: document.getElementById('providerChannelMonitorStatus').value,
+        interval_seconds: Number(document.getElementById('providerChannelMonitorInterval').value || 300),
+        timeout_seconds: Number(document.getElementById('providerChannelMonitorTimeout').value || 30),
+      };
+      if (!payload.channel_id || !payload.primary_model) return toast('渠道和主模型必填', 'error');
+      try {
+        const r = await fetch(monitorId ? `/admin/provider-channel-monitors/${encodeURIComponent(monitorId)}` : '/admin/provider-channel-monitors', {
+          method: monitorId ? 'PATCH' : 'POST',
+          headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+          body: JSON.stringify(payload)
+        });
+        const d = await r.json();
+        if (!r.ok) return toast(d.detail || '保存主动监控失败', 'error');
+        closeModal('providerChannelMonitorModal');
+        toast('主动监控已保存', 'success');
+        loadProviderChannelMonitors();
+      } catch (e) {
+        console.error(e);
+        toast('保存主动监控失败', 'error');
+      }
+    }
+
+    async function runProviderChannelMonitor(monitorId) {
+      try {
+        const r = await fetch(`/admin/provider-channel-monitors/${encodeURIComponent(monitorId)}/run`, { method: 'POST', headers: adminHeaders() });
+        const d = await r.json();
+        if (!r.ok) return toast(d.detail || '主动检测失败', 'error');
+        const primary = (d.results || [])[0] || {};
+        toast(`检测完成：${primary.status || '-'} ${formatLatency(primary.latency_ms || 0)}`, primary.status === 'operational' ? 'success' : 'warning');
+        loadProviderChannelMonitors();
+        loadProviderChannelStability(false);
+      } catch (e) {
+        console.error(e);
+        toast('主动检测失败', 'error');
+      }
+    }
+
+    async function deleteProviderChannelMonitor(monitorId) {
+      if (!confirm(`删除主动监控 ${monitorId}？`)) return;
+      try {
+        const r = await fetch(`/admin/provider-channel-monitors/${encodeURIComponent(monitorId)}`, { method: 'DELETE', headers: adminHeaders() });
+        const d = await r.json();
+        if (!r.ok) return toast(d.detail || '删除主动监控失败', 'error');
+        toast('主动监控已删除', 'success');
+        loadProviderChannelMonitors();
+      } catch (e) {
+        console.error(e);
+        toast('删除主动监控失败', 'error');
+      }
+    }
+
     function renderProviderChannelOption(channel) {
       const status = channel.status === 'active' ? '' : ' / disabled';
       return `${channel.name || channel.id} · ${channel.provider_platform || channel.channel_type || '-'}${status}`;
@@ -4088,6 +4443,8 @@
             <td><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-sm btn-secondary" onclick="openModelChannelRouteModal('${escapeHtml(route.id)}')">编辑</button><button class="btn btn-sm btn-danger" onclick="deleteModelChannelRoute('${escapeHtml(route.id)}')">删除</button></div></td>
           </tr>
         `).join('') : '<tr><td colspan="7"><div class="empty-state"><div class="empty-state-icon">R</div><h3>暂无模型 route</h3><p>没有 route 时继续使用 catalog 默认转发</p></div></td></tr>';
+        await loadProviderChannelStability(false);
+        await loadProviderChannelMonitors(false);
       } catch (e) {
         console.error(e);
         toast('加载上游渠道失败', 'error');
@@ -4263,7 +4620,12 @@
             <td><select id="providerChannelModelPublic-${index}" class="form-select" onchange="updateDiscoveredModelEndpointOptions(${index})">${publicModelOptionsHtml(suggested)}</select></td>
             <td><select id="providerChannelModelEndpoint-${index}" class="form-select">${endpointOptionsHtml(suggested, endpoint)}</select></td>
             <td>${exists ? '<span class="badge badge-info">已配置</span>' : '<span class="badge badge-success">可创建</span>'}</td>
-            <td><button class="btn btn-sm btn-primary" onclick="createRouteFromDiscoveredModel(${index})">${exists ? '再建 route' : '建 route'}</button></td>
+            <td>
+              <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <button class="btn btn-sm btn-primary" onclick="createRouteFromDiscoveredModel(${index})">${exists ? '再建 route' : '建 route'}</button>
+                <button class="btn btn-sm btn-secondary" onclick="createMonitorFromDiscoveredModel(${index})">建监控</button>
+              </div>
+            </td>
           </tr>
         `;
       }).join('') : '<tr><td colspan="5"><div class="empty-state"><div class="empty-state-icon">M</div><h3>暂无模型</h3><p>上游 /models 返回为空</p></div></td></tr>';
@@ -4329,6 +4691,23 @@
         console.error(e);
         toast('创建 route 失败', 'error');
       }
+    }
+
+    function createMonitorFromDiscoveredModel(index) {
+      const model = providerChannelModelsCache[index] || {};
+      const endpoint = document.getElementById(`providerChannelModelEndpoint-${index}`)?.value || 'responses';
+      const channel = providerChannelCache.find(item => item.id === currentProviderChannelModelsChannelId) || {};
+      if (!model.id || !currentProviderChannelModelsChannelId) return toast('请选择渠道模型', 'error');
+      openProviderChannelMonitorModal('', {
+        channel_id: currentProviderChannelModelsChannelId,
+        name: `${channel.name || 'channel'} · ${model.id}`,
+        endpoint: endpoint || 'responses',
+        primary_model: model.id,
+        extra_models: [],
+        status: 'active',
+        interval_seconds: 300,
+        timeout_seconds: 30,
+      });
     }
 
     function fillRouteChannelOptions(selectedId = '') {
@@ -4503,7 +4882,7 @@
       logsUserId = userId;
       logsOffset = 0;
       document.getElementById('logsModalTitle').textContent = `请求日志 - ${displayName}`;
-      document.getElementById('logsBody').innerHTML = '<tr><td colspan="10" style="text-align:center;padding:40px;color:var(--text-tertiary)">加载中...</td></tr>';
+      document.getElementById('logsBody').innerHTML = '<tr><td colspan="11" style="text-align:center;padding:40px;color:var(--text-tertiary)">加载中...</td></tr>';
       document.getElementById('logsPagination').textContent = '';
       openModal('logsModal');
       await loadRequestLogs();
@@ -4516,7 +4895,7 @@
         const data = await r.json();
         const body = document.getElementById('logsBody');
         if (!data.data.length) {
-          body.innerHTML = '<tr><td colspan="10"><div class="empty-state" style="padding:40px"><div class="empty-state-icon">📋</div><h3>暂无请求日志</h3></div></td></tr>';
+          body.innerHTML = '<tr><td colspan="11"><div class="empty-state" style="padding:40px"><div class="empty-state-icon">📋</div><h3>暂无请求日志</h3></div></td></tr>';
         } else {
           body.innerHTML = data.data.map(l => {
             const sc = l.status_code < 400 ? 'badge-success' : 'badge-error';
@@ -4524,6 +4903,10 @@
               ? `${formatNum(l.image_count || l.usage_unit_count || 0)} 张图片`
               : `输入 ${formatNum(l.input_tokens || 0)} / 输出 ${formatNum(l.output_tokens || 0)}`;
             const cacheLabel = `读 ${formatNum(l.cache_read_tokens || l.cached_tokens || 0)} / 写 ${formatNum(l.cache_creation_tokens || 0)}`;
+            const routeMeta = [
+              l.channel_id ? `${escapeHtml(l.provider_platform || l.channel_type || 'channel')} · ${escapeHtml(l.channel_id)}` : '',
+              Number(l.route_attempt || 0) > 0 ? `fallback from ${escapeHtml(l.fallback_from_channel_id || '-')} · attempt ${escapeHtml(String(l.route_attempt))}` : '',
+            ].filter(Boolean).join('<br/>');
             return `<tr>
               <td class="text-sm">${l.created_at ? utcDate(l.created_at).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '-'}</td>
               <td class="text-sm">${l.endpoint}</td>
@@ -4535,6 +4918,7 @@
               <td class="text-sm text-success">$${l.cost_usd.toFixed(4)}</td>
               <td class="text-sm text-muted">${l.duration_ms}ms</td>
               <td><span class="badge ${sc}" style="font-size:11px">${l.status_code}</span></td>
+              <td><div class="text-sm text-muted">${escapeHtml(l.route_reason || '-')}</div>${routeMeta ? `<div class="text-sm text-muted">${routeMeta}</div>` : ''}</td>
             </tr>`;
           }).join('');
         }
@@ -5280,6 +5664,7 @@
         document.getElementById('opsHealthStats').innerHTML = `
           <div class="stat-card"><div class="stat-icon">↗</div><div class="stat-value">${formatNum(traffic.total_requests || 0)}</div><div class="stat-label">24h 请求</div></div>
           <div class="stat-card"><div class="stat-icon">!</div><div class="stat-value">${formatNum(traffic.failed_requests || 0)}</div><div class="stat-label">24h 失败 · ${(errorRate * 100).toFixed(1)}%</div></div>
+          <div class="stat-card"><div class="stat-icon">F</div><div class="stat-value">${formatNum(traffic.fallback_requests || 0)}</div><div class="stat-label">24h Fallback · ${(Number(traffic.fallback_rate || 0) * 100).toFixed(1)}%</div></div>
           <div class="stat-card"><div class="stat-icon">M</div><div class="stat-value">${formatNum(models.count || 0)}</div><div class="stat-label">模型 · ${models.routable ? '可路由' : '无路由'}</div></div>
           <div class="stat-card"><div class="stat-icon">✓</div><div class="stat-value" style="font-size:20px">${formatDate(traffic.latest_success_at)}</div><div class="stat-label">最近成功</div></div>
         `;
@@ -5310,7 +5695,12 @@
             <td>${escapeHtml(item.endpoint || '-')}</td>
             <td>${escapeHtml(item.model || '-')}</td>
             <td>${formatNum(item.duration_ms || 0)}ms</td>
-            <td><div class="text-sm text-muted">${escapeHtml(item.route_reason || '-')}</div>${item.upstream_request_id ? `<div class="text-sm text-muted">${escapeHtml(item.upstream_request_id)}</div>` : ''}</td>
+            <td>
+              <div class="text-sm text-muted">${escapeHtml(item.route_reason || '-')}</div>
+              ${item.channel_id ? `<div class="text-sm text-muted">${escapeHtml(item.provider_platform || item.channel_type || 'channel')} · ${escapeHtml(item.channel_id)}</div>` : ''}
+              ${Number(item.route_attempt || 0) > 0 ? `<div class="text-sm text-muted">fallback from ${escapeHtml(item.fallback_from_channel_id || '-')} · attempt ${escapeHtml(String(item.route_attempt))}</div>` : ''}
+              ${item.upstream_request_id ? `<div class="text-sm text-muted">${escapeHtml(item.upstream_request_id)}</div>` : ''}
+            </td>
           </tr>
         `).join('') : '<tr><td colspan="7" style="text-align:center;padding:32px;color:var(--text-tertiary)">暂无失败请求</td></tr>';
       } catch (e) {

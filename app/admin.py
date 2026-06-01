@@ -28,6 +28,9 @@ from .models import (
     ModelChannelRoute,
     ModelPricingOverride,
     ProviderChannel,
+    ProviderChannelMonitor,
+    ProviderChannelMonitorDailyRollup,
+    ProviderChannelMonitorHistory,
     ProviderChannelRuntimeState,
     SystemSetting,
     PaymentOrder,
@@ -55,8 +58,16 @@ from .schemas import (
     AdminUserPasswordResetResponse, AdminUserUpdate,
     AdminClaudeCompatSettingsUpdate, AdminModelAliasUpdate, AdminModelChannelRouteCreate,
     AdminModelChannelRouteUpdate, AdminModelPricingUpdate, AdminProviderChannelCreate,
+    AdminProviderChannelMonitorCreate, AdminProviderChannelMonitorUpdate,
     AdminProviderChannelUpdate, AnnouncementCreate, AnnouncementUpdate,
     RedemptionGenerateRequest, RedemptionGenerateResponse,
+)
+from .channel_monitoring import (
+    monitor_availability_rows,
+    monitor_model_list,
+    parse_monitor_models,
+    run_provider_channel_monitor_once,
+    serialize_monitor_models,
 )
 from .model_pricing_overrides import refresh_model_pricing_registry_from_db
 from .system_settings import (
@@ -306,6 +317,48 @@ def _provider_channel_payload(
         "updated_by": row.updated_by,
         "created_at": row.created_at,
         "updated_at": row.updated_at,
+    }
+
+
+def _provider_channel_monitor_payload(
+    monitor: ProviderChannelMonitor,
+    channel: Optional[ProviderChannel] = None,
+    *,
+    availability: dict[str, Any] | None = None,
+    timeline: list[dict] | None = None,
+) -> dict:
+    availability = availability or {}
+    return {
+        "id": monitor.id,
+        "channel_id": monitor.channel_id,
+        "channel_name": getattr(channel, "name", "") if channel is not None else "",
+        "provider_platform": getattr(channel, "provider_platform", "") if channel is not None else "",
+        "channel_type": getattr(channel, "channel_type", "") if channel is not None else "",
+        "base_url": getattr(channel, "base_url", "") if channel is not None else "",
+        "name": monitor.name,
+        "endpoint": monitor.endpoint,
+        "primary_model": monitor.primary_model,
+        "extra_models": parse_monitor_models(monitor.extra_models),
+        "models": monitor_model_list(monitor),
+        "status": monitor.status,
+        "interval_seconds": int(monitor.interval_seconds or 0),
+        "timeout_seconds": int(monitor.timeout_seconds or 0),
+        "last_checked_at": monitor.last_checked_at,
+        "last_status": monitor.last_status,
+        "last_latency_ms": int(monitor.last_latency_ms or 0),
+        "last_ping_latency_ms": int(monitor.last_ping_latency_ms or 0),
+        "last_message": monitor.last_message,
+        "availability_rate": float(availability.get("availability_rate", 0.0) or 0.0),
+        "avg_latency_ms": int(availability.get("avg_latency_ms", 0) or 0),
+        "avg_ping_latency_ms": int(availability.get("avg_ping_latency_ms", 0) or 0),
+        "total_checks": int(availability.get("total_checks", 0) or 0),
+        "operational_count": int(availability.get("operational_count", 0) or 0),
+        "degraded_count": int(availability.get("degraded_count", 0) or 0),
+        "failed_count": int(availability.get("failed_count", 0) or 0),
+        "error_count": int(availability.get("error_count", 0) or 0),
+        "timeline": timeline or [],
+        "created_at": monitor.created_at,
+        "updated_at": monitor.updated_at,
     }
 
 
@@ -1287,6 +1340,368 @@ async def list_provider_channels(db: AsyncSession = Depends(get_db)):
         ],
         "default_channels": _system_default_channel_payloads(),
         "router_version": channel_router.version,
+    }
+
+
+@router.get("/provider-channels/stability", dependencies=[Depends(admin_guard)])
+async def provider_channel_stability(period: str = "7d", limit: int = 60, db: AsyncSession = Depends(get_db)):
+    days_by_period = {"7d": 7, "15d": 15, "30d": 30}
+    normalized = (period or "7d").strip().lower()
+    if normalized not in days_by_period:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unsupported period")
+    limit = min(120, max(20, int(limit or 60)))
+    since = datetime.utcnow() - timedelta(days=days_by_period[normalized])
+
+    channel_rows = (await db.execute(select(ProviderChannel))).scalars().all()
+    runtime_rows = (await db.execute(select(ProviderChannelRuntimeState))).scalars().all()
+    runtime_by_channel = {row.channel_id: row for row in runtime_rows}
+
+    stats_rows = (
+        await db.execute(
+            select(
+                RequestLog.channel_id.label("channel_id"),
+                RequestLog.provider_platform.label("provider_platform"),
+                RequestLog.channel_type.label("channel_type"),
+                RequestLog.provider_account_fingerprint.label("provider_account_fingerprint"),
+                func.count(RequestLog.id).label("requests"),
+                func.coalesce(func.sum(case((RequestLog.status_code < 400, 1), else_=0)), 0).label("success_requests"),
+                func.coalesce(func.sum(case((RequestLog.status_code >= 400, 1), else_=0)), 0).label("failed_requests"),
+                func.coalesce(func.sum(case((RequestLog.route_attempt > 0, 1), else_=0)), 0).label("fallback_in_requests"),
+                func.coalesce(func.avg(RequestLog.duration_ms), 0).label("avg_latency_ms"),
+                func.coalesce(func.max(RequestLog.duration_ms), 0).label("max_latency_ms"),
+                func.max(RequestLog.created_at).label("last_seen_at"),
+            )
+            .where(RequestLog.created_at >= since, RequestLog.channel_id != "")
+            .group_by(
+                RequestLog.channel_id,
+                RequestLog.provider_platform,
+                RequestLog.channel_type,
+                RequestLog.provider_account_fingerprint,
+            )
+            .order_by(func.count(RequestLog.id).desc())
+        )
+    ).all()
+    fallback_out_rows = (
+        await db.execute(
+            select(
+                RequestLog.fallback_from_channel_id.label("channel_id"),
+                func.count(RequestLog.id).label("fallback_out_requests"),
+            )
+            .where(RequestLog.created_at >= since, RequestLog.fallback_from_channel_id != "")
+            .group_by(RequestLog.fallback_from_channel_id)
+        )
+    ).all()
+    recent_rows = (
+        await db.execute(
+            select(RequestLog)
+            .where(RequestLog.created_at >= since, RequestLog.channel_id != "")
+            .order_by(RequestLog.created_at.desc())
+            .limit(max(500, limit * max(1, len(channel_rows))))
+        )
+    ).scalars().all()
+
+    stats_by_channel = {str(_row_value(row, "channel_id", "") or ""): row for row in stats_rows}
+    fallback_out_by_channel = {
+        str(_row_value(row, "channel_id", "") or ""): int(_row_value(row, "fallback_out_requests", 0) or 0)
+        for row in fallback_out_rows
+    }
+    channel_meta: dict[str, dict] = {}
+    for row in channel_rows:
+        payload = _provider_channel_payload(row, runtime_state=runtime_by_channel.get(row.id))
+        channel_meta[row.id] = payload
+
+    recent_by_channel: dict[str, list[dict]] = {}
+    for log in recent_rows:
+        channel_id = str(getattr(log, "channel_id", "") or "")
+        if not channel_id:
+            continue
+        bucket = recent_by_channel.setdefault(channel_id, [])
+        if len(bucket) >= limit:
+            continue
+        status_label = "failed" if int(getattr(log, "status_code", 0) or 0) >= 400 else "ok"
+        if status_label == "ok" and int(getattr(log, "route_attempt", 0) or 0) > 0:
+            status_label = "fallback"
+        bucket.append({
+            "at": getattr(log, "created_at", None),
+            "status": status_label,
+            "status_code": int(getattr(log, "status_code", 0) or 0),
+            "latency_ms": int(getattr(log, "duration_ms", 0) or 0),
+            "model": getattr(log, "model", "") or getattr(log, "customer_model_alias", ""),
+            "route_reason": getattr(log, "route_reason", "") or "",
+            "route_attempt": int(getattr(log, "route_attempt", 0) or 0),
+        })
+
+    channel_ids = set(channel_meta.keys()) | set(stats_by_channel.keys()) | set(fallback_out_by_channel.keys())
+    items = []
+    for channel_id in sorted(channel_ids):
+        meta = channel_meta.get(channel_id) or {}
+        stat = stats_by_channel.get(channel_id)
+        requests = int(_row_value(stat, "requests", 0) or 0)
+        success = int(_row_value(stat, "success_requests", 0) or 0)
+        failed = int(_row_value(stat, "failed_requests", 0) or 0)
+        fallback_in = int(_row_value(stat, "fallback_in_requests", 0) or 0)
+        fallback_out = int(fallback_out_by_channel.get(channel_id, 0) or 0)
+        availability_rate = _safe_rate(success, requests)
+        runtime = meta.get("runtime") or _channel_runtime_payload(channel_id, runtime_by_channel.get(channel_id))
+        cooling = int(runtime.get("memory_cooldown_remaining_seconds") or 0)
+        if requests <= 0:
+            health_status = "idle"
+        elif cooling > 0:
+            health_status = "cooling"
+        elif availability_rate >= 0.98 and fallback_out == 0:
+            health_status = "operational"
+        elif availability_rate >= 0.90:
+            health_status = "degraded"
+        else:
+            health_status = "failed"
+        provider_platform = (
+            meta.get("provider_platform")
+            or _row_value(stat, "provider_platform", "")
+            or ("system" if channel_id.startswith("system:") else "")
+        )
+        channel_type = meta.get("channel_type") or _row_value(stat, "channel_type", "") or ""
+        items.append({
+            "channel_id": channel_id,
+            "name": meta.get("name") or channel_id,
+            "provider_platform": provider_platform,
+            "channel_type": channel_type,
+            "base_url": meta.get("base_url", ""),
+            "status": meta.get("status") or ("default" if channel_id.startswith("system:") else ""),
+            "health_status": health_status,
+            "availability_rate": availability_rate,
+            "requests": requests,
+            "success_requests": success,
+            "failed_requests": failed,
+            "failure_rate": _safe_rate(failed, requests),
+            "fallback_in_requests": fallback_in,
+            "fallback_out_requests": fallback_out,
+            "avg_latency_ms": int(float(_row_value(stat, "avg_latency_ms", 0) or 0)),
+            "max_latency_ms": int(float(_row_value(stat, "max_latency_ms", 0) or 0)),
+            "last_seen_at": _row_value(stat, "last_seen_at", None),
+            "runtime": runtime,
+            "recent": list(reversed(recent_by_channel.get(channel_id, []))),
+        })
+    items.sort(key=lambda item: (0 if item["health_status"] in {"failed", "cooling", "degraded"} else 1, -item["requests"], item["name"]))
+    total_requests = sum(item["requests"] for item in items)
+    total_failed = sum(item["failed_requests"] for item in items)
+    total_fallback_out = sum(item["fallback_out_requests"] for item in items)
+    return {
+        "period": normalized,
+        "window_days": days_by_period[normalized],
+        "window_start": since,
+        "limit": limit,
+        "summary": {
+            "channels": len(items),
+            "requests": total_requests,
+            "failed_requests": total_failed,
+            "availability_rate": 1.0 - _safe_rate(total_failed, total_requests) if total_requests else 0.0,
+            "fallback_out_requests": total_fallback_out,
+        },
+        "items": items,
+    }
+
+
+def _monitor_period_days(period: str) -> tuple[str, int]:
+    days_by_period = {"7d": 7, "15d": 15, "30d": 30}
+    normalized = (period or "7d").strip().lower()
+    if normalized not in days_by_period:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unsupported period")
+    return normalized, days_by_period[normalized]
+
+
+async def _monitor_timeline_map(db: AsyncSession, monitors: list[ProviderChannelMonitor], *, limit: int = 60) -> dict[str, list[dict]]:
+    if not monitors:
+        return {}
+    primary_by_id = {monitor.id: monitor.primary_model for monitor in monitors}
+    rows = (
+        await db.execute(
+            select(ProviderChannelMonitorHistory)
+            .where(ProviderChannelMonitorHistory.monitor_id.in_(list(primary_by_id.keys())))
+            .order_by(ProviderChannelMonitorHistory.checked_at.desc())
+            .limit(max(500, len(monitors) * max(20, int(limit or 60))))
+        )
+    ).scalars().all()
+    result: dict[str, list[dict]] = {}
+    for row in rows:
+        if row.model != primary_by_id.get(row.monitor_id):
+            continue
+        bucket = result.setdefault(row.monitor_id, [])
+        if len(bucket) >= limit:
+            continue
+        bucket.append({
+            "status": row.status,
+            "latency_ms": int(row.latency_ms or 0),
+            "ping_latency_ms": int(row.ping_latency_ms or 0),
+            "status_code": int(row.status_code or 0),
+            "message": row.message,
+            "checked_at": row.checked_at,
+        })
+    return {key: list(reversed(value)) for key, value in result.items()}
+
+
+@router.get("/provider-channel-monitors", dependencies=[Depends(admin_guard)])
+async def list_provider_channel_monitors(period: str = "7d", db: AsyncSession = Depends(get_db)):
+    normalized, days = _monitor_period_days(period)
+    rows = (
+        await db.execute(
+            select(ProviderChannelMonitor, ProviderChannel)
+            .outerjoin(ProviderChannel, ProviderChannel.id == ProviderChannelMonitor.channel_id)
+            .order_by(ProviderChannelMonitor.status.asc(), ProviderChannelMonitor.name.asc(), ProviderChannelMonitor.created_at.desc())
+        )
+    ).all()
+    monitors = [row[0] for row in rows]
+    availability = await monitor_availability_rows(db, window_days=days)
+    timelines = await _monitor_timeline_map(db, monitors, limit=60)
+    items = []
+    for monitor, channel in rows:
+        key = f"{monitor.id}:{monitor.primary_model}"
+        items.append(
+            _provider_channel_monitor_payload(
+                monitor,
+                channel,
+                availability=availability.get(key),
+                timeline=timelines.get(monitor.id, []),
+            )
+        )
+    return {"period": normalized, "window_days": days, "items": items}
+
+
+@router.post("/provider-channel-monitors", dependencies=[Depends(admin_guard)])
+async def create_provider_channel_monitor(payload: AdminProviderChannelMonitorCreate, db: AsyncSession = Depends(get_db)):
+    channel = await db.get(ProviderChannel, payload.channel_id)
+    if channel is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="provider channel not found")
+    monitor = ProviderChannelMonitor(
+        id=generate_id("cmon_"),
+        channel_id=payload.channel_id,
+        name=(payload.name or channel.name or payload.primary_model).strip(),
+        endpoint=payload.endpoint,
+        primary_model=payload.primary_model.strip(),
+        extra_models=serialize_monitor_models(payload.extra_models),
+        status=payload.status,
+        interval_seconds=int(payload.interval_seconds or _settings.provider_channel_monitor_default_interval),
+        timeout_seconds=int(payload.timeout_seconds or _settings.provider_channel_monitor_default_timeout),
+        created_by="admin",
+    )
+    db.add(monitor)
+    await db.commit()
+    return _provider_channel_monitor_payload(monitor, channel)
+
+
+@router.patch("/provider-channel-monitors/{monitor_id}", dependencies=[Depends(admin_guard)])
+async def update_provider_channel_monitor(
+    monitor_id: str,
+    payload: AdminProviderChannelMonitorUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    if not payload.model_fields_set:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="no monitor fields provided")
+    monitor = await db.get(ProviderChannelMonitor, monitor_id)
+    if monitor is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel monitor not found")
+    fields = payload.model_fields_set
+    if "channel_id" in fields and payload.channel_id is not None:
+        channel = await db.get(ProviderChannel, payload.channel_id)
+        if channel is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="provider channel not found")
+        monitor.channel_id = payload.channel_id
+    if "name" in fields and payload.name is not None:
+        monitor.name = payload.name.strip()
+    if "endpoint" in fields and payload.endpoint is not None:
+        monitor.endpoint = payload.endpoint
+    if "primary_model" in fields and payload.primary_model is not None:
+        monitor.primary_model = payload.primary_model.strip()
+    if "extra_models" in fields:
+        monitor.extra_models = serialize_monitor_models(payload.extra_models or [])
+    if "status" in fields and payload.status is not None:
+        monitor.status = payload.status
+    if "interval_seconds" in fields and payload.interval_seconds is not None:
+        monitor.interval_seconds = int(payload.interval_seconds)
+    if "timeout_seconds" in fields and payload.timeout_seconds is not None:
+        monitor.timeout_seconds = int(payload.timeout_seconds)
+    await db.commit()
+    channel = await db.get(ProviderChannel, monitor.channel_id)
+    return _provider_channel_monitor_payload(monitor, channel)
+
+
+@router.delete("/provider-channel-monitors/{monitor_id}", dependencies=[Depends(admin_guard)])
+async def delete_provider_channel_monitor(monitor_id: str, db: AsyncSession = Depends(get_db)):
+    monitor = await db.get(ProviderChannelMonitor, monitor_id)
+    if monitor is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel monitor not found")
+    history_rows = (
+        await db.execute(select(ProviderChannelMonitorHistory).where(ProviderChannelMonitorHistory.monitor_id == monitor_id))
+    ).scalars().all()
+    for row in history_rows:
+        await db.delete(row)
+    daily_rows = (
+        await db.execute(select(ProviderChannelMonitorDailyRollup).where(ProviderChannelMonitorDailyRollup.monitor_id == monitor_id))
+    ).scalars().all()
+    for row in daily_rows:
+        await db.delete(row)
+    await db.delete(monitor)
+    await db.commit()
+    return {"deleted": True, "id": monitor_id}
+
+
+@router.post("/provider-channel-monitors/{monitor_id}/run", dependencies=[Depends(admin_guard)])
+async def run_provider_channel_monitor_now(monitor_id: str, db: AsyncSession = Depends(get_db)):
+    monitor = await db.get(ProviderChannelMonitor, monitor_id)
+    if monitor is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel monitor not found")
+    results = await run_provider_channel_monitor_once(db, monitor_id)
+    channel = await db.get(ProviderChannel, monitor.channel_id)
+    return {
+        "monitor": _provider_channel_monitor_payload(monitor, channel),
+        "results": [
+            {
+                "model": result.model,
+                "status": result.status,
+                "latency_ms": result.latency_ms,
+                "ping_latency_ms": result.ping_latency_ms,
+                "status_code": result.status_code,
+                "message": result.message,
+                "checked_at": result.checked_at,
+            }
+            for result in results
+        ],
+    }
+
+
+@router.get("/provider-channel-monitors/{monitor_id}/history", dependencies=[Depends(admin_guard)])
+async def list_provider_channel_monitor_history(monitor_id: str, model: str = "", limit: int = 120, db: AsyncSession = Depends(get_db)):
+    monitor = await db.get(ProviderChannelMonitor, monitor_id)
+    if monitor is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel monitor not found")
+    limit = min(500, max(1, int(limit or 120)))
+    conditions = [ProviderChannelMonitorHistory.monitor_id == monitor_id]
+    if model:
+        conditions.append(ProviderChannelMonitorHistory.model == model)
+    rows = (
+        await db.execute(
+            select(ProviderChannelMonitorHistory)
+            .where(*conditions)
+            .order_by(ProviderChannelMonitorHistory.checked_at.desc())
+            .limit(limit)
+        )
+    ).scalars().all()
+    return {
+        "monitor": _provider_channel_monitor_payload(monitor, await db.get(ProviderChannel, monitor.channel_id)),
+        "items": [
+            {
+                "id": row.id,
+                "monitor_id": row.monitor_id,
+                "channel_id": row.channel_id,
+                "model": row.model,
+                "status": row.status,
+                "latency_ms": int(row.latency_ms or 0),
+                "ping_latency_ms": int(row.ping_latency_ms or 0),
+                "status_code": int(row.status_code or 0),
+                "message": row.message,
+                "checked_at": row.checked_at,
+            }
+            for row in rows
+        ],
     }
 
 
@@ -2743,6 +3158,7 @@ async def analytics_model_latency_diagnostics(
                 func.coalesce(func.max(RequestLog.duration_ms), 0).label("max_latency_ms"),
                 func.coalesce(func.sum(RequestLog.input_tokens + RequestLog.output_tokens), 0).label("tokens"),
                 func.coalesce(func.sum(RequestLog.cost_cents), 0).label("user_charge_cents"),
+                func.coalesce(func.sum(case((RequestLog.route_attempt > 0, 1), else_=0)), 0).label("fallback_requests"),
             ).where(*filtered)
         )
     ).first()
@@ -2807,6 +3223,7 @@ async def analytics_model_latency_diagnostics(
                 func.coalesce(func.avg(RequestLog.duration_ms), 0).label("avg_latency_ms"),
                 func.coalesce(func.max(RequestLog.duration_ms), 0).label("max_latency_ms"),
                 func.coalesce(func.sum(case((RequestLog.status_code >= 400, 1), else_=0)), 0).label("failed_requests"),
+                func.coalesce(func.sum(case((RequestLog.route_attempt > 0, 1), else_=0)), 0).label("fallback_requests"),
             )
             .where(*filtered)
             .group_by(RequestLog.route_reason)
@@ -2898,6 +3315,8 @@ async def analytics_model_latency_diagnostics(
             "requests": total,
             "failed_requests": failed,
             "failure_rate": _safe_rate(failed, total),
+            "fallback_requests": int(_row_value(summary, "fallback_requests", 0) or 0),
+            "fallback_rate": _safe_rate(int(_row_value(summary, "fallback_requests", 0) or 0), total),
             "min_latency_ms": int(float(_row_value(summary, "min_latency_ms", 0) or 0)),
             "avg_latency_ms": int(float(_row_value(summary, "avg_latency_ms", 0) or 0)),
             "p50_latency_ms": percentile(latency_points, 0.50),
@@ -2931,6 +3350,7 @@ async def analytics_model_latency_diagnostics(
                 "avg_latency_ms": int(float(_row_value(row, "avg_latency_ms", 0) or 0)),
                 "max_latency_ms": int(float(_row_value(row, "max_latency_ms", 0) or 0)),
                 "failed_requests": int(_row_value(row, "failed_requests", 0) or 0),
+                "fallback_requests": int(_row_value(row, "fallback_requests", 0) or 0),
             }
             for row in route_rows
         ],
@@ -3242,6 +3662,11 @@ async def ops_health(db: AsyncSession = Depends(get_db)):
             select(func.count()).select_from(RequestLog).where(RequestLog.created_at >= since, RequestLog.status_code >= 400)
         )
     ).scalar() or 0
+    fallback_requests = (
+        await db.execute(
+            select(func.count()).select_from(RequestLog).where(RequestLog.created_at >= since, RequestLog.route_attempt > 0)
+        )
+    ).scalar() or 0
     latest_success = (
         await db.execute(
             select(RequestLog.created_at)
@@ -3305,6 +3730,8 @@ async def ops_health(db: AsyncSession = Depends(get_db)):
             "total_requests": int(total_requests),
             "failed_requests": int(failed_requests),
             "error_rate": (float(failed_requests) / float(total_requests)) if total_requests else 0,
+            "fallback_requests": int(fallback_requests),
+            "fallback_rate": (float(fallback_requests) / float(total_requests)) if total_requests else 0,
             "latest_success_at": latest_success,
         },
         "errors": {
@@ -3319,6 +3746,11 @@ async def ops_health(db: AsyncSession = Depends(get_db)):
                     "model": log.model,
                     "duration_ms": log.duration_ms,
                     "route_reason": log.route_reason,
+                    "channel_id": getattr(log, "channel_id", ""),
+                    "channel_type": getattr(log, "channel_type", ""),
+                    "provider_platform": getattr(log, "provider_platform", ""),
+                    "fallback_from_channel_id": getattr(log, "fallback_from_channel_id", ""),
+                    "route_attempt": getattr(log, "route_attempt", 0),
                     "upstream_request_id": log.upstream_request_id,
                 }
                 for log, user in failed_rows

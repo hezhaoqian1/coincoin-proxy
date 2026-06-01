@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from .admin import router as admin_router
 from .anthropic_compat import router as anthropic_router
 from .auth import router as auth_router
+from .channel_monitoring import provider_channel_monitor_loop
 from .image_jobs import (
     image_job_loop,
     openai_router as image_jobs_openai_router,
@@ -537,6 +538,77 @@ async def _run_migrations(conn):
             INDEX ix_channel_runtime_updated_at (updated_at)
         )
         """,
+        """
+        CREATE TABLE coincoin_provider_channel_monitors (
+            id VARCHAR(32) PRIMARY KEY,
+            channel_id VARCHAR(32) NOT NULL,
+            name VARCHAR(128) DEFAULT '',
+            endpoint VARCHAR(64) DEFAULT 'responses',
+            primary_model VARCHAR(128) DEFAULT '',
+            extra_models TEXT NULL,
+            status VARCHAR(16) DEFAULT 'active',
+            interval_seconds BIGINT DEFAULT 300,
+            timeout_seconds BIGINT DEFAULT 30,
+            last_checked_at DATETIME NULL,
+            last_status VARCHAR(16) DEFAULT '',
+            last_latency_ms BIGINT DEFAULT 0,
+            last_ping_latency_ms BIGINT DEFAULT 0,
+            last_message VARCHAR(512) DEFAULT '',
+            created_by VARCHAR(64) DEFAULT 'admin',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX ix_channel_monitors_channel_id (channel_id),
+            INDEX ix_channel_monitors_endpoint (endpoint),
+            INDEX ix_channel_monitors_status (status),
+            INDEX ix_channel_monitors_last_checked_at (last_checked_at),
+            INDEX ix_channel_monitors_created_at (created_at),
+            INDEX ix_channel_monitors_updated_at (updated_at)
+        )
+        """,
+        """
+        CREATE TABLE coincoin_provider_channel_monitor_history (
+            id VARCHAR(32) PRIMARY KEY,
+            monitor_id VARCHAR(32) NOT NULL,
+            channel_id VARCHAR(32) NOT NULL,
+            model VARCHAR(128) DEFAULT '',
+            status VARCHAR(16) DEFAULT 'error',
+            latency_ms BIGINT DEFAULT 0,
+            ping_latency_ms BIGINT DEFAULT 0,
+            status_code BIGINT DEFAULT 0,
+            message VARCHAR(512) DEFAULT '',
+            checked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            INDEX ix_channel_monitor_history_monitor (monitor_id),
+            INDEX ix_channel_monitor_history_channel (channel_id),
+            INDEX ix_channel_monitor_history_model (model),
+            INDEX ix_channel_monitor_history_status (status),
+            INDEX ix_channel_monitor_history_checked_at (checked_at)
+        )
+        """,
+        """
+        CREATE TABLE coincoin_provider_channel_monitor_daily (
+            id VARCHAR(32) PRIMARY KEY,
+            monitor_id VARCHAR(32) NOT NULL,
+            channel_id VARCHAR(32) NOT NULL,
+            model VARCHAR(128) DEFAULT '',
+            bucket_date DATE NOT NULL,
+            total_checks BIGINT DEFAULT 0,
+            operational_count BIGINT DEFAULT 0,
+            degraded_count BIGINT DEFAULT 0,
+            failed_count BIGINT DEFAULT 0,
+            error_count BIGINT DEFAULT 0,
+            sum_latency_ms BIGINT DEFAULT 0,
+            count_latency BIGINT DEFAULT 0,
+            sum_ping_latency_ms BIGINT DEFAULT 0,
+            count_ping_latency BIGINT DEFAULT 0,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY ix_channel_monitor_daily_unique (monitor_id, model, bucket_date),
+            INDEX ix_channel_monitor_daily_monitor (monitor_id),
+            INDEX ix_channel_monitor_daily_channel (channel_id),
+            INDEX ix_channel_monitor_daily_model (model),
+            INDEX ix_channel_monitor_daily_bucket (bucket_date),
+            INDEX ix_channel_monitor_daily_updated_at (updated_at)
+        )
+        """,
     ]
     for ddl in table_migrations:
         try:
@@ -554,6 +626,8 @@ async def _run_migrations(conn):
         "CREATE INDEX ix_request_logs_station_created ON coincoin_request_logs (station_id, created_at)",
         "CREATE INDEX ix_request_logs_channel_created ON coincoin_request_logs (channel_id, created_at)",
         "CREATE INDEX ix_request_logs_platform_created ON coincoin_request_logs (provider_platform, created_at)",
+        "CREATE INDEX ix_channel_monitor_history_channel_checked ON coincoin_provider_channel_monitor_history (channel_id, checked_at)",
+        "CREATE INDEX ix_channel_monitor_daily_channel_bucket ON coincoin_provider_channel_monitor_daily (channel_id, bucket_date)",
         "CREATE INDEX ix_referral_rewards_recipient_id ON coincoin_referral_rewards (recipient_id)",
         "CREATE INDEX ix_referral_rewards_reward_type ON coincoin_referral_rewards (reward_type)",
     ]
@@ -685,6 +759,9 @@ async def lifespan(app: FastAPI):
     provider_channel_task = asyncio.create_task(
         provider_channel_refresh_loop(settings.model_alias_overrides_refresh_interval)
     )
+    provider_channel_monitor_task = asyncio.create_task(
+        provider_channel_monitor_loop(settings.provider_channel_monitor_poll_interval)
+    )
     alias_override_task = asyncio.create_task(
         model_alias_override_refresh_loop(settings.model_alias_overrides_refresh_interval)
     )
@@ -703,6 +780,7 @@ async def lifespan(app: FastAPI):
         reconcile_task.cancel()
         runtime_system_settings_task.cancel()
         provider_channel_task.cancel()
+        provider_channel_monitor_task.cancel()
         alias_override_task.cancel()
         pricing_override_task.cancel()
         if image_job_task is not None:

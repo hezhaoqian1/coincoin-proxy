@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     model_catalog_json: str = ""
     model_alias_overrides_path: str = "config/model_alias_overrides.json"
     model_alias_overrides_refresh_interval: int = 10
+    provider_channel_monitor_enabled: bool = True
+    provider_channel_monitor_poll_interval: int = 15
+    provider_channel_monitor_default_interval: int = 300
+    provider_channel_monitor_default_timeout: int = 30
+    provider_channel_monitor_history_retention_days: int = 35
 
     # Gateway-backed public models (legacy/internal OpenAI-compatible gateway)
     gateway_base_url: str = ""

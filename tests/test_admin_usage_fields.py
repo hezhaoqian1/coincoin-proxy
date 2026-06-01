@@ -182,6 +182,20 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("analytics: loadAnalytics,", admin_html)
         self.assertIn("async function loadAnalytics()", admin_html)
 
+    def test_admin_ui_surfaces_provider_fallback_observability(self) -> None:
+        admin_html = (Path(admin_module.__file__).parent / "static" / "admin.html").read_text()
+
+        self.assertIn("24h Fallback", admin_html)
+        self.assertIn("Route / Channel", admin_html)
+        self.assertIn("fallback_from_channel_id", admin_html)
+        self.assertIn("route_attempt", admin_html)
+        self.assertIn("渠道稳定性", admin_html)
+        self.assertIn("/admin/provider-channels/stability", admin_html)
+        self.assertIn("主动监控", admin_html)
+        self.assertIn("/admin/provider-channel-monitors", admin_html)
+        self.assertIn("data-monitor-period", admin_html)
+        self.assertIn("createMonitorFromDiscoveredModel", admin_html)
+
     async def test_provider_channels_includes_system_default_channels(self) -> None:
         catalog = {
             "default_text_model": "codex-legacy",
@@ -262,6 +276,164 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             admin_module._settings.model_alias_overrides_path = originals["model_alias_overrides_path"]
             app.dependency_overrides.pop(admin_module.get_db, None)
             model_registry._initialized = False
+
+    async def test_provider_channel_stability_aggregates_request_logs(self) -> None:
+        channel = SimpleNamespace(
+            id="ch_primary",
+            name="North Star",
+            provider_platform="sub2api",
+            channel_type="openai_compatible",
+            base_url="https://sub2api.example/v1",
+            encrypted_api_key=None,
+            auth_style="bearer",
+            status="active",
+            priority=0,
+            weight=1,
+            allowed_fails=3,
+            cooldown_seconds=30,
+            capabilities="responses,chat/completions",
+            provider_account_fingerprint="acct_test",
+            cost_tier="premium",
+            notes="",
+            updated_by="admin",
+            created_at=datetime(2026, 6, 1, 11, 0, 0),
+            updated_at=datetime(2026, 6, 1, 11, 0, 0),
+        )
+        stats_row = SimpleNamespace(
+            channel_id="ch_primary",
+            provider_platform="sub2api",
+            channel_type="openai_compatible",
+            provider_account_fingerprint="acct_test",
+            requests=10,
+            success_requests=9,
+            failed_requests=1,
+            fallback_in_requests=2,
+            avg_latency_ms=1234,
+            max_latency_ms=9000,
+            last_seen_at=datetime(2026, 6, 1, 12, 0, 0),
+        )
+        fallback_out_row = SimpleNamespace(channel_id="ch_primary", fallback_out_requests=3)
+        recent_log = SimpleNamespace(
+            channel_id="ch_primary",
+            status_code=200,
+            duration_ms=800,
+            created_at=datetime(2026, 6, 1, 12, 0, 0),
+            route_attempt=1,
+            route_reason="channel_fallback:500",
+            model="gpt-5.3-codex",
+            customer_model_alias="gpt-5.3-codex",
+        )
+        fake_db = _FakeDB(
+            execute_results=[
+                _FakeScalarsResult([channel]),
+                _FakeScalarsResult([]),
+                _FakeAllResult([stats_row]),
+                _FakeAllResult([fallback_out_row]),
+                _FakeScalarsResult([recent_log]),
+            ]
+        )
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get("/admin/provider-channels/stability?period=7d")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["summary"]["requests"], 10)
+        self.assertEqual(payload["summary"]["fallback_out_requests"], 3)
+        item = payload["items"][0]
+        self.assertEqual(item["channel_id"], "ch_primary")
+        self.assertEqual(item["name"], "North Star")
+        self.assertEqual(item["availability_rate"], 0.9)
+        self.assertEqual(item["fallback_in_requests"], 2)
+        self.assertEqual(item["fallback_out_requests"], 3)
+        self.assertEqual(item["health_status"], "degraded")
+        self.assertEqual(item["recent"][0]["status"], "fallback")
+
+    async def test_provider_channel_monitors_expose_active_probe_rollups(self) -> None:
+        monitor = SimpleNamespace(
+            id="cmon_primary",
+            channel_id="ch_primary",
+            name="North Star gpt-5.3",
+            endpoint="responses",
+            primary_model="gpt-5.3-codex",
+            extra_models='["gpt-5.4"]',
+            status="active",
+            interval_seconds=60,
+            timeout_seconds=30,
+            last_checked_at=datetime(2026, 6, 1, 12, 0, 0),
+            last_status="operational",
+            last_latency_ms=1200,
+            last_ping_latency_ms=18,
+            last_message="ok",
+            created_at=datetime(2026, 6, 1, 11, 0, 0),
+            updated_at=datetime(2026, 6, 1, 11, 0, 0),
+        )
+        channel = SimpleNamespace(
+            id="ch_primary",
+            name="North Star",
+            provider_platform="sub2api",
+            channel_type="openai_compatible",
+            base_url="https://sub2api.example/v1",
+        )
+        availability_row = SimpleNamespace(
+            monitor_id="cmon_primary",
+            model="gpt-5.3-codex",
+            total_checks=10,
+            operational_count=8,
+            degraded_count=1,
+            failed_count=1,
+            error_count=0,
+            sum_latency_ms=12000,
+            count_latency=10,
+            sum_ping_latency_ms=180,
+            count_ping_latency=10,
+        )
+        history = SimpleNamespace(
+            monitor_id="cmon_primary",
+            model="gpt-5.3-codex",
+            status="operational",
+            latency_ms=1200,
+            ping_latency_ms=18,
+            status_code=200,
+            message="ok",
+            checked_at=datetime(2026, 6, 1, 12, 0, 0),
+        )
+        fake_db = _FakeDB(
+            execute_results=[
+                _FakeAllResult([(monitor, channel)]),
+                _FakeAllResult([availability_row]),
+                _FakeScalarsResult([history]),
+            ]
+        )
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get("/admin/provider-channel-monitors?period=15d")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["period"], "15d")
+        item = payload["items"][0]
+        self.assertEqual(item["id"], "cmon_primary")
+        self.assertEqual(item["channel_name"], "North Star")
+        self.assertEqual(item["models"], ["gpt-5.3-codex", "gpt-5.4"])
+        self.assertEqual(item["availability_rate"], 0.9)
+        self.assertEqual(item["avg_latency_ms"], 1200)
+        self.assertEqual(item["avg_ping_latency_ms"], 18)
+        self.assertEqual(item["timeline"][0]["status"], "operational")
 
     async def test_provider_channel_upstream_models_uses_v1_fallback_and_masks_key(self) -> None:
         channel = SimpleNamespace(
@@ -392,6 +564,12 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             duration_ms=2100,
             status_code=200,
             route_reason="catalog:gemini-image:gateway",
+            channel_id="ch_backup",
+            channel_type="openai_compatible",
+            provider_platform="sub2api",
+            provider_account_fingerprint="acct_test",
+            fallback_from_channel_id="ch_primary",
+            route_attempt=1,
         )
         fake_db = _FakeDB(
             execute_results=[
@@ -423,6 +601,56 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(item["cache_creation_tokens"], 0)
         self.assertEqual(item["billable_sku"], "gemini-image")
         self.assertEqual(item["upstream_request_id"], "req_img_123")
+        self.assertEqual(item["channel_id"], "ch_backup")
+        self.assertEqual(item["provider_platform"], "sub2api")
+        self.assertEqual(item["fallback_from_channel_id"], "ch_primary")
+        self.assertEqual(item["route_attempt"], 1)
+
+    async def test_ops_health_reports_provider_fallback_activity(self) -> None:
+        recent_log = SimpleNamespace(
+            created_at=datetime(2026, 6, 1, 12, 0, 0),
+            status_code=500,
+            endpoint="responses",
+            model="gpt-5.3-codex",
+            duration_ms=13000,
+            route_reason="channel_fallback:500",
+            channel_id="ch_backup",
+            channel_type="openai_compatible",
+            provider_platform="sub2api",
+            fallback_from_channel_id="ch_primary",
+            route_attempt=1,
+            upstream_request_id="req_fallback",
+        )
+        user = SimpleNamespace(username="alice", email=None, external_id=None, id="u_1")
+        fake_db = _FakeDB(
+            execute_results=[
+                _FakeScalarResult(10),
+                _FakeScalarResult(2),
+                _FakeScalarResult(3),
+                _FakeScalarOneResult(datetime(2026, 6, 1, 12, 5, 0)),
+                _FakeAllResult([(500, 2)]),
+                _FakeAllResult([("gpt-5.3-codex", 2)]),
+                _FakeAllResult([(recent_log, user)]),
+            ]
+        )
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get("/admin/ops/health")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["traffic"]["fallback_requests"], 3)
+        self.assertEqual(payload["traffic"]["fallback_rate"], 0.3)
+        self.assertEqual(payload["errors"]["recent"][0]["channel_id"], "ch_backup")
+        self.assertEqual(payload["errors"]["recent"][0]["fallback_from_channel_id"], "ch_primary")
+        self.assertEqual(payload["errors"]["recent"][0]["route_attempt"], 1)
 
     async def test_admin_can_reset_user_password(self) -> None:
         user = SimpleNamespace(id="u_1")
@@ -911,6 +1139,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             max_latency_ms=90000,
             tokens=1054898,
             user_charge_cents=197,
+            fallback_requests=1,
         )
         user_row = SimpleNamespace(
             user_id="u_slow",
@@ -928,6 +1157,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             avg_latency_ms=60000,
             max_latency_ms=90000,
             failed_requests=0,
+            fallback_requests=1,
         )
         endpoint_row = SimpleNamespace(
             endpoint="responses",
@@ -952,6 +1182,11 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             duration_ms=90000,
             status_code=200,
             route_reason="catalog:gpt-5.3-codex:legacy_explicit",
+            channel_id="ch_backup",
+            channel_type="openai_compatible",
+            provider_platform="sub2api",
+            fallback_from_channel_id="ch_primary",
+            route_attempt=1,
             input_tokens=1000,
             output_tokens=200,
             cost_cents=120,
@@ -990,11 +1225,15 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["period_label"], "近24小时")
         self.assertEqual(payload["summary"]["requests"], 3)
         self.assertEqual(payload["summary"]["avg_latency_ms"], 53712)
+        self.assertEqual(payload["summary"]["fallback_requests"], 1)
+        self.assertEqual(payload["summary"]["fallback_rate"], 1 / 3)
         self.assertEqual(payload["summary"]["p95_latency_ms"], 90000)
         self.assertEqual(payload["summary"]["slow_counts"]["ge_60s"], 1)
         self.assertEqual(payload["by_user"][0]["display_name"], "slow-user")
         self.assertEqual(payload["by_route"][0]["route_reason"], "catalog:gpt-5.3-codex:legacy_explicit")
+        self.assertEqual(payload["by_route"][0]["fallback_requests"], 1)
         self.assertEqual(payload["slow_requests"][0]["upstream_request_id"], "req_slow")
+        self.assertEqual(payload["slow_requests"][0]["fallback_from_channel_id"], "ch_primary")
 
     async def test_manual_payment_confirm_credits_pending_order_from_proof_url(self) -> None:
         admin_module._settings.epay_api_url = "https://code.nxslq.top/"

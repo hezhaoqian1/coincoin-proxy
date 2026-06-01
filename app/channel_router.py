@@ -127,6 +127,7 @@ class ChannelRouter:
         self._channels = {}
         self._routes_by_model = {}
         self._version = 0
+        self._state = {}
 
     @property
     def version(self) -> int:
@@ -157,7 +158,14 @@ class ChannelRouter:
             return False
         return self._cooldown_until(channel.channel_id) <= now
 
-    def select_for_model(self, public_model: Any, backend: Any, endpoint: str) -> Optional[ChannelChoice]:
+    def select_for_model(
+        self,
+        public_model: Any,
+        backend: Any,
+        endpoint: str,
+        *,
+        exclude_channel_ids: Iterable[str] = (),
+    ) -> Optional[ChannelChoice]:
         public_id = str(getattr(public_model, "public_id", "") or "").strip()
         if not public_id:
             return None
@@ -167,6 +175,7 @@ class ChannelRouter:
 
         now = time.time()
         endpoint = str(endpoint or "").strip()
+        excluded = {str(item or "").strip() for item in exclude_channel_ids if str(item or "").strip()}
         candidates: List[Tuple[ModelChannelRouteSnapshot, ProviderChannelSnapshot, int, int]] = []
         for route in routes:
             if (route.status or "").strip().lower() != ACTIVE_STATUS:
@@ -175,6 +184,8 @@ class ChannelRouter:
             if route_endpoint and route_endpoint != endpoint:
                 continue
             channel = self._channels.get(route.channel_id)
+            if channel is not None and channel.channel_id in excluded:
+                continue
             if channel is None or not self._is_available(channel, now):
                 continue
             if channel.capabilities and endpoint not in channel.capabilities:
