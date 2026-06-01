@@ -122,6 +122,7 @@ def _channel_from_item(public_model: Any, backend: Any, item: Dict[str, Any]) ->
     channel_id = str(
         item.get("channel_id")
         or item.get("id")
+        or getattr(backend, "channel_id", "")
         or f"{getattr(public_model, 'public_id', '')}:{upstream_url}:{provider_model}"
     ).strip()
     return GeminiCpaChannel(
@@ -131,18 +132,21 @@ def _channel_from_item(public_model: Any, backend: Any, item: Dict[str, Any]) ->
         upstream_url=upstream_url,
         api_key=api_key,
         auth_style=auth_style,
-        priority=_as_int(item.get("priority"), _as_int(metadata.get("priority"), 0)),
-        weight=max(1, _as_int(item.get("weight"), _as_int(metadata.get("weight"), 1))),
-        allowed_fails=max(1, _as_int(item.get("allowed_fails"), _default_allowed_fails(metadata))),
+        priority=_as_int(item.get("priority"), _as_int(getattr(backend, "channel_priority", None), _as_int(metadata.get("priority"), 0))),
+        weight=max(1, _as_int(item.get("weight"), _as_int(getattr(backend, "channel_weight", None), _as_int(metadata.get("weight"), 1)))),
+        allowed_fails=max(1, _as_int(item.get("allowed_fails"), _as_int(getattr(backend, "allowed_fails", None), _default_allowed_fails(metadata)))),
         cooldown_seconds=max(
             0.0,
-            _as_float(item.get("cooldown_seconds"), _default_cooldown_seconds(metadata)),
+            _as_float(item.get("cooldown_seconds"), _as_float(getattr(backend, "cooldown_seconds", None), _default_cooldown_seconds(metadata))),
         ),
     )
 
 
 def channels_for_model(public_model: Any, backend: Any) -> List[GeminiCpaChannel]:
     metadata = public_model.metadata if isinstance(getattr(public_model, "metadata", None), dict) else {}
+    if str(getattr(backend, "channel_id", "") or "").strip():
+        return [_channel_from_item(public_model, backend, {"channel_id": getattr(backend, "channel_id")})]
+
     raw_channels = metadata.get("cpa_gemini_channels")
     channels: List[GeminiCpaChannel] = []
     if isinstance(raw_channels, list):

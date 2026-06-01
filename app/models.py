@@ -108,6 +108,12 @@ class RequestLog(Base):
     usage_unit_count: Mapped[int] = mapped_column(BigInteger, default=0)
     billable_sku: Mapped[str] = mapped_column(String(128), default="")
     upstream_request_id: Mapped[str] = mapped_column(String(128), default="")
+    channel_id: Mapped[str] = mapped_column(String(32), default="", index=True)
+    channel_type: Mapped[str] = mapped_column(String(32), default="", index=True)
+    provider_platform: Mapped[str] = mapped_column(String(64), default="", index=True)
+    provider_account_fingerprint: Mapped[str] = mapped_column(String(128), default="")
+    fallback_from_channel_id: Mapped[str] = mapped_column(String(32), default="")
+    route_attempt: Mapped[int] = mapped_column(BigInteger, default=0)
     station_id: Mapped[str] = mapped_column(String(32), default="", index=True)
     station_alias: Mapped[str] = mapped_column(String(128), default="")
     resolved_public_model: Mapped[str] = mapped_column(String(128), default="")
@@ -289,6 +295,72 @@ class SystemSetting(Base):
     setting_value: Mapped[str] = mapped_column(Text)
     updated_by: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), index=True
+    )
+
+
+class ProviderChannel(Base):
+    """Admin-managed upstream channel used by the runtime channel router."""
+    __tablename__ = "coincoin_provider_channels"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), default="")
+    provider_platform: Mapped[str] = mapped_column(String(64), default="", index=True)
+    channel_type: Mapped[str] = mapped_column(String(32), default="openai_compatible", index=True)
+    base_url: Mapped[str] = mapped_column(String(512), default="")
+    encrypted_api_key: Mapped[Optional[str]] = mapped_column(LONGTEXT, nullable=True)
+    auth_style: Mapped[str] = mapped_column(String(32), default="bearer")
+    status: Mapped[str] = mapped_column(String(16), default="active", index=True)
+    priority: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    weight: Mapped[int] = mapped_column(BigInteger, default=1)
+    allowed_fails: Mapped[int] = mapped_column(BigInteger, default=3)
+    cooldown_seconds: Mapped[float] = mapped_column(Float, default=30.0)
+    capabilities: Mapped[str] = mapped_column(Text, default="")
+    provider_account_fingerprint: Mapped[str] = mapped_column(String(128), default="", index=True)
+    cost_tier: Mapped[str] = mapped_column(String(32), default="")
+    notes: Mapped[str] = mapped_column(Text, default="")
+    updated_by: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), index=True
+    )
+
+
+class ModelChannelRoute(Base):
+    """Route policy from a public model alias to one managed provider channel."""
+    __tablename__ = "coincoin_model_channel_routes"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    public_model_id: Mapped[str] = mapped_column(String(128), default="", index=True)
+    endpoint: Mapped[str] = mapped_column(String(64), default="", index=True)
+    channel_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_provider_channels.id"), index=True)
+    upstream_model: Mapped[str] = mapped_column(String(128), default="")
+    priority_override: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    weight_override: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    transform_profile: Mapped[str] = mapped_column(String(64), default="openai_compatible")
+    status: Mapped[str] = mapped_column(String(16), default="active", index=True)
+    notes: Mapped[str] = mapped_column(Text, default="")
+    updated_by: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), index=True
+    )
+
+
+class ProviderChannelRuntimeState(Base):
+    """Persistent health snapshot for operator visibility; hot path keeps its own memory state."""
+    __tablename__ = "coincoin_provider_channel_runtime_state"
+
+    channel_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_provider_channels.id"), primary_key=True)
+    fail_count: Mapped[int] = mapped_column(BigInteger, default=0)
+    cooldown_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    last_success_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_failure_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error_code: Mapped[str] = mapped_column(String(64), default="")
+    last_error_message: Mapped[str] = mapped_column(String(512), default="")
+    rolling_latency_ms: Mapped[int] = mapped_column(BigInteger, default=0)
+    rolling_failure_rate: Mapped[float] = mapped_column(Float, default=0.0)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), index=True
     )

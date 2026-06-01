@@ -24,6 +24,7 @@ from .proxy import (
     authenticate_user, authorize_request, extract_upstream_request_id,
     filter_headers, get_http_client, get_stream_client, proxy_images_edits, proxy_images_generations,
     proxy_responses, responses_health, _KEY_ID_ATTR,
+    _channel_fallback_config, _channel_usage_kwargs, _record_channel_failure, _record_channel_success,
 )
 from .router import (
     CLAUDE_COMPAT_PROVIDER_KIRO_GO,
@@ -891,6 +892,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                 req = stream_client.build_request("POST", upstream_url, json=chat_payload, headers=headers)
                 upstream = await stream_client.send(req, stream=True)
             except (httpx.TimeoutException, httpx.RequestError):
+                _record_channel_failure(used_cfg, error_code="upstream_unreachable")
                 return openai_error("Upstream request failed", "server_error", code="upstream_unreachable", status_code=502)
             stream_headers = filter_headers(dict(upstream.headers))
             stream_headers.pop("content-length", None)
@@ -953,6 +955,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                     await upstream.aclose()
                     if upstream.status_code < 400:
                         dur = int((time.monotonic() - stream_t0) * 1000)
+                        _record_channel_success(used_cfg, duration_ms=dur)
                         asyncio.create_task(usage_buffer.add(
                             user.id,
                             api_key_id=api_key_id,
@@ -973,8 +976,11 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                             usage_unit_type="tokens",
                             billable_sku=public_model.billable_sku or display_model,
                             upstream_request_id=extract_upstream_request_id(upstream.headers),
+                            **_channel_usage_kwargs(used_cfg),
                             **usage_pricing_kwargs(public_model, station_model),
                         ))
+                    else:
+                        _record_channel_failure(used_cfg, status_code=upstream.status_code)
 
             return StreamingResponse(
                 iter_events(),
@@ -988,6 +994,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
         try:
             upstream = await client.post(upstream_url, json=chat_payload, headers=headers)
         except (httpx.TimeoutException, httpx.RequestError):
+            _record_channel_failure(used_cfg, error_code="upstream_unreachable")
             return openai_error("Upstream request failed", "server_error", code="upstream_unreachable", status_code=502)
         duration_ms = int((time.monotonic() - t0) * 1000)
         response_headers = filter_headers(dict(upstream.headers))
@@ -998,22 +1005,27 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
             try:
                 data = upstream.json()
             except Exception:
+                _record_channel_failure(used_cfg, error_code="upstream_invalid_json")
                 return openai_error("Upstream returned invalid JSON", "server_error", code="upstream_invalid_json", status_code=502)
         else:
             data = upstream.text
 
         if isinstance(data, dict) and isinstance(data.get("error"), dict):
+            _record_channel_failure(used_cfg, status_code=upstream.status_code)
             return JSONResponse(content={"error": data["error"]}, status_code=upstream.status_code if upstream.status_code >= 400 else 502, headers=response_headers)
         if upstream.status_code >= 400:
+            _record_channel_failure(used_cfg, status_code=upstream.status_code)
             return JSONResponse(
                 content={"error": {"message": str(data)[:500] if data else "upstream error", "type": "upstream_error", "code": str(upstream.status_code)}},
                 status_code=upstream.status_code,
                 headers=response_headers,
             )
         if not isinstance(data, dict):
+            _record_channel_success(used_cfg, duration_ms=duration_ms)
             return Response(content=str(data), status_code=upstream.status_code, headers=response_headers, media_type=content_type)
 
         usage = _translate_chat_response_to_responses(data, display_model).get("usage") or {}
+        _record_channel_success(used_cfg, duration_ms=duration_ms)
         await usage_buffer.add(
             user.id,
             api_key_id=api_key_id,
@@ -1034,6 +1046,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
             usage_unit_type="tokens",
             billable_sku=public_model.billable_sku or display_model,
             upstream_request_id=upstream_request_id,
+            **_channel_usage_kwargs(used_cfg),
             **usage_pricing_kwargs(public_model, station_model),
         )
 
@@ -1256,9 +1269,10 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
         try:
             upstream = await _send_stream(used_cfg)
         except (httpx.TimeoutException, httpx.RequestError) as exc:
+            _record_channel_failure(used_cfg, error_code="upstream_unreachable")
             if can_fallback:
                 _fb = "cheap" if is_cheap else "premium"
-                used_cfg = fallback_cfg
+                used_cfg = _channel_fallback_config(used_cfg, fallback_cfg)
                 used_route_reason = f"{_fb}_fallback_timeout"
                 can_fallback = False
                 is_cheap = False
@@ -1275,7 +1289,8 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                 await upstream.aclose()
             except Exception:
                 pass
-            used_cfg = fallback_cfg
+            _record_channel_failure(used_cfg, status_code=_code)
+            used_cfg = _channel_fallback_config(used_cfg, fallback_cfg)
             used_route_reason = f"{_fb}_fallback_{_code}"
             can_fallback = False
             is_cheap = False
@@ -1289,7 +1304,8 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                 except Exception:
                     pass
                 _fb = "cheap" if is_cheap else "premium"
-                used_cfg = fallback_cfg
+                _record_channel_failure(used_cfg, error_code="upstream_unexpected_content_type")
+                used_cfg = _channel_fallback_config(used_cfg, fallback_cfg)
                 used_route_reason = f"{_fb}_fallback_unexpected"
                 can_fallback = False
                 is_cheap = False
@@ -1306,6 +1322,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                     import logging
                     _logger = logging.getLogger("coincoin.compat")
                     _logger.error("upstream stream-fallback %s: %s", upstream.status_code, body[:1000])
+                    _record_channel_failure(used_cfg, status_code=upstream.status_code)
                     if "application/json" in content_type:
                         try:
                             data = json.loads(body.decode("utf-8"))
@@ -1320,6 +1337,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                 if "application/json" in content_type:
                     data = json.loads(body.decode("utf-8"))
                     if _responses_payload_is_empty_success(data):
+                        _record_channel_failure(used_cfg, error_code="upstream_empty_response")
                         return openai_error(
                             "Upstream completed without returning assistant text or tool calls",
                             "server_error",
@@ -1475,6 +1493,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                 await upstream.aclose()
                 if upstream.status_code < 400:
                     dur = int((time.monotonic() - compat_stream_t0) * 1000)
+                    _record_channel_success(used_cfg, duration_ms=dur)
                     asyncio.create_task(usage_buffer.add(
                         user.id,
                         api_key_id=api_key_id,
@@ -1495,8 +1514,11 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                         usage_unit_type="tokens",
                         billable_sku=public_model.billable_sku or display_model,
                         upstream_request_id=extract_upstream_request_id(upstream.headers),
+                        **_channel_usage_kwargs(used_cfg),
                         **usage_pricing_kwargs(public_model, station_model),
                     ))
+                else:
+                    _record_channel_failure(used_cfg, status_code=upstream.status_code)
         stream_headers = filter_headers(dict(upstream.headers))
         stream_headers.pop("content-length", None)
         stream_headers.setdefault("cache-control", "no-cache")
@@ -1535,9 +1557,10 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
     try:
         upstream, duration_ms = await _post_json(used_cfg)
     except (httpx.TimeoutException, httpx.RequestError):
+        _record_channel_failure(used_cfg, error_code="upstream_unreachable")
         if can_fallback:
             _fb = "cheap" if is_cheap else "premium"
-            used_cfg = fallback_cfg
+            used_cfg = _channel_fallback_config(used_cfg, fallback_cfg)
             used_route_reason = f"{_fb}_fallback_timeout"
             can_fallback = False
             is_cheap = False
@@ -1547,7 +1570,8 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
 
     if can_fallback and upstream.status_code >= 400:
         _fb = "cheap" if is_cheap else "premium"
-        used_cfg = fallback_cfg
+        _record_channel_failure(used_cfg, status_code=upstream.status_code)
+        used_cfg = _channel_fallback_config(used_cfg, fallback_cfg)
         used_route_reason = f"{_fb}_fallback_{upstream.status_code}"
         can_fallback = False
         is_cheap = False
@@ -1559,7 +1583,8 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
     upstream_request_id = extract_upstream_request_id(upstream.headers)
     if can_fallback and "application/json" not in content_type:
         _fb = "cheap" if is_cheap else "premium"
-        used_cfg = fallback_cfg
+        _record_channel_failure(used_cfg, error_code="upstream_unexpected_content_type")
+        used_cfg = _channel_fallback_config(used_cfg, fallback_cfg)
         used_route_reason = f"{_fb}_fallback_unexpected"
         can_fallback = False
         is_cheap = False
@@ -1575,7 +1600,8 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
         except Exception:
             if can_fallback:
                 _fb = "cheap" if is_cheap else "premium"
-                used_cfg = fallback_cfg
+                _record_channel_failure(used_cfg, error_code="upstream_invalid_json")
+                used_cfg = _channel_fallback_config(used_cfg, fallback_cfg)
                 used_route_reason = f"{_fb}_fallback_unexpected"
                 can_fallback = False
                 is_cheap = False
@@ -1586,6 +1612,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                 upstream_request_id = extract_upstream_request_id(upstream.headers)
                 data = upstream.json() if "application/json" in content_type else upstream.text
             else:
+                _record_channel_failure(used_cfg, error_code="upstream_invalid_json")
                 return openai_error("Upstream returned invalid JSON", "server_error", code="upstream_invalid_json", status_code=502)
     else:
         data = upstream.text
@@ -1595,6 +1622,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
     cache_read_tokens_delta = 0
     cache_creation_tokens_delta = 0
     if isinstance(data, dict) and isinstance(data.get("error"), dict):
+        _record_channel_failure(used_cfg, status_code=upstream.status_code)
         return JSONResponse(
             content={"error": data["error"]},
             status_code=upstream.status_code if upstream.status_code >= 400 else 502,
@@ -1602,6 +1630,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
         )
     if upstream.status_code < 400 and isinstance(data, dict):
         if _responses_payload_is_empty_success(data):
+            _record_channel_failure(used_cfg, error_code="upstream_empty_response")
             return openai_error(
                 "Upstream completed without returning assistant text or tool calls",
                 "server_error",
@@ -1615,6 +1644,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
         cache_creation_tokens_delta = extract_cache_creation_tokens(usage)
 
     if upstream.status_code < 400:
+        _record_channel_success(used_cfg, duration_ms=duration_ms)
         await usage_buffer.add(
             user.id,
             api_key_id=api_key_id,
@@ -1635,9 +1665,11 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
             usage_unit_type="tokens",
             billable_sku=public_model.billable_sku or display_model,
             upstream_request_id=upstream_request_id,
+            **_channel_usage_kwargs(used_cfg),
             **usage_pricing_kwargs(public_model, station_model),
         )
     else:
+        _record_channel_failure(used_cfg, status_code=upstream.status_code)
         import logging
         _logger = logging.getLogger("coincoin.compat")
         _logger.error("upstream %s for chat/completions: %s", upstream.status_code, str(data)[:1000])
@@ -1686,6 +1718,7 @@ async def _proxy_gemini_cpa_chat_completions(
         upstream = await client.post(upstream_url, json=send_payload, headers=headers)
     except (httpx.TimeoutException, httpx.RequestError) as exc:
         gemini_cpa.record_failure(channel)
+        _record_channel_failure(used_cfg, error_code="upstream_unreachable")
         import logging
         logging.getLogger("coincoin.compat").error("gemini cpa chat transport error: %s", exc)
         return openai_error("Upstream request failed", "server_error", code="upstream_unreachable", status_code=502)
@@ -1703,20 +1736,24 @@ async def _proxy_gemini_cpa_chat_completions(
             data = upstream.json()
         except Exception:
             gemini_cpa.record_failure(channel)
+            _record_channel_failure(used_cfg, error_code="upstream_invalid_json")
             return openai_error("Upstream returned invalid JSON", "server_error", code="upstream_invalid_json", status_code=502)
     else:
         data = upstream.text
 
     if upstream.status_code < 400:
         gemini_cpa.record_success(channel)
+        _record_channel_success(used_cfg, duration_ms=duration_ms)
     elif gemini_cpa.should_record_failure(upstream.status_code):
         gemini_cpa.record_failure(channel)
+        _record_channel_failure(used_cfg, status_code=upstream.status_code)
 
     input_tokens_delta = 0
     output_tokens_delta = 0
     cache_read_tokens_delta = 0
     cache_creation_tokens_delta = 0
     if isinstance(data, dict) and isinstance(data.get("error"), dict):
+        _record_channel_failure(used_cfg, status_code=upstream.status_code)
         return JSONResponse(
             content={"error": data["error"]},
             status_code=upstream.status_code if upstream.status_code >= 400 else 502,
@@ -1749,10 +1786,12 @@ async def _proxy_gemini_cpa_chat_completions(
             usage_unit_type="tokens",
             billable_sku=public_model.billable_sku or display_model,
             upstream_request_id=upstream_request_id,
+            **_channel_usage_kwargs(used_cfg, channel),
             **usage_pricing_kwargs(public_model, station_model),
         )
 
     if upstream.status_code >= 400:
+        _record_channel_failure(used_cfg, status_code=upstream.status_code)
         if isinstance(data, dict) and "error" in data:
             return JSONResponse(content={"error": data["error"]}, status_code=upstream.status_code, headers=response_headers)
         return JSONResponse(
@@ -1811,7 +1850,11 @@ async def embeddings(request: Request, db: AsyncSession = Depends(get_db)):
 
     client = await get_http_client()
     t0 = time.monotonic()
-    upstream = await client.post(upstream_url, json=payload, headers=headers)
+    try:
+        upstream = await client.post(upstream_url, json=payload, headers=headers)
+    except (httpx.TimeoutException, httpx.RequestError):
+        _record_channel_failure(used_cfg, error_code="upstream_unreachable")
+        return openai_error("Upstream request failed", "server_error", code="upstream_unreachable", status_code=502)
     duration_ms = int((time.monotonic() - t0) * 1000)
     response_headers = filter_headers(dict(upstream.headers))
     response_headers.pop("content-length", None)
@@ -1822,6 +1865,7 @@ async def embeddings(request: Request, db: AsyncSession = Depends(get_db)):
         try:
             data = upstream.json()
         except Exception:
+            _record_channel_failure(used_cfg, error_code="upstream_invalid_json")
             return openai_error("Upstream returned invalid JSON", "server_error", code="upstream_invalid_json", status_code=502)
     else:
         data = upstream.text
@@ -1836,6 +1880,7 @@ async def embeddings(request: Request, db: AsyncSession = Depends(get_db)):
         cache_creation_tokens_delta = extract_cache_creation_tokens(usage)
 
     if upstream.status_code < 400:
+        _record_channel_success(used_cfg, duration_ms=duration_ms)
         await usage_buffer.add(
             user.id,
             api_key_id=getattr(user, _KEY_ID_ATTR, ""),
@@ -1856,8 +1901,11 @@ async def embeddings(request: Request, db: AsyncSession = Depends(get_db)):
             usage_unit_type="tokens",
             billable_sku=public_model.billable_sku or display_model,
             upstream_request_id=upstream_request_id,
+            **_channel_usage_kwargs(used_cfg),
             **usage_pricing_kwargs(public_model, station_model),
         )
+    else:
+        _record_channel_failure(used_cfg, status_code=upstream.status_code)
 
     if isinstance(data, dict):
         return JSONResponse(content=data, status_code=upstream.status_code, headers=response_headers)

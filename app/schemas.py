@@ -176,6 +176,74 @@ class AdminModelPricingUpdate(BaseModel):
     image_multiplier: Optional[float] = Field(default=None, ge=0)
 
 
+class AdminProviderChannelCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(..., min_length=1, max_length=128)
+    provider_platform: str = Field(default="", max_length=64)
+    channel_type: str = Field(default="openai_compatible", max_length=32)
+    base_url: str = Field(..., min_length=1, max_length=512)
+    api_key: str = Field(..., min_length=1, max_length=4096)
+    auth_style: str = Field(default="bearer", pattern=r"^(bearer|azure)$")
+    status: str = Field(default="active", pattern=r"^(active|disabled)$")
+    priority: int = Field(default=0, ge=0)
+    weight: int = Field(default=1, ge=1)
+    allowed_fails: int = Field(default=3, ge=1)
+    cooldown_seconds: float = Field(default=30.0, ge=0)
+    capabilities: List[str] = Field(default_factory=list, max_length=16)
+    provider_account_fingerprint: str = Field(default="", max_length=128)
+    cost_tier: str = Field(default="", max_length=32)
+    notes: str = Field(default="", max_length=2048)
+
+
+class AdminProviderChannelUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    provider_platform: Optional[str] = Field(default=None, max_length=64)
+    channel_type: Optional[str] = Field(default=None, max_length=32)
+    base_url: Optional[str] = Field(default=None, min_length=1, max_length=512)
+    api_key: Optional[str] = Field(default=None, min_length=1, max_length=4096)
+    auth_style: Optional[str] = Field(default=None, pattern=r"^(bearer|azure)$")
+    status: Optional[str] = Field(default=None, pattern=r"^(active|disabled)$")
+    priority: Optional[int] = Field(default=None, ge=0)
+    weight: Optional[int] = Field(default=None, ge=1)
+    allowed_fails: Optional[int] = Field(default=None, ge=1)
+    cooldown_seconds: Optional[float] = Field(default=None, ge=0)
+    capabilities: Optional[List[str]] = Field(default=None, max_length=16)
+    provider_account_fingerprint: Optional[str] = Field(default=None, max_length=128)
+    cost_tier: Optional[str] = Field(default=None, max_length=32)
+    notes: Optional[str] = Field(default=None, max_length=2048)
+
+
+class AdminModelChannelRouteCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    public_model_id: str = Field(..., min_length=1, max_length=128)
+    endpoint: str = Field(default="", max_length=64)
+    channel_id: str = Field(..., min_length=1, max_length=32)
+    upstream_model: str = Field(default="", max_length=128)
+    priority_override: Optional[int] = Field(default=None, ge=0)
+    weight_override: Optional[int] = Field(default=None, ge=1)
+    transform_profile: str = Field(default="openai_compatible", max_length=64)
+    status: str = Field(default="active", pattern=r"^(active|disabled)$")
+    notes: str = Field(default="", max_length=2048)
+
+
+class AdminModelChannelRouteUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    public_model_id: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    endpoint: Optional[str] = Field(default=None, max_length=64)
+    channel_id: Optional[str] = Field(default=None, min_length=1, max_length=32)
+    upstream_model: Optional[str] = Field(default=None, max_length=128)
+    priority_override: Optional[int] = Field(default=None, ge=0)
+    weight_override: Optional[int] = Field(default=None, ge=1)
+    transform_profile: Optional[str] = Field(default=None, max_length=64)
+    status: Optional[str] = Field(default=None, pattern=r"^(active|disabled)$")
+    notes: Optional[str] = Field(default=None, max_length=2048)
+
+
 class AdminClaudeCompatSettingsUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

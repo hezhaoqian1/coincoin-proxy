@@ -1159,6 +1159,10 @@
             <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 19V5m0 14h16M8 16V9m4 7V7m4 9v-4"/></svg>
             模型定价
           </div>
+          <div class="nav-item" data-page="provider-channels">
+            <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h5l2 3h9M4 17h5l2-3h9M17 5l3 2-3 2M17 15l3 2-3 2"/></svg>
+            上游渠道
+          </div>
           <div class="nav-item" data-page="stations">
             <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 21h18M5 21V7l8-4 6 3v15M9 10h1m3 0h1M9 14h1m3 0h1M9 18h1m3 0h1"/></svg>
             站长管理
@@ -1642,6 +1646,71 @@
                   </tr>
                 </thead>
                 <tbody id="modelPricingBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- =============== Provider Channels =============== -->
+      <div id="page-provider-channels" class="page">
+        <div class="page-header">
+          <h1 class="page-title">上游渠道</h1>
+          <p class="page-desc">集中管理可用上游 URL、Key、优先级、权重和保底 route。用户仍只看到 CoinCoin 公共 API。</p>
+        </div>
+        <div class="card" style="margin-bottom:20px">
+          <div class="card-header">
+            <div>
+              <span class="card-title">Provider Channels</span>
+              <div class="text-sm text-muted" id="providerChannelSummary">加载中...</div>
+            </div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap">
+              <button class="btn btn-secondary" onclick="loadProviderChannels()">刷新</button>
+              <button class="btn btn-primary" onclick="openProviderChannelModal()">+ 新增渠道</button>
+            </div>
+          </div>
+          <div class="card-body flush">
+            <div class="table-wrapper">
+              <table>
+                <thead>
+                  <tr>
+                    <th>渠道</th>
+                    <th>平台</th>
+                    <th>优先级</th>
+                    <th>能力</th>
+                    <th>健康</th>
+                    <th>状态</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="providerChannelsBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <span class="card-title">Model Routes</span>
+              <div class="text-sm text-muted" id="modelChannelRouteSummary">加载中...</div>
+            </div>
+            <button class="btn btn-primary" onclick="openModelChannelRouteModal()">+ 新增 route</button>
+          </div>
+          <div class="card-body flush">
+            <div class="table-wrapper">
+              <table>
+                <thead>
+                  <tr>
+                    <th>公开模型</th>
+                    <th>Endpoint</th>
+                    <th>渠道</th>
+                    <th>上游模型</th>
+                    <th>调度</th>
+                    <th>状态</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="modelChannelRoutesBody"></tbody>
               </table>
             </div>
           </div>
@@ -2237,6 +2306,82 @@
     </div>
   </div>
 
+  <!-- Provider Channel Modal -->
+  <div id="providerChannelModal" class="modal-overlay">
+    <div class="modal" style="max-width:760px">
+      <div class="modal-header">
+        <span class="modal-title" id="providerChannelModalTitle">新增上游渠道</span>
+        <button class="modal-close" onclick="closeModal('providerChannelModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="providerChannelId" />
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">名称</label><input id="providerChannelName" class="form-input" placeholder="CPA 主通道 / New API 备用" /></div>
+          <div class="form-group"><label class="form-label">平台</label><input id="providerChannelPlatform" class="form-input" placeholder="cpa / new_api / sub2api" /></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">类型</label><select id="providerChannelType" class="form-select"><option value="openai_compatible">OpenAI compatible</option><option value="account_pool">Account pool</option><option value="official_provider">Official provider</option></select></div>
+          <div class="form-group"><label class="form-label">认证</label><select id="providerChannelAuthStyle" class="form-select"><option value="bearer">Bearer</option><option value="azure">api-key</option></select></div>
+        </div>
+        <div class="form-group"><label class="form-label">Base URL</label><input id="providerChannelBaseUrl" class="form-input" placeholder="https://example.com/v1" /></div>
+        <div class="form-group"><label class="form-label">API Key</label><input id="providerChannelApiKey" type="password" class="form-input" placeholder="编辑已有渠道时留空则不更换" /></div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">状态</label><select id="providerChannelStatus" class="form-select"><option value="active">active</option><option value="disabled">disabled</option></select></div>
+          <div class="form-group"><label class="form-label">账号指纹</label><input id="providerChannelFingerprint" class="form-input" placeholder="acct_xxx / org_xxx" /></div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px">
+          <div class="form-group"><label class="form-label">优先级</label><input id="providerChannelPriority" type="number" min="0" class="form-input" value="0" /></div>
+          <div class="form-group"><label class="form-label">权重</label><input id="providerChannelWeight" type="number" min="1" class="form-input" value="1" /></div>
+          <div class="form-group"><label class="form-label">失败阈值</label><input id="providerChannelAllowedFails" type="number" min="1" class="form-input" value="3" /></div>
+          <div class="form-group"><label class="form-label">冷却秒数</label><input id="providerChannelCooldown" type="number" min="0" class="form-input" value="30" /></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">能力</label><input id="providerChannelCapabilities" class="form-input" placeholder="responses,chat/completions" /></div>
+          <div class="form-group"><label class="form-label">成本档位</label><input id="providerChannelCostTier" class="form-input" placeholder="cheap / premium / official" /></div>
+        </div>
+        <div class="form-group"><label class="form-label">备注</label><input id="providerChannelNotes" class="form-input" /></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('providerChannelModal')">取消</button>
+        <button class="btn btn-primary" onclick="saveProviderChannel()">保存渠道</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Model Channel Route Modal -->
+  <div id="modelChannelRouteModal" class="modal-overlay">
+    <div class="modal" style="max-width:680px">
+      <div class="modal-header">
+        <span class="modal-title" id="modelChannelRouteModalTitle">新增模型 route</span>
+        <button class="modal-close" onclick="closeModal('modelChannelRouteModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="modelChannelRouteId" />
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">公开模型</label><input id="modelChannelRoutePublicModel" class="form-input" placeholder="gpt-5.3-codex" /></div>
+          <div class="form-group"><label class="form-label">Endpoint</label><select id="modelChannelRouteEndpoint" class="form-select"><option value="">全部</option><option value="responses">responses</option><option value="chat/completions">chat/completions</option><option value="images/generations">images/generations</option><option value="images/edits">images/edits</option><option value="embeddings">embeddings</option></select></div>
+        </div>
+        <div class="form-group"><label class="form-label">渠道</label><select id="modelChannelRouteChannel" class="form-select"></select></div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">上游模型</label><input id="modelChannelRouteUpstreamModel" class="form-input" placeholder="留空则沿用 catalog 模型" /></div>
+          <div class="form-group"><label class="form-label">Transform</label><input id="modelChannelRouteTransform" class="form-input" value="openai_compatible" /></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">优先级覆盖</label><input id="modelChannelRoutePriority" type="number" min="0" class="form-input" placeholder="留空" /></div>
+          <div class="form-group"><label class="form-label">权重覆盖</label><input id="modelChannelRouteWeight" type="number" min="1" class="form-input" placeholder="留空" /></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">状态</label><select id="modelChannelRouteStatus" class="form-select"><option value="active">active</option><option value="disabled">disabled</option></select></div>
+          <div class="form-group"><label class="form-label">备注</label><input id="modelChannelRouteNotes" class="form-input" /></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('modelChannelRouteModal')">取消</button>
+        <button class="btn btn-primary" onclick="saveModelChannelRoute()">保存 route</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Generate Codes Modal -->
   <div id="generateCodesModal" class="modal-overlay">
     <div class="modal">
@@ -2559,6 +2704,8 @@
     let currentModelAliasId = null;
     let modelPricingCache = [];
     let currentModelPricingId = null;
+    let providerChannelCache = [];
+    let modelChannelRouteCache = [];
     let claudeCompatSettingsCache = null;
     const ADMIN_TRAFFIC_PACK_VALID_DAYS = 180;
     const ADMIN_MONTHLY_PRODUCTS = [
@@ -2590,6 +2737,7 @@
         keys: loadAllKeys,
         'model-aliases': loadModelAliases,
         'model-pricing': loadModelPricing,
+        'provider-channels': loadProviderChannels,
         stations: loadStations,
         'station-applications': loadStationApplications,
         'station-commission': loadStationCommissionLedger,
@@ -3788,6 +3936,239 @@
       } catch (e) {
         console.error(e);
         toast('清除失败', 'error');
+      }
+    }
+
+    function splitCsv(value) {
+      return String(value || '').split(',').map(item => item.trim()).filter(Boolean);
+    }
+
+    function channelBadgeClass(status) {
+      return status === 'active' ? 'badge-success' : 'badge-warning';
+    }
+
+    function routeNumberOrNull(id) {
+      const raw = document.getElementById(id).value;
+      if (raw === '') return null;
+      const value = Number(raw);
+      return Number.isFinite(value) ? value : null;
+    }
+
+    function renderProviderChannelOption(channel) {
+      const status = channel.status === 'active' ? '' : ' / disabled';
+      return `${channel.name || channel.id} · ${channel.provider_platform || channel.channel_type || '-'}${status}`;
+    }
+
+    async function loadProviderChannels() {
+      try {
+        const [channelsResp, routesResp] = await Promise.all([
+          fetch('/admin/provider-channels', { headers: adminHeaders() }),
+          fetch('/admin/model-channel-routes', { headers: adminHeaders() }),
+        ]);
+        if (!channelsResp.ok || !routesResp.ok) return toast('加载上游渠道失败', 'error');
+        const channelsPayload = await channelsResp.json();
+        const routesPayload = await routesResp.json();
+        providerChannelCache = channelsPayload.channels || [];
+        modelChannelRouteCache = routesPayload.routes || [];
+        document.getElementById('providerChannelSummary').textContent = `${providerChannelCache.length} 个渠道，router v${channelsPayload.router_version || 0}`;
+        document.getElementById('modelChannelRouteSummary').textContent = `${modelChannelRouteCache.length} 条 route，router v${routesPayload.router_version || 0}`;
+
+        const channelBody = document.getElementById('providerChannelsBody');
+        channelBody.innerHTML = providerChannelCache.length ? providerChannelCache.map(channel => {
+          const runtime = channel.runtime || {};
+          const cooling = Number(runtime.memory_cooldown_remaining_seconds || 0);
+          return `
+            <tr>
+              <td><strong>${escapeHtml(channel.name || channel.id)}</strong><div class="text-sm text-muted">${escapeHtml(channel.id)} · ${escapeHtml(channel.base_url || '-')}</div></td>
+              <td><div>${escapeHtml(channel.provider_platform || '-')}</div><div class="text-sm text-muted">${escapeHtml(channel.channel_type || '-')} · ${channel.api_key_configured ? 'key ok' : 'missing key'}</div></td>
+              <td><strong>${Number(channel.priority || 0)}</strong><div class="text-sm text-muted">weight ${Number(channel.weight || 1)} · fails ${Number(channel.allowed_fails || 0)} / ${Number(channel.cooldown_seconds || 0)}s</div></td>
+              <td><div class="text-sm text-muted">${escapeHtml((channel.capabilities || []).join(', ') || '全部')}</div><div class="text-sm text-muted">${escapeHtml(channel.cost_tier || '')}</div></td>
+              <td><div>${cooling ? `<span class="badge badge-warning">冷却 ${cooling}s</span>` : '<span class="badge badge-success">可调度</span>'}</div><div class="text-sm text-muted">${escapeHtml(channel.provider_account_fingerprint || runtime.memory_last_error_code || '-')}</div></td>
+              <td><span class="badge ${channelBadgeClass(channel.status)}">${escapeHtml(channel.status || '-')}</span><div class="text-sm text-muted">${Number(channel.route_count || 0)} routes</div></td>
+              <td>
+                <div style="display:flex;gap:8px;flex-wrap:wrap">
+                  <button class="btn btn-sm btn-secondary" onclick="openProviderChannelModal('${escapeHtml(channel.id)}')">编辑</button>
+                  <button class="btn btn-sm btn-success" onclick="clearProviderChannelCooldown('${escapeHtml(channel.id)}')">清冷却</button>
+                  <button class="btn btn-sm btn-danger" onclick="deleteProviderChannel('${escapeHtml(channel.id)}')">删除</button>
+                </div>
+              </td>
+            </tr>
+          `;
+        }).join('') : '<tr><td colspan="7"><div class="empty-state"><div class="empty-state-icon">C</div><h3>暂无上游渠道</h3><p>添加第一个 Provider Channel 后即可配置模型 route</p></div></td></tr>';
+
+        const routeBody = document.getElementById('modelChannelRoutesBody');
+        routeBody.innerHTML = modelChannelRouteCache.length ? modelChannelRouteCache.map(route => `
+          <tr>
+            <td><strong>${escapeHtml(route.public_model_id)}</strong><div class="text-sm text-muted">${escapeHtml(route.id)}</div></td>
+            <td>${escapeHtml(route.endpoint || '全部')}</td>
+            <td><div>${escapeHtml(route.channel_name || route.channel_id)}</div><div class="text-sm text-muted">${escapeHtml(route.provider_platform || '-')} · ${escapeHtml(route.channel_id || '')}</div></td>
+            <td>${escapeHtml(route.upstream_model || '沿用 catalog')}</td>
+            <td><div>priority ${route.priority_override ?? 'channel'}</div><div class="text-sm text-muted">weight ${route.weight_override ?? 'channel'} · ${escapeHtml(route.transform_profile || '-')}</div></td>
+            <td><span class="badge ${channelBadgeClass(route.status)}">${escapeHtml(route.status || '-')}</span></td>
+            <td><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-sm btn-secondary" onclick="openModelChannelRouteModal('${escapeHtml(route.id)}')">编辑</button><button class="btn btn-sm btn-danger" onclick="deleteModelChannelRoute('${escapeHtml(route.id)}')">删除</button></div></td>
+          </tr>
+        `).join('') : '<tr><td colspan="7"><div class="empty-state"><div class="empty-state-icon">R</div><h3>暂无模型 route</h3><p>没有 route 时继续使用 catalog 默认转发</p></div></td></tr>';
+      } catch (e) {
+        console.error(e);
+        toast('加载上游渠道失败', 'error');
+      }
+    }
+
+    function openProviderChannelModal(channelId = '') {
+      const channel = providerChannelCache.find(item => item.id === channelId) || {};
+      document.getElementById('providerChannelModalTitle').textContent = channelId ? `编辑 ${channel.name || channelId}` : '新增上游渠道';
+      document.getElementById('providerChannelId').value = channelId || '';
+      document.getElementById('providerChannelName').value = channel.name || '';
+      document.getElementById('providerChannelPlatform').value = channel.provider_platform || '';
+      document.getElementById('providerChannelType').value = channel.channel_type || 'openai_compatible';
+      document.getElementById('providerChannelAuthStyle').value = channel.auth_style || 'bearer';
+      document.getElementById('providerChannelBaseUrl').value = channel.base_url || '';
+      document.getElementById('providerChannelApiKey').value = '';
+      document.getElementById('providerChannelStatus').value = channel.status || 'active';
+      document.getElementById('providerChannelFingerprint').value = channel.provider_account_fingerprint || '';
+      document.getElementById('providerChannelPriority').value = Number(channel.priority ?? 0);
+      document.getElementById('providerChannelWeight').value = Number(channel.weight ?? 1);
+      document.getElementById('providerChannelAllowedFails').value = Number(channel.allowed_fails ?? 3);
+      document.getElementById('providerChannelCooldown').value = Number(channel.cooldown_seconds ?? 30);
+      document.getElementById('providerChannelCapabilities').value = (channel.capabilities || []).join(',');
+      document.getElementById('providerChannelCostTier').value = channel.cost_tier || '';
+      document.getElementById('providerChannelNotes').value = channel.notes || '';
+      openModal('providerChannelModal');
+    }
+
+    async function saveProviderChannel() {
+      const channelId = document.getElementById('providerChannelId').value;
+      const apiKey = document.getElementById('providerChannelApiKey').value.trim();
+      const payload = {
+        name: document.getElementById('providerChannelName').value.trim(),
+        provider_platform: document.getElementById('providerChannelPlatform').value.trim(),
+        channel_type: document.getElementById('providerChannelType').value,
+        base_url: document.getElementById('providerChannelBaseUrl').value.trim(),
+        auth_style: document.getElementById('providerChannelAuthStyle').value,
+        status: document.getElementById('providerChannelStatus').value,
+        priority: Number(document.getElementById('providerChannelPriority').value || 0),
+        weight: Number(document.getElementById('providerChannelWeight').value || 1),
+        allowed_fails: Number(document.getElementById('providerChannelAllowedFails').value || 3),
+        cooldown_seconds: Number(document.getElementById('providerChannelCooldown').value || 0),
+        capabilities: splitCsv(document.getElementById('providerChannelCapabilities').value),
+        provider_account_fingerprint: document.getElementById('providerChannelFingerprint').value.trim(),
+        cost_tier: document.getElementById('providerChannelCostTier').value.trim(),
+        notes: document.getElementById('providerChannelNotes').value,
+      };
+      if (!payload.name || !payload.base_url) return toast('名称和 Base URL 必填', 'error');
+      if (apiKey || !channelId) payload.api_key = apiKey;
+      if (!channelId && !payload.api_key) return toast('新增渠道必须填写 API Key', 'error');
+      try {
+        const r = await fetch(channelId ? `/admin/provider-channels/${encodeURIComponent(channelId)}` : '/admin/provider-channels', {
+          method: channelId ? 'PATCH' : 'POST',
+          headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+          body: JSON.stringify(payload)
+        });
+        const d = await r.json();
+        if (!r.ok) return toast(d.detail || '保存渠道失败', 'error');
+        closeModal('providerChannelModal');
+        toast('上游渠道已保存', 'success');
+        loadProviderChannels();
+        loadAnalytics();
+      } catch (e) {
+        console.error(e);
+        toast('保存渠道失败', 'error');
+      }
+    }
+
+    async function deleteProviderChannel(channelId) {
+      if (!confirm(`删除或禁用渠道 ${channelId}？`)) return;
+      try {
+        const r = await fetch(`/admin/provider-channels/${encodeURIComponent(channelId)}`, { method: 'DELETE', headers: adminHeaders() });
+        const d = await r.json();
+        if (!r.ok) return toast(d.detail || '操作失败', 'error');
+        toast(d.disabled ? '渠道仍有 route，已禁用' : '渠道已删除', 'success');
+        loadProviderChannels();
+      } catch (e) {
+        console.error(e);
+        toast('操作失败', 'error');
+      }
+    }
+
+    async function clearProviderChannelCooldown(channelId) {
+      try {
+        const r = await fetch(`/admin/provider-channels/${encodeURIComponent(channelId)}/clear-cooldown`, { method: 'POST', headers: adminHeaders() });
+        const d = await r.json();
+        if (!r.ok) return toast(d.detail || '清冷却失败', 'error');
+        toast('冷却已清除', 'success');
+        loadProviderChannels();
+      } catch (e) {
+        console.error(e);
+        toast('清冷却失败', 'error');
+      }
+    }
+
+    function fillRouteChannelOptions(selectedId = '') {
+      const select = document.getElementById('modelChannelRouteChannel');
+      select.innerHTML = providerChannelCache.map(channel => `
+        <option value="${escapeHtml(channel.id)}" ${channel.id === selectedId ? 'selected' : ''}>${escapeHtml(renderProviderChannelOption(channel))}</option>
+      `).join('');
+    }
+
+    function openModelChannelRouteModal(routeId = '') {
+      const route = modelChannelRouteCache.find(item => item.id === routeId) || {};
+      document.getElementById('modelChannelRouteModalTitle').textContent = routeId ? `编辑 ${route.public_model_id}` : '新增模型 route';
+      document.getElementById('modelChannelRouteId').value = routeId || '';
+      document.getElementById('modelChannelRoutePublicModel').value = route.public_model_id || '';
+      document.getElementById('modelChannelRouteEndpoint').value = route.endpoint || '';
+      fillRouteChannelOptions(route.channel_id || '');
+      document.getElementById('modelChannelRouteUpstreamModel').value = route.upstream_model || '';
+      document.getElementById('modelChannelRouteTransform').value = route.transform_profile || 'openai_compatible';
+      document.getElementById('modelChannelRoutePriority').value = route.priority_override ?? '';
+      document.getElementById('modelChannelRouteWeight').value = route.weight_override ?? '';
+      document.getElementById('modelChannelRouteStatus').value = route.status || 'active';
+      document.getElementById('modelChannelRouteNotes').value = route.notes || '';
+      openModal('modelChannelRouteModal');
+    }
+
+    async function saveModelChannelRoute() {
+      const routeId = document.getElementById('modelChannelRouteId').value;
+      const payload = {
+        public_model_id: document.getElementById('modelChannelRoutePublicModel').value.trim(),
+        endpoint: document.getElementById('modelChannelRouteEndpoint').value,
+        channel_id: document.getElementById('modelChannelRouteChannel').value,
+        upstream_model: document.getElementById('modelChannelRouteUpstreamModel').value.trim(),
+        priority_override: routeNumberOrNull('modelChannelRoutePriority'),
+        weight_override: routeNumberOrNull('modelChannelRouteWeight'),
+        transform_profile: document.getElementById('modelChannelRouteTransform').value.trim() || 'openai_compatible',
+        status: document.getElementById('modelChannelRouteStatus').value,
+        notes: document.getElementById('modelChannelRouteNotes').value,
+      };
+      if (!payload.public_model_id || !payload.channel_id) return toast('公开模型和渠道必填', 'error');
+      try {
+        const r = await fetch(routeId ? `/admin/model-channel-routes/${encodeURIComponent(routeId)}` : '/admin/model-channel-routes', {
+          method: routeId ? 'PATCH' : 'POST',
+          headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+          body: JSON.stringify(payload)
+        });
+        const d = await r.json();
+        if (!r.ok) return toast(d.detail || '保存 route 失败', 'error');
+        closeModal('modelChannelRouteModal');
+        toast('模型 route 已保存', 'success');
+        loadProviderChannels();
+        loadModelAliases();
+      } catch (e) {
+        console.error(e);
+        toast('保存 route 失败', 'error');
+      }
+    }
+
+    async function deleteModelChannelRoute(routeId) {
+      if (!confirm(`删除 route ${routeId}？`)) return;
+      try {
+        const r = await fetch(`/admin/model-channel-routes/${encodeURIComponent(routeId)}`, { method: 'DELETE', headers: adminHeaders() });
+        const d = await r.json();
+        if (!r.ok) return toast(d.detail || '删除 route 失败', 'error');
+        toast('模型 route 已删除', 'success');
+        loadProviderChannels();
+      } catch (e) {
+        console.error(e);
+        toast('删除 route 失败', 'error');
       }
     }
 
