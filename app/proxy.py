@@ -194,6 +194,10 @@ def _build_openai_image_upstream_url(base_url: str, endpoint: str) -> str:
     return f"{normalized}/{endpoint.lstrip('/')}"
 
 
+def _build_openai_responses_upstream_url(base_url: str) -> str:
+    return f"{_normalize_openai_base_url(base_url)}/responses"
+
+
 def _responses_text_input_item(text: str) -> dict:
     return {
         "type": "message",
@@ -2084,7 +2088,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
 
     base_payload = dict(payload)
 
-    upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/responses"
+    upstream_url = _build_openai_responses_upstream_url(used_cfg.upstream_url)
     cpa_channel = None
 
     if public_model.delivery_lane == gemini_cpa.DELIVERY_LANE:
@@ -2128,7 +2132,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             if cfg.strip_unsupported:
                 for param in _STRIP_PARAMS:
                     send_payload.pop(param, None)
-            req_url = gemini_cpa.responses_url(cpa_channel) if cpa_channel is not None else f"{cfg.upstream_url.rstrip('/')}/responses"
+            req_url = gemini_cpa.responses_url(cpa_channel) if cpa_channel is not None else _build_openai_responses_upstream_url(cfg.upstream_url)
             req_headers = gemini_cpa.build_headers(cpa_channel) if cpa_channel is not None else _build_upstream_headers(cfg)
             logger.info("stream → %s  model=%s  store=%s  has_prev_resp=%s  input_types=%s",
                         req_url, send_payload.get("model"), send_payload.get("store"),
@@ -2338,7 +2342,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             send_payload = gemini_cpa.build_responses_chat_payload(send_payload, cpa_channel.provider_model)
             req_url = gemini_cpa.chat_completions_url(cpa_channel)
         else:
-            req_url = f"{cfg.upstream_url.rstrip('/')}/responses"
+            req_url = _build_openai_responses_upstream_url(cfg.upstream_url)
         req_headers = gemini_cpa.build_headers(cpa_channel) if cpa_channel is not None else _build_upstream_headers(cfg)
         logger.info("json → %s  model=%s  store=%s  has_prev_resp=%s",
                     req_url, send_payload.get("model"), send_payload.get("store"),

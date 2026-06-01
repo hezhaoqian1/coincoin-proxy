@@ -2407,6 +2407,40 @@
     </div>
   </div>
 
+  <!-- Provider Channel Models Modal -->
+  <div id="providerChannelModelsModal" class="modal-overlay">
+    <div class="modal" style="max-width:980px">
+      <div class="modal-header">
+        <span class="modal-title" id="providerChannelModelsModalTitle">上游模型</span>
+        <button class="modal-close" onclick="closeModal('providerChannelModelsModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="card" style="margin-bottom:16px">
+          <div class="card-body">
+            <div class="text-sm text-muted" id="providerChannelModelsSummary">加载中...</div>
+          </div>
+        </div>
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>上游模型</th>
+                <th>公开模型</th>
+                <th>Endpoint</th>
+                <th>状态</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="providerChannelModelsBody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('providerChannelModelsModal')">关闭</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Generate Codes Modal -->
   <div id="generateCodesModal" class="modal-overlay">
     <div class="modal">
@@ -2732,6 +2766,10 @@
     let providerChannelCache = [];
     let defaultProviderChannelCache = [];
     let modelChannelRouteCache = [];
+    let currentProviderChannelModelsChannelId = '';
+    let providerChannelModelsCache = [];
+    let providerChannelModelsPublicCache = [];
+    let providerChannelModelsLastPayload = null;
     let claudeCompatSettingsCache = null;
     const ADMIN_TRAFFIC_PACK_VALID_DAYS = 180;
     const ADMIN_MONTHLY_PRODUCTS = [
@@ -4028,6 +4066,8 @@
               <td>
                 <div style="display:flex;gap:8px;flex-wrap:wrap">
                   <button class="btn btn-sm btn-secondary" onclick="openProviderChannelModal('${escapeHtml(channel.id)}')">编辑</button>
+                  <button class="btn btn-sm btn-secondary" onclick="testProviderChannel('${escapeHtml(channel.id)}')">测试</button>
+                  <button class="btn btn-sm btn-secondary" onclick="openProviderChannelModelsModal('${escapeHtml(channel.id)}')">模型</button>
                   <button class="btn btn-sm btn-success" onclick="clearProviderChannelCooldown('${escapeHtml(channel.id)}')">清冷却</button>
                   <button class="btn btn-sm btn-danger" onclick="deleteProviderChannel('${escapeHtml(channel.id)}')">删除</button>
                 </div>
@@ -4078,6 +4118,7 @@
 
     async function saveProviderChannel() {
       const channelId = document.getElementById('providerChannelId').value;
+      const isNewChannel = !channelId;
       const apiKey = document.getElementById('providerChannelApiKey').value.trim();
       const payload = {
         name: document.getElementById('providerChannelName').value.trim(),
@@ -4108,8 +4149,9 @@
         if (!r.ok) return toast(d.detail || '保存渠道失败', 'error');
         closeModal('providerChannelModal');
         toast('上游渠道已保存', 'success');
-        loadProviderChannels();
+        await loadProviderChannels();
         loadAnalytics();
+        if (isNewChannel && d.id) openProviderChannelModelsModal(d.id);
       } catch (e) {
         console.error(e);
         toast('保存渠道失败', 'error');
@@ -4140,6 +4182,152 @@
       } catch (e) {
         console.error(e);
         toast('清冷却失败', 'error');
+      }
+    }
+
+    async function testProviderChannel(channelId) {
+      try {
+        const r = await fetch(`/admin/provider-channels/${encodeURIComponent(channelId)}/test-connection`, { method: 'POST', headers: adminHeaders() });
+        const d = await r.json();
+        if (!r.ok) return toast(d.detail || '测试失败', 'error');
+        if (!d.ok) return toast(d.error || `连接失败 HTTP ${d.status_code || 0}`, 'error');
+        toast(`连接成功：${Number(d.model_count || 0)} 个模型，${Number(d.latency_ms || 0)}ms`, 'success');
+      } catch (e) {
+        console.error(e);
+        toast('测试失败', 'error');
+      }
+    }
+
+    function publicModelOptionText(model) {
+      const caps = (model.capabilities || []).join(',');
+      const owner = model.provider_name || model.owned_by || model.delivery_lane || '';
+      return `${model.id}${owner ? ' · ' + owner : ''}${caps ? ' · ' + caps : ''}`;
+    }
+
+    function publicModelOptionsHtml(selectedId = '') {
+      return ['<option value="">选择公开模型</option>'].concat(providerChannelModelsPublicCache.map(model => `
+        <option value="${escapeHtml(model.id)}" ${model.id === selectedId ? 'selected' : ''}>${escapeHtml(publicModelOptionText(model))}</option>
+      `)).join('');
+    }
+
+    function endpointOptionsHtml(publicModelId = '', selected = '') {
+      const model = providerChannelModelsPublicCache.find(item => item.id === publicModelId) || {};
+      const capabilities = (model.capabilities && model.capabilities.length)
+        ? model.capabilities
+        : ['responses', 'chat/completions', 'images/generations', 'images/edits', 'embeddings'];
+      const values = [''].concat(capabilities.filter((item, index, list) => list.indexOf(item) === index));
+      return values.map(value => `
+        <option value="${escapeHtml(value)}" ${value === selected ? 'selected' : ''}>${escapeHtml(value || '全部')}</option>
+      `).join('');
+    }
+
+    function updateDiscoveredModelEndpointOptions(index) {
+      const publicSelect = document.getElementById(`providerChannelModelPublic-${index}`);
+      const endpointSelect = document.getElementById(`providerChannelModelEndpoint-${index}`);
+      if (!publicSelect || !endpointSelect) return;
+      endpointSelect.innerHTML = endpointOptionsHtml(publicSelect.value, endpointSelect.value);
+    }
+
+    function routeExistsForDiscoveredModel(publicModelId, endpoint, upstreamModel) {
+      return modelChannelRouteCache.some(route =>
+        route.public_model_id === publicModelId &&
+        (route.endpoint || '') === (endpoint || '') &&
+        route.channel_id === currentProviderChannelModelsChannelId &&
+        (route.upstream_model || '') === (upstreamModel || '')
+      );
+    }
+
+    function renderProviderChannelModels(payload = {}) {
+      if ((!payload || !Object.keys(payload).length) && providerChannelModelsLastPayload) payload = providerChannelModelsLastPayload;
+      if (payload && payload.ok) providerChannelModelsLastPayload = payload;
+      const body = document.getElementById('providerChannelModelsBody');
+      const summary = document.getElementById('providerChannelModelsSummary');
+      if (!payload.ok) {
+        const attempts = (payload.attempts || []).map(item => `${item.status_code || 0} ${item.url || ''}`).join(' / ');
+        summary.textContent = payload.error || '上游模型加载失败';
+        body.innerHTML = `<tr><td colspan="5"><div class="empty-state"><div class="empty-state-icon">M</div><h3>模型加载失败</h3><p>${escapeHtml(attempts || payload.error || '-')}</p></div></td></tr>`;
+        return;
+      }
+      const channel = providerChannelCache.find(item => item.id === currentProviderChannelModelsChannelId) || {};
+      const recommended = payload.recommended_base_url && channel.base_url && payload.recommended_base_url !== channel.base_url
+        ? ` · 建议 Base URL ${payload.recommended_base_url}`
+        : '';
+      summary.textContent = `${Number(payload.model_count || 0)} 个模型 · HTTP ${Number(payload.status_code || 0)} · ${Number(payload.latency_ms || 0)}ms · ${payload.models_url || '-'}${recommended}`;
+      body.innerHTML = providerChannelModelsCache.length ? providerChannelModelsCache.map((model, index) => {
+        const suggested = model.suggested_public_model_id || '';
+        const endpoint = '';
+        const exists = suggested && routeExistsForDiscoveredModel(suggested, endpoint, model.id);
+        return `
+          <tr>
+            <td><strong>${escapeHtml(model.id)}</strong><div class="text-sm text-muted">${escapeHtml(model.owned_by || model.object || '-')}</div></td>
+            <td><select id="providerChannelModelPublic-${index}" class="form-select" onchange="updateDiscoveredModelEndpointOptions(${index})">${publicModelOptionsHtml(suggested)}</select></td>
+            <td><select id="providerChannelModelEndpoint-${index}" class="form-select">${endpointOptionsHtml(suggested, endpoint)}</select></td>
+            <td>${exists ? '<span class="badge badge-info">已配置</span>' : '<span class="badge badge-success">可创建</span>'}</td>
+            <td><button class="btn btn-sm btn-primary" onclick="createRouteFromDiscoveredModel(${index})">${exists ? '再建 route' : '建 route'}</button></td>
+          </tr>
+        `;
+      }).join('') : '<tr><td colspan="5"><div class="empty-state"><div class="empty-state-icon">M</div><h3>暂无模型</h3><p>上游 /models 返回为空</p></div></td></tr>';
+    }
+
+    async function openProviderChannelModelsModal(channelId) {
+      const channel = providerChannelCache.find(item => item.id === channelId) || {};
+      currentProviderChannelModelsChannelId = channelId;
+      providerChannelModelsCache = [];
+      providerChannelModelsPublicCache = [];
+      providerChannelModelsLastPayload = null;
+      document.getElementById('providerChannelModelsModalTitle').textContent = `上游模型 · ${channel.name || channelId}`;
+      document.getElementById('providerChannelModelsSummary').textContent = '加载中...';
+      document.getElementById('providerChannelModelsBody').innerHTML = '<tr><td colspan="5"><div class="empty-state"><div class="empty-state-icon">M</div><h3>加载中</h3><p>正在读取上游模型列表</p></div></td></tr>';
+      openModal('providerChannelModelsModal');
+      try {
+        const r = await fetch(`/admin/provider-channels/${encodeURIComponent(channelId)}/upstream-models`, { headers: adminHeaders() });
+        const d = await r.json();
+        if (!r.ok) {
+          renderProviderChannelModels({ ok: false, error: d.detail || '加载失败' });
+          return;
+        }
+        providerChannelModelsCache = d.models || [];
+        providerChannelModelsPublicCache = d.public_models || [];
+        providerChannelModelsLastPayload = d;
+        renderProviderChannelModels(d);
+      } catch (e) {
+        console.error(e);
+        renderProviderChannelModels({ ok: false, error: '加载失败' });
+      }
+    }
+
+    async function createRouteFromDiscoveredModel(index) {
+      const model = providerChannelModelsCache[index] || {};
+      const publicModelId = (document.getElementById(`providerChannelModelPublic-${index}`)?.value || '').trim();
+      const endpoint = document.getElementById(`providerChannelModelEndpoint-${index}`)?.value || '';
+      if (!model.id || !publicModelId) return toast('请选择公开模型', 'error');
+      if (routeExistsForDiscoveredModel(publicModelId, endpoint, model.id) && !confirm('这条 route 看起来已存在，仍然创建一条新的？')) return;
+      const payload = {
+        public_model_id: publicModelId,
+        endpoint,
+        channel_id: currentProviderChannelModelsChannelId,
+        upstream_model: model.id,
+        priority_override: null,
+        weight_override: null,
+        transform_profile: 'openai_compatible',
+        status: 'active',
+        notes: `created from upstream model discovery: ${model.id}`,
+      };
+      try {
+        const r = await fetch('/admin/model-channel-routes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+          body: JSON.stringify(payload)
+        });
+        const d = await r.json();
+        if (!r.ok) return toast(d.detail || '创建 route 失败', 'error');
+        modelChannelRouteCache.push(d);
+        toast('模型 route 已创建', 'success');
+        renderProviderChannelModels();
+        loadProviderChannels();
+      } catch (e) {
+        console.error(e);
+        toast('创建 route 失败', 'error');
       }
     }
 

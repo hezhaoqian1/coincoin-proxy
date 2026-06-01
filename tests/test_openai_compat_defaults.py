@@ -407,12 +407,72 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         registry._initialized = False
         registry.init_from_settings()
 
+    def _add_root_base_text_model(self) -> None:
+        catalog = json.loads(settings.model_catalog_json)
+        catalog.setdefault("models", []).append(
+            {
+                "id": "root-base-model",
+                "owned_by": "coincoin",
+                "provider_name": "OpenAI Compatible",
+                "provider_model": "root-upstream-model",
+                "capabilities": ["chat/completions", "responses"],
+                "routing_mode": "direct",
+                "delivery_lane": "upstream_direct",
+                "upstream_model": "root-upstream-model",
+                "upstream_url": "https://root-base.example",
+                "api_key": "root-key",
+                "auth_style": "bearer",
+                "price_input_per_million": 100,
+                "price_output_per_million": 200,
+            }
+        )
+        settings.model_catalog_json = json.dumps(catalog)
+        registry._initialized = False
+        registry.init_from_settings()
+
     def tearDown(self) -> None:
         for key, value in self._originals.items():
             setattr(settings, key, value)
         registry._initialized = False
         app.dependency_overrides.pop(proxy_module.get_db, None)
         app.dependency_overrides.pop(openai_module.get_db, None)
+
+    async def test_responses_normalizes_root_base_url_for_openai_compatible_upstream(self) -> None:
+        self._add_root_base_text_model()
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "resp_root_base",
+                        "output": [
+                            {
+                                "type": "message",
+                                "content": [{"type": "output_text", "text": "OK"}],
+                            }
+                        ],
+                        "usage": {"input_tokens": 3, "output_tokens": 1, "total_tokens": 4},
+                    }
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(proxy_module.usage_buffer, "add", AsyncMock()):
+                response = await client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"model": "root-base-model", "input": "Reply with only: OK"},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(upstream_client.calls[0]["url"], "https://root-base.example/v1/responses")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "root-upstream-model")
+        self.assertEqual(upstream_client.calls[0]["headers"]["authorization"], "Bearer root-key")
 
     async def test_chat_without_model_keeps_legacy_public_alias(self) -> None:
         upstream_client = _RecordingClient(
