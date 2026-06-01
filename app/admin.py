@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from . import gemini_cpa
 from .db import get_db
 from .epay import EpayVerificationError, epay_configured, extract_epay_params_from_proof_url, verify_epay_callback_params
 from .finance_summary import (
@@ -335,6 +336,141 @@ def _validate_model_channel_route(public_model_id: str, endpoint: str = "") -> N
     endpoint = (endpoint or "").strip()
     if endpoint and endpoint not in (model.capabilities or ()):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="endpoint is not supported by public model")
+
+
+def _add_system_channel_model(groups: dict, key: str, payload: dict, public_model) -> None:
+    entry = groups.setdefault(key, {**payload, "model_count": 0, "public_models": [], "capabilities": set()})
+    entry["model_count"] = int(entry.get("model_count", 0) or 0) + 1
+    entry["public_models"].append(public_model.public_id)
+    entry["capabilities"].update(public_model.capabilities or ())
+
+
+def _catalog_env_default(value):
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    if not (text.startswith("${") and ":-" in text):
+        return value
+    fallback = text.split(":-", 1)[1]
+    while fallback.endswith("}"):
+        fallback = fallback[:-1]
+    return fallback
+
+
+def _admin_int(value, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        try:
+            return int(_catalog_env_default(value))
+        except (TypeError, ValueError):
+            return default
+
+
+def _admin_float(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        try:
+            return float(_catalog_env_default(value))
+        except (TypeError, ValueError):
+            return default
+
+
+def _system_default_channel_payloads() -> list[dict]:
+    model_registry.ensure_initialized()
+    groups: dict[str, dict] = {}
+    for public_model in model_registry.list_public_models():
+        metadata = public_model.metadata if isinstance(public_model.metadata, dict) else {}
+        if public_model.routing_mode == "legacy_auto":
+            execution_pool = str(metadata.get("execution_pool") or "cpa_general_pool").strip() or "cpa_general_pool"
+            default_slot = str(metadata.get("legacy_default_slot") or "cheap").strip() or "cheap"
+            key = f"legacy:{execution_pool}:{default_slot}"
+            _add_system_channel_model(
+                groups,
+                key,
+                {
+                    "id": f"system:{key}",
+                    "name": f"Legacy CPA · {execution_pool}",
+                    "provider_platform": "legacy_cpa",
+                    "channel_type": "account_pool",
+                    "source": "catalog/env",
+                    "status": "default",
+                    "priority": 0 if default_slot == "premium" else 10,
+                    "weight": 1,
+                    "allowed_fails": 3,
+                    "cooldown_seconds": 30,
+                    "notes": f"catalog legacy_auto，默认 slot={default_slot}",
+                },
+                public_model,
+            )
+            continue
+
+        if public_model.delivery_lane == gemini_cpa.DELIVERY_LANE:
+            raw_channels = metadata.get("cpa_gemini_channels")
+            if isinstance(raw_channels, list) and raw_channels:
+                channel_items = [item for item in raw_channels if isinstance(item, dict)]
+            else:
+                channel_items = [{
+                    "channel_id": metadata.get("channel_id") or "gemini-cpa-default",
+                    "priority": metadata.get("priority"),
+                    "weight": metadata.get("weight"),
+                    "allowed_fails": metadata.get("allowed_fails"),
+                    "cooldown_seconds": metadata.get("cooldown_seconds"),
+                    "provider_model": public_model.upstream_model or public_model.provider_model,
+                }]
+            for item in channel_items:
+                channel_id = str(item.get("channel_id") or metadata.get("channel_id") or "gemini-cpa-default").strip()
+                provider_model = str(item.get("provider_model") or public_model.upstream_model or public_model.provider_model or "").strip()
+                key = f"cpa_gemini:{channel_id}"
+                _add_system_channel_model(
+                    groups,
+                    key,
+                    {
+                        "id": f"system:{key}",
+                        "name": f"Gemini CPA · {channel_id}",
+                        "provider_platform": "cpa_gemini",
+                        "channel_type": "account_pool",
+                        "source": "catalog metadata",
+                        "status": "default",
+                        "priority": _admin_int(item.get("priority") or metadata.get("priority"), 0),
+                        "weight": max(1, _admin_int(item.get("weight") or metadata.get("weight"), 1)),
+                        "allowed_fails": max(1, _admin_int(item.get("allowed_fails") or metadata.get("allowed_fails"), 3)),
+                        "cooldown_seconds": max(0.0, _admin_float(item.get("cooldown_seconds") or metadata.get("cooldown_seconds"), 30.0)),
+                        "notes": f"provider_model={provider_model}" if provider_model else "Gemini CPA catalog route",
+                    },
+                    public_model,
+                )
+            continue
+
+        if public_model.delivery_lane in {"upstream_direct", CLAUDE_COMPAT_PROVIDER_KIRO_GO, "gateway", "vertex_direct"}:
+            lane = public_model.delivery_lane or "upstream_direct"
+            key = f"{lane}:{public_model.provider_name or public_model.owned_by}"
+            _add_system_channel_model(
+                groups,
+                key,
+                {
+                    "id": f"system:{key}",
+                    "name": f"{lane} · {public_model.provider_name or public_model.owned_by}",
+                    "provider_platform": lane,
+                    "channel_type": "openai_compatible",
+                    "source": "catalog/env",
+                    "status": "default",
+                    "priority": 0,
+                    "weight": 1,
+                    "allowed_fails": 3,
+                    "cooldown_seconds": 30,
+                    "notes": "catalog direct route",
+                },
+                public_model,
+            )
+
+    result = []
+    for entry in groups.values():
+        entry["capabilities"] = sorted(entry.get("capabilities") or [])
+        entry["public_models"] = sorted(set(entry.get("public_models") or []))[:12]
+        result.append(entry)
+    return sorted(result, key=lambda item: (item.get("provider_platform", ""), item.get("name", "")))
 
 
 def admin_guard(request: Request):
@@ -969,6 +1105,7 @@ async def list_provider_channels(db: AsyncSession = Depends(get_db)):
             )
             for row in channel_rows
         ],
+        "default_channels": _system_default_channel_payloads(),
         "router_version": channel_router.version,
     }
 
