@@ -1643,9 +1643,8 @@ async def run_provider_channel_monitor_now(monitor_id: str, db: AsyncSession = D
     if monitor is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel monitor not found")
     results = await run_provider_channel_monitor_once(db, monitor_id)
-    channel = await db.get(ProviderChannel, monitor.channel_id)
     return JSONResponse(content=jsonable_encoder({
-        "monitor": _provider_channel_monitor_payload(monitor, channel),
+        "monitor_id": monitor_id,
         "results": [
             {
                 "model": result.model,
