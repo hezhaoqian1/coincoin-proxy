@@ -8,8 +8,9 @@ from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
-from fastapi.responses import FileResponse
-from sqlalchemy import case, func, select
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import FileResponse, JSONResponse
+from sqlalchemy import case, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import gemini_cpa
@@ -1629,17 +1630,9 @@ async def delete_provider_channel_monitor(monitor_id: str, db: AsyncSession = De
     monitor = await db.get(ProviderChannelMonitor, monitor_id)
     if monitor is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel monitor not found")
-    history_rows = (
-        await db.execute(select(ProviderChannelMonitorHistory).where(ProviderChannelMonitorHistory.monitor_id == monitor_id))
-    ).scalars().all()
-    for row in history_rows:
-        await db.delete(row)
-    daily_rows = (
-        await db.execute(select(ProviderChannelMonitorDailyRollup).where(ProviderChannelMonitorDailyRollup.monitor_id == monitor_id))
-    ).scalars().all()
-    for row in daily_rows:
-        await db.delete(row)
-    await db.delete(monitor)
+    await db.execute(delete(ProviderChannelMonitorHistory).where(ProviderChannelMonitorHistory.monitor_id == monitor_id))
+    await db.execute(delete(ProviderChannelMonitorDailyRollup).where(ProviderChannelMonitorDailyRollup.monitor_id == monitor_id))
+    await db.execute(delete(ProviderChannelMonitor).where(ProviderChannelMonitor.id == monitor_id))
     await db.commit()
     return {"deleted": True, "id": monitor_id}
 
@@ -1651,7 +1644,7 @@ async def run_provider_channel_monitor_now(monitor_id: str, db: AsyncSession = D
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel monitor not found")
     results = await run_provider_channel_monitor_once(db, monitor_id)
     channel = await db.get(ProviderChannel, monitor.channel_id)
-    return {
+    return JSONResponse(content=jsonable_encoder({
         "monitor": _provider_channel_monitor_payload(monitor, channel),
         "results": [
             {
@@ -1665,7 +1658,7 @@ async def run_provider_channel_monitor_now(monitor_id: str, db: AsyncSession = D
             }
             for result in results
         ],
-    }
+    }))
 
 
 @router.get("/provider-channel-monitors/{monitor_id}/history", dependencies=[Depends(admin_guard)])
