@@ -182,6 +182,87 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("analytics: loadAnalytics,", admin_html)
         self.assertIn("async function loadAnalytics()", admin_html)
 
+    async def test_provider_channels_includes_system_default_channels(self) -> None:
+        catalog = {
+            "default_text_model": "codex-legacy",
+            "models": [
+                {
+                    "id": "codex-legacy",
+                    "owned_by": "openai",
+                    "provider_name": "OpenAI",
+                    "capabilities": ["chat/completions", "responses"],
+                    "routing_mode": "legacy_auto",
+                    "billable_sku": "legacy-codex",
+                    "metadata": {
+                        "execution_pool": "cpa_coding_pool",
+                        "legacy_default_slot": "premium",
+                    },
+                },
+                {
+                    "id": "gemini-balanced",
+                    "owned_by": "google",
+                    "provider_name": "Google",
+                    "provider_model": "gemini-2.5-flash-lite",
+                    "capabilities": ["chat/completions", "responses"],
+                    "routing_mode": "direct",
+                    "delivery_lane": "cpa_gemini",
+                    "upstream_model": "gemini-2.5-flash-lite",
+                    "upstream_url": "https://gemini.example/v1",
+                    "api_key": "gemini-key",
+                    "auth_style": "bearer",
+                    "billable_sku": "gemini-balanced-text",
+                    "metadata": {
+                        "channel_id": "gemini-cpa-primary",
+                        "priority": 0,
+                        "weight": 1,
+                        "allowed_fails": "${COINCOIN_GEMINI_CPA_ALLOWED_FAILS:-4}",
+                        "cooldown_seconds": "${COINCOIN_GEMINI_CPA_COOLDOWN_SECONDS:-12.5}",
+                    },
+                },
+            ],
+        }
+        originals = {
+            "model_catalog_json": admin_module._settings.model_catalog_json,
+            "model_alias_overrides_path": admin_module._settings.model_alias_overrides_path,
+        }
+        fake_db = _FakeDB(
+            execute_results=[
+                _FakeScalarsResult([]),
+                _FakeAllResult([]),
+                _FakeScalarsResult([]),
+            ]
+        )
+
+        async def fake_get_db():
+            yield fake_db
+
+        try:
+            admin_module._settings.model_catalog_json = json.dumps(catalog)
+            admin_module._settings.model_alias_overrides_path = ""
+            model_registry._initialized = False
+            app.dependency_overrides[admin_module.get_db] = fake_get_db
+            app.dependency_overrides[admin_module.admin_guard] = lambda: None
+
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                response = await client.get("/admin/provider-channels")
+
+            self.assertEqual(response.status_code, 200, response.text)
+            payload = response.json()
+            self.assertEqual(payload["channels"], [])
+            defaults = {item["id"]: item for item in payload["default_channels"]}
+            self.assertIn("system:legacy:cpa_coding_pool:premium", defaults)
+            self.assertIn("system:cpa_gemini:gemini-cpa-primary", defaults)
+            self.assertEqual(defaults["system:legacy:cpa_coding_pool:premium"]["model_count"], 1)
+            self.assertEqual(defaults["system:cpa_gemini:gemini-cpa-primary"]["allowed_fails"], 4)
+            self.assertEqual(defaults["system:cpa_gemini:gemini-cpa-primary"]["cooldown_seconds"], 12.5)
+            self.assertIn("gemini-balanced", defaults["system:cpa_gemini:gemini-cpa-primary"]["public_models"])
+        finally:
+            admin_module._settings.model_catalog_json = originals["model_catalog_json"]
+            admin_module._settings.model_alias_overrides_path = originals["model_alias_overrides_path"]
+            app.dependency_overrides.pop(admin_module.get_db, None)
+            model_registry._initialized = False
+
     async def test_request_logs_expose_provider_alias_and_usage_units(self) -> None:
         log = SimpleNamespace(
             created_at=datetime(2026, 3, 25, 12, 34, 56),
