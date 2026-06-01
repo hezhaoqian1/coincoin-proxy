@@ -8,6 +8,7 @@ import time
 from urllib.parse import urlsplit, urlunsplit
 from collections import OrderedDict
 from copy import deepcopy
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
@@ -21,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from .config import settings
+from .channel_router import channel_router, should_record_failure as should_record_channel_failure
 from .db import get_db
 from . import gemini_cpa
 from .models import ApiKey, RequestLog, UsageDaily, User
@@ -1125,6 +1127,52 @@ def _build_upstream_headers(cfg) -> Dict[str, str]:
     return headers
 
 
+def _channel_usage_kwargs(cfg, cpa_channel=None) -> Dict[str, object]:
+    if cpa_channel is not None:
+        return {
+            "channel_id": getattr(cpa_channel, "channel_id", "") or getattr(cfg, "channel_id", ""),
+            "channel_type": getattr(cfg, "channel_type", "") or "account_pool",
+            "provider_platform": getattr(cfg, "provider_platform", "") or "cpa_gemini",
+            "provider_account_fingerprint": getattr(cfg, "provider_account_fingerprint", ""),
+            "fallback_from_channel_id": getattr(cfg, "fallback_from_channel_id", ""),
+            "route_attempt": getattr(cfg, "route_attempt", 0),
+        }
+    return {
+        "channel_id": getattr(cfg, "channel_id", ""),
+        "channel_type": getattr(cfg, "channel_type", ""),
+        "provider_platform": getattr(cfg, "provider_platform", ""),
+        "provider_account_fingerprint": getattr(cfg, "provider_account_fingerprint", ""),
+        "fallback_from_channel_id": getattr(cfg, "fallback_from_channel_id", ""),
+        "route_attempt": getattr(cfg, "route_attempt", 0),
+    }
+
+
+def _record_channel_success(cfg, *, duration_ms: int = 0) -> None:
+    channel_router.record_success(getattr(cfg, "channel_id", ""), latency_ms=duration_ms)
+
+
+def _record_channel_failure(cfg, *, status_code: int | None = None, error_code: str = "") -> None:
+    channel_id = getattr(cfg, "channel_id", "")
+    if not channel_id:
+        return
+    if status_code is None or should_record_channel_failure(int(status_code or 0)):
+        channel_router.record_failure(channel_id, error_code=error_code or str(status_code or "request_error"))
+
+
+def _channel_fallback_config(previous_cfg, fallback_cfg):
+    previous_channel_id = getattr(previous_cfg, "channel_id", "") or ""
+    if not previous_channel_id:
+        return fallback_cfg
+    try:
+        return replace(
+            fallback_cfg,
+            fallback_from_channel_id=previous_channel_id,
+            route_attempt=int(getattr(previous_cfg, "route_attempt", 0) or 0) + 1,
+        )
+    except Exception:
+        return fallback_cfg
+
+
 def _requested_image_count_from_pairs(pairs: List[Tuple[str, str]]) -> int:
     for key, value in reversed(pairs):
         if key != "n":
@@ -1704,6 +1752,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 req = stream_client.build_request("POST", upstream_url, json=chat_payload, headers=headers)
                 upstream = await stream_client.send(req, stream=True)
             except (httpx.TimeoutException, httpx.RequestError):
+                _record_channel_failure(used_cfg, error_code="upstream_unreachable")
                 return JSONResponse(
                     content={"error": {"message": "Upstream request failed", "type": "server_error", "code": "upstream_unreachable"}},
                     status_code=502,
@@ -1866,6 +1915,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 finally:
                     await upstream.aclose()
                     if upstream.status_code < 400:
+                        _record_channel_success(used_cfg, duration_ms=int((time.monotonic() - stream_t0) * 1000))
                         if response_id and output_items:
                             _conv_cache.set(response_id, _normalize_responses_input_items(payload.get("input")), output_items)
                         dur = int((time.monotonic() - stream_t0) * 1000)
@@ -1889,8 +1939,11 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                             usage_unit_type="tokens",
                             billable_sku=public_model.billable_sku or display_model,
                             upstream_request_id=extract_upstream_request_id(upstream.headers),
+                            **_channel_usage_kwargs(used_cfg),
                             **usage_pricing_kwargs(public_model, station_model),
                         ))
+                    else:
+                        _record_channel_failure(used_cfg, status_code=upstream.status_code)
 
             return StreamingResponse(
                 iter_events(),
@@ -1904,6 +1957,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         try:
             upstream = await client.post(upstream_url, json=chat_payload, headers=headers)
         except (httpx.TimeoutException, httpx.RequestError):
+            _record_channel_failure(used_cfg, error_code="upstream_unreachable")
             return JSONResponse(
                 content={"error": {"message": "Upstream request failed", "type": "server_error", "code": "upstream_unreachable"}},
                 status_code=502,
@@ -1917,6 +1971,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             try:
                 data = upstream.json()
             except Exception:
+                _record_channel_failure(used_cfg, error_code="upstream_invalid_json")
                 return JSONResponse(
                     content={"error": {"message": "Upstream returned invalid JSON", "type": "server_error", "code": "upstream_invalid_json"}},
                     status_code=502,
@@ -1926,18 +1981,21 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             data = upstream.text
 
         if isinstance(data, dict) and isinstance(data.get("error"), dict):
+            _record_channel_failure(used_cfg, status_code=upstream.status_code, error_code=str(upstream.status_code))
             return JSONResponse(
                 content={"error": data["error"]},
                 status_code=upstream.status_code if upstream.status_code >= 400 else 502,
                 headers=response_headers,
             )
         if upstream.status_code >= 400:
+            _record_channel_failure(used_cfg, status_code=upstream.status_code)
             return JSONResponse(
                 content={"error": {"message": str(data)[:500] if data else "upstream error", "type": "upstream_error", "code": str(upstream.status_code)}},
                 status_code=upstream.status_code,
                 headers=response_headers,
             )
         if not isinstance(data, dict):
+            _record_channel_success(used_cfg, duration_ms=duration_ms)
             return Response(content=str(data), status_code=upstream.status_code, headers=response_headers, media_type=content_type)
 
         response_payload = _translate_chat_response_to_responses(data, display_model)
@@ -1950,6 +2008,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         response_output = response_payload.get("output")
         if response_id and isinstance(response_output, list):
             _conv_cache.set(response_id, _normalize_responses_input_items(payload.get("input")), response_output)
+        _record_channel_success(used_cfg, duration_ms=duration_ms)
         await usage_buffer.add(
             user.id,
             api_key_id=api_key_id,
@@ -1970,6 +2029,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             usage_unit_type="tokens",
             billable_sku=public_model.billable_sku or display_model,
             upstream_request_id=upstream_request_id,
+            **_channel_usage_kwargs(used_cfg),
             **usage_pricing_kwargs(public_model, station_model),
         )
         return JSONResponse(content=response_payload, status_code=upstream.status_code, headers=response_headers)
@@ -2082,10 +2142,11 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         except (httpx.TimeoutException, httpx.RequestError) as exc:
             if cpa_channel is not None:
                 gemini_cpa.record_failure(cpa_channel)
+            _record_channel_failure(used_cfg, error_code="upstream_unreachable")
             if can_fallback:
                 _fb = "cheap" if is_cheap else "premium"
                 logger.warning("primary %s failed (%s: %s), falling back", _fb, type(exc).__name__, exc)
-                used_cfg = fallback_cfg
+                used_cfg = _channel_fallback_config(used_cfg, fallback_cfg)
                 used_route_reason = f"{_fb}_fallback_timeout"
                 can_fallback = False
                 is_cheap = False
@@ -2110,7 +2171,8 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             except Exception:
                 pass
             logger.warning("primary %s returned %s: %s — falling back", _fb, _code, _err_body[:500])
-            used_cfg = fallback_cfg
+            _record_channel_failure(used_cfg, status_code=_code)
+            used_cfg = _channel_fallback_config(used_cfg, fallback_cfg)
             used_route_reason = f"{_fb}_fallback_{_code}"
             can_fallback = False
             is_cheap = False
@@ -2121,6 +2183,8 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 gemini_cpa.record_success(cpa_channel)
             elif gemini_cpa.should_record_failure(upstream.status_code):
                 gemini_cpa.record_failure(cpa_channel)
+        if upstream.status_code >= 400:
+            _record_channel_failure(used_cfg, status_code=upstream.status_code)
 
         content_type = upstream.headers.get("content-type", "")
         upstream_request_id = extract_upstream_request_id(upstream.headers)
@@ -2131,7 +2195,8 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 except Exception:
                     pass
                 _fb = "cheap" if is_cheap else "premium"
-                used_cfg = fallback_cfg
+                _record_channel_failure(used_cfg, error_code="upstream_unexpected_content_type")
+                used_cfg = _channel_fallback_config(used_cfg, fallback_cfg)
                 used_route_reason = f"{_fb}_fallback_unexpected"
                 can_fallback = False
                 is_cheap = False
@@ -2146,6 +2211,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             response_headers.pop("content-length", None)
             if upstream.status_code >= 400:
                 logger.error("upstream error %s: %s", upstream.status_code, body[:500])
+                _record_channel_failure(used_cfg, status_code=upstream.status_code)
             if "application/json" in content_type:
                 try:
                     data = json.loads(body.decode("utf-8"))
@@ -2201,6 +2267,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             finally:
                 await upstream.aclose()
                 if upstream.status_code < 400:
+                    _record_channel_success(used_cfg, duration_ms=int((time.monotonic() - stream_t0) * 1000))
                     if _resp_id_cap:
                         _conv_cache.set(_resp_id_cap, _expanded_input, _resp_out_cap or [])
                         logger.info("polyfill: cached stream resp %s (%d in, %d out)",
@@ -2226,8 +2293,11 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                         usage_unit_type="tokens",
                         billable_sku=public_model.billable_sku or display_model,
                         upstream_request_id=upstream_request_id,
+                        **_channel_usage_kwargs(used_cfg, cpa_channel),
                         **usage_pricing_kwargs(public_model, station_model),
                     ))
+                else:
+                    _record_channel_failure(used_cfg, status_code=upstream.status_code)
 
         stream_headers = filter_headers(dict(upstream.headers))
         stream_headers.pop("content-length", None)
@@ -2283,10 +2353,11 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
     except (httpx.TimeoutException, httpx.RequestError) as exc:
         if cpa_channel is not None:
             gemini_cpa.record_failure(cpa_channel)
+        _record_channel_failure(used_cfg, error_code="upstream_unreachable")
         if can_fallback:
             _fb = "cheap" if is_cheap else "premium"
             logger.warning("primary %s failed (%s: %s), falling back", _fb, type(exc).__name__, exc)
-            used_cfg = fallback_cfg
+            used_cfg = _channel_fallback_config(used_cfg, fallback_cfg)
             used_route_reason = f"{_fb}_fallback_timeout"
             can_fallback = False
             is_cheap = False
@@ -2302,7 +2373,8 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         _fb = "cheap" if is_cheap else "premium"
         logger.warning("primary %s returned %s: %s — falling back",
                        _fb, upstream.status_code, str(upstream.text)[:500])
-        used_cfg = fallback_cfg
+        _record_channel_failure(used_cfg, status_code=upstream.status_code)
+        used_cfg = _channel_fallback_config(used_cfg, fallback_cfg)
         used_route_reason = f"{_fb}_fallback_{upstream.status_code}"
         can_fallback = False
         is_cheap = False
@@ -2312,6 +2384,8 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             gemini_cpa.record_success(cpa_channel)
         elif gemini_cpa.should_record_failure(upstream.status_code):
             gemini_cpa.record_failure(cpa_channel)
+    if upstream.status_code >= 400:
+        _record_channel_failure(used_cfg, status_code=upstream.status_code)
     response_headers = filter_headers(dict(upstream.headers))
     response_headers.pop("content-length", None)
 
@@ -2319,7 +2393,8 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
     upstream_request_id = extract_upstream_request_id(upstream.headers)
     if can_fallback and "application/json" not in content_type:
         _fb = "cheap" if is_cheap else "premium"
-        used_cfg = fallback_cfg
+        _record_channel_failure(used_cfg, error_code="upstream_unexpected_content_type")
+        used_cfg = _channel_fallback_config(used_cfg, fallback_cfg)
         used_route_reason = f"{_fb}_fallback_unexpected"
         can_fallback = False
         is_cheap = False
@@ -2335,7 +2410,8 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         except Exception:
             if can_fallback:
                 _fb = "cheap" if is_cheap else "premium"
-                used_cfg = fallback_cfg
+                _record_channel_failure(used_cfg, error_code="upstream_invalid_json")
+                used_cfg = _channel_fallback_config(used_cfg, fallback_cfg)
                 used_route_reason = f"{_fb}_fallback_unexpected"
                 can_fallback = False
                 is_cheap = False
@@ -2352,6 +2428,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                         status_code=502, headers=response_headers,
                     )
             else:
+                _record_channel_failure(used_cfg, error_code="upstream_invalid_json")
                 return JSONResponse(
                     content={"error": {"message": "Upstream returned invalid JSON", "type": "server_error", "code": "upstream_invalid_json"}},
                     status_code=502, headers=response_headers,
@@ -2376,6 +2453,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             logger.error("responses upstream returned empty success payload for model=%s", display_model)
             if cpa_channel is not None:
                 gemini_cpa.record_failure(cpa_channel)
+            _record_channel_failure(used_cfg, error_code="upstream_empty_response")
             return JSONResponse(
                 content={
                     "error": {
@@ -2400,6 +2478,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                         _resp_id, len(_expanded_input), len(_resp_output))
 
     if upstream.status_code < 400:
+        _record_channel_success(used_cfg, duration_ms=duration_ms)
         await usage_buffer.add(
             user.id,
             api_key_id=api_key_id,
@@ -2420,6 +2499,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             usage_unit_type="tokens",
             billable_sku=public_model.billable_sku or display_model,
             upstream_request_id=upstream_request_id,
+            **_channel_usage_kwargs(used_cfg, cpa_channel),
             **usage_pricing_kwargs(public_model, station_model),
         )
     elif isinstance(data, (dict, str)):
@@ -2463,6 +2543,7 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
     should_use_cpa_gemini_image_generation = is_google_image_generation and delivery_lane == gemini_cpa.DELIVERY_LANE
     should_use_direct_vertex = is_google_image_generation and delivery_lane == "vertex_direct"
     client = None
+    cpa_channel = None
 
     if (
         is_google_image_generation
@@ -2517,6 +2598,7 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
             upstream = await _post_with_retries(client, upstream_url, json_body=upstream_payload, headers=headers)
         except httpx.TransportError as exc:
             gemini_cpa.record_failure(cpa_channel)
+            _record_channel_failure(used_cfg, error_code="cpa_gemini_image_generation_transport_error")
             return _openai_error_response(
                 f"Gemini CPA image generation transport error: {exc}",
                 error_type="server_error",
@@ -2568,6 +2650,7 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
 
     if should_use_gateway_image_generation and "application/json" in content_type:
         if upstream.status_code < 400:
+            _record_channel_success(used_cfg, duration_ms=duration_ms)
             image_count = _requested_image_count_from_json(payload)
             await usage_buffer.add(
                 user.id,
@@ -2586,6 +2669,7 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
                 upstream_request_id=upstream_request_id,
                 image_count=image_count,
                 price_per_image_cents=price_per_image_cents,
+                **_channel_usage_kwargs(used_cfg),
                 **usage_pricing_kwargs(public_model, station_model),
             )
             return _stream_upstream_response(
@@ -2614,6 +2698,7 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
         except Exception:
             if should_use_cpa_gemini_image_generation:
                 gemini_cpa.record_failure(cpa_channel)
+                _record_channel_failure(used_cfg, error_code="upstream_invalid_json")
             return JSONResponse(
                 content={"error": {"message": "Upstream returned invalid JSON", "type": "server_error", "code": "upstream_invalid_json"}},
                 status_code=502,
@@ -2623,12 +2708,15 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
             data = gemini_cpa.translate_image_response(upstream_json if isinstance(upstream_json, dict) else {})
             if not data.get("data"):
                 gemini_cpa.record_failure(cpa_channel)
+                _record_channel_failure(used_cfg, error_code="upstream_empty_image_response")
                 return _gemini_cpa_empty_image_error()
             gemini_cpa.record_success(cpa_channel)
+            _record_channel_success(used_cfg, duration_ms=duration_ms)
         elif should_use_cpa_gemini_image_generation and upstream.status_code >= 400:
             data = upstream_json
             if gemini_cpa.should_record_failure(upstream.status_code):
                 gemini_cpa.record_failure(cpa_channel)
+            _record_channel_failure(used_cfg, status_code=upstream.status_code)
         elif should_use_direct_vertex and upstream.status_code < 400:
             data = _translate_vertex_image_response(upstream_json if isinstance(upstream_json, dict) else {})
         else:
@@ -2638,6 +2726,7 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
 
     image_count = 0
     if upstream.status_code < 400 and isinstance(data, dict):
+        _record_channel_success(used_cfg, duration_ms=duration_ms)
         data_items = data.get("data")
         if isinstance(data_items, list) and data_items:
             image_count = len(data_items)
@@ -2664,9 +2753,11 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
             upstream_request_id=upstream_request_id,
             image_count=image_count,
             price_per_image_cents=price_per_image_cents,
+            **_channel_usage_kwargs(used_cfg, cpa_channel),
             **usage_pricing_kwargs(public_model, station_model),
         )
     elif isinstance(data, (dict, str)):
+        _record_channel_failure(used_cfg, status_code=upstream.status_code)
         logger.error("image upstream error %s: %s", upstream.status_code, str(data)[:500])
 
     if isinstance(data, dict):
@@ -2704,6 +2795,7 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
     should_use_cpa_gemini_image_edit = is_google_image_edit and delivery_lane == gemini_cpa.DELIVERY_LANE
     should_use_direct_vertex = is_google_image_edit and delivery_lane == "vertex_direct"
     client = None
+    cpa_channel = None
     input_image_count = sum(1 for key, _ in file_fields if key in {"image", "image[]"})
     total_upload_bytes = sum(len(content) for key, (_, content, _) in file_fields if key in {"image", "image[]"})
 
@@ -2780,6 +2872,7 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
                 total_upload_bytes,
                 display_model,
             )
+            _record_channel_failure(used_cfg, error_code="upstream_timeout")
             if settings.image_jobs_enabled and input_image_count <= max(1, int(settings.image_job_async_max_inputs or 8)):
                 return _image_job_timeout_error(input_image_count)
             return _openai_error_response(
@@ -2790,6 +2883,7 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
             )
         except (httpx.TimeoutException, httpx.RequestError) as exc:
             logger.error("gateway image edit transport error: %s", exc)
+            _record_channel_failure(used_cfg, error_code="upstream_unreachable")
             return _openai_error_response(
                 f"Gateway image edit request failed: {exc}",
                 code="upstream_unreachable",
@@ -2804,6 +2898,7 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
         content_type = upstream.headers.get("content-type", "application/json")
 
         if "application/json" in content_type and upstream.status_code < 400:
+            _record_channel_success(used_cfg, duration_ms=duration_ms)
             image_count = _requested_image_count_from_pairs(form_fields)
             await usage_buffer.add(
                 user.id,
@@ -2822,6 +2917,7 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
                 upstream_request_id=upstream_request_id,
                 image_count=image_count,
                 price_per_image_cents=price_per_image_cents,
+                **_channel_usage_kwargs(used_cfg),
                 **usage_pricing_kwargs(public_model, station_model),
             )
             return _stream_upstream_response(
@@ -2875,6 +2971,7 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
             upstream = await _post_with_retries(client, upstream_url, json_body=payload, headers=headers)
         except httpx.TransportError as exc:
             gemini_cpa.record_failure(cpa_channel)
+            _record_channel_failure(used_cfg, error_code="cpa_gemini_image_edit_transport_error")
             return _openai_error_response(
                 f"Gemini CPA image edit transport error: {exc}",
                 error_type="server_error",
@@ -2889,6 +2986,7 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
             upstream_data = upstream.json()
         except Exception:
             gemini_cpa.record_failure(cpa_channel)
+            _record_channel_failure(used_cfg, error_code="upstream_invalid_json")
             return JSONResponse(
                 content={"error": {"message": "Gemini CPA returned invalid JSON", "type": "server_error", "code": "upstream_invalid_json"}},
                 status_code=502,
@@ -2899,12 +2997,15 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
             data = gemini_cpa.translate_image_response(upstream_data if isinstance(upstream_data, dict) else {})
             if not data.get("data"):
                 gemini_cpa.record_failure(cpa_channel)
+                _record_channel_failure(used_cfg, error_code="upstream_empty_image_response")
                 return _gemini_cpa_empty_image_error()
             gemini_cpa.record_success(cpa_channel)
+            _record_channel_success(used_cfg, duration_ms=duration_ms)
         else:
             data = upstream_data
             if gemini_cpa.should_record_failure(upstream.status_code):
                 gemini_cpa.record_failure(cpa_channel)
+            _record_channel_failure(used_cfg, status_code=upstream.status_code)
     elif should_use_direct_vertex:
         client = await get_http_client()
         if any(key in {"mask", "mask[]"} for key, _ in file_fields):
@@ -2982,6 +3083,7 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
             )
         except (httpx.TimeoutException, httpx.RequestError) as exc:
             logger.error("OpenAI image edit transport error: %s", exc)
+            _record_channel_failure(used_cfg, error_code="upstream_unreachable")
             return _openai_error_response(
                 f"OpenAI image edit request failed: {exc}",
                 code="upstream_unreachable",
@@ -2996,6 +3098,7 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
         upstream_request_id = extract_upstream_request_id(upstream.headers)
 
         if "application/json" in content_type and upstream.status_code < 400:
+            _record_channel_success(used_cfg, duration_ms=duration_ms)
             image_count = _requested_image_count_from_pairs(form_fields)
             await usage_buffer.add(
                 user.id,
@@ -3014,6 +3117,7 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
                 upstream_request_id=upstream_request_id,
                 image_count=image_count,
                 price_per_image_cents=price_per_image_cents,
+                **_channel_usage_kwargs(used_cfg),
                 **usage_pricing_kwargs(public_model, station_model),
             )
             return _stream_upstream_response(
@@ -3040,6 +3144,7 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
 
     image_count = 0
     if upstream.status_code < 400 and isinstance(data, dict):
+        _record_channel_success(used_cfg, duration_ms=duration_ms)
         data_items = data.get("data")
         if isinstance(data_items, list) and data_items:
             image_count = len(data_items)
@@ -3063,9 +3168,11 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
             upstream_request_id=upstream_request_id,
             image_count=image_count,
             price_per_image_cents=price_per_image_cents,
+            **_channel_usage_kwargs(used_cfg, cpa_channel),
             **usage_pricing_kwargs(public_model, station_model),
         )
     elif isinstance(data, (dict, str)):
+        _record_channel_failure(used_cfg, status_code=upstream.status_code)
         logger.error("image edit upstream error %s: %s", upstream.status_code, str(data)[:500])
 
     if isinstance(data, dict):

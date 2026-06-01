@@ -28,6 +28,9 @@ from .proxy import (
     _parse_image_edit_form,
     _requested_image_count_from_pairs,
     _send_stream_request,
+    _channel_usage_kwargs,
+    _record_channel_failure,
+    _record_channel_success,
     authenticate_user,
     authorize_request,
     extract_upstream_request_id,
@@ -267,6 +270,7 @@ async def _process_image_edit_job(job_id: str) -> None:
     except Exception as exc:
         if delivery_lane == gemini_cpa.DELIVERY_LANE and "channel" in locals() and channel is not None:
             gemini_cpa.record_failure(channel)
+        _record_channel_failure(used_cfg, error_code="upstream_transport_error")
         await _mark_job_failed(job_id, code="upstream_transport_error", message=str(exc))
         return
     duration_ms = int((time.monotonic() - started) * 1000)
@@ -275,12 +279,14 @@ async def _process_image_edit_job(job_id: str) -> None:
     try:
         payload = json.loads(upstream_body.decode("utf-8"))
     except Exception:
+        _record_channel_failure(used_cfg, error_code="upstream_invalid_json")
         await _mark_job_failed(job_id, code="upstream_invalid_json", message="Upstream returned invalid JSON.", duration_ms=duration_ms)
         return
 
     if upstream.status_code >= 400:
         if delivery_lane == gemini_cpa.DELIVERY_LANE and "channel" in locals() and channel is not None and gemini_cpa.should_record_failure(upstream.status_code):
             gemini_cpa.record_failure(channel)
+        _record_channel_failure(used_cfg, status_code=upstream.status_code)
         err = payload.get("error") if isinstance(payload, dict) else None
         message = str(err.get("message") or err) if isinstance(err, dict) else str(payload)
         await _mark_job_failed(job_id, code="upstream_error", message=message, duration_ms=duration_ms)
@@ -290,9 +296,11 @@ async def _process_image_edit_job(job_id: str) -> None:
         payload = gemini_cpa.translate_image_response(payload if isinstance(payload, dict) else {})
         if "channel" in locals() and channel is not None:
             gemini_cpa.record_success(channel)
+        _record_channel_success(used_cfg, duration_ms=duration_ms)
 
     data_items = payload.get("data") if isinstance(payload, dict) else None
     if not isinstance(data_items, list) or not data_items:
+        _record_channel_failure(used_cfg, error_code="empty_image_result")
         await _mark_job_failed(
             job_id,
             code="empty_image_result",
@@ -301,6 +309,8 @@ async def _process_image_edit_job(job_id: str) -> None:
         )
         return
 
+    if delivery_lane != gemini_cpa.DELIVERY_LANE:
+        _record_channel_success(used_cfg, duration_ms=duration_ms)
     await usage_buffer.add(
         job.user_id,
         api_key_id=getattr(job, "api_key_id", "") or "",
@@ -318,6 +328,7 @@ async def _process_image_edit_job(job_id: str) -> None:
         upstream_request_id=upstream_request_id,
         image_count=1,
         price_per_image_cents=public_model.price_per_image_cents,
+        **_channel_usage_kwargs(used_cfg, channel if "channel" in locals() else None),
         **public_model_pricing_kwargs(public_model),
     )
     await _mark_job_completed(

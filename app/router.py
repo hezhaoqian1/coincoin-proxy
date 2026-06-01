@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from .channel_router import channel_router
 from .config import settings
 
 
@@ -24,6 +25,19 @@ class ModelConfig:
     price_output_per_million: int
     strip_unsupported: bool
     auth_style: str = "azure"  # "azure" → api-key header; "bearer" → Authorization: Bearer
+    channel_id: str = ""
+    route_id: str = ""
+    channel_type: str = ""
+    provider_platform: str = ""
+    provider_account_fingerprint: str = ""
+    transform_profile: str = ""
+    cost_tier: str = ""
+    fallback_from_channel_id: str = ""
+    route_attempt: int = 0
+    channel_priority: int = 0
+    channel_weight: int = 1
+    allowed_fails: int = 3
+    cooldown_seconds: float = 30.0
 
 
 @dataclass(frozen=True)
@@ -738,6 +752,60 @@ class ModelRegistry:
             auth_style=primary.auth_style,
         )
 
+    def _apply_channel_route(
+        self,
+        public_model: PublicModelConfig,
+        backend: ModelConfig,
+        endpoint: str,
+    ) -> Optional[ModelConfig]:
+        choice = channel_router.select_for_model(public_model, backend, endpoint)
+        if choice is None:
+            return None
+        return ModelConfig(
+            model_id=choice.provider_model,
+            upstream_url=choice.upstream_url,
+            api_key=choice.api_key,
+            price_input_per_million=backend.price_input_per_million,
+            price_output_per_million=backend.price_output_per_million,
+            strip_unsupported=backend.strip_unsupported or public_model.strip_unsupported,
+            auth_style=choice.auth_style or backend.auth_style,
+            channel_id=choice.channel_id,
+            route_id=choice.route_id,
+            channel_type=choice.channel_type,
+            provider_platform=choice.provider_platform,
+            provider_account_fingerprint=choice.provider_account_fingerprint,
+            transform_profile=choice.transform_profile,
+            cost_tier=choice.cost_tier,
+            route_attempt=choice.route_attempt,
+            channel_priority=choice.priority,
+            channel_weight=choice.weight,
+            allowed_fails=choice.allowed_fails,
+            cooldown_seconds=choice.cooldown_seconds,
+        )
+
+    def _resolved_with_channel_route(
+        self,
+        *,
+        public_model: PublicModelConfig,
+        backend: ModelConfig,
+        endpoint: str,
+        execution_profile: ExecutionProfile,
+        route_reason: str,
+        lock_model_selection: bool = False,
+    ) -> ResolvedModel:
+        routed_backend = self._apply_channel_route(public_model, backend, endpoint)
+        if routed_backend is not None:
+            backend = routed_backend
+            route_reason = f"{route_reason}:channel:{backend.channel_id}"
+        return ResolvedModel(
+            public_model=public_model,
+            backend=backend,
+            execution_profile=execution_profile.profile_id,
+            execution_pool=execution_profile.pool_id,
+            route_reason=route_reason,
+            lock_model_selection=lock_model_selection,
+        )
+
     def _pick_default_model(self, requested_id: str, allowed_caps: frozenset[str]) -> str:
         if requested_id and requested_id in self.public_models:
             model = self.public_models[requested_id]
@@ -968,31 +1036,31 @@ class ModelRegistry:
         explicit_requested = bool((requested_model or "").strip())
         execution_profile = self._resolve_execution_profile(public_model, endpoint)
         if endpoint in EMBEDDING_ENDPOINTS:
-            return ResolvedModel(
+            return self._resolved_with_channel_route(
                 public_model=public_model,
                 backend=self.get(EMBEDDING),
-                execution_profile=execution_profile.profile_id,
-                execution_pool=execution_profile.pool_id,
+                endpoint=endpoint,
+                execution_profile=execution_profile,
                 route_reason=f"catalog:{public_model.public_id}:{public_model.delivery_lane or 'upstream_direct'}",
             )
         if public_model.routing_mode == "legacy_auto":
             if explicit_requested:
                 explicit_backend = self._build_explicit_legacy_backend(public_model)
                 if explicit_backend is not None:
-                    return ResolvedModel(
+                    return self._resolved_with_channel_route(
                         public_model=public_model,
                         backend=explicit_backend,
-                        execution_profile=execution_profile.profile_id,
-                        execution_pool=execution_profile.pool_id,
+                        endpoint=endpoint,
+                        execution_profile=execution_profile,
                         route_reason=f"catalog:{public_model.public_id}:legacy_explicit",
                         lock_model_selection=True,
                     )
             backend, route_reason = resolve(messages or [], tools, execution_profile=execution_profile)
-            return ResolvedModel(
+            return self._resolved_with_channel_route(
                 public_model=public_model,
                 backend=backend,
-                execution_profile=execution_profile.profile_id,
-                execution_pool=execution_profile.pool_id,
+                endpoint=endpoint,
+                execution_profile=execution_profile,
                 route_reason=f"catalog:{public_model.public_id}:{route_reason}",
             )
 
@@ -1005,11 +1073,11 @@ class ModelRegistry:
             strip_unsupported=public_model.strip_unsupported,
             auth_style=public_model.auth_style,
         )
-        return ResolvedModel(
+        return self._resolved_with_channel_route(
             public_model=public_model,
             backend=backend,
-            execution_profile=execution_profile.profile_id,
-            execution_pool=execution_profile.pool_id,
+            endpoint=endpoint,
+            execution_profile=execution_profile,
             route_reason=f"catalog:{public_model.public_id}:{public_model.delivery_lane}",
         )
 

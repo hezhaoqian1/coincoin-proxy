@@ -24,6 +24,9 @@ from .proxy import (
     filter_headers,
     get_http_client,
     get_stream_client,
+    _channel_usage_kwargs,
+    _record_channel_failure,
+    _record_channel_success,
 )
 from .router import (
     CLAUDE_COMPAT_PROVIDER_KIRO_GO,
@@ -1161,10 +1164,12 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                             anthropic_event_lines.clear()
                         break
             except (httpx.TimeoutException, httpx.RequestError):
+                _record_channel_failure(used_cfg, error_code="upstream_unreachable")
                 yield _anthropic_stream_error_bytes("Upstream request failed")
                 stream_failed = True
                 return
             except Exception:
+                _record_channel_failure(used_cfg, error_code="upstream_stream_error")
                 yield _anthropic_stream_error_bytes("Upstream request failed")
                 stream_failed = True
                 return
@@ -1186,6 +1191,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                 return
 
             duration_ms = _elapsed_ms_since(request_t0)
+            _record_channel_success(used_cfg, duration_ms=duration_ms)
             asyncio.create_task(usage_buffer.add(
                 user.id,
                 api_key_id=api_key_id,
@@ -1206,6 +1212,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                 usage_unit_type="tokens",
                 billable_sku=public_model.billable_sku or display_model,
                 upstream_request_id=upstream_request_id,
+                **_channel_usage_kwargs(used_cfg),
                 **usage_pricing_kwargs(public_model, station_model),
             ))
 
@@ -1219,7 +1226,11 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
     if upstream_payload.get("stream"):
         stream_client = await get_stream_client()
         req = stream_client.build_request("POST", upstream_url, json=upstream_payload, headers=headers)
-        upstream = await stream_client.send(req, stream=True)
+        try:
+            upstream = await stream_client.send(req, stream=True)
+        except (httpx.TimeoutException, httpx.RequestError):
+            _record_channel_failure(used_cfg, error_code="upstream_unreachable")
+            return anthropic_error("Upstream request failed", error_type="api_error", status_code=502)
         upstream_request_id = extract_upstream_request_id(upstream.headers)
         stream_headers = filter_headers(dict(upstream.headers))
         stream_headers.pop("content-length", None)
@@ -1244,6 +1255,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                         yield event
                 duration_ms = _elapsed_ms_since(request_t0)
                 if stream_state.usage:
+                    _record_channel_success(used_cfg, duration_ms=duration_ms)
                     asyncio.create_task(usage_buffer.add(
                         user.id,
                         api_key_id=api_key_id,
@@ -1264,8 +1276,11 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                         usage_unit_type="tokens",
                         billable_sku=public_model.billable_sku or display_model,
                         upstream_request_id=upstream_request_id,
+                        **_channel_usage_kwargs(used_cfg),
                         **usage_pricing_kwargs(public_model, station_model),
                     ))
+                elif upstream.status_code >= 400:
+                    _record_channel_failure(used_cfg, status_code=upstream.status_code)
                 await upstream.aclose()
 
         return StreamingResponse(
@@ -1279,6 +1294,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
     try:
         upstream = await client.post(upstream_url, json=upstream_payload, headers=headers)
     except (httpx.TimeoutException, httpx.RequestError):
+        _record_channel_failure(used_cfg, error_code="upstream_unreachable")
         return anthropic_error("Upstream request failed", error_type="api_error", status_code=502)
     duration_ms = _elapsed_ms_since(request_t0)
     response_headers = filter_headers(dict(upstream.headers))
@@ -1293,9 +1309,11 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
     try:
         data = upstream.json()
     except Exception:
+        _record_channel_failure(used_cfg, error_code="upstream_invalid_json")
         return anthropic_error("Upstream returned invalid JSON", error_type="api_error", status_code=502)
 
     if upstream.status_code >= 400:
+        _record_channel_failure(used_cfg, status_code=upstream.status_code)
         if isinstance(data, dict) and "error" in data:
             error_info = data["error"]
             message = error_info.get("message") if isinstance(error_info, dict) else str(error_info)
@@ -1329,6 +1347,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
             response_id=str(data.get("id") or ""),
         )
 
+    _record_channel_success(used_cfg, duration_ms=duration_ms)
     await usage_buffer.add(
         user.id,
         api_key_id=api_key_id,
@@ -1349,6 +1368,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
         usage_unit_type="tokens",
         billable_sku=public_model.billable_sku or display_model,
         upstream_request_id=upstream_request_id,
+        **_channel_usage_kwargs(used_cfg),
         **usage_pricing_kwargs(public_model, station_model),
     )
 

@@ -32,6 +32,7 @@ from .config import settings
 from .db import Base, engine
 from .model_alias_overrides import get_model_alias_override_db_state, refresh_model_alias_registry_from_db
 from .model_pricing_overrides import get_model_pricing_override_db_state, refresh_model_pricing_registry_from_db
+from .provider_channels import get_provider_channel_db_state, refresh_provider_channel_router_from_db
 from .system_settings import get_runtime_system_settings_db_state, refresh_runtime_system_settings_from_db
 from .usage_buffer import flush_loop, flush_once
 from .reconcile import reconcile_loop
@@ -91,6 +92,12 @@ async def _run_migrations(conn):
         ("coincoin_request_logs", "usage_unit_count", "BIGINT DEFAULT 0"),
         ("coincoin_request_logs", "billable_sku", "VARCHAR(128) DEFAULT ''"),
         ("coincoin_request_logs", "upstream_request_id", "VARCHAR(128) DEFAULT ''"),
+        ("coincoin_request_logs", "channel_id", "VARCHAR(32) DEFAULT ''"),
+        ("coincoin_request_logs", "channel_type", "VARCHAR(32) DEFAULT ''"),
+        ("coincoin_request_logs", "provider_platform", "VARCHAR(64) DEFAULT ''"),
+        ("coincoin_request_logs", "provider_account_fingerprint", "VARCHAR(128) DEFAULT ''"),
+        ("coincoin_request_logs", "fallback_from_channel_id", "VARCHAR(32) DEFAULT ''"),
+        ("coincoin_request_logs", "route_attempt", "BIGINT DEFAULT 0"),
         ("coincoin_user_finance_summary", "initialized_from_history", "BIGINT DEFAULT 0"),
         ("coincoin_user_finance_summary", "total_paid_rmb_cents", "BIGINT DEFAULT 0"),
         ("coincoin_user_finance_summary", "total_paid_balance_cents", "BIGINT DEFAULT 0"),
@@ -461,6 +468,75 @@ async def _run_migrations(conn):
             INDEX ix_system_settings_updated_at (updated_at)
         )
         """,
+        """
+        CREATE TABLE coincoin_provider_channels (
+            id VARCHAR(32) PRIMARY KEY,
+            name VARCHAR(128) DEFAULT '',
+            provider_platform VARCHAR(64) DEFAULT '',
+            channel_type VARCHAR(32) DEFAULT 'openai_compatible',
+            base_url VARCHAR(512) DEFAULT '',
+            encrypted_api_key LONGTEXT NULL,
+            auth_style VARCHAR(32) DEFAULT 'bearer',
+            status VARCHAR(16) DEFAULT 'active',
+            priority BIGINT DEFAULT 0,
+            weight BIGINT DEFAULT 1,
+            allowed_fails BIGINT DEFAULT 3,
+            cooldown_seconds DOUBLE DEFAULT 30,
+            capabilities TEXT NULL,
+            provider_account_fingerprint VARCHAR(128) DEFAULT '',
+            cost_tier VARCHAR(32) DEFAULT '',
+            notes TEXT NULL,
+            updated_by VARCHAR(64) DEFAULT '',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX ix_provider_channels_provider_platform (provider_platform),
+            INDEX ix_provider_channels_channel_type (channel_type),
+            INDEX ix_provider_channels_status (status),
+            INDEX ix_provider_channels_priority (priority),
+            INDEX ix_provider_channels_fingerprint (provider_account_fingerprint),
+            INDEX ix_provider_channels_created_at (created_at),
+            INDEX ix_provider_channels_updated_at (updated_at)
+        )
+        """,
+        """
+        CREATE TABLE coincoin_model_channel_routes (
+            id VARCHAR(32) PRIMARY KEY,
+            public_model_id VARCHAR(128) DEFAULT '',
+            endpoint VARCHAR(64) DEFAULT '',
+            channel_id VARCHAR(32) NOT NULL,
+            upstream_model VARCHAR(128) DEFAULT '',
+            priority_override BIGINT NULL,
+            weight_override BIGINT NULL,
+            transform_profile VARCHAR(64) DEFAULT 'openai_compatible',
+            status VARCHAR(16) DEFAULT 'active',
+            notes TEXT NULL,
+            updated_by VARCHAR(64) DEFAULT '',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX ix_model_channel_routes_public_model (public_model_id),
+            INDEX ix_model_channel_routes_endpoint (endpoint),
+            INDEX ix_model_channel_routes_channel_id (channel_id),
+            INDEX ix_model_channel_routes_status (status),
+            INDEX ix_model_channel_routes_created_at (created_at),
+            INDEX ix_model_channel_routes_updated_at (updated_at)
+        )
+        """,
+        """
+        CREATE TABLE coincoin_provider_channel_runtime_state (
+            channel_id VARCHAR(32) PRIMARY KEY,
+            fail_count BIGINT DEFAULT 0,
+            cooldown_until DATETIME NULL,
+            last_success_at DATETIME NULL,
+            last_failure_at DATETIME NULL,
+            last_error_code VARCHAR(64) DEFAULT '',
+            last_error_message VARCHAR(512) DEFAULT '',
+            rolling_latency_ms BIGINT DEFAULT 0,
+            rolling_failure_rate DOUBLE DEFAULT 0,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX ix_channel_runtime_cooldown_until (cooldown_until),
+            INDEX ix_channel_runtime_updated_at (updated_at)
+        )
+        """,
     ]
     for ddl in table_migrations:
         try:
@@ -476,6 +552,8 @@ async def _run_migrations(conn):
     index_migrations = [
         "CREATE INDEX ix_request_logs_user_key_created ON coincoin_request_logs (user_id, api_key_id, created_at)",
         "CREATE INDEX ix_request_logs_station_created ON coincoin_request_logs (station_id, created_at)",
+        "CREATE INDEX ix_request_logs_channel_created ON coincoin_request_logs (channel_id, created_at)",
+        "CREATE INDEX ix_request_logs_platform_created ON coincoin_request_logs (provider_platform, created_at)",
         "CREATE INDEX ix_referral_rewards_recipient_id ON coincoin_referral_rewards (recipient_id)",
         "CREATE INDEX ix_referral_rewards_reward_type ON coincoin_referral_rewards (reward_type)",
     ]
@@ -562,6 +640,24 @@ async def runtime_system_settings_refresh_loop(interval_seconds: int):
         await asyncio.sleep(max(1, int(interval_seconds or 10)))
 
 
+async def provider_channel_refresh_loop(interval_seconds: int):
+    from .db import SessionLocal
+
+    logger = logging.getLogger("coincoin.provider_channels")
+    last_state = None
+    while True:
+        try:
+            async with SessionLocal() as db:
+                state = await get_provider_channel_db_state(db)
+                if state != last_state:
+                    await refresh_provider_channel_router_from_db(db)
+                    last_state = state
+                    logger.info("refreshed provider channels from database channels=%s routes=%s", state[0], state[1])
+        except Exception as exc:
+            logger.warning("failed to refresh provider channels from database: %s", exc)
+        await asyncio.sleep(max(1, int(interval_seconds or 10)))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
@@ -573,6 +669,7 @@ async def lifespan(app: FastAPI):
         from .db import SessionLocal
         async with SessionLocal() as db:
             await refresh_runtime_system_settings_from_db(db)
+            await refresh_provider_channel_router_from_db(db)
             await refresh_model_alias_registry_from_db(db)
             await refresh_model_pricing_registry_from_db(db)
     except Exception as exc:
@@ -584,6 +681,9 @@ async def lifespan(app: FastAPI):
     reconcile_task = asyncio.create_task(reconcile_loop())
     runtime_system_settings_task = asyncio.create_task(
         runtime_system_settings_refresh_loop(settings.model_alias_overrides_refresh_interval)
+    )
+    provider_channel_task = asyncio.create_task(
+        provider_channel_refresh_loop(settings.model_alias_overrides_refresh_interval)
     )
     alias_override_task = asyncio.create_task(
         model_alias_override_refresh_loop(settings.model_alias_overrides_refresh_interval)
@@ -602,6 +702,7 @@ async def lifespan(app: FastAPI):
         flush_task.cancel()
         reconcile_task.cancel()
         runtime_system_settings_task.cancel()
+        provider_channel_task.cancel()
         alias_override_task.cancel()
         pricing_override_task.cancel()
         if image_job_task is not None:

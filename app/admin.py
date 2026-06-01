@@ -22,7 +22,10 @@ from .models import (
     ApiKey,
     BillingLedgerEntry,
     ModelAliasOverride,
+    ModelChannelRoute,
     ModelPricingOverride,
+    ProviderChannel,
+    ProviderChannelRuntimeState,
     SystemSetting,
     PaymentOrder,
     RechargeLog,
@@ -47,7 +50,9 @@ from .schemas import (
     AdminKeyUpdate, AdminPaymentManualConfirmRequest, AdminSubscriptionAdjustRequest,
     AdminTrafficPackGrantRequest, AdminTrafficPackUpdateRequest, AdminUserPasswordResetRequest,
     AdminUserPasswordResetResponse, AdminUserUpdate,
-    AdminClaudeCompatSettingsUpdate, AdminModelAliasUpdate, AdminModelPricingUpdate, AnnouncementCreate, AnnouncementUpdate,
+    AdminClaudeCompatSettingsUpdate, AdminModelAliasUpdate, AdminModelChannelRouteCreate,
+    AdminModelChannelRouteUpdate, AdminModelPricingUpdate, AdminProviderChannelCreate,
+    AdminProviderChannelUpdate, AnnouncementCreate, AnnouncementUpdate,
     RedemptionGenerateRequest, RedemptionGenerateResponse,
 )
 from .model_pricing_overrides import refresh_model_pricing_registry_from_db
@@ -72,6 +77,8 @@ from .billing import (
     utcnow,
 )
 from .router import registry as model_registry
+from .channel_router import channel_router
+from .provider_channels import refresh_provider_channel_router_from_db
 from .router import (
     CLAUDE_COMPAT_PROVIDER_KIRO_GO,
     CLAUDE_COMPAT_PROVIDER_UPSTREAM_DIRECT,
@@ -229,6 +236,105 @@ def _pricing_payload(model_id: str):
         "price_version": model.price_version,
         "override_active": model.public_id in model_registry.pricing_overrides,
     }
+
+
+def _csv_from_list(items: Optional[list[str]]) -> str:
+    return ",".join(str(item).strip() for item in (items or []) if str(item).strip())
+
+
+def _list_from_csv(raw: Optional[str]) -> list[str]:
+    return [item.strip() for item in str(raw or "").replace("\n", ",").split(",") if item.strip()]
+
+
+def _provider_channel_key_fingerprint(row: ProviderChannel) -> str:
+    raw = _recover_raw_key(getattr(row, "encrypted_api_key", None))
+    return _key_fingerprint(hash_key(raw)) if raw else ""
+
+
+def _channel_runtime_payload(channel_id: str, db_state: Optional[ProviderChannelRuntimeState] = None) -> dict:
+    state = channel_router.channel_state(channel_id)
+    cooldown_until = float(state.get("cooldown_until") or 0)
+    now = time.time()
+    payload = {
+        "memory_failures": int(state.get("failures") or 0),
+        "memory_cooldown_until": cooldown_until,
+        "memory_cooldown_remaining_seconds": max(0, int(cooldown_until - now)) if cooldown_until else 0,
+        "memory_last_error_code": state.get("last_error_code", ""),
+        "memory_rolling_latency_ms": int(state.get("rolling_latency_ms") or 0),
+    }
+    if db_state is not None:
+        payload.update({
+            "db_fail_count": int(getattr(db_state, "fail_count", 0) or 0),
+            "db_cooldown_until": getattr(db_state, "cooldown_until", None),
+            "db_last_success_at": getattr(db_state, "last_success_at", None),
+            "db_last_failure_at": getattr(db_state, "last_failure_at", None),
+            "db_last_error_code": getattr(db_state, "last_error_code", "") or "",
+            "db_rolling_latency_ms": int(getattr(db_state, "rolling_latency_ms", 0) or 0),
+        })
+    return payload
+
+
+def _provider_channel_payload(
+    row: ProviderChannel,
+    *,
+    route_count: int = 0,
+    runtime_state: Optional[ProviderChannelRuntimeState] = None,
+) -> dict:
+    return {
+        "id": row.id,
+        "name": row.name,
+        "provider_platform": row.provider_platform,
+        "channel_type": row.channel_type,
+        "base_url": row.base_url,
+        "auth_style": row.auth_style,
+        "status": row.status,
+        "priority": int(row.priority or 0),
+        "weight": int(row.weight or 1),
+        "allowed_fails": int(row.allowed_fails or 3),
+        "cooldown_seconds": float(row.cooldown_seconds or 0),
+        "capabilities": _list_from_csv(row.capabilities),
+        "provider_account_fingerprint": row.provider_account_fingerprint,
+        "api_key_configured": bool(getattr(row, "encrypted_api_key", None)),
+        "api_key_fingerprint": _provider_channel_key_fingerprint(row),
+        "cost_tier": row.cost_tier,
+        "notes": row.notes,
+        "route_count": route_count,
+        "runtime": _channel_runtime_payload(row.id, runtime_state),
+        "updated_by": row.updated_by,
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
+    }
+
+
+def _model_channel_route_payload(row: ModelChannelRoute, channel: Optional[ProviderChannel] = None) -> dict:
+    return {
+        "id": row.id,
+        "public_model_id": row.public_model_id,
+        "endpoint": row.endpoint,
+        "channel_id": row.channel_id,
+        "channel_name": getattr(channel, "name", "") if channel else "",
+        "channel_status": getattr(channel, "status", "") if channel else "",
+        "provider_platform": getattr(channel, "provider_platform", "") if channel else "",
+        "upstream_model": row.upstream_model,
+        "priority_override": row.priority_override,
+        "weight_override": row.weight_override,
+        "transform_profile": row.transform_profile,
+        "status": row.status,
+        "notes": row.notes,
+        "updated_by": row.updated_by,
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
+    }
+
+
+def _validate_model_channel_route(public_model_id: str, endpoint: str = "") -> None:
+    model_registry.ensure_initialized()
+    model = model_registry.get_public_model(public_model_id)
+    if not model:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="public model not found")
+    endpoint = (endpoint or "").strip()
+    if endpoint and endpoint not in (model.capabilities or ()):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="endpoint is not supported by public model")
 
 
 def admin_guard(request: Request):
@@ -402,7 +508,7 @@ def _request_upstream_cost_expr():
 
 def _request_channel_type_expr():
     route = func.lower(func.coalesce(RequestLog.route_reason, ""))
-    return case(
+    inferred = case(
         (
             route.like("%cpa_gemini%") | route.like("%legacy%"),
             "account_pool",
@@ -413,6 +519,7 @@ def _request_channel_type_expr():
         ),
         else_="unknown",
     )
+    return func.coalesce(func.nullif(RequestLog.channel_type, ""), inferred)
 
 
 def _billing_package_entry_types():
@@ -445,14 +552,14 @@ def _source_quality(*, upstream_cost_cents: int, user_charge_cents: int, channel
         "upstream_cost_available": upstream_known,
         "upstream_cost_coverage": "partial" if upstream_known and upstream_cost_cents < user_charge_cents else ("available" if upstream_known else "missing"),
         "channel_type_available": channel_known_rate > 0,
-        "channel_type_confidence": "route_reason_inferred",
+        "channel_type_confidence": "request_log_field_or_route_reason_fallback",
         "channel_known_rate": channel_known_rate,
         "missing_fields": [
             field
             for field, missing in {
                 "channel_type": channel_known_rate < 1,
-                "provider_pool_id": True,
-                "provider_account_fingerprint": True,
+                "channel_id": channel_known_rate < 1,
+                "provider_account_fingerprint": channel_known_rate < 1,
                 "upstream_cost": not upstream_known,
             }.items()
             if missing
@@ -585,7 +692,7 @@ def _build_action_items(
             "owner": "tech",
             "title": "缺稳定 channel_type，无法准确拆号池/官方通道",
             "evidence": channel.get("source_quality"),
-            "suggested_action": "在请求日志补 channel_type、provider_pool_id、provider_account_fingerprint，并做按通道聚合。",
+            "suggested_action": "优先接入后台 provider channel route；新请求会写入 channel_type、channel_id 和 provider_account_fingerprint。",
         })
 
     if int(revenue.get("paid_cents") or 0) == 0 and int(revenue.get("user_charge_cents") or 0) > 0:
@@ -836,6 +943,260 @@ async def clear_model_pricing(model_id: str, db: AsyncSession = Depends(get_db))
     return payload
 
 
+@router.get("/provider-channels", dependencies=[Depends(admin_guard)])
+async def list_provider_channels(db: AsyncSession = Depends(get_db)):
+    channel_rows = (
+        await db.execute(select(ProviderChannel).order_by(ProviderChannel.priority.asc(), ProviderChannel.name.asc()))
+    ).scalars().all()
+    route_count_rows = (
+        await db.execute(
+            select(ModelChannelRoute.channel_id, func.count(ModelChannelRoute.id).label("route_count"))
+            .group_by(ModelChannelRoute.channel_id)
+        )
+    ).all()
+    route_counts = {
+        str(_row_value(row, "channel_id", "") or row[0] or ""): int(_row_value(row, "route_count", 0) or row[1] or 0)
+        for row in route_count_rows
+    }
+    runtime_rows = (await db.execute(select(ProviderChannelRuntimeState))).scalars().all()
+    runtime_by_channel = {row.channel_id: row for row in runtime_rows}
+    return {
+        "channels": [
+            _provider_channel_payload(
+                row,
+                route_count=route_counts.get(row.id, 0),
+                runtime_state=runtime_by_channel.get(row.id),
+            )
+            for row in channel_rows
+        ],
+        "router_version": channel_router.version,
+    }
+
+
+@router.post("/provider-channels", dependencies=[Depends(admin_guard)])
+async def create_provider_channel(payload: AdminProviderChannelCreate, db: AsyncSession = Depends(get_db)):
+    channel = ProviderChannel(
+        id=generate_id("ch_"),
+        name=payload.name.strip(),
+        provider_platform=(payload.provider_platform or "").strip(),
+        channel_type=(payload.channel_type or "openai_compatible").strip(),
+        base_url=payload.base_url.strip().rstrip("/"),
+        encrypted_api_key=encrypt_api_key(payload.api_key.strip()),
+        auth_style=payload.auth_style,
+        status=payload.status,
+        priority=int(payload.priority or 0),
+        weight=int(payload.weight or 1),
+        allowed_fails=int(payload.allowed_fails or 3),
+        cooldown_seconds=float(payload.cooldown_seconds or 0),
+        capabilities=_csv_from_list(payload.capabilities),
+        provider_account_fingerprint=(payload.provider_account_fingerprint or "").strip(),
+        cost_tier=(payload.cost_tier or "").strip(),
+        notes=payload.notes or "",
+        updated_by="admin",
+    )
+    db.add(channel)
+    await db.commit()
+    await refresh_provider_channel_router_from_db(db)
+    return _provider_channel_payload(channel)
+
+
+@router.get("/provider-channels/{channel_id}", dependencies=[Depends(admin_guard)])
+async def get_provider_channel(channel_id: str, db: AsyncSession = Depends(get_db)):
+    channel = await db.get(ProviderChannel, channel_id)
+    if channel is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="provider channel not found")
+    route_count = await db.scalar(select(func.count(ModelChannelRoute.id)).where(ModelChannelRoute.channel_id == channel_id)) or 0
+    runtime_state = await db.get(ProviderChannelRuntimeState, channel_id)
+    return _provider_channel_payload(channel, route_count=int(route_count or 0), runtime_state=runtime_state)
+
+
+@router.patch("/provider-channels/{channel_id}", dependencies=[Depends(admin_guard)])
+async def update_provider_channel(channel_id: str, payload: AdminProviderChannelUpdate, db: AsyncSession = Depends(get_db)):
+    if not payload.model_fields_set:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="no channel fields provided")
+    channel = await db.get(ProviderChannel, channel_id)
+    if channel is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="provider channel not found")
+
+    fields = payload.model_fields_set
+    if "name" in fields and payload.name is not None:
+        channel.name = payload.name.strip()
+    if "provider_platform" in fields and payload.provider_platform is not None:
+        channel.provider_platform = payload.provider_platform.strip()
+    if "channel_type" in fields and payload.channel_type is not None:
+        channel.channel_type = payload.channel_type.strip() or "openai_compatible"
+    if "base_url" in fields and payload.base_url is not None:
+        channel.base_url = payload.base_url.strip().rstrip("/")
+    if "api_key" in fields and payload.api_key is not None:
+        channel.encrypted_api_key = encrypt_api_key(payload.api_key.strip())
+    if "auth_style" in fields and payload.auth_style is not None:
+        channel.auth_style = payload.auth_style
+    if "status" in fields and payload.status is not None:
+        channel.status = payload.status
+    if "priority" in fields and payload.priority is not None:
+        channel.priority = int(payload.priority)
+    if "weight" in fields and payload.weight is not None:
+        channel.weight = int(payload.weight)
+    if "allowed_fails" in fields and payload.allowed_fails is not None:
+        channel.allowed_fails = int(payload.allowed_fails)
+    if "cooldown_seconds" in fields and payload.cooldown_seconds is not None:
+        channel.cooldown_seconds = float(payload.cooldown_seconds)
+    if "capabilities" in fields:
+        channel.capabilities = _csv_from_list(payload.capabilities or [])
+    if "provider_account_fingerprint" in fields and payload.provider_account_fingerprint is not None:
+        channel.provider_account_fingerprint = payload.provider_account_fingerprint.strip()
+    if "cost_tier" in fields and payload.cost_tier is not None:
+        channel.cost_tier = payload.cost_tier.strip()
+    if "notes" in fields and payload.notes is not None:
+        channel.notes = payload.notes
+    channel.updated_by = "admin"
+    await db.commit()
+    await refresh_provider_channel_router_from_db(db)
+    route_count = await db.scalar(select(func.count(ModelChannelRoute.id)).where(ModelChannelRoute.channel_id == channel_id)) or 0
+    runtime_state = await db.get(ProviderChannelRuntimeState, channel_id)
+    return _provider_channel_payload(channel, route_count=int(route_count or 0), runtime_state=runtime_state)
+
+
+@router.delete("/provider-channels/{channel_id}", dependencies=[Depends(admin_guard)])
+async def delete_provider_channel(channel_id: str, db: AsyncSession = Depends(get_db)):
+    channel = await db.get(ProviderChannel, channel_id)
+    if channel is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="provider channel not found")
+    route_count = await db.scalar(select(func.count(ModelChannelRoute.id)).where(ModelChannelRoute.channel_id == channel_id)) or 0
+    if int(route_count or 0) > 0:
+        channel.status = "disabled"
+        channel.updated_by = "admin"
+        await db.commit()
+        await refresh_provider_channel_router_from_db(db)
+        return {
+            "deleted": False,
+            "disabled": True,
+            "reason": "channel still has model routes",
+            "channel": _provider_channel_payload(channel, route_count=int(route_count or 0)),
+        }
+
+    runtime_state = await db.get(ProviderChannelRuntimeState, channel_id)
+    if runtime_state is not None:
+        await db.delete(runtime_state)
+    await db.delete(channel)
+    await db.commit()
+    channel_router.reset_channel_state(channel_id)
+    await refresh_provider_channel_router_from_db(db)
+    return {"deleted": True, "channel_id": channel_id}
+
+
+@router.post("/provider-channels/{channel_id}/clear-cooldown", dependencies=[Depends(admin_guard)])
+async def clear_provider_channel_cooldown(channel_id: str, db: AsyncSession = Depends(get_db)):
+    channel = await db.get(ProviderChannel, channel_id)
+    if channel is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="provider channel not found")
+    channel_router.reset_channel_state(channel_id)
+    runtime_state = await db.get(ProviderChannelRuntimeState, channel_id)
+    if runtime_state is not None:
+        runtime_state.fail_count = 0
+        runtime_state.cooldown_until = None
+        runtime_state.last_error_code = ""
+        runtime_state.last_error_message = ""
+        await db.commit()
+    return _provider_channel_payload(channel, runtime_state=runtime_state)
+
+
+@router.get("/model-channel-routes", dependencies=[Depends(admin_guard)])
+async def list_model_channel_routes(public_model_id: Optional[str] = None, db: AsyncSession = Depends(get_db)):
+    query = (
+        select(ModelChannelRoute, ProviderChannel)
+        .outerjoin(ProviderChannel, ProviderChannel.id == ModelChannelRoute.channel_id)
+        .order_by(ModelChannelRoute.public_model_id.asc(), ModelChannelRoute.endpoint.asc(), ModelChannelRoute.created_at.desc())
+    )
+    if public_model_id:
+        query = query.where(ModelChannelRoute.public_model_id == public_model_id)
+    rows = (await db.execute(query)).all()
+    return {
+        "routes": [_model_channel_route_payload(route, channel) for route, channel in rows],
+        "router_version": channel_router.version,
+    }
+
+
+@router.post("/model-channel-routes", dependencies=[Depends(admin_guard)])
+async def create_model_channel_route(payload: AdminModelChannelRouteCreate, db: AsyncSession = Depends(get_db)):
+    public_model_id = payload.public_model_id.strip()
+    endpoint = (payload.endpoint or "").strip()
+    _validate_model_channel_route(public_model_id, endpoint)
+    channel = await db.get(ProviderChannel, payload.channel_id)
+    if channel is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="provider channel not found")
+
+    route = ModelChannelRoute(
+        id=generate_id("mcr_"),
+        public_model_id=public_model_id,
+        endpoint=endpoint,
+        channel_id=payload.channel_id,
+        upstream_model=(payload.upstream_model or "").strip(),
+        priority_override=payload.priority_override,
+        weight_override=payload.weight_override,
+        transform_profile=(payload.transform_profile or "openai_compatible").strip(),
+        status=payload.status,
+        notes=payload.notes or "",
+        updated_by="admin",
+    )
+    db.add(route)
+    await db.commit()
+    await refresh_provider_channel_router_from_db(db)
+    return _model_channel_route_payload(route, channel)
+
+
+@router.patch("/model-channel-routes/{route_id}", dependencies=[Depends(admin_guard)])
+async def update_model_channel_route(route_id: str, payload: AdminModelChannelRouteUpdate, db: AsyncSession = Depends(get_db)):
+    if not payload.model_fields_set:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="no route fields provided")
+    route = await db.get(ModelChannelRoute, route_id)
+    if route is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="model channel route not found")
+
+    public_model_id = payload.public_model_id.strip() if payload.public_model_id is not None else route.public_model_id
+    endpoint = payload.endpoint.strip() if payload.endpoint is not None else route.endpoint
+    _validate_model_channel_route(public_model_id, endpoint)
+    channel_id = payload.channel_id if payload.channel_id is not None else route.channel_id
+    channel = await db.get(ProviderChannel, channel_id)
+    if channel is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="provider channel not found")
+
+    fields = payload.model_fields_set
+    if "public_model_id" in fields and payload.public_model_id is not None:
+        route.public_model_id = public_model_id
+    if "endpoint" in fields and payload.endpoint is not None:
+        route.endpoint = endpoint
+    if "channel_id" in fields and payload.channel_id is not None:
+        route.channel_id = payload.channel_id
+    if "upstream_model" in fields and payload.upstream_model is not None:
+        route.upstream_model = payload.upstream_model.strip()
+    if "priority_override" in fields:
+        route.priority_override = payload.priority_override
+    if "weight_override" in fields:
+        route.weight_override = payload.weight_override
+    if "transform_profile" in fields and payload.transform_profile is not None:
+        route.transform_profile = payload.transform_profile.strip() or "openai_compatible"
+    if "status" in fields and payload.status is not None:
+        route.status = payload.status
+    if "notes" in fields and payload.notes is not None:
+        route.notes = payload.notes
+    route.updated_by = "admin"
+    await db.commit()
+    await refresh_provider_channel_router_from_db(db)
+    return _model_channel_route_payload(route, channel)
+
+
+@router.delete("/model-channel-routes/{route_id}", dependencies=[Depends(admin_guard)])
+async def delete_model_channel_route(route_id: str, db: AsyncSession = Depends(get_db)):
+    route = await db.get(ModelChannelRoute, route_id)
+    if route is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="model channel route not found")
+    await db.delete(route)
+    await db.commit()
+    await refresh_provider_channel_router_from_db(db)
+    return {"deleted": True, "route_id": route_id}
+
+
 @router.get("/settings/claude-compat", dependencies=[Depends(admin_guard)])
 async def get_claude_compat_settings(db: AsyncSession = Depends(get_db)):
     await refresh_runtime_system_settings_from_db(db)
@@ -1008,9 +1369,9 @@ async def adjust_user_subscription(
     sub.period_end = period_end
     sub.paid_until = paid_until
     sub.quota_cents = product.balance_cents if payload.quota_cents is None else int(payload.quota_cents)
-    sub.used_cents = min(int(payload.used_cents or 0), int(sub.quota_cents or 0)) if "used_cents" in payload.model_fields_set else min(int(sub.used_cents or 0), int(sub.quota_cents or 0))
     if sub.status == "active":
         normalize_subscription_period(sub, now)
+    sub.used_cents = min(int(payload.used_cents or 0), int(sub.quota_cents or 0)) if "used_cents" in payload.model_fields_set else min(int(sub.used_cents or 0), int(sub.quota_cents or 0))
 
     after_remaining = available_subscription_cents(sub)
     add_billing_ledger(
@@ -2170,6 +2531,12 @@ async def analytics_model_latency_diagnostics(
             "duration_ms": log.duration_ms,
             "status_code": log.status_code,
             "route_reason": getattr(log, "route_reason", ""),
+            "channel_id": getattr(log, "channel_id", ""),
+            "channel_type": getattr(log, "channel_type", ""),
+            "provider_platform": getattr(log, "provider_platform", ""),
+            "provider_account_fingerprint": getattr(log, "provider_account_fingerprint", ""),
+            "fallback_from_channel_id": getattr(log, "fallback_from_channel_id", ""),
+            "route_attempt": getattr(log, "route_attempt", 0),
             "input_tokens": log.input_tokens,
             "output_tokens": log.output_tokens,
             "cost_cents": log.cost_cents,
@@ -2268,6 +2635,25 @@ async def analytics_channel_health(period: str = "today", db: AsyncSession = Dep
             .order_by(func.count(RequestLog.id).desc())
         )
     ).all()
+    channel_rows = (
+        await db.execute(
+            select(
+                RequestLog.channel_id.label("channel_id"),
+                RequestLog.provider_platform.label("provider_platform"),
+                RequestLog.provider_account_fingerprint.label("provider_account_fingerprint"),
+                channel_type.label("channel_type"),
+                func.count(RequestLog.id).label("requests"),
+                func.coalesce(func.sum(case((RequestLog.status_code < 400, 1), else_=0)), 0).label("success"),
+                func.coalesce(func.sum(case((RequestLog.status_code >= 400, 1), else_=0)), 0).label("failed"),
+                func.coalesce(func.sum(fallback_expr), 0).label("fallback_count"),
+                func.coalesce(func.avg(RequestLog.duration_ms), 0).label("avg_latency_ms"),
+            )
+            .where(RequestLog.created_at >= since, RequestLog.channel_id != "")
+            .group_by(RequestLog.channel_id, RequestLog.provider_platform, RequestLog.provider_account_fingerprint, channel_type)
+            .order_by(func.count(RequestLog.id).desc())
+            .limit(100)
+        )
+    ).all()
     total_requests = sum(int(_row_value(row, "requests", 0) or 0) for row in rows)
     data = []
     for row in rows:
@@ -2292,6 +2678,22 @@ async def analytics_channel_health(period: str = "today", db: AsyncSession = Dep
         })
     account_pool = next((item for item in data if item["channel_type"] == "account_pool"), None)
     known_requests = sum(item["requests"] for item in data if item["channel_type"] != "unknown")
+    per_channel = []
+    for row in channel_rows:
+        requests = int(_row_value(row, "requests", 0) or 0)
+        failed = int(_row_value(row, "failed", 0) or 0)
+        per_channel.append({
+            "channel_id": _row_value(row, "channel_id", "") or "",
+            "provider_platform": _row_value(row, "provider_platform", "") or "",
+            "provider_account_fingerprint": _row_value(row, "provider_account_fingerprint", "") or "",
+            "channel_type": _row_value(row, "channel_type", "unknown") or "unknown",
+            "requests": requests,
+            "success": int(_row_value(row, "success", 0) or 0),
+            "failed": failed,
+            "fallback_count": int(_row_value(row, "fallback_count", 0) or 0),
+            "avg_latency_ms": int(float(_row_value(row, "avg_latency_ms", 0) or 0)),
+            "failure_rate": _safe_rate(failed, requests),
+        })
     user_charge_cents = sum(item["user_charge_cents"] for item in data)
     upstream_cost_cents = sum(item["upstream_cost_cents"] for item in data)
     return {
@@ -2300,14 +2702,15 @@ async def analytics_channel_health(period: str = "today", db: AsyncSession = Dep
         "total_requests": total_requests,
         "account_pool": account_pool,
         "data": data,
+        "per_channel": per_channel,
         "source_quality": _source_quality(
             upstream_cost_cents=upstream_cost_cents,
             user_charge_cents=user_charge_cents,
             channel_known_rate=_safe_rate(known_requests, total_requests),
         ),
         "field_notes": {
-            "channel_type": "当前由 route_reason 推断，需补稳定枚举 account_pool / official_provider。",
-            "provider_account_fingerprint": "未落库，暂不能看单账号负载和异常。",
+            "channel_type": "优先使用 request_logs.channel_type；历史日志缺字段时才回退 route_reason 推断。",
+            "provider_account_fingerprint": "新通道可写 provider_account_fingerprint，用于看单账号负载和异常。",
         },
     }
 
@@ -2665,6 +3068,12 @@ async def list_user_request_logs(
                 "duration_ms": log.duration_ms,
                 "status_code": log.status_code,
                 "route_reason": getattr(log, "route_reason", ""),
+                "channel_id": getattr(log, "channel_id", ""),
+                "channel_type": getattr(log, "channel_type", ""),
+                "provider_platform": getattr(log, "provider_platform", ""),
+                "provider_account_fingerprint": getattr(log, "provider_account_fingerprint", ""),
+                "fallback_from_channel_id": getattr(log, "fallback_from_channel_id", ""),
+                "route_attempt": getattr(log, "route_attempt", 0),
             }
             for log in logs
         ],
