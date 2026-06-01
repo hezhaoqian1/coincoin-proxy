@@ -363,6 +363,20 @@ def _provider_channel_monitor_payload(
     }
 
 
+def _provider_channel_monitor_action_payload(monitor: ProviderChannelMonitor) -> dict:
+    return {
+        "id": monitor.id,
+        "channel_id": monitor.channel_id,
+        "name": monitor.name,
+        "endpoint": monitor.endpoint,
+        "primary_model": monitor.primary_model,
+        "extra_models": parse_monitor_models(monitor.extra_models),
+        "status": monitor.status,
+        "interval_seconds": int(monitor.interval_seconds or 0),
+        "timeout_seconds": int(monitor.timeout_seconds or 0),
+    }
+
+
 def _model_channel_route_payload(row: ModelChannelRoute, channel: Optional[ProviderChannel] = None) -> dict:
     return {
         "id": row.id,
@@ -1586,7 +1600,7 @@ async def create_provider_channel_monitor(payload: AdminProviderChannelMonitorCr
     )
     db.add(monitor)
     await db.commit()
-    return _provider_channel_monitor_payload(monitor, channel)
+    return JSONResponse(content=jsonable_encoder(_provider_channel_monitor_action_payload(monitor)))
 
 
 @router.patch("/provider-channel-monitors/{monitor_id}", dependencies=[Depends(admin_guard)])
@@ -1621,8 +1635,7 @@ async def update_provider_channel_monitor(
     if "timeout_seconds" in fields and payload.timeout_seconds is not None:
         monitor.timeout_seconds = int(payload.timeout_seconds)
     await db.commit()
-    channel = await db.get(ProviderChannel, monitor.channel_id)
-    return _provider_channel_monitor_payload(monitor, channel)
+    return JSONResponse(content=jsonable_encoder(_provider_channel_monitor_action_payload(monitor)))
 
 
 @router.delete("/provider-channel-monitors/{monitor_id}", dependencies=[Depends(admin_guard)])
