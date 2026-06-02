@@ -1612,7 +1612,14 @@
         </div>
         <div class="card">
           <div class="card-header">
-            <input type="text" id="userSearch" class="form-input" style="width:300px" placeholder="搜索用户名、邮箱、external_id、user_id 或 API Key（sk_cc_...）..." oninput="debounceSearch()" />
+            <div class="filter-bar">
+              <input type="text" id="userSearch" class="form-input" style="width:300px" placeholder="搜索用户名、邮箱、external_id、user_id 或 API Key（sk_cc_...）..." oninput="debounceSearch()" />
+              <select id="userUsageSort" class="form-select" style="width:170px" onchange="loadUsers()">
+                <option value="">按创建时间</option>
+                <option value="1d">近 1 天消耗</option>
+                <option value="7d">近 7 天消耗</option>
+              </select>
+            </div>
             <button class="btn btn-secondary" onclick="loadUsers()">刷新</button>
           </div>
           <div class="card-body flush">
@@ -1625,6 +1632,7 @@
                     <th>站长归属</th>
                     <th>可用额度</th>
                     <th>Token 用量</th>
+                    <th>周期消耗</th>
                     <th>频率限制</th>
                     <th class="sortable desc" onclick="toggleUserSort()">创建时间 <span class="sort-icon">▼</span></th>
                     <th>操作</th>
@@ -3578,19 +3586,26 @@
     async function loadUsers() {
       try {
         const search = document.getElementById('userSearch')?.value.trim() || '';
-        const url = search ? `/admin/users?search=${encodeURIComponent(search)}` : '/admin/users';
+        const usageSort = document.getElementById('userUsageSort')?.value || '';
+        const params = new URLSearchParams();
+        if (search) params.set('search', search);
+        if (usageSort) params.set('usage_sort', usageSort);
+        const query = params.toString();
+        const url = query ? `/admin/users?${query}` : '/admin/users';
         const r = await fetch(url, { headers: adminHeaders() });
         if (!r.ok) return toast('加载失败', 'error');
         let data = await r.json();
-        data.sort((a, b) => {
-          const ta = new Date(a.created_at || 0).getTime();
-          const tb = new Date(b.created_at || 0).getTime();
-          return userSortAsc ? ta - tb : tb - ta;
-        });
+        if (!usageSort) {
+          data.sort((a, b) => {
+            const ta = new Date(a.created_at || 0).getTime();
+            const tb = new Date(b.created_at || 0).getTime();
+            return userSortAsc ? ta - tb : tb - ta;
+          });
+        }
         usersCache = data;
         const body = document.getElementById('usersBody');
         if (!data.length) {
-          body.innerHTML = '<tr><td colspan="8"><div class="empty-state"><div class="empty-state-icon">👥</div><h3>暂无用户</h3><p>先创建第一个用户吧</p></div></td></tr>';
+          body.innerHTML = '<tr><td colspan="9"><div class="empty-state"><div class="empty-state-icon">👥</div><h3>暂无用户</h3><p>先创建第一个用户吧</p></div></td></tr>';
           return;
         }
         body.innerHTML = data.map(u => {
@@ -3600,12 +3615,17 @@
           const stationHtml = station
             ? `<div><strong>${escapeHtml(station.station_name || station.station_id)}</strong><div class="text-sm text-muted">${escapeHtml(station.station_id || '')}</div></div>`
             : '<span class="text-sm text-muted">平台直营</span>';
+          const period = u.period_usage || null;
+          const periodHtml = period
+            ? `<div><strong>${formatMoney(period.cost_cents || 0)}</strong></div><div class="text-sm text-muted">${formatNum(period.requests_total || 0)} req · ${formatNum(period.tokens_total || 0)} tokens</div>`
+            : '<span class="text-sm text-muted">选择 1天/7天</span>';
           return `<tr>
             <td><div class="user-cell"><div class="user-avatar">${getInitials(u.username || u.email || u.external_id)}</div><div class="user-info"><strong>${escapeHtml(u.username || u.external_id || '未知用户')}</strong><span>${escapeHtml(u.email || u.id)}</span><span>${escapeHtml(u.id)}</span></div></div></td>
             <td><span class="badge ${u.status === 'active' ? 'badge-success' : 'badge-error'}">${u.status === 'active' ? '正常' : '已封禁'}</span></td>
             <td>${stationHtml}</td>
             <td>${billingSummaryHtml(u.billing_summary, true)}</td>
             <td><div>${formatNum(u.token_used)} / ${u.token_limit ? formatNum(u.token_limit) : '∞'}</div><div class="text-sm text-muted">输入: ${formatNum(u.input_tokens_used||0)} | 输出: ${formatNum(u.output_tokens_used||0)}</div>${u.token_limit ? `<div class="progress"><div class="progress-bar ${color}" style="width:${pct}%"></div></div>` : ''}</td>
+            <td>${periodHtml}</td>
             <td><div class="text-sm">${u.request_limit_per_minute ? u.request_limit_per_minute + '/分钟' : '∞'}</div><div class="text-sm text-muted">${u.request_limit_per_day ? u.request_limit_per_day + '/天' : '∞'}</div></td>
             <td class="text-sm text-muted">${formatDate(u.created_at)}</td>
             <td><div class="actions">

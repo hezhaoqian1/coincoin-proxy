@@ -193,6 +193,16 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("function loadUsageLeaderboards()", admin_html)
         self.assertIn("loadUsageLeaderboards();", admin_html)
 
+    def test_admin_ui_wires_user_usage_sort(self) -> None:
+        admin_html = (Path(admin_module.__file__).parent / "static" / "admin.html").read_text()
+
+        self.assertIn('id="userUsageSort"', admin_html)
+        self.assertIn('value="1d">近 1 天消耗', admin_html)
+        self.assertIn('value="7d">近 7 天消耗', admin_html)
+        self.assertIn("params.set('usage_sort', usageSort)", admin_html)
+        self.assertIn("周期消耗", admin_html)
+        self.assertIn("u.period_usage", admin_html)
+
     def test_admin_ui_surfaces_provider_fallback_observability(self) -> None:
         admin_html = (Path(admin_module.__file__).parent / "static" / "admin.html").read_text()
 
@@ -1080,6 +1090,43 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("coincoin_request_logs", query_text)
         self.assertIn("created_at >=", query_text)
         self.assertNotIn("coincoin_usage_daily", query_text)
+
+    async def test_admin_users_can_sort_by_recent_usage(self) -> None:
+        user = SimpleNamespace(
+            id="u_hot",
+            username="hot-user",
+            email="hot@example.com",
+            email_verified_at=None,
+            external_id=None,
+            status="active",
+            balance=1200,
+            token_limit=None,
+            token_used=1000,
+            input_tokens_used=800,
+            output_tokens_used=200,
+            request_limit_per_minute=None,
+            request_limit_per_day=None,
+            referral_code=None,
+            referred_by=None,
+            created_at=datetime(2026, 6, 1, 10, 0, 0),
+            updated_at=datetime(2026, 6, 1, 10, 0, 0),
+        )
+        fake_db = _FakeDB(execute_results=[_FakeAllResult([(user, None, None, 12, 1000, 3, 456)])])
+
+        with patch.object(admin_module, "_admin_billing_state", AsyncMock(return_value={})):
+            result = await admin_module.list_users(usage_sort="7d", db=fake_db)
+
+        self.assertEqual(result[0]["id"], "u_hot")
+        self.assertEqual(result[0]["period_usage"]["period"], "7d")
+        self.assertEqual(result[0]["period_usage"]["window_hours"], 168)
+        self.assertEqual(result[0]["period_usage"]["requests_total"], 12)
+        self.assertEqual(result[0]["period_usage"]["tokens_total"], 1000)
+        self.assertEqual(result[0]["period_usage"]["images_total"], 3)
+        self.assertEqual(result[0]["period_usage"]["cost_cents"], 456)
+        query_text = str(fake_db.queries[-1].compile())
+        self.assertIn("coincoin_request_logs", query_text)
+        self.assertIn("created_at >=", query_text)
+        self.assertIn("period_cost_cents", query_text)
 
     async def test_admin_revenue_margin_today_keeps_previous_day_rows_inside_24h_window(self) -> None:
         fake_db = _FakeDB(

@@ -758,6 +758,20 @@ def _leaderboard_window(window: str) -> tuple[str, int]:
     return ("24h" if normalized in {"day", "daily"} else normalized), hours
 
 
+def _user_usage_sort_window(usage_sort: Optional[str]) -> tuple[str, int] | tuple[None, None]:
+    normalized = (usage_sort or "").strip().lower()
+    if not normalized:
+        return None, None
+    hours_by_sort = {
+        "1d": 24,
+        "day": 24,
+        "7d": 24 * 7,
+    }
+    if normalized not in hours_by_sort:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unsupported usage_sort")
+    return ("1d" if normalized in {"1d", "day"} else normalized), hours_by_sort[normalized]
+
+
 def _analytics_period_fields(period: str, days: int, start_day: date, since: datetime, *, end_at: Optional[datetime] = None) -> dict:
     end_at = end_at or datetime.utcnow()
     if period == "today":
@@ -2051,13 +2065,40 @@ async def update_claude_compat_settings(payload: AdminClaudeCompatSettingsUpdate
 
 
 @router.get("/users", dependencies=[Depends(admin_guard)])
-async def list_users(search: Optional[str] = None, db: AsyncSession = Depends(get_db)):
+async def list_users(
+    search: Optional[str] = None,
+    usage_sort: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    usage_sort, usage_sort_hours = _user_usage_sort_window(usage_sort)
+    usage_columns = None
+    if usage_sort and usage_sort_hours:
+        since = datetime.utcnow() - timedelta(hours=usage_sort_hours)
+        request_charge = _request_user_charge_expr()
+        usage_columns = (
+            select(
+                RequestLog.user_id.label("usage_user_id"),
+                func.count(RequestLog.id).label("period_requests_total"),
+                func.coalesce(func.sum(RequestLog.input_tokens + RequestLog.output_tokens), 0).label("period_tokens_total"),
+                func.coalesce(func.sum(RequestLog.image_count), 0).label("period_images_total"),
+                func.coalesce(func.sum(request_charge), 0).label("period_cost_cents"),
+            )
+            .where(RequestLog.created_at >= since)
+            .group_by(RequestLog.user_id)
+            .subquery()
+        )
     query = (
         select(User, StationCustomerLink, Station)
         .outerjoin(StationCustomerLink, StationCustomerLink.user_id == User.id)
         .outerjoin(Station, Station.id == StationCustomerLink.station_id)
-        .order_by(User.created_at.desc())
     )
+    if usage_columns is not None:
+        query = query.add_columns(
+            usage_columns.c.period_requests_total,
+            usage_columns.c.period_tokens_total,
+            usage_columns.c.period_images_total,
+            usage_columns.c.period_cost_cents,
+        ).outerjoin(usage_columns, usage_columns.c.usage_user_id == User.id)
     if search:
         if search.startswith(_settings.key_prefix):
             key_hash_val = hash_key(search)
@@ -2076,10 +2117,25 @@ async def list_users(search: Optional[str] = None, db: AsyncSession = Depends(ge
                 | User.external_id.ilike(pat)
                 | User.id.ilike(pat)
             )
+    if usage_columns is not None:
+        query = query.order_by(func.coalesce(usage_columns.c.period_cost_cents, 0).desc(), User.created_at.desc())
+    else:
+        query = query.order_by(User.created_at.desc())
     result = await db.execute(query.limit(200))
     rows = result.all()
     items = []
-    for u, link, station in rows:
+    for row in rows:
+        u, link, station = row[:3]
+        period_usage = None
+        if usage_columns is not None:
+            period_usage = {
+                "period": usage_sort,
+                "window_hours": usage_sort_hours,
+                "requests_total": int((row[3] if len(row) > 3 else 0) or 0),
+                "tokens_total": int((row[4] if len(row) > 4 else 0) or 0),
+                "images_total": int((row[5] if len(row) > 5 else 0) or 0),
+                "cost_cents": int((row[6] if len(row) > 6 else 0) or 0),
+            }
         billing = await _admin_billing_state(db, u)
         items.append({
             "id": u.id,
@@ -2101,6 +2157,7 @@ async def list_users(search: Optional[str] = None, db: AsyncSession = Depends(ge
             "updated_at": u.updated_at,
             "billing": billing,
             "billing_summary": _billing_summary_for_admin(billing),
+            "period_usage": period_usage,
             "station_attribution": None if not station else {
                 "station_id": station.id,
                 "station_name": station.display_name,
