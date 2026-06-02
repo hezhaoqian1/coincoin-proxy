@@ -743,6 +743,21 @@ def _analytics_period(period: str) -> Tuple[str, int, date, datetime]:
     return normalized, days, start_day, since
 
 
+def _leaderboard_window(window: str) -> tuple[str, int]:
+    normalized = (window or "1h").strip().lower()
+    hours_by_window = {
+        "1h": 1,
+        "4h": 4,
+        "24h": 24,
+        "day": 24,
+        "daily": 24,
+    }
+    if normalized not in hours_by_window:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unsupported window")
+    hours = hours_by_window[normalized]
+    return ("24h" if normalized in {"day", "daily"} else normalized), hours
+
+
 def _analytics_period_fields(period: str, days: int, start_day: date, since: datetime, *, end_at: Optional[datetime] = None) -> dict:
     end_at = end_at or datetime.utcnow()
     if period == "today":
@@ -2688,6 +2703,82 @@ async def analytics_top_users(
         "period": period,
         "days": days,
         **_analytics_period_fields(period, days, start_day, since),
+        "metric": metric,
+        "limit": limit,
+        "data": [
+            {
+                "rank": idx + 1,
+                "user_id": _row_value(row, "user_id", ""),
+                "username": _row_value(row, "username", None),
+                "email": _row_value(row, "email", None),
+                "external_id": _row_value(row, "external_id", None),
+                "display_name": _display_name(
+                    _row_value(row, "username", None),
+                    _row_value(row, "email", None),
+                    _row_value(row, "external_id", None),
+                    _row_value(row, "user_id", ""),
+                ),
+                "balance_cents": int(_row_value(row, "balance", 0) or 0),
+                "requests_total": int(_row_value(row, "requests_total", 0) or 0),
+                "input_tokens": int(_row_value(row, "input_tokens", 0) or 0),
+                "output_tokens": int(_row_value(row, "output_tokens", 0) or 0),
+                "tokens_total": int(_row_value(row, "tokens_total", 0) or 0),
+                "images_total": int(_row_value(row, "images_total", 0) or 0),
+                "cost_cents": int(_row_value(row, "cost_cents", 0) or 0),
+            }
+            for idx, row in enumerate(rows)
+        ],
+    }
+
+
+@router.get("/usage/leaderboard", dependencies=[Depends(admin_guard)])
+async def usage_leaderboard(
+    window: str = "1h",
+    metric: str = "cost_cents",
+    limit: int = 10,
+    db: AsyncSession = Depends(get_db),
+):
+    window, hours = _leaderboard_window(window)
+    limit = max(1, min(limit, 50))
+    end_at = datetime.utcnow()
+    since = end_at - timedelta(hours=hours)
+    request_charge = _request_user_charge_expr()
+    metric_map = {
+        "cost_cents": func.coalesce(func.sum(request_charge), 0),
+        "requests_total": func.count(RequestLog.id),
+        "tokens_total": func.coalesce(func.sum(RequestLog.input_tokens + RequestLog.output_tokens), 0),
+        "images_total": func.coalesce(func.sum(RequestLog.image_count), 0),
+    }
+    order_metric = metric_map.get(metric)
+    if order_metric is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unsupported metric")
+    result = await db.execute(
+        select(
+            User.id.label("user_id"),
+            User.username.label("username"),
+            User.email.label("email"),
+            User.external_id.label("external_id"),
+            User.balance.label("balance"),
+            func.count(RequestLog.id).label("requests_total"),
+            func.coalesce(func.sum(RequestLog.input_tokens), 0).label("input_tokens"),
+            func.coalesce(func.sum(RequestLog.output_tokens), 0).label("output_tokens"),
+            func.coalesce(func.sum(RequestLog.input_tokens + RequestLog.output_tokens), 0).label("tokens_total"),
+            func.coalesce(func.sum(RequestLog.image_count), 0).label("images_total"),
+            func.coalesce(func.sum(request_charge), 0).label("cost_cents"),
+        )
+        .join(User, RequestLog.user_id == User.id)
+        .where(RequestLog.created_at >= since)
+        .group_by(User.id, User.username, User.email, User.external_id, User.balance)
+        .order_by(order_metric.desc())
+        .limit(limit)
+    )
+    rows = result.all()
+    return {
+        "window": window,
+        "window_hours": hours,
+        "window_label": f"近 {hours} 小时" if hours < 24 else "近 24 小时",
+        "window_start": since,
+        "window_end": end_at,
         "metric": metric,
         "limit": limit,
         "data": [
