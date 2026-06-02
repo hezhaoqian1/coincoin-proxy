@@ -182,6 +182,17 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("analytics: loadAnalytics,", admin_html)
         self.assertIn("async function loadAnalytics()", admin_html)
 
+    def test_admin_ui_wires_rolling_usage_leaderboards(self) -> None:
+        admin_html = (Path(admin_module.__file__).parent / "static" / "admin.html").read_text()
+
+        self.assertIn("滚动用量排行榜", admin_html)
+        self.assertIn("usageLeaderboard1hBody", admin_html)
+        self.assertIn("usageLeaderboard4hBody", admin_html)
+        self.assertIn("usageLeaderboard24hBody", admin_html)
+        self.assertIn("/admin/usage/leaderboard?window=", admin_html)
+        self.assertIn("function loadUsageLeaderboards()", admin_html)
+        self.assertIn("loadUsageLeaderboards();", admin_html)
+
     def test_admin_ui_surfaces_provider_fallback_observability(self) -> None:
         admin_html = (Path(admin_module.__file__).parent / "static" / "admin.html").read_text()
 
@@ -1025,6 +1036,46 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["window_hours"], 24)
         self.assertEqual(payload["data"][0]["user_id"], "u_1")
         self.assertEqual(payload["data"][0]["cost_cents"], 88)
+        query_text = str(fake_db.queries[-1].compile())
+        self.assertIn("coincoin_request_logs", query_text)
+        self.assertIn("created_at >=", query_text)
+        self.assertNotIn("coincoin_usage_daily", query_text)
+
+    async def test_admin_usage_leaderboard_supports_rolling_windows(self) -> None:
+        row = SimpleNamespace(
+            user_id="u_hot",
+            username="hot-user",
+            email=None,
+            external_id=None,
+            balance=1200,
+            requests_total=12,
+            input_tokens=800,
+            output_tokens=200,
+            tokens_total=1000,
+            images_total=3,
+            cost_cents=456,
+        )
+        fake_db = _FakeDB(execute_results=[_FakeAllResult([row])])
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get("/admin/usage/leaderboard?window=4h&metric=cost_cents&limit=5")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["window"], "4h")
+        self.assertEqual(payload["window_hours"], 4)
+        self.assertEqual(payload["window_label"], "近 4 小时")
+        self.assertEqual(payload["data"][0]["rank"], 1)
+        self.assertEqual(payload["data"][0]["display_name"], "hot-user")
+        self.assertEqual(payload["data"][0]["cost_cents"], 456)
+        self.assertEqual(payload["data"][0]["tokens_total"], 1000)
         query_text = str(fake_db.queries[-1].compile())
         self.assertIn("coincoin_request_logs", query_text)
         self.assertIn("created_at >=", query_text)
