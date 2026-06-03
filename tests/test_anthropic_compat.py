@@ -203,6 +203,41 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(usage_kwargs["cache_creation_tokens"], 0)
         self.assertGreater(usage_kwargs["duration_ms"], 0)
 
+    async def test_messages_normalizes_root_openai_compatible_base_url(self):
+        settings.upstream_base_url = "https://sub2api.example"
+        registry.init_from_settings()
+        fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_claude_root")
+        client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "chatcmpl_root",
+                        "choices": [{"message": {"role": "assistant", "content": "OK"}}],
+                        "usage": {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3},
+                    }
+                )
+            ]
+        )
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_http_client", AsyncMock(return_value=client)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()),
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={"authorization": "Bearer sk_test", "anthropic-version": "2023-06-01"},
+                    json={
+                        "model": "gpt-5.5",
+                        "max_tokens": 64,
+                        "messages": [{"role": "user", "content": "Reply with exactly OK"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(client.calls[0]["url"], "https://sub2api.example/v1/chat/completions")
+
     async def test_messages_subtract_cache_creation_from_anthropic_input_tokens(self):
         fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_claude")
         client = _RecordingClient(
