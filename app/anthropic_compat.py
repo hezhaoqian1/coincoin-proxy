@@ -1023,7 +1023,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
         upstream_payload["model"] = _kiro_go_upstream_model(used_cfg.model_id)
         upstream_payload["stream"] = bool(payload.get("stream"))
     else:
-        upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/chat/completions"
+        upstream_url = f"{_normalize_openai_base_url(used_cfg.upstream_url)}/chat/completions"
         headers = _build_anthropic_upstream_headers(used_cfg, request)
         upstream_payload = openai_payload
 
