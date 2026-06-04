@@ -1875,6 +1875,32 @@
             </div>
             <button class="btn btn-primary" onclick="openModelChannelRouteModal()">+ 新增 route</button>
           </div>
+          <div class="card-body">
+            <div class="filter-bar">
+              <input id="modelChannelRouteSearch" class="form-input" placeholder="搜索模型 / 渠道 / 上游模型 / route id" oninput="handleModelChannelRouteFilterChange()" />
+              <select id="modelChannelRouteModelFilter" class="form-select" onchange="renderModelChannelRoutes()">
+                <option value="">全部模型</option>
+              </select>
+              <select id="modelChannelRouteChannelFilter" class="form-select" onchange="renderModelChannelRoutes()">
+                <option value="">全部渠道</option>
+              </select>
+              <select id="modelChannelRouteEndpointFilter" class="form-select" onchange="renderModelChannelRoutes()">
+                <option value="">全部 Endpoint</option>
+              </select>
+              <select id="modelChannelRouteStatusFilter" class="form-select" onchange="renderModelChannelRoutes()">
+                <option value="">全部状态</option>
+                <option value="active">仅 active</option>
+                <option value="disabled">仅 disabled</option>
+              </select>
+              <select id="modelChannelRouteSort" class="form-select" onchange="renderModelChannelRoutes()">
+                <option value="model_priority">模型 + 优先级</option>
+                <option value="priority">优先级</option>
+                <option value="channel">渠道</option>
+                <option value="updated">最近更新</option>
+              </select>
+              <button class="btn btn-secondary btn-sm" onclick="resetModelChannelRouteFilters()">重置</button>
+            </div>
+          </div>
           <div class="card-body flush">
             <div class="table-wrapper">
               <table>
@@ -3016,11 +3042,13 @@
     let providerChannelCache = [];
     let defaultProviderChannelCache = [];
     let modelChannelRouteCache = [];
+    let modelChannelRouteRouterVersion = 0;
     let providerChannelStabilityCache = [];
     let providerChannelStabilityPeriod = '7d';
     let providerChannelMonitorCache = [];
     let providerChannelMonitorPeriod = '7d';
     let providerChannelMonitorSearchTimeout = null;
+    let modelChannelRouteSearchTimeout = null;
     let currentProviderChannelModelsChannelId = '';
     let providerChannelModelsCache = [];
     let providerChannelModelsPublicCache = [];
@@ -4314,6 +4342,160 @@
       return Number.isFinite(value) ? value : null;
     }
 
+    function providerChannelById(channelId) {
+      return providerChannelCache.find(channel => channel.id === channelId) || {};
+    }
+
+    function modelChannelRouteChannelLabel(route) {
+      const channel = providerChannelById(route.channel_id);
+      return route.channel_name || channel.name || route.channel_id || '-';
+    }
+
+    function modelChannelRouteEffectivePriority(route) {
+      if (route.priority_override !== null && route.priority_override !== undefined) return Number(route.priority_override || 0);
+      const channel = providerChannelById(route.channel_id);
+      return Number(channel.priority || 0);
+    }
+
+    function modelChannelRouteEffectiveWeight(route) {
+      if (route.weight_override !== null && route.weight_override !== undefined) return Number(route.weight_override || 1);
+      const channel = providerChannelById(route.channel_id);
+      return Number(channel.weight || 1);
+    }
+
+    function modelChannelRouteEndpointValue(route) {
+      return route.endpoint || '__all__';
+    }
+
+    function modelChannelRouteEndpointLabel(value) {
+      return value === '__all__' ? '全部' : (value || '全部');
+    }
+
+    function setSelectOptionsPreserve(selectId, options, allLabel) {
+      const select = document.getElementById(selectId);
+      if (!select) return;
+      const previous = select.value;
+      select.innerHTML = `<option value="">${escapeHtml(allLabel)}</option>` + options.map(option => `
+        <option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>
+      `).join('');
+      select.value = options.some(option => option.value === previous) ? previous : '';
+    }
+
+    function fillModelChannelRouteFilterOptions() {
+      const models = Array.from(new Set(modelChannelRouteCache.map(route => route.public_model_id).filter(Boolean)))
+        .sort((a, b) => a.localeCompare(b))
+        .map(value => ({ value, label: value }));
+      const channels = Array.from(new Map(modelChannelRouteCache.map(route => [
+        route.channel_id,
+        { value: route.channel_id, label: modelChannelRouteChannelLabel(route) }
+      ]).filter(([value]) => value)).values())
+        .sort((a, b) => a.label.localeCompare(b.label));
+      const endpoints = Array.from(new Set(modelChannelRouteCache.map(modelChannelRouteEndpointValue)))
+        .sort((a, b) => modelChannelRouteEndpointLabel(a).localeCompare(modelChannelRouteEndpointLabel(b)))
+        .map(value => ({ value, label: modelChannelRouteEndpointLabel(value) }));
+      setSelectOptionsPreserve('modelChannelRouteModelFilter', models, '全部模型');
+      setSelectOptionsPreserve('modelChannelRouteChannelFilter', channels, '全部渠道');
+      setSelectOptionsPreserve('modelChannelRouteEndpointFilter', endpoints, '全部 Endpoint');
+    }
+
+    function handleModelChannelRouteFilterChange() {
+      clearTimeout(modelChannelRouteSearchTimeout);
+      modelChannelRouteSearchTimeout = setTimeout(renderModelChannelRoutes, 180);
+    }
+
+    function resetModelChannelRouteFilters() {
+      ['modelChannelRouteSearch', 'modelChannelRouteModelFilter', 'modelChannelRouteChannelFilter', 'modelChannelRouteEndpointFilter', 'modelChannelRouteStatusFilter'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+      });
+      const sort = document.getElementById('modelChannelRouteSort');
+      if (sort) sort.value = 'model_priority';
+      renderModelChannelRoutes();
+    }
+
+    function filteredModelChannelRoutes() {
+      const search = (document.getElementById('modelChannelRouteSearch')?.value || '').trim().toLowerCase();
+      const model = document.getElementById('modelChannelRouteModelFilter')?.value || '';
+      const channel = document.getElementById('modelChannelRouteChannelFilter')?.value || '';
+      const endpoint = document.getElementById('modelChannelRouteEndpointFilter')?.value || '';
+      const status = document.getElementById('modelChannelRouteStatusFilter')?.value || '';
+      const sort = document.getElementById('modelChannelRouteSort')?.value || 'model_priority';
+      const routes = modelChannelRouteCache.filter(route => {
+        if (model && route.public_model_id !== model) return false;
+        if (channel && route.channel_id !== channel) return false;
+        if (endpoint && modelChannelRouteEndpointValue(route) !== endpoint) return false;
+        if (status && route.status !== status) return false;
+        if (!search) return true;
+        const channelObj = providerChannelById(route.channel_id);
+        const haystack = [
+          route.id,
+          route.public_model_id,
+          route.endpoint || '全部',
+          route.channel_id,
+          route.channel_name,
+          channelObj.name,
+          route.provider_platform,
+          channelObj.provider_platform,
+          route.upstream_model,
+          route.transform_profile,
+          route.status,
+          route.notes,
+          String(modelChannelRouteEffectivePriority(route)),
+        ].join(' ').toLowerCase();
+        return haystack.includes(search);
+      });
+      const byModelPriority = (a, b) =>
+        (a.public_model_id || '').localeCompare(b.public_model_id || '') ||
+        (a.endpoint || '').localeCompare(b.endpoint || '') ||
+        modelChannelRouteEffectivePriority(a) - modelChannelRouteEffectivePriority(b) ||
+        modelChannelRouteChannelLabel(a).localeCompare(modelChannelRouteChannelLabel(b)) ||
+        (a.upstream_model || '').localeCompare(b.upstream_model || '');
+      const sorters = {
+        model_priority: byModelPriority,
+        priority: (a, b) =>
+          modelChannelRouteEffectivePriority(a) - modelChannelRouteEffectivePriority(b) ||
+          (a.public_model_id || '').localeCompare(b.public_model_id || '') ||
+          modelChannelRouteChannelLabel(a).localeCompare(modelChannelRouteChannelLabel(b)),
+        channel: (a, b) =>
+          modelChannelRouteChannelLabel(a).localeCompare(modelChannelRouteChannelLabel(b)) ||
+          (a.public_model_id || '').localeCompare(b.public_model_id || '') ||
+          modelChannelRouteEffectivePriority(a) - modelChannelRouteEffectivePriority(b),
+        updated: (a, b) =>
+          (utcDate(b.updated_at || b.created_at)?.getTime() || 0) - (utcDate(a.updated_at || a.created_at)?.getTime() || 0) ||
+          byModelPriority(a, b),
+      };
+      return routes.sort(sorters[sort] || byModelPriority);
+    }
+
+    function renderModelChannelRoutes() {
+      const routeBody = document.getElementById('modelChannelRoutesBody');
+      if (!routeBody) return;
+      const routes = filteredModelChannelRoutes();
+      const total = modelChannelRouteCache.length;
+      const summary = document.getElementById('modelChannelRouteSummary');
+      if (summary) {
+        summary.textContent = `${routes.length}/${total} 条 route，router v${modelChannelRouteRouterVersion || 0}`;
+      }
+      routeBody.innerHTML = routes.length ? routes.map(route => {
+        const priority = modelChannelRouteEffectivePriority(route);
+        const weight = modelChannelRouteEffectiveWeight(route);
+        const prioritySource = route.priority_override === null || route.priority_override === undefined ? 'channel' : 'override';
+        const weightSource = route.weight_override === null || route.weight_override === undefined ? 'channel' : 'override';
+        const channel = providerChannelById(route.channel_id);
+        return `
+          <tr>
+            <td><strong>${escapeHtml(route.public_model_id)}</strong><div class="text-sm text-muted">${escapeHtml(route.id)}</div></td>
+            <td>${escapeHtml(route.endpoint || '全部')}</td>
+            <td><div>${escapeHtml(modelChannelRouteChannelLabel(route))}</div><div class="text-sm text-muted">${escapeHtml(route.provider_platform || channel.provider_platform || '-')} · ${escapeHtml(route.channel_id || '')}</div></td>
+            <td>${escapeHtml(route.upstream_model || '沿用 catalog')}</td>
+            <td><div>priority ${priority} · ${prioritySource}</div><div class="text-sm text-muted">weight ${weight} · ${weightSource} · ${escapeHtml(route.transform_profile || '-')}</div></td>
+            <td><span class="badge ${channelBadgeClass(route.status)}">${escapeHtml(route.status || '-')}</span></td>
+            <td><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-sm btn-secondary" onclick="openModelChannelRouteModal('${escapeHtml(route.id)}')">编辑</button><button class="btn btn-sm btn-danger" onclick="deleteModelChannelRoute('${escapeHtml(route.id)}')">删除</button></div></td>
+          </tr>
+        `;
+      }).join('') : `<tr><td colspan="7"><div class="empty-state"><div class="empty-state-icon">R</div><h3>${total ? '没有符合筛选的 route' : '暂无模型 route'}</h3><p>${total ? '调整搜索、模型、渠道或状态筛选后再看' : '没有 route 时继续使用 catalog 默认转发'}</p></div></td></tr>`;
+    }
+
     function providerChannelHealthBadge(status) {
       const normalized = String(status || 'idle');
       const labels = {
@@ -4651,10 +4833,11 @@
         providerChannelCache = channelsPayload.channels || [];
         defaultProviderChannelCache = channelsPayload.default_channels || [];
         modelChannelRouteCache = routesPayload.routes || [];
+        modelChannelRouteRouterVersion = routesPayload.router_version || 0;
         fillProviderChannelMonitorFilterOptions();
+        fillModelChannelRouteFilterOptions();
         document.getElementById('defaultProviderChannelSummary').textContent = `${defaultProviderChannelCache.length} 条只读默认路径，来自 catalog/env；新增渠道后会覆盖命中的模型 route`;
         document.getElementById('providerChannelSummary').textContent = `${providerChannelCache.length} 个渠道，router v${channelsPayload.router_version || 0}`;
-        document.getElementById('modelChannelRouteSummary').textContent = `${modelChannelRouteCache.length} 条 route，router v${routesPayload.router_version || 0}`;
 
         const defaultBody = document.getElementById('defaultProviderChannelsBody');
         defaultBody.innerHTML = defaultProviderChannelCache.length ? defaultProviderChannelCache.map(channel => `
@@ -4693,18 +4876,7 @@
           `;
         }).join('') : '<tr><td colspan="7"><div class="empty-state"><div class="empty-state-icon">C</div><h3>暂无上游渠道</h3><p>添加第一个 Provider Channel 后即可配置模型 route</p></div></td></tr>';
 
-        const routeBody = document.getElementById('modelChannelRoutesBody');
-        routeBody.innerHTML = modelChannelRouteCache.length ? modelChannelRouteCache.map(route => `
-          <tr>
-            <td><strong>${escapeHtml(route.public_model_id)}</strong><div class="text-sm text-muted">${escapeHtml(route.id)}</div></td>
-            <td>${escapeHtml(route.endpoint || '全部')}</td>
-            <td><div>${escapeHtml(route.channel_name || route.channel_id)}</div><div class="text-sm text-muted">${escapeHtml(route.provider_platform || '-')} · ${escapeHtml(route.channel_id || '')}</div></td>
-            <td>${escapeHtml(route.upstream_model || '沿用 catalog')}</td>
-            <td><div>priority ${route.priority_override ?? 'channel'}</div><div class="text-sm text-muted">weight ${route.weight_override ?? 'channel'} · ${escapeHtml(route.transform_profile || '-')}</div></td>
-            <td><span class="badge ${channelBadgeClass(route.status)}">${escapeHtml(route.status || '-')}</span></td>
-            <td><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-sm btn-secondary" onclick="openModelChannelRouteModal('${escapeHtml(route.id)}')">编辑</button><button class="btn btn-sm btn-danger" onclick="deleteModelChannelRoute('${escapeHtml(route.id)}')">删除</button></div></td>
-          </tr>
-        `).join('') : '<tr><td colspan="7"><div class="empty-state"><div class="empty-state-icon">R</div><h3>暂无模型 route</h3><p>没有 route 时继续使用 catalog 默认转发</p></div></td></tr>';
+        renderModelChannelRoutes();
         await loadProviderChannelStability(false);
         await loadProviderChannelMonitors(false);
       } catch (e) {
