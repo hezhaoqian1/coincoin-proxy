@@ -8,8 +8,10 @@ import httpx
 
 from app.channel_router import ModelChannelRouteSnapshot, ProviderChannelSnapshot, channel_router
 from app.config import settings
+from app.fallback_alerts import FallbackExhaustedAlert
 from app.main import app
 from app.router import registry
+import app.fallback_alerts as fallback_alerts
 import app.proxy as proxy_module
 import app.openai_compat as openai_module
 
@@ -246,6 +248,8 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             "claude_compat_api_key": settings.claude_compat_api_key,
             "claude_compat_auth_style": settings.claude_compat_auth_style,
             "model_catalog_json": settings.model_catalog_json,
+            "fallback_alert_webhook_url": settings.fallback_alert_webhook_url,
+            "fallback_alert_dedup_seconds": settings.fallback_alert_dedup_seconds,
         }
 
         settings.fixed_model = "gpt-5.4"
@@ -284,6 +288,8 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         settings.claude_compat_base_url = "https://kiro-go.example"
         settings.claude_compat_api_key = "kiro-key"
         settings.claude_compat_auth_style = "bearer"
+        settings.fallback_alert_webhook_url = ""
+        settings.fallback_alert_dedup_seconds = 900
         settings.model_catalog_json = json.dumps(
             {
                 "default_text_model": "gpt-5.4",
@@ -439,6 +445,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         for key, value in self._originals.items():
             setattr(settings, key, value)
         channel_router.clear_snapshot()
+        fallback_alerts.reset_fallback_alert_state()
         registry._initialized = False
         app.dependency_overrides.pop(proxy_module.get_db, None)
         app.dependency_overrides.pop(openai_module.get_db, None)
@@ -519,6 +526,30 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(upstream_client.calls[0]["url"], "https://legacy.example/v1/responses")
         self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-4o-mini")
         self.assertEqual(upstream_client.calls[0]["headers"]["api-key"], "legacy-key")
+
+    async def test_fallback_alert_deduplicates_same_failure(self) -> None:
+        settings.fallback_alert_webhook_url = "https://dingtalk.example/robot"
+        settings.fallback_alert_dedup_seconds = 900
+        alert = FallbackExhaustedAlert(
+            endpoint="responses",
+            model="gpt-5.3-codex",
+            status_code=503,
+            reason="upstream_unreachable",
+            route_reason="system_fallback:500",
+            channel_id="system:legacy_cpa",
+            fallback_from_channel_id="ch_primary",
+            route_attempt=1,
+        )
+
+        def fake_create_task(coro):
+            coro.close()
+            return object()
+
+        with patch.object(fallback_alerts.asyncio, "create_task", side_effect=fake_create_task) as create_task:
+            self.assertTrue(fallback_alerts.notify_fallback_exhausted(alert))
+            self.assertFalse(fallback_alerts.notify_fallback_exhausted(alert))
+
+        create_task.assert_called_once()
 
     async def test_chat_empty_nonstream_json_collapses_stream_output(self) -> None:
         settings.router_enabled = False
@@ -823,6 +854,72 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(usage_kwargs["channel_id"], "ch_test_backup")
         self.assertEqual(usage_kwargs["fallback_from_channel_id"], "ch_test_primary")
         self.assertEqual(usage_kwargs["route_attempt"], 1)
+
+    async def test_responses_alerts_once_when_provider_and_system_fallbacks_fail(self) -> None:
+        channel_router.set_snapshot(
+            [
+                ProviderChannelSnapshot(
+                    channel_id="ch_test_primary",
+                    provider_platform="sub2api",
+                    base_url="https://primary-channel.example/v1",
+                    api_key="primary-key",
+                    auth_style="bearer",
+                    priority=0,
+                    allowed_fails=99,
+                    cooldown_seconds=30,
+                ),
+            ],
+            [
+                ModelChannelRouteSnapshot(
+                    route_id="mcr_test_primary",
+                    public_model_id="gpt-5.3-codex",
+                    endpoint="responses",
+                    channel_id="ch_test_primary",
+                ),
+            ],
+        )
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {"error": {"message": "provider failed", "type": "server_error", "code": "provider_failed"}},
+                    status_code=500,
+                    headers={"x-request-id": "req_provider"},
+                ),
+                _FakeUpstreamResponse(
+                    {"error": {"message": "system fallback failed", "type": "server_error", "code": "system_failed"}},
+                    status_code=503,
+                    headers={"x-request-id": "req_system"},
+                ),
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(proxy_module, "notify_fallback_exhausted", return_value=True) as notify:
+                response = await client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"model": "gpt-5.3-codex", "input": "Reply with only: OK"},
+                )
+
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertEqual(len(upstream_client.calls), 2)
+        notify.assert_called_once()
+        alert = notify.call_args.args[0]
+        self.assertIsInstance(alert, FallbackExhaustedAlert)
+        self.assertEqual(alert.endpoint, "responses")
+        self.assertEqual(alert.model, "gpt-5.3-codex")
+        self.assertEqual(alert.status_code, 503)
+        self.assertEqual(alert.reason, "system_failed")
+        self.assertEqual(alert.route_reason, "system_fallback:500")
+        self.assertEqual(alert.channel_id, "system:legacy_cpa")
+        self.assertEqual(alert.fallback_from_channel_id, "ch_test_primary")
+        self.assertEqual(alert.route_attempt, 1)
+        self.assertEqual(alert.upstream_request_id, "req_system")
 
     async def test_responses_provider_channel_falls_back_to_system_catalog_when_no_peer_route(self) -> None:
         channel_router.set_snapshot(
