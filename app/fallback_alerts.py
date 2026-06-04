@@ -55,6 +55,9 @@ def _should_send(alert: FallbackExhaustedAlert, now: Optional[float] = None) -> 
 
 def build_dingtalk_text_payload(alert: FallbackExhaustedAlert) -> Dict[str, Any]:
     title = "CoinCoin fallback 全部失败"
+    keyword = (settings.fallback_alert_keyword or "").strip()
+    if keyword and keyword not in title:
+        title = f"{keyword} {title}"
     lines = [
         title,
         f"模型: {alert.model or '-'}",

@@ -249,6 +249,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             "claude_compat_auth_style": settings.claude_compat_auth_style,
             "model_catalog_json": settings.model_catalog_json,
             "fallback_alert_webhook_url": settings.fallback_alert_webhook_url,
+            "fallback_alert_keyword": settings.fallback_alert_keyword,
             "fallback_alert_dedup_seconds": settings.fallback_alert_dedup_seconds,
         }
 
@@ -289,6 +290,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         settings.claude_compat_api_key = "kiro-key"
         settings.claude_compat_auth_style = "bearer"
         settings.fallback_alert_webhook_url = ""
+        settings.fallback_alert_keyword = ""
         settings.fallback_alert_dedup_seconds = 900
         settings.model_catalog_json = json.dumps(
             {
@@ -529,6 +531,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_fallback_alert_deduplicates_same_failure(self) -> None:
         settings.fallback_alert_webhook_url = "https://dingtalk.example/robot"
+        settings.fallback_alert_keyword = "CoinCoinAlert"
         settings.fallback_alert_dedup_seconds = 900
         alert = FallbackExhaustedAlert(
             endpoint="responses",
@@ -550,6 +553,8 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(fallback_alerts.notify_fallback_exhausted(alert))
 
         create_task.assert_called_once()
+        payload = fallback_alerts.build_dingtalk_text_payload(alert)
+        self.assertTrue(payload["text"]["content"].startswith("CoinCoinAlert CoinCoin fallback 全部失败"))
 
     async def test_chat_empty_nonstream_json_collapses_stream_output(self) -> None:
         settings.router_enabled = False
