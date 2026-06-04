@@ -24,6 +24,7 @@ from sqlalchemy.orm import selectinload
 from .config import settings
 from .channel_router import channel_router, should_record_failure as should_record_channel_failure
 from .db import get_db
+from .fallback_alerts import FallbackExhaustedAlert, notify_fallback_exhausted
 from . import gemini_cpa
 from .models import ApiKey, RequestLog, UsageDaily, User
 from .prompt_cache import build_claude_code_prompt_cache_key
@@ -1586,6 +1587,33 @@ def _openai_error_response(
     )
 
 
+def _notify_fallback_exhausted(
+    *,
+    endpoint: str,
+    model: str,
+    status_code: int,
+    reason: str,
+    cfg,
+    route_reason: str = "",
+    upstream_request_id: str = "",
+) -> bool:
+    return notify_fallback_exhausted(
+        FallbackExhaustedAlert(
+            endpoint=endpoint,
+            model=model,
+            status_code=int(status_code or 0),
+            reason=str(reason or ""),
+            route_reason=str(route_reason or ""),
+            channel_id=str(getattr(cfg, "channel_id", "") or ""),
+            fallback_from_channel_id=str(getattr(cfg, "fallback_from_channel_id", "") or ""),
+            route_attempt=int(getattr(cfg, "route_attempt", 0) or 0),
+            provider_platform=str(getattr(cfg, "provider_platform", "") or ""),
+            channel_type=str(getattr(cfg, "channel_type", "") or ""),
+            upstream_request_id=str(upstream_request_id or ""),
+        )
+    )
+
+
 def _model_resolution_error_response(exc: Exception) -> JSONResponse:
     if isinstance(exc, UnknownModelError):
         return _openai_error_response(str(exc), code="model_not_found", param="model", status_code=400)
@@ -2702,11 +2730,27 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                         upstream, duration_ms = await _post_json(used_cfg, is_fallback=True)
                     except (httpx.TimeoutException, httpx.RequestError):
                         _record_channel_failure(used_cfg, error_code="upstream_unreachable")
+                        _notify_fallback_exhausted(
+                            endpoint="responses",
+                            model=display_model,
+                            status_code=502,
+                            reason="upstream_unreachable",
+                            cfg=used_cfg,
+                            route_reason=used_route_reason,
+                        )
                         return JSONResponse(
                             content={"error": {"message": "Upstream request failed", "type": "server_error", "code": "upstream_unreachable"}},
                             status_code=502,
                         )
                 else:
+                    _notify_fallback_exhausted(
+                        endpoint="responses",
+                        model=display_model,
+                        status_code=502,
+                        reason="upstream_unreachable",
+                        cfg=used_cfg,
+                        route_reason=used_route_reason,
+                    )
                     return JSONResponse(
                         content={"error": {"message": "Upstream request failed", "type": "server_error", "code": "upstream_unreachable"}},
                         status_code=502,
@@ -2869,6 +2913,15 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 try:
                     data = upstream.json() if "application/json" in content_type else upstream.text
                 except Exception:
+                    _notify_fallback_exhausted(
+                        endpoint="responses",
+                        model=display_model,
+                        status_code=502,
+                        reason="upstream_invalid_json",
+                        cfg=used_cfg,
+                        route_reason=used_route_reason,
+                        upstream_request_id=upstream_request_id,
+                    )
                     return JSONResponse(
                         content={"error": {"message": "Upstream returned invalid JSON", "type": "server_error", "code": "upstream_invalid_json"}},
                         status_code=502, headers=response_headers,
@@ -2888,12 +2941,30 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 try:
                     data = upstream.json() if "application/json" in content_type else upstream.text
                 except Exception:
+                    _notify_fallback_exhausted(
+                        endpoint="responses",
+                        model=display_model,
+                        status_code=502,
+                        reason="upstream_invalid_json",
+                        cfg=used_cfg,
+                        route_reason=used_route_reason,
+                        upstream_request_id=upstream_request_id,
+                    )
                     return JSONResponse(
                         content={"error": {"message": "Upstream returned invalid JSON", "type": "server_error", "code": "upstream_invalid_json"}},
                         status_code=502, headers=response_headers,
                     )
             else:
                 _record_channel_failure(used_cfg, error_code="upstream_invalid_json")
+                _notify_fallback_exhausted(
+                    endpoint="responses",
+                    model=display_model,
+                    status_code=502,
+                    reason="upstream_invalid_json",
+                    cfg=used_cfg,
+                    route_reason=used_route_reason,
+                    upstream_request_id=upstream_request_id,
+                )
                 return JSONResponse(
                     content={"error": {"message": "Upstream returned invalid JSON", "type": "server_error", "code": "upstream_invalid_json"}},
                     status_code=502, headers=response_headers,
@@ -2906,6 +2977,15 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
     cache_read_tokens_delta = 0
     cache_creation_tokens_delta = 0
     if isinstance(data, dict) and isinstance(data.get("error"), dict):
+        _notify_fallback_exhausted(
+            endpoint="responses",
+            model=display_model,
+            status_code=upstream.status_code if upstream.status_code >= 400 else 502,
+            reason=str((data.get("error") or {}).get("code") or upstream.status_code or "upstream_error"),
+            cfg=used_cfg,
+            route_reason=used_route_reason,
+            upstream_request_id=upstream_request_id,
+        )
         return JSONResponse(
             content={"error": data["error"]},
             status_code=upstream.status_code if upstream.status_code >= 400 else 502,
@@ -2957,6 +3037,15 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                     if _resp_id and isinstance(_resp_output, list):
                         _conv_cache.set(_resp_id, _expanded_input, _resp_output)
                 else:
+                    _notify_fallback_exhausted(
+                        endpoint="responses",
+                        model=display_model,
+                        status_code=502,
+                        reason="upstream_empty_response",
+                        cfg=used_cfg,
+                        route_reason=used_route_reason,
+                        upstream_request_id=upstream_request_id,
+                    )
                     return JSONResponse(
                         content={
                             "error": {
@@ -2969,6 +3058,15 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                         headers=response_headers,
                     )
             else:
+                _notify_fallback_exhausted(
+                    endpoint="responses",
+                    model=display_model,
+                    status_code=502,
+                    reason="upstream_empty_response",
+                    cfg=used_cfg,
+                    route_reason=used_route_reason,
+                    upstream_request_id=upstream_request_id,
+                )
                 return JSONResponse(
                     content={
                         "error": {
@@ -3022,8 +3120,28 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
 
     if isinstance(data, dict):
         data["model"] = display_model
+        if upstream.status_code >= 400:
+            _notify_fallback_exhausted(
+                endpoint="responses",
+                model=display_model,
+                status_code=upstream.status_code,
+                reason=str((data.get("error") or {}).get("code") if isinstance(data.get("error"), dict) else upstream.status_code),
+                cfg=used_cfg,
+                route_reason=used_route_reason,
+                upstream_request_id=upstream_request_id,
+            )
         return JSONResponse(content=data, status_code=upstream.status_code, headers=response_headers)
 
+    if upstream.status_code >= 400:
+        _notify_fallback_exhausted(
+            endpoint="responses",
+            model=display_model,
+            status_code=upstream.status_code,
+            reason=str(upstream.status_code or "upstream_error"),
+            cfg=used_cfg,
+            route_reason=used_route_reason,
+            upstream_request_id=upstream_request_id,
+        )
     return Response(content=str(data), status_code=upstream.status_code, headers=response_headers, media_type=content_type)
 
 
