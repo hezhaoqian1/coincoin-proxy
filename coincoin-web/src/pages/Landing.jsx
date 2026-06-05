@@ -1,22 +1,6 @@
 import { Link } from 'react-router-dom'
-import { PRICING_PLANS } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
 import './Landing.css'
-
-const ACCESS_STEPS = [
-    {
-        title: '创建控制台账号',
-        body: '账户、余额、请求日志和密钥都从控制台统一管理。',
-    },
-    {
-        title: '生成开发者 Key',
-        body: '程序调用使用独立开发者 Key，不和网页登录态混用。',
-    },
-    {
-        title: '查看接入指南',
-        body: 'OpenAI 兼容客户端走 /v1，Claude Code 走根地址，平时主要替换 model。',
-    },
-]
 
 const CLIENTS = [
     'Claude Code',
@@ -25,21 +9,6 @@ const CLIENTS = [
     'Aider',
     'OpenClaw',
     'cURL / SDK',
-]
-
-const ENTRY_POINTS = [
-    {
-        title: '一把开发者 Key',
-        detail: '同一把 Key 可用于 OpenAI 兼容客户端、Claude Code、CLI、SDK 和图片接口。',
-    },
-    {
-        title: '统一管理调用',
-        detail: '余额、请求日志、开发者 Key 和充值记录都在同一个控制台里。',
-    },
-    {
-        title: '清楚的接入路径',
-        detail: 'OpenAI 兼容客户端用 /v1，Claude Code 用根地址，按文档复制配置即可开始。',
-    },
 ]
 
 const HERO_LANES = [
@@ -69,76 +38,6 @@ const HERO_STATS = [
     { label: '密钥', value: '独立管理' },
 ]
 
-const COMMAND_SNIPPET = `# OpenAI-compatible
-base_url = "https://your-domain/v1"
-api_key = "sk_cc_xxxxx"
-model = "opus"
-
-# Claude Code
-ANTHROPIC_BASE_URL = "https://your-domain"
-ANTHROPIC_AUTH_TOKEN = "sk_cc_xxxxx"
-model = "claude-opus-4-8"`
-
-const FAQS = [
-    {
-        question: '这是 OpenAI 兼容接口吗？',
-        answer: '是。常见 SDK、脚本和多数支持 OpenAI 协议的客户端都可以直接替换 Base URL 和 API Key 来接入。',
-    },
-    {
-        question: 'Claude Code 怎么接？',
-        answer: 'Claude Code 走根地址，不走 /v1。接入文档里提供了可复制的环境变量配置。',
-    },
-    {
-        question: '余额和计费怎么处理？',
-        answer: '充值后按模型用量扣费，文本、图片等能力共用同一个账户余额。控制台会展示余额、请求日志和开发者 Key。',
-    },
-]
-
-function PricingPreview({ isLoggedIn }) {
-    const featuredPlans = PRICING_PLANS
-
-    return (
-        <section className="landing-band landing-pricing-band">
-            <div className="container landing-pricing">
-                <div className="landing-section-head">
-                    <div>
-                        <span className="landing-eyebrow">Pricing</span>
-                        <h2>按月选预算，用完可补量</h2>
-                    </div>
-                    <p>月付套餐给清晰预算感，多模型调用最终仍从同一个余额扣费。</p>
-                </div>
-                <div className="landing-pricing-grid">
-                    {featuredPlans.map((plan) => (
-                        <div key={plan.name} className={`landing-pricing-card ${plan.highlight ? 'is-highlight' : ''}`}>
-                            <div className="landing-pricing-top">
-                                <div>
-                                    <strong>{plan.name}</strong>
-                                    <span>{plan.balanceLabel}</span>
-                                </div>
-                                {plan.badge ? <span className="landing-plan-badge">{plan.badge}</span> : null}
-                            </div>
-                            <div className="landing-pricing-price">{plan.price}</div>
-                            <ul className="landing-pricing-list">
-                                {plan.features.slice(0, 3).map((feature) => (
-                                    <li key={feature}>{feature}</li>
-                                ))}
-                            </ul>
-                        </div>
-                    ))}
-                </div>
-                <div className="landing-inline-actions">
-                    <Link to="/recharge" className="btn btn-primary">
-                        {isLoggedIn ? '去充值' : '查看充值页'}
-                    </Link>
-                    <Link to="/docs" className="btn btn-secondary">
-                        查看接入文档
-                    </Link>
-                </div>
-            </div>
-        </section>
-    )
-}
-
 export default function Landing() {
     const { isLoggedIn } = useAuth()
     const startTarget = isLoggedIn ? '/dashboard' : '/register'
@@ -159,10 +58,6 @@ export default function Landing() {
                                 <span className="landing-title-brand">CoinCoin.ai</span>
                                 <span className="landing-title-main">打开 AI 时代的模型网关</span>
                             </h1>
-                            <p className="landing-summary">
-                                不用在多个平台之间来回切换。生成开发者 Key 后，把配置复制到
-                                Codex、Claude Code、SDK 或常用客户端里，就能开始调用文本和图片接口。
-                            </p>
 
                             <div className="landing-inline-actions">
                                 <Link to={startTarget} className="btn btn-primary btn-lg">
@@ -245,82 +140,9 @@ export default function Landing() {
                             </div>
                         </div>
 
-                        <div className="landing-endpoint-note">
-                            <span>OpenAI-compatible 用 <code>/v1</code></span>
-                            <span>Claude Code 用根地址</span>
-                        </div>
                     </div>
                 </div>
             </section>
-
-            <section className="landing-band">
-                <div className="container">
-                    <div className="landing-section-head">
-                        <div>
-                            <span className="landing-eyebrow">Platform</span>
-                            <h2>从拿到 Key 到发出请求，路径保持清楚</h2>
-                        </div>
-                        <p>先创建账号并生成开发者 Key，再按客户端选择 Base URL 和模型名；余额、日志和密钥都在控制台管理。</p>
-                    </div>
-                    <div className="landing-feature-grid">
-                        {ENTRY_POINTS.map((item) => (
-                            <div key={item.title} className="landing-feature-card">
-                                <span className="landing-feature-mark" />
-                                <strong>{item.title}</strong>
-                                <p>{item.detail}</p>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            </section>
-
-            <section className="landing-band landing-band-alt">
-                <div className="container landing-setup-layout">
-                    <div className="landing-section-head landing-section-head-compact">
-                        <div>
-                            <span className="landing-eyebrow">Quick Start</span>
-                            <h2>三步完成接入</h2>
-                        </div>
-                        <p>少讲概念，直接交付开发者最常走的路径。</p>
-                    </div>
-                    <div className="landing-step-grid">
-                        {ACCESS_STEPS.map((step, index) => (
-                            <div key={step.title} className="landing-step-card">
-                                <span className="landing-step-number">0{index + 1}</span>
-                                <strong>{step.title}</strong>
-                                <p>{step.body}</p>
-                            </div>
-                        ))}
-                    </div>
-                    <div className="landing-code-card landing-code-card-wide">
-                        <span className="landing-code-label">Recommended Setup</span>
-                        <pre>{COMMAND_SNIPPET}</pre>
-                    </div>
-                </div>
-            </section>
-
-            <section className="landing-band" id="faq">
-                <div className="container">
-                    <div className="landing-section-head">
-                        <div>
-                            <span className="landing-eyebrow">FAQ</span>
-                            <h2>开发者最常问的三个问题</h2>
-                        </div>
-                        <p>先确认协议、Claude Code 接法和计费方式，再开始接入。</p>
-                    </div>
-                    <div className="landing-faq-grid">
-                        {FAQS.map((item, index) => (
-                            <article key={item.question} className="landing-faq-card">
-                                <span className="landing-faq-index">0{index + 1}</span>
-                                <strong>{item.question}</strong>
-                                <p>{item.answer}</p>
-                            </article>
-                        ))}
-                    </div>
-                </div>
-            </section>
-
-            <PricingPreview isLoggedIn={isLoggedIn} />
         </div>
     )
 }

@@ -19,15 +19,6 @@ export default function Footer() {
                                 <span className="footer-brand-sub">One console for multi-model access</span>
                             </div>
                         </div>
-                        <p className="footer-desc">
-                            为开发者提供统一余额、统一日志和统一控制台。
-                            一把开发者 Key 可接入 OpenAI 兼容客户端、Claude Code、CLI、SDK 和图片接口。
-                        </p>
-                        <div className="footer-chip-row">
-                            <span className="footer-chip">OpenAI Compatible</span>
-                            <span className="footer-chip">Claude Code</span>
-                            <span className="footer-chip">CLI / SDK</span>
-                        </div>
                     </div>
 
                     <div className="footer-col">
@@ -40,7 +31,6 @@ export default function Footer() {
                     <div className="footer-col">
                         <h4>支持</h4>
                         <Link to="/docs">快速开始</Link>
-                        <Link to="/#faq">常见问题</Link>
                         <Link to="/docs">接口说明</Link>
                     </div>
 
