@@ -270,6 +270,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             execute_results=[
                 _FakeScalarsResult([]),
                 _FakeAllResult([]),
+                _FakeAllResult([]),
                 _FakeScalarsResult([]),
             ]
         )
@@ -303,6 +304,85 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             admin_module._settings.model_alias_overrides_path = originals["model_alias_overrides_path"]
             app.dependency_overrides.pop(admin_module.get_db, None)
             model_registry._initialized = False
+
+    async def test_provider_channels_include_billing_stats(self) -> None:
+        channel = SimpleNamespace(
+            id="ch_northstar",
+            name="North Star",
+            provider_platform="sub2api",
+            channel_type="openai_compatible",
+            base_url="https://sub2api.example/v1",
+            encrypted_api_key="cipher",
+            auth_style="bearer",
+            status="active",
+            priority=0,
+            weight=1,
+            allowed_fails=3,
+            cooldown_seconds=30,
+            capabilities="responses,chat/completions",
+            provider_account_fingerprint="acct_northstar",
+            cost_tier="premium",
+            notes="",
+            updated_by="admin",
+            created_at=datetime(2026, 6, 1, 11, 0, 0),
+            updated_at=datetime(2026, 6, 1, 11, 0, 0),
+        )
+        route_row = SimpleNamespace(channel_id="ch_northstar", route_count=2)
+        billing_row = SimpleNamespace(
+            channel_id="ch_northstar",
+            last_1h_cents=123,
+            last_4h_cents=456,
+            today_cents=789,
+            total_cents=3210,
+        )
+        runtime_row = SimpleNamespace(
+            channel_id="ch_northstar",
+            fail_count=0,
+            cooldown_until=None,
+            last_success_at=datetime(2026, 6, 1, 12, 0, 0),
+            last_failure_at=None,
+            last_error_code="",
+            rolling_latency_ms=900,
+        )
+        fake_db = _FakeDB(
+            execute_results=[
+                _FakeScalarsResult([channel]),
+                _FakeAllResult([route_row]),
+                _FakeAllResult([billing_row]),
+                _FakeScalarsResult([runtime_row]),
+            ]
+        )
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+
+        with patch.object(admin_module, "_system_default_channel_payloads", return_value=[]), patch.object(
+            admin_module, "_provider_channel_key_fingerprint", return_value="fp_test"
+        ):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                response = await client.get("/admin/provider-channels")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(len(payload["channels"]), 1)
+        item = payload["channels"][0]
+        self.assertEqual(item["id"], "ch_northstar")
+        self.assertEqual(item["route_count"], 2)
+        self.assertEqual(
+            item["billing_stats"],
+            {
+                "last_1h_cents": 123,
+                "last_4h_cents": 456,
+                "today_cents": 789,
+                "total_cents": 3210,
+            },
+        )
+        self.assertTrue(item["api_key_configured"])
+        self.assertEqual(item["api_key_fingerprint"], "fp_test")
 
     async def test_provider_channel_stability_aggregates_request_logs(self) -> None:
         channel = SimpleNamespace(
