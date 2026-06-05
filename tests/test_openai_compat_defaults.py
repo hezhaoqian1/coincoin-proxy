@@ -902,6 +902,116 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(usage_kwargs["fallback_from_channel_id"], "ch_test_primary")
         self.assertEqual(usage_kwargs["route_attempt"], 1)
 
+    async def test_responses_provider_channel_can_fallback_across_multiple_empty_outputs(self) -> None:
+        channel_router.set_snapshot(
+            [
+                ProviderChannelSnapshot(
+                    channel_id="ch_responses_primary",
+                    provider_platform="new_api",
+                    base_url="https://primary-channel.example",
+                    api_key="primary-key",
+                    auth_style="bearer",
+                    priority=0,
+                    allowed_fails=99,
+                    cooldown_seconds=30,
+                ),
+                ProviderChannelSnapshot(
+                    channel_id="ch_responses_second",
+                    provider_platform="sub2api",
+                    base_url="https://second-channel.example",
+                    api_key="second-key",
+                    auth_style="bearer",
+                    priority=5,
+                    allowed_fails=99,
+                    cooldown_seconds=30,
+                ),
+                ProviderChannelSnapshot(
+                    channel_id="ch_responses_third",
+                    provider_platform="sub2api",
+                    base_url="https://third-channel.example",
+                    api_key="third-key",
+                    auth_style="bearer",
+                    priority=10,
+                ),
+            ],
+            [
+                ModelChannelRouteSnapshot(
+                    route_id="mcr_responses_primary",
+                    public_model_id="gpt-5.4",
+                    endpoint="responses",
+                    channel_id="ch_responses_primary",
+                ),
+                ModelChannelRouteSnapshot(
+                    route_id="mcr_responses_second",
+                    public_model_id="gpt-5.4",
+                    endpoint="responses",
+                    channel_id="ch_responses_second",
+                ),
+                ModelChannelRouteSnapshot(
+                    route_id="mcr_responses_third",
+                    public_model_id="gpt-5.4",
+                    endpoint="responses",
+                    channel_id="ch_responses_third",
+                ),
+            ],
+        )
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "resp_empty_primary",
+                        "output": [],
+                        "usage": {"input_tokens": 3, "output_tokens": 0, "total_tokens": 3},
+                    }
+                ),
+                _FakeUpstreamResponse(
+                    {
+                        "id": "resp_empty_second",
+                        "output": [],
+                        "usage": {"input_tokens": 3, "output_tokens": 0, "total_tokens": 3},
+                    }
+                ),
+                _FakeUpstreamResponse(
+                    {
+                        "id": "resp_responses_multi_fallback",
+                        "output": [
+                            {
+                                "type": "message",
+                                "content": [{"type": "output_text", "text": "OK"}],
+                            }
+                        ],
+                        "usage": {"input_tokens": 4, "output_tokens": 1, "total_tokens": 5},
+                    }
+                ),
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(proxy_module.usage_buffer, "add", AsyncMock()) as add_usage:
+                response = await client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"model": "gpt-5.4", "input": "Reply with only: OK"},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["output"][0]["content"][0]["text"], "OK")
+        self.assertEqual(len(upstream_client.calls), 3)
+        self.assertEqual(upstream_client.calls[0]["url"], "https://primary-channel.example/v1/responses")
+        self.assertEqual(upstream_client.calls[1]["url"], "https://second-channel.example/v1/responses")
+        self.assertEqual(upstream_client.calls[2]["url"], "https://third-channel.example/v1/responses")
+        add_usage.assert_awaited_once()
+        usage_kwargs = add_usage.await_args.kwargs
+        self.assertEqual(usage_kwargs["route_reason"], "channel_fallback:upstream_empty_response")
+        self.assertEqual(usage_kwargs["channel_id"], "ch_responses_third")
+        self.assertEqual(usage_kwargs["fallback_from_channel_id"], "ch_responses_primary,ch_responses_second")
+        self.assertEqual(usage_kwargs["route_attempt"], 2)
+
     async def test_responses_alerts_once_when_provider_and_system_fallbacks_fail(self) -> None:
         channel_router.set_snapshot(
             [

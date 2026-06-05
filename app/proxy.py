@@ -2996,7 +2996,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
     if upstream.status_code < 400 and isinstance(data, dict):
         if cpa_channel is not None:
             data = gemini_cpa.translate_chat_response_to_responses(data, display_model)
-        if _responses_payload_is_empty_success(data):
+        while upstream.status_code < 400 and isinstance(data, dict) and _responses_payload_is_empty_success(data):
             logger.error("responses upstream returned empty success payload for model=%s", display_model)
             if cpa_channel is not None:
                 gemini_cpa.record_failure(cpa_channel)
@@ -3013,53 +3013,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                     lock_model_selection=resolved_model.lock_model_selection,
                     reason="upstream_empty_response",
                 )
-            if route_fallback_cfg is not None:
-                used_cfg = route_fallback_cfg
-                used_route_reason = route_fallback_reason
-                _mark_system_fallback_terminal()
-                upstream, duration_ms = await _post_json(used_cfg, is_fallback=True)
-                response_headers = filter_headers(dict(upstream.headers))
-                response_headers.pop("content-length", None)
-                content_type = upstream.headers.get("content-type", "application/json")
-                upstream_request_id = extract_upstream_request_id(upstream.headers)
-                try:
-                    data = upstream.json() if "application/json" in content_type else upstream.text
-                except Exception:
-                    data = {"error": {"message": "Upstream returned invalid JSON", "type": "server_error", "code": "upstream_invalid_json"}}
-                if upstream.status_code < 400 and isinstance(data, dict) and cpa_channel is not None:
-                    data = gemini_cpa.translate_chat_response_to_responses(data, display_model)
-                if upstream.status_code < 400 and isinstance(data, dict) and not _responses_payload_is_empty_success(data):
-                    usage = data.get("usage") or {}
-                    input_tokens_delta = extract_total_input_tokens(usage)
-                    output_tokens_delta = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
-                    cache_read_tokens_delta = extract_cache_read_tokens(usage)
-                    cache_creation_tokens_delta = extract_cache_creation_tokens(usage)
-                    _resp_id = data.get("id")
-                    _resp_output = data.get("output")
-                    if _resp_id and isinstance(_resp_output, list):
-                        _conv_cache.set(_resp_id, _expanded_input, _resp_output)
-                else:
-                    _notify_fallback_exhausted(
-                        endpoint="responses",
-                        model=display_model,
-                        status_code=502,
-                        reason="upstream_empty_response",
-                        cfg=used_cfg,
-                        route_reason=used_route_reason,
-                        upstream_request_id=upstream_request_id,
-                    )
-                    return JSONResponse(
-                        content={
-                            "error": {
-                                "message": "Upstream completed without returning assistant text or tool calls",
-                                "type": "server_error",
-                                "code": "upstream_empty_response",
-                            }
-                        },
-                        status_code=502,
-                        headers=response_headers,
-                    )
-            else:
+            if route_fallback_cfg is None:
                 _notify_fallback_exhausted(
                     endpoint="responses",
                     model=display_model,
@@ -3080,17 +3034,33 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                     status_code=502,
                     headers=response_headers,
                 )
-        usage = data.get("usage") or {}
-        input_tokens_delta = extract_total_input_tokens(usage)
-        output_tokens_delta = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
-        cache_read_tokens_delta = extract_cache_read_tokens(usage)
-        cache_creation_tokens_delta = extract_cache_creation_tokens(usage)
-        _resp_id = data.get("id")
-        _resp_output = data.get("output")
-        if _resp_id and isinstance(_resp_output, list):
-            _conv_cache.set(_resp_id, _expanded_input, _resp_output)
-            logger.info("polyfill: cached json resp %s (%d in, %d out)",
-                        _resp_id, len(_expanded_input), len(_resp_output))
+
+            used_cfg = route_fallback_cfg
+            used_route_reason = route_fallback_reason
+            _mark_system_fallback_terminal()
+            upstream, duration_ms = await _post_json(used_cfg, is_fallback=True)
+            response_headers = filter_headers(dict(upstream.headers))
+            response_headers.pop("content-length", None)
+            content_type = upstream.headers.get("content-type", "application/json")
+            upstream_request_id = extract_upstream_request_id(upstream.headers)
+            try:
+                data = upstream.json() if "application/json" in content_type else upstream.text
+            except Exception:
+                data = {"error": {"message": "Upstream returned invalid JSON", "type": "server_error", "code": "upstream_invalid_json"}}
+            if upstream.status_code < 400 and isinstance(data, dict) and cpa_channel is not None:
+                data = gemini_cpa.translate_chat_response_to_responses(data, display_model)
+        if isinstance(data, dict):
+            usage = data.get("usage") or {}
+            input_tokens_delta = extract_total_input_tokens(usage)
+            output_tokens_delta = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
+            cache_read_tokens_delta = extract_cache_read_tokens(usage)
+            cache_creation_tokens_delta = extract_cache_creation_tokens(usage)
+            _resp_id = data.get("id")
+            _resp_output = data.get("output")
+            if _resp_id and isinstance(_resp_output, list):
+                _conv_cache.set(_resp_id, _expanded_input, _resp_output)
+                logger.info("polyfill: cached json resp %s (%d in, %d out)",
+                            _resp_id, len(_expanded_input), len(_resp_output))
 
     if upstream.status_code < 400:
         _record_channel_success(used_cfg, duration_ms=duration_ms)
