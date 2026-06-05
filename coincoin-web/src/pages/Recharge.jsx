@@ -356,21 +356,6 @@ export default function Recharge() {
                 </div>
             )}
 
-            {!isLoggedIn && (
-                <div className="glass-card animate-fade-in" style={{ padding: 'var(--space-lg)', marginBottom: 'var(--space-lg)', background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 'var(--space-md)', alignItems: 'center', flexWrap: 'wrap' }}>
-                        <div>
-                            <strong style={{ display: 'block', marginBottom: 'var(--space-xs)' }}>未登录也能看套餐</strong>
-                            <span style={{ color: 'var(--text-secondary)' }}>创建订单和兑换码入账需要先登录，避免充到错误账户。</span>
-                        </div>
-                        <div style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
-                            <Link to="/login" className="btn btn-primary btn-sm">登录后充值</Link>
-                            <Link to="/register" className="btn btn-secondary btn-sm">注册账号</Link>
-                        </div>
-                    </div>
-                </div>
-            )}
-
                 {isLoggedIn && (
                     <BillingSnapshot
                         billingState={billingState}
@@ -396,7 +381,6 @@ export default function Recharge() {
                         <span className="recharge-kicker">Monthly</span>
                         <h3>月付套餐</h3>
                     </div>
-                    <p>同一时间只有一个有效套餐；同档未用完只续费，用完后可立即重置；高档购买按剩余天数补差升级。</p>
                 </div>
                 <div className="recharge-plans recharge-monthly-plans stagger-children">
                     {monthlyProducts.map((plan, i) => (
@@ -414,7 +398,6 @@ export default function Recharge() {
                     <div>
                         <span className="recharge-kicker">Add-on</span>
                         <h3>需要补量时再买流量包</h3>
-                        <p>流量包只保留三档，必须先有有效月卡；有效期 180 天，套餐失效时暂停消耗。</p>
                     </div>
                     <div className="addon-entry-actions">
                         <button
@@ -433,7 +416,6 @@ export default function Recharge() {
                                 <span className="recharge-kicker">Add-on</span>
                                 <h3>流量包</h3>
                             </div>
-                            <p>轻量解锁补量包，基础解锁项目包，旗舰解锁超大包。默认先推荐升级月卡，再做补量。</p>
                         </div>
                         <div className="recharge-plans recharge-addon-plans stagger-children">
                             {addonProducts.map((pack, i) => (
@@ -643,7 +625,6 @@ export default function Recharge() {
             <div className="container">
                 <div className="page-header">
                     <h1 className="page-title">充值与套餐</h1>
-                    <p className="page-desc">先看套餐和支付方式，登录后再创建订单和入账。</p>
                 </div>
                 {pageContent}
             </div>

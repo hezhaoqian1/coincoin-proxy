@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import { PRICING_PLANS } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
 import './Landing.css'
 
@@ -140,6 +141,33 @@ export default function Landing() {
                             </div>
                         </div>
 
+                    </div>
+                </div>
+            </section>
+
+            <section className="landing-plans-section" aria-label="套餐">
+                <div className="container">
+                    <div className="landing-plans-head">
+                        <h2>套餐</h2>
+                    </div>
+                    <div className="landing-plans-grid">
+                        {PRICING_PLANS.map((plan) => (
+                            <Link
+                                key={plan.id}
+                                to="/recharge"
+                                className={`landing-plan-card ${plan.highlight ? 'is-highlight' : ''}`}
+                            >
+                                <div className="landing-plan-top">
+                                    <strong>{plan.name}</strong>
+                                    {plan.badge ? <span>{plan.badge}</span> : null}
+                                </div>
+                                <div className="landing-plan-price">
+                                    <b>{plan.price}</b>
+                                    <small>{plan.priceNote}</small>
+                                </div>
+                                <div className="landing-plan-balance">{plan.balanceLabel}</div>
+                            </Link>
+                        ))}
                     </div>
                 </div>
             </section>
