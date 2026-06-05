@@ -27,6 +27,7 @@ from .db import get_db
 from .fallback_alerts import FallbackExhaustedAlert, notify_fallback_exhausted
 from . import gemini_cpa
 from .models import ApiKey, RequestLog, UsageDaily, User
+from .media_store import record_media_artifacts_best_effort
 from .prompt_cache import build_claude_code_prompt_cache_key
 from .rate_limiter import rate_limiter
 from .security import extract_api_key, hash_key
@@ -3222,6 +3223,24 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
             **_channel_usage_kwargs(used_cfg, cpa_channel),
             **usage_pricing_kwargs(public_model, station_model),
         )
+        await record_media_artifacts_best_effort(
+            db,
+            user_id=user.id,
+            api_key_id=getattr(user, _KEY_ID_ATTR, "") or None,
+            media_type="image",
+            endpoint="images/generations",
+            model=display_model,
+            provider_model=public_model.provider_model or used_cfg.model_id,
+            payload=data,
+            status="completed",
+            source_type="request",
+            source_id=upstream_request_id,
+            upstream_request_id=upstream_request_id,
+            route_reason=used_route_reason,
+            cost_cents=round(float(price_per_image_cents or 0.0) * max(1, int(image_count or 1))),
+            completed_at=datetime.utcnow(),
+            commit=True,
+        )
     elif isinstance(data, (dict, str)):
         _record_channel_failure(used_cfg, status_code=upstream.status_code)
         logger.error("image upstream error %s: %s", upstream.status_code, str(data)[:500])
@@ -3636,6 +3655,24 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
             price_per_image_cents=price_per_image_cents,
             **_channel_usage_kwargs(used_cfg, cpa_channel),
             **usage_pricing_kwargs(public_model, station_model),
+        )
+        await record_media_artifacts_best_effort(
+            db,
+            user_id=user.id,
+            api_key_id=getattr(user, _KEY_ID_ATTR, "") or None,
+            media_type="image",
+            endpoint="images/edits",
+            model=display_model,
+            provider_model=public_model.provider_model or used_cfg.model_id,
+            payload=data,
+            status="completed",
+            source_type="request",
+            source_id=upstream_request_id,
+            upstream_request_id=upstream_request_id,
+            route_reason=used_route_reason,
+            cost_cents=round(float(price_per_image_cents or 0.0) * max(1, int(image_count or 1))),
+            completed_at=datetime.utcnow(),
+            commit=True,
         )
     elif isinstance(data, (dict, str)):
         _record_channel_failure(used_cfg, status_code=upstream.status_code)

@@ -26,6 +26,7 @@ from .billing import (
 from .channel_router import channel_router
 from .db import get_db
 from .finance_summary import increment_finance_summary
+from .media_store import record_media_artifacts_best_effort
 from .models import RequestLog, UsageDaily, User, UserSubscription, VideoJob
 from .proxy import (
     _KEY_ID_ATTR,
@@ -496,6 +497,30 @@ async def _record_video_creation_usage(
         await process_first_usage_referral_reward(user_id, db)
 
 
+async def _record_completed_video_artifact(
+    db: AsyncSession,
+    job: VideoJob,
+    payload: Dict[str, Any],
+) -> None:
+    await record_media_artifacts_best_effort(
+        db,
+        user_id=job.user_id,
+        api_key_id=job.api_key_id,
+        media_type="video",
+        endpoint="videos/generations",
+        model=job.public_model,
+        provider_model=job.provider_model,
+        payload=payload,
+        status=JOB_STATUS_COMPLETED,
+        source_type="video_job",
+        source_id=job.id,
+        upstream_request_id=job.upstream_request_id,
+        route_reason=job.route_reason,
+        cost_cents=int(job.charged_cents or 0),
+        completed_at=job.completed_at or datetime.utcnow(),
+    )
+
+
 async def _charge_video_job_once(
     *,
     db: AsyncSession,
@@ -791,6 +816,8 @@ async def _create_video_generation(request: Request, db: AsyncSession) -> JSONRe
 
     if job.status == JOB_STATUS_FAILED:
         await _refund_failed_job_once(job, db)
+    elif job.status == JOB_STATUS_COMPLETED:
+        await _record_completed_video_artifact(db, job, upstream_json)
     await db.commit()
     await db.refresh(job)
     return JSONResponse(status_code=202, content=_video_job_response(job))
@@ -853,6 +880,7 @@ async def _refresh_video_job(job: VideoJob, db: AsyncSession) -> None:
         job.error_code = ""
         job.error_message = ""
         job.completed_at = datetime.utcnow()
+        await _record_completed_video_artifact(db, job, payload)
 
 
 async def _get_video_generation(job_id: str, request: Request, db: AsyncSession) -> JSONResponse:

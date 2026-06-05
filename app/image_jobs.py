@@ -17,6 +17,7 @@ from .config import settings
 from .db import SessionLocal, get_db
 from . import gemini_cpa
 from .models import ImageJob
+from .media_store import record_media_artifacts_best_effort
 from .router import registry as model_registry
 from .station_runtime import public_model_pricing_kwargs
 from .usage_buffer import usage_buffer
@@ -183,16 +184,35 @@ async def _mark_job_completed(
     result_payload: Dict[str, Any],
     upstream_request_id: str,
     duration_ms: int,
+    cost_cents: int = 0,
 ) -> None:
     async with SessionLocal() as session:
         job = await session.get(ImageJob, job_id)
         if not job:
             return
+        completed_at = datetime.utcnow()
         job.status = JOB_STATUS_COMPLETED
         job.result_payload_json = json.dumps(result_payload, ensure_ascii=False)
         job.upstream_request_id = upstream_request_id
         job.duration_ms = duration_ms
-        job.completed_at = datetime.utcnow()
+        job.completed_at = completed_at
+        await record_media_artifacts_best_effort(
+            session,
+            user_id=job.user_id,
+            api_key_id=getattr(job, "api_key_id", "") or None,
+            media_type="image",
+            endpoint="image-jobs/edits",
+            model=job.public_model,
+            provider_model=job.provider_model,
+            payload=result_payload,
+            status="completed",
+            source_type="image_job",
+            source_id=job.id,
+            upstream_request_id=upstream_request_id,
+            route_reason=job.route_reason,
+            cost_cents=cost_cents,
+            completed_at=completed_at,
+        )
         await session.commit()
 
 
@@ -336,6 +356,7 @@ async def _process_image_edit_job(job_id: str) -> None:
         result_payload=payload if isinstance(payload, dict) else {"raw": payload},
         upstream_request_id=upstream_request_id,
         duration_ms=duration_ms,
+        cost_cents=round(float(public_model.price_per_image_cents or 0.0)),
     )
 
 

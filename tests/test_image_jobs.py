@@ -10,7 +10,7 @@ import httpx
 
 from app.config import settings
 from app.main import app
-from app.models import ImageJob
+from app.models import ImageJob, MediaArtifact
 from app.router import registry
 import app.image_jobs as image_jobs_module
 
@@ -30,16 +30,23 @@ class _FakeExecuteResult:
 class _JobStore:
     def __init__(self) -> None:
         self.jobs = {}
+        self.media_artifacts = []
 
 
 class _FakeDBSession:
     def __init__(self, store: _JobStore) -> None:
         self.store = store
 
-    def add(self, job: ImageJob) -> None:
-        if not job.created_at:
-            job.created_at = datetime.utcnow()
-        self.store.jobs[job.id] = job
+    def add(self, item) -> None:
+        if isinstance(item, ImageJob):
+            if not item.created_at:
+                item.created_at = datetime.utcnow()
+            self.store.jobs[item.id] = item
+            return
+        if isinstance(item, MediaArtifact):
+            self.store.media_artifacts.append(item)
+            return
+        raise AssertionError(f"unexpected add: {item!r}")
 
     async def commit(self) -> None:
         return None
@@ -351,6 +358,48 @@ class ImageJobsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(add_usage.await_args.kwargs["api_key_id"], "k_image_job")
         self.assertEqual(add_usage.await_args.kwargs["endpoint"], "image-jobs/edits")
         self.assertEqual(add_usage.await_args.kwargs["usage_unit_count"], 1)
+        self.assertEqual(self.store.media_artifacts, [])
+
+    async def test_mark_image_job_completed_records_http_artifact(self) -> None:
+        job = ImageJob(
+            id="job_worker_http",
+            user_id=self.fake_user.id,
+            api_key_id="k_image_job",
+            status=image_jobs_module.JOB_STATUS_RUNNING,
+            endpoint="images/edits",
+            public_model="gemini-image",
+            provider_model="gemini-3.1-flash-image",
+            route_reason="catalog:gemini-image:direct",
+            image_count=1,
+            request_payload_json="{}",
+            storage_dir=self._tmpdir.name,
+            created_at=datetime.utcnow(),
+            started_at=datetime.utcnow(),
+        )
+        self.store.jobs[job.id] = job
+
+        with patch.object(image_jobs_module, "SessionLocal", _FakeSessionFactory(self.store)):
+            await image_jobs_module._mark_job_completed(
+                job.id,
+                result_payload={"data": [{"url": "https://example.com/image.png"}]},
+                upstream_request_id="req_image_http_1",
+                duration_ms=1200,
+                cost_cents=18,
+            )
+
+        updated = self.store.jobs[job.id]
+        self.assertEqual(updated.status, image_jobs_module.JOB_STATUS_COMPLETED)
+        self.assertEqual(updated.upstream_request_id, "req_image_http_1")
+        self.assertEqual(len(self.store.media_artifacts), 1)
+        artifact = self.store.media_artifacts[0]
+        self.assertEqual(artifact.media_type, "image")
+        self.assertEqual(artifact.endpoint, "image-jobs/edits")
+        self.assertEqual(artifact.url, "https://example.com/image.png")
+        self.assertEqual(artifact.user_id, self.fake_user.id)
+        self.assertEqual(artifact.api_key_id, "k_image_job")
+        self.assertEqual(artifact.source_type, "image_job")
+        self.assertEqual(artifact.source_id, job.id)
+        self.assertEqual(artifact.cost_cents, 18)
 
 
 if __name__ == "__main__":

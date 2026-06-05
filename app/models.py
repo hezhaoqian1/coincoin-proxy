@@ -144,6 +144,34 @@ Index("ix_request_logs_user_created", RequestLog.user_id, RequestLog.created_at.
 Index("ix_request_logs_user_key_created", RequestLog.user_id, RequestLog.api_key_id, RequestLog.created_at.desc())
 
 
+class MediaArtifact(Base):
+    """Previewable media outputs for the user workbench."""
+    __tablename__ = "coincoin_media_artifacts"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_users.id"), index=True)
+    api_key_id: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("coincoin_api_keys.id"), nullable=True, index=True)
+    media_type: Mapped[str] = mapped_column(String(16), default="", index=True)
+    endpoint: Mapped[str] = mapped_column(String(64), default="")
+    model: Mapped[str] = mapped_column(String(128), default="")
+    provider_model: Mapped[str] = mapped_column(String(128), default="")
+    status: Mapped[str] = mapped_column(String(16), default="completed", index=True)
+    url: Mapped[str] = mapped_column(String(2048), default="")
+    thumbnail_url: Mapped[str] = mapped_column(String(2048), default="")
+    source_type: Mapped[str] = mapped_column(String(32), default="")
+    source_id: Mapped[str] = mapped_column(String(128), default="", index=True)
+    upstream_request_id: Mapped[str] = mapped_column(String(128), default="")
+    route_reason: Mapped[str] = mapped_column(String(64), default="")
+    cost_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    metadata_json: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+Index("ix_media_artifacts_user_created", MediaArtifact.user_id, MediaArtifact.created_at.desc())
+Index("ix_media_artifacts_user_type_created", MediaArtifact.user_id, MediaArtifact.media_type, MediaArtifact.created_at.desc())
+
+
 class RechargeLog(Base):
     """充值记录表，用于对账和幂等性"""
     __tablename__ = "coincoin_recharge_logs"

@@ -17,6 +17,7 @@ from .image_jobs import (
     openai_router as image_jobs_openai_router,
     router as image_jobs_router,
 )
+from .media_artifacts import router as media_artifacts_router
 from .video_jobs import (
     openai_router as video_jobs_openai_router,
     router as video_jobs_router,
@@ -442,6 +443,36 @@ async def _run_migrations(conn):
             INDEX ix_video_jobs_channel_id (channel_id),
             INDEX ix_video_jobs_created_at (created_at),
             INDEX ix_video_jobs_status_created (status, created_at)
+        )
+        """,
+        """
+        CREATE TABLE coincoin_media_artifacts (
+            id VARCHAR(32) PRIMARY KEY,
+            user_id VARCHAR(32) NOT NULL,
+            api_key_id VARCHAR(32) NULL,
+            media_type VARCHAR(16) DEFAULT '',
+            endpoint VARCHAR(64) DEFAULT '',
+            model VARCHAR(128) DEFAULT '',
+            provider_model VARCHAR(128) DEFAULT '',
+            status VARCHAR(16) DEFAULT 'completed',
+            url VARCHAR(2048) DEFAULT '',
+            thumbnail_url VARCHAR(2048) DEFAULT '',
+            source_type VARCHAR(32) DEFAULT '',
+            source_id VARCHAR(128) DEFAULT '',
+            upstream_request_id VARCHAR(128) DEFAULT '',
+            route_reason VARCHAR(64) DEFAULT '',
+            cost_cents BIGINT DEFAULT 0,
+            metadata_json TEXT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            completed_at DATETIME NULL,
+            INDEX ix_media_artifacts_user_id (user_id),
+            INDEX ix_media_artifacts_api_key_id (api_key_id),
+            INDEX ix_media_artifacts_media_type (media_type),
+            INDEX ix_media_artifacts_status (status),
+            INDEX ix_media_artifacts_source_id (source_id),
+            INDEX ix_media_artifacts_created_at (created_at),
+            INDEX ix_media_artifacts_user_created (user_id, created_at),
+            INDEX ix_media_artifacts_user_type_created (user_id, media_type, created_at)
         )
         """,
         """
@@ -875,6 +906,7 @@ app.include_router(image_jobs_router)
 app.include_router(image_jobs_openai_router)
 app.include_router(video_jobs_router)
 app.include_router(video_jobs_openai_router)
+app.include_router(media_artifacts_router)
 app.include_router(keys_router)
 app.include_router(admin_router)
 app.include_router(admin_monitoring_router)
