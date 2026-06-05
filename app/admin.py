@@ -294,7 +294,9 @@ def _provider_channel_payload(
     *,
     route_count: int = 0,
     runtime_state: Optional[ProviderChannelRuntimeState] = None,
+    billing_stats: Optional[dict[str, int]] = None,
 ) -> dict:
+    billing_stats = billing_stats or {}
     return {
         "id": row.id,
         "name": row.name,
@@ -315,6 +317,12 @@ def _provider_channel_payload(
         "notes": row.notes,
         "route_count": route_count,
         "runtime": _channel_runtime_payload(row.id, runtime_state),
+        "billing_stats": {
+            "last_1h_cents": int(billing_stats.get("last_1h_cents", 0) or 0),
+            "last_4h_cents": int(billing_stats.get("last_4h_cents", 0) or 0),
+            "today_cents": int(billing_stats.get("today_cents", 0) or 0),
+            "total_cents": int(billing_stats.get("total_cents", 0) or 0),
+        },
         "updated_by": row.updated_by,
         "created_at": row.created_at,
         "updated_at": row.updated_at,
@@ -935,6 +943,22 @@ def _request_channel_type_expr():
     return func.coalesce(func.nullif(RequestLog.channel_type, ""), inferred)
 
 
+def _provider_channel_billing_stats_by_channel(rows, *, now: Optional[datetime] = None) -> dict[str, dict[str, int]]:
+    results: dict[str, dict[str, int]] = {}
+
+    for row in rows:
+        channel_id = str(_row_value(row, "channel_id", "") or row[0] or "")
+        if not channel_id:
+            continue
+        results[channel_id] = {
+            "last_1h_cents": int(_row_value(row, "last_1h_cents", 0) or 0),
+            "last_4h_cents": int(_row_value(row, "last_4h_cents", 0) or 0),
+            "today_cents": int(_row_value(row, "today_cents", 0) or 0),
+            "total_cents": int(_row_value(row, "total_cents", 0) or 0),
+        }
+    return results
+
+
 def _billing_package_entry_types():
     return ("usage_subscription_debit", "usage_traffic_pack_debit")
 
@@ -1371,6 +1395,26 @@ async def list_provider_channels(db: AsyncSession = Depends(get_db)):
         str(_row_value(row, "channel_id", "") or row[0] or ""): int(_row_value(row, "route_count", 0) or row[1] or 0)
         for row in route_count_rows
     }
+    now = datetime.utcnow()
+    since_1h = now - timedelta(hours=1)
+    since_4h = now - timedelta(hours=4)
+    china_day = (now + timedelta(hours=8)).date()
+    today_start = datetime.combine(china_day, datetime.min.time()) - timedelta(hours=8)
+    request_charge = _request_user_charge_expr()
+    billing_rows = (
+        await db.execute(
+            select(
+                RequestLog.channel_id.label("channel_id"),
+                func.coalesce(func.sum(case((RequestLog.created_at >= since_1h, request_charge), else_=0)), 0).label("last_1h_cents"),
+                func.coalesce(func.sum(case((RequestLog.created_at >= since_4h, request_charge), else_=0)), 0).label("last_4h_cents"),
+                func.coalesce(func.sum(case((RequestLog.created_at >= today_start, request_charge), else_=0)), 0).label("today_cents"),
+                func.coalesce(func.sum(request_charge), 0).label("total_cents"),
+            )
+            .where(RequestLog.channel_id != "")
+            .group_by(RequestLog.channel_id)
+        )
+    ).all()
+    billing_by_channel = _provider_channel_billing_stats_by_channel(billing_rows)
     runtime_rows = (await db.execute(select(ProviderChannelRuntimeState))).scalars().all()
     runtime_by_channel = {row.channel_id: row for row in runtime_rows}
     return {
@@ -1379,6 +1423,7 @@ async def list_provider_channels(db: AsyncSession = Depends(get_db)):
                 row,
                 route_count=route_counts.get(row.id, 0),
                 runtime_state=runtime_by_channel.get(row.id),
+                billing_stats=billing_by_channel.get(row.id),
             )
             for row in channel_rows
         ],
