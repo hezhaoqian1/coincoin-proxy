@@ -48,11 +48,6 @@ export default function Navbar() {
                 </div>
 
                 <div className="navbar-links">
-                    {isLanding ? (
-                        <a href="#faq" className="nav-link">
-                            FAQ
-                        </a>
-                    ) : null}
                     <Link to="/docs" className={`nav-link ${isActive('/docs') ? 'active' : ''}`}>
                         文档
                     </Link>
@@ -71,7 +66,6 @@ export default function Navbar() {
             </div>
             <div className={`navbar-mobile-menu ${mobileMenuOpen ? 'open' : ''}`}>
                 <div className="container navbar-mobile-menu-inner">
-                    {isLanding ? <a href="#faq" className="nav-link">FAQ</a> : null}
                     <Link to="/docs" className={`nav-link ${isActive('/docs') ? 'active' : ''}`}>文档</Link>
                     <Link to={pricingTarget} className={`nav-link ${isActive('/recharge') ? 'active' : ''}`}>定价</Link>
                     {isLoggedIn ? (
