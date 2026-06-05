@@ -482,6 +482,60 @@
     color: var(--accent-indigo);
 }
 
+.model-category-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    color: currentColor;
+}
+
+.model-category-icon.compact {
+    width: 14px;
+    height: 14px;
+}
+
+.model-category-icon img,
+.model-category-icon svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+.model-category-icon svg {
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.model-category-icon svg rect,
+.model-category-icon svg path,
+.model-category-icon svg circle {
+    vector-effect: non-scaling-stroke;
+}
+
+.model-category-icon-openai {
+    color: #412991;
+}
+
+.model-category-icon-anthropic {
+    color: #d97757;
+}
+
+.model-category-icon-google {
+    color: #4285f4;
+}
+
+.model-category-icon-openai svg,
+.model-category-icon-anthropic svg,
+.model-category-icon-google svg {
+    fill: currentColor;
+    stroke: none;
+}
+
 .model-catalog-table th:nth-child(1),
 .model-catalog-table td:nth-child(1) {
     width: 28%;
@@ -552,6 +606,7 @@
 .model-category-pill {
     display: inline-flex;
     align-items: center;
+    gap: 5px;
     height: 24px;
     padding: 0 9px;
     border-radius: var(--radius-full);
