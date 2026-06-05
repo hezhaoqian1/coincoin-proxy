@@ -52,7 +52,7 @@ from .usage_buffer import (
 
 _KEY_KIND_ATTR = "_key_kind"
 _KEY_ID_ATTR = "_api_key_id"
-CHANNEL_FALLBACK_MAX_ATTEMPTS = 2
+CHANNEL_FALLBACK_MAX_ATTEMPTS = 16
 CHANNEL_FALLBACK_RETRY_ERRORS = frozenset({
     "upstream_unreachable",
     "upstream_timeout",
@@ -1187,11 +1187,13 @@ def _channel_fallback_config(previous_cfg, fallback_cfg):
 
 
 def _channel_attempted_ids(cfg) -> Tuple[str, ...]:
-    values = (
+    values: List[str] = []
+    for raw in (
         getattr(cfg, "fallback_from_channel_id", "") or "",
         getattr(cfg, "channel_id", "") or "",
-    )
-    return tuple(dict.fromkeys(item for item in values if item))
+    ):
+        values.extend(item.strip() for item in str(raw or "").split(",") if item.strip())
+    return tuple(dict.fromkeys(values))
 
 
 def _next_channel_fallback_config(public_model, previous_cfg, endpoint: str, *, reason: str):
