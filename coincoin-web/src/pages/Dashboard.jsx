@@ -19,6 +19,16 @@ function formatDurationMs(durationMs) {
     return `${(ms / 1000).toFixed(1)}s`
 }
 
+function formatUsageUnits(log) {
+    if (log.usage_unit_type === 'images') {
+        return `${log.image_count || log.usage_unit_count || 0} images`
+    }
+    if (log.usage_unit_type === 'videos') {
+        return `${log.video_count || log.usage_unit_count || 0} videos`
+    }
+    return `${(log.total_tokens || log.usage_unit_count || 0).toLocaleString()} tokens`
+}
+
 async function getLocalDailyUsage(days = 7) {
     const dates = getRecentLocalIsoDates(days)
     const rows = await Promise.all(dates.map(async (day) => {
@@ -30,6 +40,7 @@ async function getLocalDailyUsage(days = 7) {
                 output_tokens: 0,
                 tokens_total: 0,
                 images_total: 0,
+                videos_total: 0,
                 cost_usd: 0,
                 requests_total: 0,
             }
@@ -47,6 +58,7 @@ async function getLocalDailyUsage(days = 7) {
             output_tokens: summary.output_tokens || 0,
             tokens_total: summary.total_tokens || 0,
             images_total: summary.image_count || 0,
+            videos_total: summary.video_count || 0,
             cost_usd: summary.cost_usd || 0,
             requests_total: usage.total || 0,
         }
@@ -457,7 +469,7 @@ function StationCard({ stationState, onSubmitted }) {
 }
 
 export default function Dashboard() {
-    const { defaultTextModel, defaultImageModel } = usePublicModels()
+    const { defaultTextModel, defaultImageModel, defaultVideoModel } = usePublicModels()
     const {
         activeDeveloperKeyCount,
         authMode,
@@ -628,6 +640,11 @@ export default function Dashboard() {
         : todaySummary
             ? (todaySummary.images_total || 0)
             : todayUsageFallback.reduce((sum, d) => sum + (d.image_count || 0), 0)
+    const todayVideos = todayDetailSummary
+        ? (todayDetailSummary.video_count || 0)
+        : todaySummary
+            ? (todaySummary.videos_total || 0)
+            : todayUsageFallback.reduce((sum, d) => sum + (d.video_count || 0), 0)
     const todayRequests = todayUsage
         ? (todayUsage.total || 0)
         : todaySummary
@@ -784,7 +801,7 @@ export default function Dashboard() {
                         <div className="stat-info">
                             <span className="stat-label">今日消费</span>
                             <span className="stat-value">${todayCost.toFixed(2)}</span>
-                            <span className="stat-sub">{todayRequests} 次请求 &middot; {todayTokens.toLocaleString()} Tokens &middot; {todayImages} 张图</span>
+                            <span className="stat-sub">{todayRequests} 次请求 &middot; {todayTokens.toLocaleString()} Tokens &middot; {todayImages} 张图 &middot; {todayVideos} 个视频</span>
                         </div>
                     </div>
                 </div>
@@ -928,6 +945,10 @@ export default function Dashboard() {
                             <span className="price-label">默认图片模型</span>
                             <span className="price-val model-tag">{defaultImageModel?.id || 'gpt-image-2'}</span>
                         </div>
+                        <div className="price-item">
+                            <span className="price-label">默认视频模型</span>
+                            <span className="price-val model-tag">{defaultVideoModel?.id || 'seedance-v2-720p'}</span>
+                        </div>
                     </div>
                 </div>
 
@@ -957,7 +978,7 @@ export default function Dashboard() {
                                             <td>{formatLocalTime(log.created_at, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
                                             <td><code className="endpoint-tag">{log.endpoint}</code></td>
                                             <td><span className="model-tag-sm">{log.model}</span></td>
-                                            <td>{log.usage_unit_type === 'images' ? `${log.image_count || log.usage_unit_count || 0} images` : `${(log.total_tokens || 0).toLocaleString()} tokens`}</td>
+                                            <td>{formatUsageUnits(log)}</td>
                                             <td className="cost-cell">${log.cost_usd.toFixed(2)}</td>
                                             <td>{formatDurationMs(log.duration_ms)}</td>
                                             <td><span className={`badge ${log.status_code === 200 ? 'badge-success' : 'badge-error'}`}>{log.status_code}</span></td>

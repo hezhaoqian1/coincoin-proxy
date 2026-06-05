@@ -168,11 +168,23 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         admin_html = (Path(admin_module.__file__).parent / "static" / "admin.html").read_text()
 
         self.assertIn("function loadCurrentPage()", admin_html)
-        self.assertIn("function loadAll() {\n      loadCurrentPage();\n    }", admin_html)
+        self.assertIn("function initCollapsibleCards(scope = document)", admin_html)
+        self.assertIn("function loadAll() {\n      initCollapsibleCards();\n      loadCurrentPage();\n    }", admin_html)
         self.assertNotIn(
             "loadUsers();\n      loadUsage();\n      loadFinanceSummary();\n      loadModelAliases();",
             admin_html,
         )
+
+    def test_admin_ui_wires_provider_channel_card_collapses(self) -> None:
+        admin_html = (Path(admin_module.__file__).parent / "static" / "admin.html").read_text()
+
+        self.assertIn("collapsible-card", admin_html)
+        self.assertIn("card-collapse-btn", admin_html)
+        self.assertIn("toggleCollapsibleCard('provider-channel-stability')", admin_html)
+        self.assertIn("toggleCollapsibleCard('provider-channel-monitor')", admin_html)
+        self.assertIn("toggleCollapsibleCard('provider-channels')", admin_html)
+        self.assertIn("toggleCollapsibleCard('model-channel-routes')", admin_html)
+        self.assertIn("cc_admin_card_collapsed:", admin_html)
 
     def test_admin_ui_wires_analytics_page_loader(self) -> None:
         admin_html = (Path(admin_module.__file__).parent / "static" / "admin.html").read_text()
@@ -900,7 +912,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         fake_db = _FakeDB(
             execute_results=[
                 _FakeScalarResult(1),
-                _FakeSummaryResult((1, 10, 5, 0, 0, 0, 0, 15)),
+                _FakeSummaryResult((1, 10, 5, 0, 0, 0, 0, 0, 15)),
                 _FakeScalarsResult([log]),
             ]
         )
@@ -946,7 +958,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         fake_db = _FakeDB(
             execute_results=[
                 _FakeScalarResult(3500),
-                _FakeSummaryResult((85, 1_200_000, 116_675, 400_000, 0, 12_345, 3, 1_316_675)),
+                _FakeSummaryResult((85, 1_200_000, 116_675, 400_000, 0, 12_345, 3, 0, 1_316_675)),
                 _FakeScalarsResult([log]),
             ]
         )
@@ -978,7 +990,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         fake_db = _FakeDB(
             execute_results=[
                 _FakeScalarResult(0),
-                _FakeSummaryResult((0, 0, 0, 0, 0, 0, 0, 0)),
+                _FakeSummaryResult((0, 0, 0, 0, 0, 0, 0, 0, 0)),
                 _FakeScalarsResult([]),
             ]
         )
@@ -1001,7 +1013,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         fake_db = _FakeDB(
             execute_results=[
                 _FakeScalarResult(0),
-                _FakeSummaryResult((0, 0, 0, 0, 0, 0, 0, 0)),
+                _FakeSummaryResult((0, 0, 0, 0, 0, 0, 0, 0, 0)),
                 _FakeScalarsResult([]),
             ]
         )
@@ -1022,7 +1034,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(datetime(2026, 5, 3, 16, 0), params)
 
     async def test_summary_metrics_expose_images_today(self) -> None:
-        fake_db = _FakeDB(scalar_results=[12, 10, 987654, 45, 6, 999, 321])
+        fake_db = _FakeDB(scalar_results=[12, 10, 987654, 45, 6, 0, 999, 321])
 
         async def fake_get_db():
             yield fake_db
@@ -1041,6 +1053,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["total_tokens"], 987654)
         self.assertEqual(payload["total_requests_today"], 45)
         self.assertEqual(payload["total_images_today"], 6)
+        self.assertEqual(payload["total_videos_today"], 0)
         self.assertEqual(payload["paid_today_cents"], 999)
         self.assertEqual(payload["consumed_today_cents"], 321)
 
@@ -1191,7 +1204,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             created_at=datetime(2026, 6, 1, 10, 0, 0),
             updated_at=datetime(2026, 6, 1, 10, 0, 0),
         )
-        fake_db = _FakeDB(execute_results=[_FakeAllResult([(user, None, None, 12, 1000, 3, 456)])])
+        fake_db = _FakeDB(execute_results=[_FakeAllResult([(user, None, None, 12, 1000, 3, 0, 456)])])
 
         with patch.object(admin_module, "_admin_billing_state", AsyncMock(return_value={})):
             result = await admin_module.list_users(usage_sort="7d", db=fake_db)
@@ -1202,6 +1215,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result[0]["period_usage"]["requests_total"], 12)
         self.assertEqual(result[0]["period_usage"]["tokens_total"], 1000)
         self.assertEqual(result[0]["period_usage"]["images_total"], 3)
+        self.assertEqual(result[0]["period_usage"]["videos_total"], 0)
         self.assertEqual(result[0]["period_usage"]["cost_cents"], 456)
         query_text = str(fake_db.queries[-1].compile())
         self.assertIn("coincoin_request_logs", query_text)

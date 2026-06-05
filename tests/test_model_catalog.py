@@ -176,6 +176,7 @@ class ModelCatalogTests(unittest.TestCase):
                 "default_text_model": "gpt-5.4",
                 "default_embedding_model": "text-embedding-3-small",
                 "default_image_model": "gpt-image-2",
+                "default_video_model": "seedance-v2-720p",
                 "models": [
                     *[_legacy_text_model(model_id) for model_id in LEGACY_PUBLIC_TEXT_MODELS],
                     {
@@ -276,6 +277,21 @@ class ModelCatalogTests(unittest.TestCase):
                         "billable_sku": "gemini-image",
                         "metadata": {"provider_platform": "cpa_gemini"},
                     },
+                    {
+                        "id": "seedance-v2-720p",
+                        "owned_by": "bytedance",
+                        "provider_name": "Seedance",
+                        "provider_model": "seedance-v2-720p",
+                        "capabilities": ["videos/generations"],
+                        "routing_mode": "direct",
+                        "delivery_lane": "upstream_direct",
+                        "upstream_model": "seedance-v2-720p",
+                        "upstream_url": "https://api.wgspai.cn",
+                        "api_key": "seedance-key",
+                        "auth_style": "bearer",
+                        "price_per_video_cents": 98,
+                        "billable_sku": "seedance-v2-720p-video-task",
+                    },
                 ],
             }
         )
@@ -320,6 +336,7 @@ class ModelCatalogTests(unittest.TestCase):
         settings.model_catalog_json = json.dumps(
             {
                 "default_text_model": "priced-fast",
+                "default_video_model": "priced-video",
                 "models": [
                     {
                         "id": "priced-fast",
@@ -340,6 +357,23 @@ class ModelCatalogTests(unittest.TestCase):
                             "cache_read_multiplier": 0.2,
                             "price_version": 7,
                         },
+                    },
+                    {
+                        "id": "priced-video",
+                        "owned_by": "bytedance",
+                        "provider_model": "seedance-v2-720p",
+                        "capabilities": ["videos/generations"],
+                        "routing_mode": "direct",
+                        "delivery_lane": "upstream_direct",
+                        "upstream_model": "seedance-v2-720p",
+                        "upstream_url": "https://api.wgspai.cn",
+                        "api_key": "seedance-key",
+                        "auth_style": "bearer",
+                        "price_per_video_cents": 98,
+                        "pricing": {
+                            "video_multiplier": 1.25,
+                            "price_version": 8,
+                        },
                     }
                 ],
             }
@@ -357,6 +391,13 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertEqual(public_model.output_multiplier, 2)
         self.assertEqual(public_model.cache_read_multiplier, 0.2)
         self.assertEqual(public_model.price_version, 7)
+
+        video_model = registry.get_public_model("priced-video")
+
+        self.assertEqual(video_model.base_price_per_video_cents, 98)
+        self.assertEqual(video_model.price_per_video_cents, 122.5)
+        self.assertEqual(video_model.video_multiplier, 1.25)
+        self.assertEqual(video_model.price_version, 8)
 
     def test_runtime_pricing_override_changes_effective_prices_without_alias_route(self) -> None:
         registry.set_runtime_pricing_overrides(
@@ -817,6 +858,19 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertEqual(resolved.execution_pool, "upstream_embedding_pool")
         self.assertEqual(resolved.route_reason, "catalog:text-embedding-3-small:upstream_direct")
 
+    def test_default_video_model_uses_seedance_lane(self) -> None:
+        resolved = registry.resolve_public_model(None, "videos/generations")
+
+        self.assertEqual(resolved.public_model.public_id, "seedance-v2-720p")
+        self.assertEqual(resolved.public_model.delivery_lane, "upstream_direct")
+        self.assertEqual(resolved.public_model.price_per_video_cents, 98)
+        self.assertEqual(resolved.backend.model_id, "seedance-v2-720p")
+        self.assertEqual(resolved.backend.upstream_url, "https://api.wgspai.cn")
+        self.assertEqual(resolved.backend.auth_style, "bearer")
+        self.assertEqual(resolved.execution_profile, "upstream_direct_direct")
+        self.assertEqual(resolved.execution_pool, "upstream_direct_direct_pool")
+        self.assertEqual(resolved.route_reason, "catalog:seedance-v2-720p:upstream_direct")
+
     def test_explicit_embedding_model_uses_dedicated_azure_lane(self) -> None:
         resolved = registry.resolve_public_model("text-embedding-3-small", "embeddings")
 
@@ -861,6 +915,10 @@ class ModelCatalogTests(unittest.TestCase):
     def test_image_model_rejects_chat_endpoint(self) -> None:
         with self.assertRaises(ModelCapabilityError):
             registry.resolve_public_model("gemini-image", "chat/completions")
+
+    def test_video_model_rejects_chat_endpoint(self) -> None:
+        with self.assertRaises(ModelCapabilityError):
+            registry.resolve_public_model("seedance-v2-720p", "chat/completions")
 
     def test_legacy_text_model_rejects_embeddings_endpoint(self) -> None:
         with self.assertRaises(ModelCapabilityError):

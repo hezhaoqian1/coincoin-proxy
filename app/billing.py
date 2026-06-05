@@ -437,38 +437,64 @@ async def debit_usage_cents(
     user: User,
     cost_cents: int,
     source_id: str = "",
+    source_type: str = "usage",
+    allow_negative_legacy: bool = True,
+    reserved_cents: int = 0,
     now: datetime | None = None,
 ) -> dict:
     amount = max(0, int(cost_cents or 0))
     current = now or utcnow()
     if amount <= 0:
-        return {"subscription_cents": 0, "traffic_pack_cents": 0, "legacy_cents": 0}
+        return {
+            "subscription_cents": 0,
+            "subscription_id": "",
+            "subscription_plan_id": "",
+            "traffic_pack_cents": 0,
+            "traffic_pack_debits": [],
+            "legacy_cents": 0,
+        }
 
     remaining = amount
     subscription_debit = 0
     traffic_debit = 0
     legacy_debit = 0
+    subscription_id = ""
+    subscription_plan_id = ""
+    traffic_pack_debits = []
 
     sub = await get_subscription_for_update(db, user.id)
     if sub:
         normalize_subscription_period(sub, current)
+    subscription_available = 0
+    packs: list[TrafficPackBalance] = []
     if active_subscription(sub, current):
-        take = min(available_subscription_cents(sub, current), remaining)
+        subscription_available = available_subscription_cents(sub, current)
+        packs = await active_traffic_packs_for_update(db, user.id, current)
+
+    if not allow_negative_legacy:
+        traffic_available = sum(max(0, int(pack.remaining_cents or 0)) for pack in packs)
+        total_available = subscription_available + traffic_available + int(user.balance or 0) - int(reserved_cents or 0)
+        if total_available < amount:
+            raise BillingError("insufficient balance", status_code=402)
+
+    if active_subscription(sub, current):
+        take = min(subscription_available, remaining)
         if take > 0:
             sub.used_cents = int(sub.used_cents or 0) + take
             remaining -= take
             subscription_debit = take
+            subscription_id = getattr(sub, "id", "") or ""
+            subscription_plan_id = getattr(sub, "plan_id", "") or ""
             db.add(_ledger(
                 user_id=user.id,
                 entry_type="usage_subscription_debit",
                 amount_cents=-take,
-                source_type="usage",
+                source_type=source_type,
                 source_id=source_id,
                 product_id=sub.plan_id,
                 balance_after_cents=available_subscription_cents(sub, current),
             ))
 
-        packs = await active_traffic_packs_for_update(db, user.id, current)
         for pack in packs:
             if remaining <= 0:
                 break
@@ -480,11 +506,16 @@ async def debit_usage_cents(
                 pack.status = "depleted"
             remaining -= take
             traffic_debit += take
+            traffic_pack_debits.append({
+                "id": getattr(pack, "id", "") or "",
+                "product_id": getattr(pack, "product_id", "") or "",
+                "cents": take,
+            })
             db.add(_ledger(
                 user_id=user.id,
                 entry_type="usage_traffic_pack_debit",
                 amount_cents=-take,
-                source_type="usage",
+                source_type=source_type,
                 source_id=source_id,
                 product_id=pack.product_id,
                 balance_after_cents=pack.remaining_cents,
@@ -497,14 +528,17 @@ async def debit_usage_cents(
             user_id=user.id,
             entry_type="usage_legacy_balance_debit",
             amount_cents=-remaining,
-            source_type="usage",
+            source_type=source_type,
             source_id=source_id,
             balance_after_cents=int(user.balance or 0),
         ))
 
     return {
         "subscription_cents": subscription_debit,
+        "subscription_id": subscription_id,
+        "subscription_plan_id": subscription_plan_id,
         "traffic_pack_cents": traffic_debit,
+        "traffic_pack_debits": traffic_pack_debits,
         "legacy_cents": legacy_debit,
     }
 

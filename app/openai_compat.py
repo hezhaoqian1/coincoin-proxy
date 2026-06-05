@@ -109,6 +109,8 @@ def _serialize_public_model(public_model) -> Dict[str, Any]:
         default_for.append("embedding")
     if public_model.public_id == model_registry.default_image_model_id:
         default_for.append("image")
+    if public_model.public_id == getattr(model_registry, "default_video_model_id", ""):
+        default_for.append("video")
     explicit_cached_price = getattr(public_model, "effective_cached_input_per_million", None)
     cached_input_price = round(
         float(explicit_cached_price if explicit_cached_price is not None else float(public_model.price_input_per_million or 0) * float(settings.cache_discount_rate or 0)),
@@ -129,14 +131,17 @@ def _serialize_public_model(public_model) -> Dict[str, Any]:
         "coincoin_price_cached_input_per_million": cached_input_price,
         "coincoin_price_output_per_million": public_model.price_output_per_million,
         "coincoin_price_per_image_cents": public_model.price_per_image_cents,
+        "coincoin_price_per_video_cents": getattr(public_model, "price_per_video_cents", 0.0),
         "coincoin_base_price_input_per_million": getattr(public_model, "base_price_input_per_million", 0),
         "coincoin_base_price_output_per_million": getattr(public_model, "base_price_output_per_million", 0),
         "coincoin_base_price_per_image_cents": getattr(public_model, "base_price_per_image_cents", 0.0),
+        "coincoin_base_price_per_video_cents": getattr(public_model, "base_price_per_video_cents", 0.0),
         "coincoin_pricing_mode": getattr(public_model, "pricing_mode", "explicit_price"),
         "coincoin_model_multiplier": getattr(public_model, "model_multiplier", 1.0),
         "coincoin_output_multiplier": getattr(public_model, "output_multiplier", 1.0),
         "coincoin_cache_read_multiplier": getattr(public_model, "cache_read_multiplier", 0.0),
         "coincoin_image_multiplier": getattr(public_model, "image_multiplier", 1.0),
+        "coincoin_video_multiplier": getattr(public_model, "video_multiplier", 1.0),
         "coincoin_price_version": getattr(public_model, "price_version", 0),
     }
 
@@ -301,6 +306,7 @@ async def get_usage(
             func.coalesce(func.sum(RequestLog.cache_read_tokens), 0).label("cache_read_tokens"),
             func.coalesce(func.sum(RequestLog.cache_creation_tokens), 0).label("cache_creation_tokens"),
             func.coalesce(func.sum(RequestLog.image_count), 0).label("image_count"),
+            func.coalesce(func.sum(RequestLog.video_count), 0).label("video_count"),
             func.coalesce(func.sum(RequestLog.usage_unit_count), 0).label("usage_unit_count"),
         ).where(where)
     )
@@ -321,7 +327,8 @@ async def get_usage(
     summary_cache_read_tokens = _summary_value(4, "cache_read_tokens")
     summary_cache_creation_tokens = _summary_value(5, "cache_creation_tokens")
     summary_image_count = _summary_value(6, "image_count")
-    summary_usage_unit_count = _summary_value(7, "usage_unit_count")
+    summary_video_count = _summary_value(7, "video_count")
+    summary_usage_unit_count = _summary_value(8, "usage_unit_count")
     summary_cache_read_tokens = max(summary_cache_read_tokens, summary_cached_tokens)
 
     result = await db.execute(
@@ -348,6 +355,7 @@ async def get_usage(
             "cache_creation_tokens": summary_cache_creation_tokens,
             "total_tokens": summary_input_tokens + summary_output_tokens,
             "image_count": summary_image_count,
+            "video_count": summary_video_count,
             "usage_unit_count": summary_usage_unit_count,
         },
         "data": [
@@ -362,6 +370,7 @@ async def get_usage(
                 "cache_read_tokens": getattr(log, "cache_read_tokens", 0) or getattr(log, "cached_tokens", 0),
                 "cache_creation_tokens": getattr(log, "cache_creation_tokens", 0),
                 "image_count": getattr(log, "image_count", 0),
+                "video_count": getattr(log, "video_count", 0),
                 "usage_unit_type": getattr(log, "usage_unit_type", "tokens"),
                 "usage_unit_count": getattr(log, "usage_unit_count", 0),
                 "billable_sku": getattr(log, "billable_sku", "") or (getattr(log, "customer_model_alias", "") or log.model),
@@ -405,6 +414,7 @@ async def get_daily_usage(request: Request, db: AsyncSession = Depends(get_db), 
             "output_tokens": r.output_tokens,
             "tokens_total": r.tokens_total,
             "images_total": getattr(r, "images_total", 0),
+            "videos_total": getattr(r, "videos_total", 0),
             "cost_cents": r.cost_cents,
             "cost_usd": r.cost_cents / 100,
             "requests_total": r.requests_total,

@@ -81,6 +81,7 @@ class UsageDaily(Base):
     input_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
     output_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
     images_total: Mapped[int] = mapped_column(BigInteger, default=0)
+    videos_total: Mapped[int] = mapped_column(BigInteger, default=0)
     cost_cents: Mapped[int] = mapped_column(BigInteger, default=0)  # 消费金额（分）
     requests_total: Mapped[int] = mapped_column(BigInteger, default=0)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -102,6 +103,7 @@ class RequestLog(Base):
     cache_read_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
     cache_creation_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
     image_count: Mapped[int] = mapped_column(BigInteger, default=0)
+    video_count: Mapped[int] = mapped_column(BigInteger, default=0)
     provider_model: Mapped[str] = mapped_column(String(128), default="")
     customer_model_alias: Mapped[str] = mapped_column(String(128), default="")
     usage_unit_type: Mapped[str] = mapped_column(String(32), default="tokens")
@@ -125,9 +127,12 @@ class RequestLog(Base):
     output_multiplier: Mapped[float] = mapped_column(Float, default=1.0)
     cache_read_multiplier: Mapped[float] = mapped_column(Float, default=0.0)
     image_multiplier: Mapped[float] = mapped_column(Float, default=1.0)
+    video_multiplier: Mapped[float] = mapped_column(Float, default=1.0)
     base_price_input_per_million: Mapped[int] = mapped_column(BigInteger, default=0)
     base_price_output_per_million: Mapped[int] = mapped_column(BigInteger, default=0)
     base_price_per_image_cents: Mapped[float] = mapped_column(Float, default=0.0)
+    base_price_per_video_cents: Mapped[float] = mapped_column(Float, default=0.0)
+    price_per_video_cents: Mapped[float] = mapped_column(Float, default=0.0)
     effective_cached_input_per_million: Mapped[float] = mapped_column(Float, default=0.0)
     cost_cents: Mapped[int] = mapped_column(BigInteger, default=0)  # 费用（分）
     duration_ms: Mapped[int] = mapped_column(BigInteger, default=0)  # 响应耗时（毫秒）
@@ -278,6 +283,7 @@ class ModelPricingOverride(Base):
     output_multiplier: Mapped[float] = mapped_column(Float, default=1.0)
     cache_read_multiplier: Mapped[float] = mapped_column(Float, default=0.0)
     image_multiplier: Mapped[float] = mapped_column(Float, default=1.0)
+    video_multiplier: Mapped[float] = mapped_column(Float, default=1.0)
     pricing_mode: Mapped[str] = mapped_column(String(32), default="multiplier")
     price_version: Mapped[int] = mapped_column(BigInteger, default=1)
     updated_by: Mapped[str] = mapped_column(String(64), default="")
@@ -727,3 +733,45 @@ class ImageJob(Base):
 
 
 Index("ix_image_jobs_status_created", ImageJob.status, ImageJob.created_at.desc())
+
+
+class VideoJob(Base):
+    __tablename__ = "coincoin_video_jobs"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_users.id"), index=True)
+    api_key_id: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("coincoin_api_keys.id"), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    endpoint: Mapped[str] = mapped_column(String(32), default="videos/generations")
+    public_model: Mapped[str] = mapped_column(String(128), default="")
+    provider_model: Mapped[str] = mapped_column(String(128), default="")
+    route_reason: Mapped[str] = mapped_column(String(64), default="")
+    upstream_task_id: Mapped[str] = mapped_column(String(128), default="", index=True)
+    request_payload_json: Mapped[str] = mapped_column(Text)
+    result_payload_json: Mapped[Optional[str]] = mapped_column(LONGTEXT, nullable=True)
+    error_code: Mapped[str] = mapped_column(String(64), default="")
+    error_message: Mapped[str] = mapped_column(Text, default="")
+    upstream_request_id: Mapped[str] = mapped_column(String(128), default="")
+    channel_id: Mapped[str] = mapped_column(String(32), default="", index=True)
+    channel_type: Mapped[str] = mapped_column(String(32), default="")
+    provider_platform: Mapped[str] = mapped_column(String(64), default="")
+    provider_account_fingerprint: Mapped[str] = mapped_column(String(128), default="")
+    charged_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    refunded_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    subscription_debit_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    subscription_id: Mapped[str] = mapped_column(String(32), default="")
+    subscription_plan_id: Mapped[str] = mapped_column(String(64), default="")
+    traffic_pack_debit_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    traffic_pack_debits_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    legacy_debit_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    attempt_count: Mapped[int] = mapped_column(BigInteger, default=0)
+    duration_ms: Mapped[int] = mapped_column(BigInteger, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+Index("ix_video_jobs_status_created", VideoJob.status, VideoJob.created_at.desc())

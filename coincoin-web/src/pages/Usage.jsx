@@ -41,6 +41,22 @@ function getRegularInputTokens(log) {
         : input
 }
 
+function formatUsageUnits(log) {
+    if (log.usage_unit_type === 'images') {
+        return `${log.image_count || log.usage_unit_count || 0} images`
+    }
+    if (log.usage_unit_type === 'videos') {
+        return `${log.video_count || log.usage_unit_count || 0} videos`
+    }
+    return `${(log.usage_unit_count || log.total_tokens || 0).toLocaleString()} tokens`
+}
+
+function usagePillKind(log) {
+    if (log.usage_unit_type === 'images') return 'images'
+    if (log.usage_unit_type === 'videos') return 'videos'
+    return 'tokens'
+}
+
 function formatDurationMs(durationMs) {
     const ms = Number(durationMs || 0)
     if (ms < 1000) return `${Math.max(0, Math.round(ms))}ms`
@@ -171,9 +187,14 @@ export default function Usage() {
         const headers = ['时间', '端点', '模型', '计量类型', '计量值', 'Input Token', '缓存读取 Token', '缓存写入 Token', '普通输入 Token', 'Output Token', '总 Token', '缓存读取占比', '花费($)', '耗时(ms)', '状态码']
         const rows = usage.data.map(d => [
             d.created_at, d.endpoint, d.model,
-            d.usage_unit_type, d.usage_unit_type === 'images' ? (d.image_count || d.usage_unit_count) : d.usage_unit_count,
+            d.usage_unit_type,
+            d.usage_unit_type === 'images'
+                ? (d.image_count || d.usage_unit_count)
+                : d.usage_unit_type === 'videos'
+                    ? (d.video_count || d.usage_unit_count)
+                    : d.usage_unit_count,
             d.input_tokens, getCacheReadTokens(d), getCacheCreationTokens(d), getRegularInputTokens(d), d.output_tokens, d.total_tokens,
-            formatCacheHitRate(getCacheReadTokens(d), getTotalInputForCache(d)),
+            d.usage_unit_type === 'tokens' ? formatCacheHitRate(getCacheReadTokens(d), getTotalInputForCache(d)) : '-',
             d.cost_usd.toFixed(4), d.duration_ms, d.status_code
         ])
         const csv = [headers, ...rows].map(r => r.join(',')).join('\n')
@@ -257,6 +278,7 @@ export default function Usage() {
     const totalCost = summary ? summary.cost_usd : usage.data.reduce((s, d) => s + d.cost_usd, 0)
     const totalTokens = summary ? summary.total_tokens : usage.data.reduce((s, d) => s + d.total_tokens, 0)
     const totalImages = summary ? summary.image_count : usage.data.reduce((s, d) => s + (d.image_count || 0), 0)
+    const totalVideos = summary ? (summary.video_count || 0) : usage.data.reduce((s, d) => s + (d.video_count || 0), 0)
     const totalCacheReadTokens = summary ? (summary.cache_read_tokens ?? summary.cached_tokens ?? 0) : usage.data.reduce((s, d) => s + getCacheReadTokens(d), 0)
     const totalCacheCreationTokens = summary ? (summary.cache_creation_tokens ?? 0) : usage.data.reduce((s, d) => s + getCacheCreationTokens(d), 0)
     const totalInputTokens = summary ? summary.input_tokens : usage.data.reduce((s, d) => s + getTotalInputForCache(d), 0)
@@ -303,8 +325,8 @@ export default function Usage() {
                             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent-amber)" strokeWidth="2"><path d="M4 7h16M4 17h16M7 4v16M17 4v16" /></svg>
                         </div>
                         <div className="stat-info">
-                            <span className="stat-label">当前筛选图片</span>
-                            <span className="stat-value">{totalImages}</span>
+                            <span className="stat-label">当前筛选图片 / 视频</span>
+                            <span className="stat-value">{totalImages} / {totalVideos}</span>
                         </div>
                     </div>
                     <div className="stat-card glass-card animate-fade-in-up">
@@ -337,6 +359,7 @@ export default function Usage() {
                             <option value="chat/completions">chat/completions</option>
                             <option value="chat/completions:stream">chat/completions:stream</option>
                             <option value="images/generations">images/generations</option>
+                            <option value="videos/generations">videos/generations</option>
                             <option value="embeddings">embeddings</option>
                         </select>
                         <select className="filter-select" value={filters.status_code} onChange={e => applyFilter('status_code', e.target.value)}>
@@ -428,10 +451,8 @@ export default function Usage() {
                                         <td><code className="endpoint-tag">{log.endpoint}</code></td>
                                         <td><span className="model-tag-sm">{log.model}</span></td>
                                         <td>
-                                            <span className={`usage-pill ${log.usage_unit_type === 'images' ? 'images' : 'tokens'}`}>
-                                                {log.usage_unit_type === 'images'
-                                                    ? `${log.image_count || log.usage_unit_count || 0} images`
-                                                    : `${(log.usage_unit_count || log.total_tokens || 0).toLocaleString()} tokens`}
+                                            <span className={`usage-pill ${usagePillKind(log)}`}>
+                                                {formatUsageUnits(log)}
                                             </span>
                                         </td>
                                         <td>{log.input_tokens.toLocaleString()}</td>
@@ -440,7 +461,7 @@ export default function Usage() {
                                         <td>{getRegularInputTokens(log).toLocaleString()}</td>
                                         <td>{log.output_tokens.toLocaleString()}</td>
                                         <td>
-                                            {log.usage_unit_type === 'images'
+                                            {log.usage_unit_type !== 'tokens'
                                                 ? '-'
                                                 : formatCacheHitRate(getCacheReadTokens(log), getTotalInputForCache(log))}
                                         </td>

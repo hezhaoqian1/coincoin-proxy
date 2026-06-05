@@ -11,7 +11,7 @@ from .config import settings
 from .db import get_db
 from .models import ApiKey, RequestLog, Station, StationAlias, StationApplication, StationBranding, StationCommissionLedgerEntry, StationCustomerLink, StationPayoutBatch, StationPricebookEntry, User
 from .proxy import authenticate_user
-from .router import IMAGE_ENDPOINTS, TEXT_ENDPOINTS, registry as model_registry
+from .router import IMAGE_ENDPOINTS, TEXT_ENDPOINTS, VIDEO_ENDPOINTS, registry as model_registry
 from .schemas import AdminStationCreateRequest, StationAliasCreateRequest, StationAliasUpdateRequest, StationApplicationCreateRequest, StationApplicationReviewRequest, StationBrandingUpdateRequest, StationCustomerCreateRequest, StationPayoutBatchCreateRequest, StationPayoutBatchMarkPaidRequest, StationPricebookUpdateRequest, StationSettlementUpdateRequest
 from .security import encrypt_api_key, generate_api_key, generate_id, generate_referral_code, hash_key, require_admin
 
@@ -170,6 +170,8 @@ def _capability_group(capability: str) -> str:
     cap = (capability or "").strip()
     if cap in IMAGE_ENDPOINTS:
         return "image"
+    if cap in VIDEO_ENDPOINTS:
+        return "video"
     if cap in TEXT_ENDPOINTS:
         return "text"
     if cap == "embeddings":
@@ -187,6 +189,8 @@ def _target_supports_capability(public_model, capability: str) -> bool:
 
 
 def _validate_alias_target(target_public_model_id: str, capability: str):
+    if _capability_group(capability) == "video":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="station video aliases are not supported yet")
     model_registry.ensure_initialized()
     target = model_registry.get_public_model((target_public_model_id or "").strip())
     if not target:
@@ -306,7 +310,11 @@ async def _list_active_alias_models(station_id: str, db: AsyncSession) -> list[d
             .order_by(StationAlias.alias.asc())
         )
     ).all()
-    return [_serialize_station_model_alias(alias, price) for alias, price in rows]
+    return [
+        _serialize_station_model_alias(alias, price)
+        for alias, price in rows
+        if _capability_group(alias.capability) != "video"
+    ]
 
 
 async def list_station_public_models_for_user(user: User, db: AsyncSession) -> list[dict] | None:
@@ -681,6 +689,7 @@ async def list_station_alias_targets(request: Request, db: AsyncSession = Depend
                 "price_per_image_cents": model.price_per_image_cents,
             }
             for model in model_registry.list_public_models()
+            if not any(_capability_group(capability) == "video" for capability in (model.capabilities or ()))
         ]
     }
 

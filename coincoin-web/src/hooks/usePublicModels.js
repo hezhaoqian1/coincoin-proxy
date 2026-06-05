@@ -3,10 +3,12 @@ import {
     PUBLIC_MODEL_CATALOG_FALLBACK,
     getDefaultImageModel,
     getDefaultTextModel,
+    getDefaultVideoModel,
     getPublicModels,
     getApiKey,
     isImageCapableModel,
     isTextCapableModel,
+    isVideoCapableModel,
 } from '../api/client'
 
 export function usePublicModels() {
@@ -53,6 +55,10 @@ export function usePublicModels() {
         'gpt-5': 20,
         'gpt-5-codex': 21,
         'gpt-5-codex-mini': 22,
+        'seedance-v2-720p': 30,
+        'seedance-v2-720p-video': 31,
+        'seedance-v2-1080p': 32,
+        'seedance-v2-1080p-video': 33,
     }
     const publicModelCompare = (a, b) => {
         const aRank = publicModelPriority[a.id]
@@ -69,15 +75,19 @@ export function usePublicModels() {
 
     const textModels = [...models.filter(isTextCapableModel).filter(isUserFacingModel)].sort(publicModelCompare)
     const imageModels = [...models.filter(isImageCapableModel).filter(isUserFacingModel)].sort(publicModelCompare)
+    const videoModels = [...models.filter(isVideoCapableModel).filter(isUserFacingModel)].sort(publicModelCompare)
     const defaultTextModel = getDefaultTextModel(textModels) || getDefaultTextModel(models)
     const defaultImageModel = getDefaultImageModel(imageModels) || getDefaultImageModel(models)
+    const defaultVideoModel = getDefaultVideoModel(videoModels) || getDefaultVideoModel(models)
 
     return {
         models,
         textModels,
         imageModels,
+        videoModels,
         defaultTextModel,
         defaultImageModel,
+        defaultVideoModel,
         loading,
     }
 }

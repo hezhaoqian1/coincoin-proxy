@@ -162,6 +162,7 @@ class RegistryChannelRouteTests(unittest.TestCase):
         settings.model_catalog_json = json.dumps(
             {
                 "default_text_model": "demo-model",
+                "default_video_model": "seedance-v2-720p",
                 "models": [
                     {
                         "id": "demo-model",
@@ -177,6 +178,20 @@ class RegistryChannelRouteTests(unittest.TestCase):
                         "auth_style": "bearer",
                         "price_input_per_million": 100,
                         "price_output_per_million": 200,
+                    },
+                    {
+                        "id": "seedance-v2-720p",
+                        "owned_by": "bytedance",
+                        "provider_name": "Seedance",
+                        "provider_model": "seedance-v2-720p",
+                        "capabilities": ["videos/generations"],
+                        "routing_mode": "direct",
+                        "delivery_lane": "upstream_direct",
+                        "upstream_model": "seedance-v2-720p",
+                        "upstream_url": "https://api.wgspai.cn",
+                        "api_key": "seedance-key",
+                        "auth_style": "bearer",
+                        "price_per_video_cents": 98,
                     }
                 ],
             }
@@ -256,6 +271,39 @@ class RegistryChannelRouteTests(unittest.TestCase):
         self.assertEqual(resolved.backend.model_id, "catalog-model")
         self.assertEqual(resolved.backend.upstream_url, "https://catalog.example/v1")
         self.assertEqual(resolved.route_reason, "catalog:demo-model:upstream_direct")
+
+    def test_registry_uses_db_channel_route_for_video_endpoint(self) -> None:
+        channel_router.set_snapshot(
+            [
+                ProviderChannelSnapshot(
+                    channel_id="ch_seedance",
+                    provider_platform="seedance",
+                    channel_type="openai_compatible",
+                    base_url="https://seedance-route.example",
+                    api_key="seedance-db-key",
+                    auth_style="bearer",
+                    priority=0,
+                    capabilities=("videos/generations",),
+                )
+            ],
+            [
+                ModelChannelRouteSnapshot(
+                    route_id="mcr_seedance",
+                    public_model_id="seedance-v2-720p",
+                    endpoint="videos/generations",
+                    channel_id="ch_seedance",
+                    upstream_model="seedance-v2-720p",
+                )
+            ],
+        )
+
+        resolved = registry.resolve_public_model(None, "videos/generations")
+
+        self.assertEqual(resolved.public_model.public_id, "seedance-v2-720p")
+        self.assertEqual(resolved.backend.channel_id, "ch_seedance")
+        self.assertEqual(resolved.backend.model_id, "seedance-v2-720p")
+        self.assertEqual(resolved.backend.upstream_url, "https://seedance-route.example")
+        self.assertIn(":channel:ch_seedance", resolved.route_reason)
 
 
 if __name__ == "__main__":

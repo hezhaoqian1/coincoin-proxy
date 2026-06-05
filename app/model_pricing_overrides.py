@@ -36,6 +36,7 @@ def override_rows_to_snapshot(rows: Iterable[ModelPricingOverride]) -> Tuple[Dic
             "output_multiplier": _as_float(getattr(row, "output_multiplier", 1.0), 1.0),
             "cache_read_multiplier": _as_float(getattr(row, "cache_read_multiplier", 0.0), 0.0),
             "image_multiplier": _as_float(getattr(row, "image_multiplier", 1.0), 1.0),
+            "video_multiplier": _as_float(getattr(row, "video_multiplier", 1.0), 1.0),
             "price_version": row_version,
         }
     return overrides, version

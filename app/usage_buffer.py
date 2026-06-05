@@ -135,6 +135,10 @@ def calculate_image_cost_cents(image_count: int, price_per_image_cents: float = 
     return int(image_count or 0) * float(price_per_image_cents or 0.0)
 
 
+def calculate_video_cost_cents(video_count: int, price_per_video_cents: float = 0.0) -> float:
+    return int(video_count or 0) * float(price_per_video_cents or 0.0)
+
+
 class UsageBuffer:
     """高性能使用量缓冲区
     
@@ -154,23 +158,25 @@ class UsageBuffer:
     def __init__(self) -> None:
         # 分片锁：减少高并发时的锁竞争
         self._locks = [asyncio.Lock() for _ in range(self.SHARD_COUNT)]
-        # 每日统计: (user_id, date) -> {input_tokens, output_tokens, images_total, requests, cost_cents_f}
+        # 每日统计: (user_id, date) -> {input_tokens, output_tokens, images_total, videos_total, requests, cost_cents_f}
         # cost_cents_f 使用 float 保留精度
         self._daily: Dict[Tuple[str, date], Dict[str, float]] = defaultdict(
             lambda: {
                 "input_tokens": 0,
                 "output_tokens": 0,
                 "images_total": 0,
+                "videos_total": 0,
                 "requests": 0,
                 "cost_cents_f": 0.0,
             }
         )
-        # 用户累计: user_id -> {input_tokens, output_tokens, images_total, cost_cents_f}
+        # 用户累计: user_id -> {input_tokens, output_tokens, images_total, videos_total, cost_cents_f}
         self._usage_by_user: Dict[str, Dict[str, float]] = defaultdict(
             lambda: {
                 "input_tokens": 0,
                 "output_tokens": 0,
                 "images_total": 0,
+                "videos_total": 0,
                 "cost_cents_f": 0.0,
             }
         )
@@ -215,14 +221,17 @@ class UsageBuffer:
         fallback_from_channel_id: str = "",
         route_attempt: int = 0,
         image_count: int = 0,
+        video_count: int = 0,
         cost_cents_override: Optional[float] = None,
         price_per_image_cents: float = 0.0,
+        price_per_video_cents: float = 0.0,
         station_id: str = "",
         station_alias: str = "",
         resolved_public_model: str = "",
         wholesale_price_input_per_million: int = 0,
         wholesale_price_output_per_million: int = 0,
         wholesale_price_per_image_cents: float = 0.0,
+        wholesale_price_per_video_cents: float = 0.0,
         wholesale_cost_cents_override: Optional[float] = None,
         retail_charge_cents_override: Optional[float] = None,
         price_version: int = 0,
@@ -231,9 +240,11 @@ class UsageBuffer:
         output_multiplier: float = 1.0,
         cache_read_multiplier: float = 0.0,
         image_multiplier: float = 1.0,
+        video_multiplier: float = 1.0,
         base_price_input_per_million: int = 0,
         base_price_output_per_million: int = 0,
         base_price_per_image_cents: float = 0.0,
+        base_price_per_video_cents: float = 0.0,
         effective_cached_input_per_million: float = 0.0,
     ) -> None:
         """添加使用量（高性能，不阻塞请求）
@@ -256,6 +267,7 @@ class UsageBuffer:
             and cache_creation_tokens == 0
             and requests == 0
             and image_count == 0
+            and video_count == 0
             and usage_unit_count == 0
             and not cost_cents_override
         ):
@@ -267,6 +279,11 @@ class UsageBuffer:
                 cost_cents = calculate_image_cost_cents(
                     image_count=image_count or usage_unit_count,
                     price_per_image_cents=price_per_image_cents,
+                )
+            elif (usage_unit_type or "tokens") == "videos":
+                cost_cents = calculate_video_cost_cents(
+                    video_count=video_count or usage_unit_count,
+                    price_per_video_cents=price_per_video_cents,
                 )
             else:
                 cost_cents = calculate_cost_cents(
@@ -288,6 +305,11 @@ class UsageBuffer:
                     image_count=image_count or usage_unit_count,
                     price_per_image_cents=wholesale_price_per_image_cents,
                 )
+            elif (usage_unit_type or "tokens") == "videos":
+                wholesale_cost_cents = calculate_video_cost_cents(
+                    video_count=video_count or usage_unit_count,
+                    price_per_video_cents=wholesale_price_per_video_cents,
+                )
             else:
                 wholesale_cost_cents = calculate_cost_cents(
                     input_tokens,
@@ -304,7 +326,13 @@ class UsageBuffer:
         resolved_usage_unit_type = (usage_unit_type or "tokens").strip() or "tokens"
         resolved_usage_unit_count = int(
             usage_unit_count
-            or (image_count if resolved_usage_unit_type == "images" else (input_tokens + output_tokens))
+            or (
+                image_count
+                if resolved_usage_unit_type == "images"
+                else video_count
+                if resolved_usage_unit_type == "videos"
+                else (input_tokens + output_tokens)
+            )
         )
         day = china_today()
         
@@ -316,6 +344,7 @@ class UsageBuffer:
             bucket["input_tokens"] += int(input_tokens)
             bucket["output_tokens"] += int(output_tokens)
             bucket["images_total"] += int(image_count or 0)
+            bucket["videos_total"] += int(video_count or 0)
             bucket["requests"] += int(requests)
             bucket["cost_cents_f"] += cost_cents  # 保留浮点精度
             
@@ -324,6 +353,7 @@ class UsageBuffer:
             user_bucket["input_tokens"] += int(input_tokens)
             user_bucket["output_tokens"] += int(output_tokens)
             user_bucket["images_total"] += int(image_count or 0)
+            user_bucket["videos_total"] += int(video_count or 0)
             user_bucket["cost_cents_f"] += cost_cents  # 保留浮点精度
             if api_key_id:
                 self._cost_by_api_key[(api_key_id or "")[:32]] += cost_cents
@@ -340,6 +370,7 @@ class UsageBuffer:
                 "cache_read_tokens": int(cache_read_tokens or cached_tokens or 0),
                 "cache_creation_tokens": int(cache_creation_tokens or 0),
                 "image_count": int(image_count or 0),
+                "video_count": int(video_count or 0),
                 "provider_model": (provider_model or model)[:128],
                 "customer_model_alias": (customer_model_alias or model)[:128],
                 "usage_unit_type": resolved_usage_unit_type[:32],
@@ -363,9 +394,12 @@ class UsageBuffer:
                 "output_multiplier": float(output_multiplier or 0.0),
                 "cache_read_multiplier": float(cache_read_multiplier or 0.0),
                 "image_multiplier": float(image_multiplier or 0.0),
+                "video_multiplier": float(video_multiplier or 0.0),
                 "base_price_input_per_million": int(base_price_input_per_million or 0),
                 "base_price_output_per_million": int(base_price_output_per_million or 0),
                 "base_price_per_image_cents": float(base_price_per_image_cents or 0.0),
+                "base_price_per_video_cents": float(base_price_per_video_cents or 0.0),
+                "price_per_video_cents": float(price_per_video_cents or 0.0),
                 "effective_cached_input_per_million": float(effective_cached_input_per_million or 0.0),
                 "cost_cents": round(cost_cents),
                 "duration_ms": int(duration_ms),
@@ -443,6 +477,7 @@ class UsageBuffer:
                     bucket["input_tokens"] += int(stats.get("input_tokens", 0))
                     bucket["output_tokens"] += int(stats.get("output_tokens", 0))
                     bucket["images_total"] += int(stats.get("images_total", 0))
+                    bucket["videos_total"] += int(stats.get("videos_total", 0))
                     bucket["requests"] += int(stats.get("requests", 0))
                     bucket["cost_cents_f"] += float(stats.get("cost_cents_f", 0))
                 for user_id, usage in usage_by_user.items():
@@ -450,6 +485,7 @@ class UsageBuffer:
                     user_bucket["input_tokens"] += int(usage.get("input_tokens", 0))
                     user_bucket["output_tokens"] += int(usage.get("output_tokens", 0))
                     user_bucket["images_total"] += int(usage.get("images_total", 0))
+                    user_bucket["videos_total"] += int(usage.get("videos_total", 0))
                     user_bucket["cost_cents_f"] += float(usage.get("cost_cents_f", 0))
             finally:
                 for lock in self._locks:
@@ -501,11 +537,12 @@ async def flush_once() -> None:
                 input_tokens = int(stats.get("input_tokens", 0))
                 output_tokens = int(stats.get("output_tokens", 0))
                 images_total = int(stats.get("images_total", 0))
+                videos_total = int(stats.get("videos_total", 0))
                 requests = int(stats.get("requests", 0))
                 cost_cents = round(stats.get("cost_cents_f", 0.0))
                 total_tokens = input_tokens + output_tokens
                 
-                if total_tokens == 0 and images_total == 0 and requests == 0:
+                if total_tokens == 0 and images_total == 0 and videos_total == 0 and requests == 0:
                     continue
                     
                 stmt = mysql_insert(UsageDaily).values(
@@ -515,6 +552,7 @@ async def flush_once() -> None:
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
                     images_total=images_total,
+                    videos_total=videos_total,
                     cost_cents=cost_cents,
                     requests_total=requests,
                     updated_at=datetime.utcnow(),
@@ -524,6 +562,7 @@ async def flush_once() -> None:
                     input_tokens=UsageDaily.input_tokens + input_tokens,
                     output_tokens=UsageDaily.output_tokens + output_tokens,
                     images_total=UsageDaily.images_total + images_total,
+                    videos_total=UsageDaily.videos_total + videos_total,
                     cost_cents=UsageDaily.cost_cents + cost_cents,
                     requests_total=UsageDaily.requests_total + requests,
                     updated_at=datetime.utcnow(),
@@ -545,6 +584,7 @@ async def flush_once() -> None:
                         cache_read_tokens=log.get("cache_read_tokens", log.get("cached_tokens", 0)),
                         cache_creation_tokens=log.get("cache_creation_tokens", 0),
                         image_count=log.get("image_count", 0),
+                        video_count=log.get("video_count", 0),
                         provider_model=log.get("provider_model", ""),
                         customer_model_alias=log.get("customer_model_alias", ""),
                         usage_unit_type=log.get("usage_unit_type", "tokens"),
@@ -568,9 +608,12 @@ async def flush_once() -> None:
                         output_multiplier=log.get("output_multiplier", 1.0),
                         cache_read_multiplier=log.get("cache_read_multiplier", 0.0),
                         image_multiplier=log.get("image_multiplier", 1.0),
+                        video_multiplier=log.get("video_multiplier", 1.0),
                         base_price_input_per_million=log.get("base_price_input_per_million", 0),
                         base_price_output_per_million=log.get("base_price_output_per_million", 0),
                         base_price_per_image_cents=log.get("base_price_per_image_cents", 0.0),
+                        base_price_per_video_cents=log.get("base_price_per_video_cents", 0.0),
+                        price_per_video_cents=log.get("price_per_video_cents", 0.0),
                         effective_cached_input_per_million=log.get("effective_cached_input_per_million", 0.0),
                         cost_cents=log["cost_cents"],
                         duration_ms=log["duration_ms"],

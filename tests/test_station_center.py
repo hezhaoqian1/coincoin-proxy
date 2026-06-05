@@ -276,6 +276,60 @@ class StationCenterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fake_db.flushes, 1)
         self.assertEqual(fake_db.commits, 1)
 
+    async def test_list_station_alias_targets_filters_video_models(self):
+        owner = SimpleNamespace(id="u_owner")
+        station = SimpleNamespace(id="st_1")
+        fake_db = _FakeDB()
+        text_target = SimpleNamespace(
+            public_id="gpt-5.4-mini",
+            owned_by="openai",
+            capabilities=("chat/completions", "responses"),
+            billable_sku="legacy-gpt-5.4-mini-text",
+            price_input_per_million=75,
+            price_output_per_million=450,
+            price_per_image_cents=0.0,
+        )
+        video_target = SimpleNamespace(
+            public_id="seedance-v2-720p",
+            owned_by="bytedance",
+            capabilities=("videos/generations",),
+            billable_sku="seedance-v2-720p-video-task",
+            price_input_per_million=0,
+            price_output_per_million=0,
+            price_per_image_cents=0.0,
+        )
+
+        with patch.object(stations_module, "_get_current_user", AsyncMock(return_value=owner)), patch.object(
+            stations_module, "_get_owned_station", AsyncMock(return_value=station)
+        ), patch.object(stations_module.model_registry, "list_public_models", return_value=[text_target, video_target]):
+            result = await stations_module.list_station_alias_targets(request=None, db=fake_db)
+
+        self.assertEqual([item["id"] for item in result["data"]], ["gpt-5.4-mini"])
+        self.assertEqual(fake_db.added, [])
+        self.assertEqual(fake_db.commits, 0)
+
+    async def test_create_station_alias_rejects_video_capability_without_db_write(self):
+        owner = SimpleNamespace(id="u_owner")
+        station = SimpleNamespace(id="st_1", default_text_alias="", default_image_alias="")
+        fake_db = _FakeDB()
+
+        with patch.object(stations_module, "_get_current_user", AsyncMock(return_value=owner)), patch.object(
+            stations_module, "_get_owned_station", AsyncMock(return_value=station)
+        ):
+            payload = stations_module.StationAliasCreateRequest(
+                alias="video",
+                target_public_model_id="seedance-v2-720p",
+                capability="videos/generations",
+            )
+            with self.assertRaises(stations_module.HTTPException) as ctx:
+                await stations_module.create_station_alias(payload, request=None, db=fake_db)
+
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertEqual(ctx.exception.detail, "station video aliases are not supported yet")
+        self.assertEqual(fake_db.added, [])
+        self.assertEqual(fake_db.flushes, 0)
+        self.assertEqual(fake_db.commits, 0)
+
     async def test_admin_create_station_creates_owner_link_branding_and_default_alias(self):
         snapshot = self._station_url_settings_snapshot()
         owner = SimpleNamespace(id="u_owner", username="owner", email="owner@example.com", status="active")
