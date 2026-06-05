@@ -160,6 +160,7 @@ export default function ApiKeys() {
     const [createForm, setCreateForm] = useState(blankForm)
     const [editingId, setEditingId] = useState('')
     const [editForm, setEditForm] = useState(blankForm)
+    const canManageKeys = authMode !== 'api'
 
     const loadKeys = async () => {
         setLoading(true)
@@ -253,6 +254,19 @@ export default function ApiKeys() {
         window.dispatchEvent(new Event('coincoin-auth-changed'))
     }
 
+    const toggleCreate = () => {
+        if (!canManageKeys) return
+        setShowCreate((value) => !value)
+    }
+
+    const handleCreateToggleKeyDown = (event) => {
+        if (!canManageKeys) return
+        if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            toggleCreate()
+        }
+    }
+
     return (
         <AppShell
             title="API 密钥"
@@ -272,7 +286,7 @@ export default function ApiKeys() {
                         </button>
                     </div>
                 ) : (
-                    <button className="btn btn-primary btn-sm" type="button" onClick={() => setShowCreate((value) => !value)}>
+                    <button className="btn btn-primary btn-sm" type="button" onClick={toggleCreate}>
                         {showCreate ? '收起' : '新建 Key'}
                     </button>
                 )
@@ -286,18 +300,42 @@ export default function ApiKeys() {
                     </div>
                 )}
 
-                {showCreate && (
-                    <div className="glass-card api-keys-create">
+                {canManageKeys && (
+                    <div className={`glass-card api-keys-create ${showCreate ? 'is-open' : 'is-collapsed'}`}>
                         <div className="api-keys-section-head">
-                            <div>
+                            <div
+                                className="api-keys-section-toggle"
+                                role="button"
+                                tabIndex={0}
+                                aria-expanded={showCreate}
+                                onDoubleClick={toggleCreate}
+                                onKeyDown={handleCreateToggleKeyDown}
+                                title={showCreate ? '双击收起新建区域' : '双击展开新建区域'}
+                            >
                                 <span className="api-keys-kicker">New Key</span>
                                 <h3>新建开发者 Key</h3>
+                                <p className="api-keys-section-tip">
+                                    {showCreate ? '双击标题栏可收起' : '双击标题栏可展开，也可以点右侧按钮'}
+                                </p>
                             </div>
-                            <button className="btn btn-primary btn-sm" onClick={handleCreate} disabled={creating || authMode === 'api'}>
-                                {creating ? '创建中...' : '创建'}
-                            </button>
+                            <div className="api-keys-create-actions">
+                                {showCreate ? (
+                                    <>
+                                        <button className="btn btn-primary btn-sm" type="button" onClick={handleCreate} disabled={creating}>
+                                            {creating ? '创建中...' : '创建'}
+                                        </button>
+                                        <button className="btn btn-ghost btn-sm" type="button" onClick={toggleCreate}>
+                                            收起
+                                        </button>
+                                    </>
+                                ) : (
+                                    <button className="btn btn-secondary btn-sm" type="button" onClick={toggleCreate}>
+                                        展开
+                                    </button>
+                                )}
+                            </div>
                         </div>
-                        <KeyForm form={createForm} setForm={setCreateForm} mode="create" />
+                        {showCreate ? <KeyForm form={createForm} setForm={setCreateForm} mode="create" /> : null}
                     </div>
                 )}
 

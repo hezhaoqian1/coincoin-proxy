@@ -106,6 +106,44 @@
     font-weight: 600;
 }
 
+.api-keys-create {
+    transition: background var(--transition-base), border-color var(--transition-base), box-shadow var(--transition-base);
+}
+
+.api-keys-create.is-collapsed {
+    padding-bottom: var(--space-lg);
+}
+
+.api-keys-create.is-open {
+    box-shadow: var(--shadow-md);
+}
+
+.api-keys-section-toggle {
+    min-width: 0;
+    flex: 1;
+    cursor: pointer;
+    user-select: none;
+}
+
+.api-keys-section-toggle:focus-visible {
+    outline: 2px solid rgba(99, 102, 241, 0.55);
+    outline-offset: 4px;
+    border-radius: var(--radius-sm);
+}
+
+.api-keys-section-tip {
+    margin: 8px 0 0;
+    color: var(--text-tertiary);
+    font-size: 0.84rem;
+}
+
+.api-keys-create-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+}
+
 .api-keys-search,
 .api-keys-filter,
 .api-key-form-grid input,
