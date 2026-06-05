@@ -694,10 +694,9 @@ export default function Dashboard() {
         }
     }
 
-    return (
+        return (
             <AppShell
             title="概览"
-            description="余额、密钥状态和最近请求都在这里。"
             actions={<Link to="/recharge" className="btn btn-primary btn-sm">充值</Link>}
         >
             <div className="dashboard-page dashboard">

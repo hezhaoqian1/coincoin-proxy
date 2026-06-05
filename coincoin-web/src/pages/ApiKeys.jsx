@@ -270,7 +270,6 @@ export default function ApiKeys() {
     return (
         <AppShell
             title="API 密钥"
-            description="给不同项目分配 Key，按需限制额度、过期时间和服务端 IP。"
             actions={
                 authMode === 'api' ? (
                     <div className="api-keys-header-actions">

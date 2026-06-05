@@ -33,14 +33,6 @@
     top: -10px;
 }
 
-.recharge-overview {
-    display: grid;
-    grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr);
-    gap: var(--space-lg);
-    padding: var(--space-lg);
-    margin-bottom: var(--space-lg);
-}
-
 .recharge-kicker {
     display: inline-flex;
     margin-bottom: 10px;
@@ -49,45 +41,6 @@
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--accent-cyan);
-}
-
-.recharge-overview-copy h2 {
-    margin-bottom: var(--space-sm);
-    font-size: 1.35rem;
-    line-height: 1.2;
-}
-
-.recharge-overview-copy p {
-    margin: 0;
-    color: var(--text-secondary);
-    line-height: 1.65;
-    overflow-wrap: anywhere;
-}
-
-.recharge-overview-points {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-md);
-}
-
-.recharge-point {
-    padding: 14px;
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border-color);
-    background: var(--bg-glass);
-}
-
-.recharge-point strong {
-    display: block;
-    margin-bottom: 8px;
-    font-size: 0.92rem;
-}
-
-.recharge-point p {
-    margin: 0;
-    color: var(--text-tertiary);
-    font-size: 0.84rem;
-    line-height: 1.65;
 }
 
 .recharge-plans {
@@ -308,22 +261,6 @@
     margin-top: var(--space-xl);
 }
 
-.pricing-policy-note {
-    margin: 0 0 var(--space-xl);
-    padding: var(--space-lg);
-}
-
-.pricing-policy-note strong {
-    display: block;
-    margin-bottom: 8px;
-}
-
-.pricing-policy-note p {
-    margin: 0;
-    color: var(--text-secondary);
-    line-height: 1.65;
-}
-
 .recharge-live-order {
     margin-bottom: var(--space-md);
 }
@@ -444,10 +381,6 @@
 }
 
 @media (max-width: 1024px) {
-    .recharge-overview {
-        grid-template-columns: 1fr;
-    }
-
     .billing-pool-grid {
         grid-template-columns: repeat(2, 1fr);
     }
@@ -484,48 +417,11 @@
         font-weight: 750;
     }
 
-    .recharge-overview {
-        gap: 14px;
-        margin-bottom: 12px;
-    }
-
-    .recharge-overview-copy h2 {
-        font-size: 1.18rem;
-    }
-
-    .recharge-overview-copy p {
-        font-size: 0.88rem;
-    }
-
-    .recharge-overview-points {
-        display: grid;
-        grid-template-columns: 1fr;
-        gap: 8px;
-    }
-
-    .recharge-point {
-        padding: 10px;
-        text-align: center;
-    }
-
-    .recharge-point strong {
-        margin-bottom: 0;
-        font-size: 0.82rem;
-    }
-
-    .recharge-point p {
-        display: none;
-    }
-
     .recharge-plans {
         grid-template-columns: 1fr;
         gap: 10px;
         max-width: none;
         margin: 0 0 14px;
-    }
-
-    .recharge-overview {
-        padding: 16px;
     }
 
     .recharge-page .glass-card {
@@ -632,11 +528,6 @@
         justify-content: flex-start;
     }
 
-    .pricing-policy-note {
-        margin-bottom: 14px;
-        padding: 16px;
-    }
-
     .order-history-row {
         grid-template-columns: 1fr;
         gap: 8px;
@@ -709,12 +600,6 @@
     font-size: 1.1rem;
     font-weight: 700;
     margin-bottom: var(--space-xs);
-}
-
-.redeem-desc {
-    font-size: 0.85rem;
-    color: var(--text-tertiary);
-    margin-bottom: var(--space-lg);
 }
 
 .redeem-row {

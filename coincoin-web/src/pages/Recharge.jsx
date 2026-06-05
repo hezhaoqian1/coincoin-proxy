@@ -371,28 +371,6 @@ export default function Recharge() {
                 </div>
             )}
 
-            <div className="recharge-overview glass-card animate-fade-in-up">
-                <div className="recharge-overview-copy">
-                    <span className="recharge-kicker">Billing</span>
-                    <h2>月卡额度优先，流量包补量</h2>
-                    <p>所有模型共用同一套额度池，扣费顺序为套餐额度、流量包、历史余额。</p>
-                </div>
-                <div className="recharge-overview-points">
-                    <div className="recharge-point">
-                            <strong>选月卡</strong>
-                            <p>套餐每 30 天重置一次，未用完不结转。</p>
-                    </div>
-                    <div className="recharge-point">
-                            <strong>补流量</strong>
-                            <p>流量包有效期 180 天，套餐有效时才会消耗。</p>
-                    </div>
-                    <div className="recharge-point">
-                            <strong>升级补差</strong>
-                            <p>高档升级按本周期剩余时间补差，低档购买会被拦截。</p>
-                    </div>
-                </div>
-            </div>
-
                 {isLoggedIn && (
                     <BillingSnapshot
                         billingState={billingState}
@@ -470,11 +448,6 @@ export default function Recharge() {
                         </div>
                     </>
                 )}
-
-                <div className="pricing-policy-note glass-card animate-fade-in-up" style={{ animationDelay: '300ms' }}>
-                    <strong>购买规则</strong>
-                    <p>套餐额度每 30 天重置且不结转；同档未用完只续费，用完后购买会立即重置；高档购买补差升级；低档购买无效；流量包 180 天有效，套餐过期后暂停使用。</p>
-                </div>
 
                 <div id="recharge-section-orders" className="recharge-anchor"></div>
 
@@ -568,7 +541,6 @@ export default function Recharge() {
                     <div className="settings-section-head" style={{ marginBottom: 'var(--space-md)' }}>
                         <div>
                             <h3>我的订单</h3>
-                            <p className="settings-subtitle">最近支付订单和到账状态会显示在这里。</p>
                         </div>
                         {isLoggedIn && <button className="btn btn-secondary btn-sm" onClick={loadOrders} disabled={ordersLoading}>刷新</button>}
                     </div>
@@ -603,14 +575,14 @@ export default function Recharge() {
                     ) : (
                         <div className="orders-list">
                             {orders.map(order => (
-                                <div className="order-history-row" key={order.order_no}>
+                                <div className="order-history-row" key={order.order_no || order.id}>
                                     <div className="order-history-main">
-                                        <code>{order.order_no}</code>
+                                        <code>{order.order_no || order.id || '-'}</code>
                                         <span>{formatOrderTime(order.confirmed_at || order.created_at)}</span>
                                     </div>
                                     <div className="order-history-meta">
-                                        <span>¥{order.amount_rmb}</span>
-                                        <span>+${((order.add_balance_cents || 0) / 100).toFixed(2)}</span>
+                                        <span>¥{order.amount_rmb || order.money || '-'}</span>
+                                        <span>+${((order.add_balance_cents ?? order.added_cents ?? 0) / 100).toFixed(2)}</span>
                                         <span className={`order-status order-status-${order.status}`}>
                                             {order.status === 'confirmed' ? '已到账' : '待确认'}
                                         </span>
@@ -625,7 +597,6 @@ export default function Recharge() {
 
                 <div className="redeem-section glass-card animate-fade-in-up" style={{ animationDelay: '500ms' }}>
                     <h3>兑换码充值</h3>
-                    <p className="redeem-desc">{isLoggedIn ? '输入兑换码后会立即入账。' : '兑换码入账也需要先登录。'}</p>
                     {isLoggedIn ? (
                         <>
                             <div className="redeem-row">
@@ -661,10 +632,7 @@ export default function Recharge() {
 
     if (isLoggedIn) {
         return (
-            <AppShell
-                title="充值与套餐"
-                description="充值、订单状态和兑换码都在这一页。"
-            >
+            <AppShell title="充值与套餐">
                 {pageContent}
             </AppShell>
         )

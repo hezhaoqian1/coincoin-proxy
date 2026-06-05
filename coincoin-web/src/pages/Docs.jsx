@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { describePublicModel, getBalance, getCachedInputPricePerMillion, hasModelPricingMultiplier } from '../api/client'
+import { getCachedInputPricePerMillion, hasModelPricingMultiplier } from '../api/client'
 import AppShell from '../components/AppShell'
 import { useAuth } from '../hooks/useAuth'
 import { usePublicModels } from '../hooks/usePublicModels'
@@ -39,91 +39,23 @@ const TAB_INDEX_BY_KEY = {
 }
 
 const TAB_KEY_BY_INDEX = ['quickstart', 'models', 'api', 'snippets']
-
-const GEMINI_OFFICIAL_PRICE_SOURCE = 'Google Gemini API pricing · checked 2026-05-09'
-const OPENAI_IMAGE_OFFICIAL_PRICE_SOURCE = 'OpenAI image generation pricing · checked 2026-05-09'
-const CLAUDE_OFFICIAL_PRICE_SOURCE = 'Anthropic Claude pricing · checked 2026-05-31'
-const SEEDANCE_UPSTREAM_PRICE_SOURCE = 'wgspai 上游合同价 · checked 2026-06-05'
-const REFERENCE_PRICING = {
-    'claude-opus-4-8': {
-        providerModel: 'Claude Opus 4.8 alias',
-        input: '$5.00 / 1M input tokens',
-        output: '$25.00 / 1M output tokens',
-        source: CLAUDE_OFFICIAL_PRICE_SOURCE,
-    },
-    'claude-opus-4.8': {
-        providerModel: 'Claude Opus 4.8 alias',
-        input: '$5.00 / 1M input tokens',
-        output: '$25.00 / 1M output tokens',
-        source: CLAUDE_OFFICIAL_PRICE_SOURCE,
-    },
-    'gpt-image-2': {
-        providerModel: 'GPT Image 2',
-        image: '$0.053 / image · medium 1024x1024 reference',
-        source: OPENAI_IMAGE_OFFICIAL_PRICE_SOURCE,
-    },
-    'gemini-balanced': {
-        providerModel: 'Gemini 2.5 Flash-Lite',
-        input: '$0.10 / 1M input tokens',
-        output: '$0.40 / 1M output tokens',
-        source: GEMINI_OFFICIAL_PRICE_SOURCE,
-    },
-    'gemini-fast': {
-        providerModel: 'Gemini 2.5 Flash',
-        input: '$0.30 / 1M input tokens',
-        output: '$2.50 / 1M output tokens',
-        source: GEMINI_OFFICIAL_PRICE_SOURCE,
-    },
-    'gemini-reasoning': {
-        providerModel: 'Gemini 2.5 Pro (<=200K prompt)',
-        input: '$1.25 / 1M input tokens',
-        output: '$10.00 / 1M output tokens',
-        source: GEMINI_OFFICIAL_PRICE_SOURCE,
-    },
-    'gemini-image': {
-        providerModel: 'Gemini 3.1 Flash Image Preview (1K)',
-        image: '$0.067 / 1K image',
-        source: GEMINI_OFFICIAL_PRICE_SOURCE,
-    },
-    'gemini-3.1-flash-image': {
-        providerModel: 'Gemini 3.1 Flash Image Preview (1K)',
-        image: '$0.067 / 1K image',
-        source: GEMINI_OFFICIAL_PRICE_SOURCE,
-    },
-    'vertex-gemini-2.5-flash-image': {
-        providerModel: 'Gemini 3.1 Flash Image Preview (1K)',
-        image: '$0.067 / 1K image',
-        source: GEMINI_OFFICIAL_PRICE_SOURCE,
-    },
-    'vertex-gemini-3.1-flash-image-preview': {
-        providerModel: 'Gemini 3.1 Flash Image Preview (1K)',
-        image: '$0.067 / 1K image',
-        source: GEMINI_OFFICIAL_PRICE_SOURCE,
-    },
-    'seedance-v2-720p': {
-        providerModel: 'Seedance 2.0 720p',
-        video: '¥7 / video task',
-        source: SEEDANCE_UPSTREAM_PRICE_SOURCE,
-    },
-    'seedance-v2-720p-video': {
-        providerModel: 'Seedance 2.0 720p video-reference',
-        video: '¥8 / video task',
-        source: SEEDANCE_UPSTREAM_PRICE_SOURCE,
-    },
-    'seedance-v2-1080p': {
-        providerModel: 'Seedance 2.0 1080p',
-        video: '¥16 / video task',
-        source: SEEDANCE_UPSTREAM_PRICE_SOURCE,
-    },
-    'seedance-v2-1080p-video': {
-        providerModel: 'Seedance 2.0 1080p video-reference',
-        video: '¥20 / video task',
-        source: SEEDANCE_UPSTREAM_PRICE_SOURCE,
-    },
+const MODEL_CATEGORY_KEYS = ['all', 'openai', 'claude', 'gemini', 'image', 'video']
+const MODEL_CATEGORY_LABELS = {
+    all: '全部',
+    openai: 'OpenAI',
+    claude: 'Claude',
+    gemini: 'Gemini',
+    image: '图片',
+    video: '视频',
 }
 
-function formatCaps(model) {
-    return (model.coincoin_capabilities || []).join(' · ')
+function getModelCategory(model, type) {
+    const id = model.id || ''
+    if (type === 'video') return 'video'
+    if (type === 'image') return 'image'
+    if (id.startsWith('claude-') || ['opus', 'sonnet', 'haiku'].includes(id)) return 'claude'
+    if (id.includes('gemini') || model.owned_by === 'google') return 'gemini'
+    return 'openai'
 }
 
 function formatTier(model) {
@@ -158,14 +90,6 @@ function formatMultiplier(model) {
     const outputRatio = Number(model.coincoin_output_multiplier || 1).toFixed(2)
     const mediaRatio = Number(model.coincoin_video_multiplier || model.coincoin_image_multiplier || 1).toFixed(2)
     return `${modelRatio}x · out ${outputRatio}x · media ${mediaRatio}x`
-}
-
-function getReferencePricing(model) {
-    return REFERENCE_PRICING[model?.id || ''] || null
-}
-
-function getProviderName(model) {
-    return model?.owned_by === 'google' ? 'Google' : model?.owned_by || 'provider'
 }
 
 export default function Docs() {
@@ -225,7 +149,7 @@ export default function Docs() {
 
                     <div className="docs-content glass-card">
                         {activeTab === 0 && <QuickStart primaryTextModel={primaryTextModel} primaryImageModel={primaryImageModel} />}
-                        {activeTab === 1 && <ModelsAndPricing textModels={textModels} imageModels={imageModels} videoModels={videoModels} defaultTextModel={defaultTextModel} defaultImageModel={defaultImageModel} defaultVideoModel={defaultVideoModel} />}
+                        {activeTab === 1 && <ModelsAndPricing textModels={textModels} imageModels={imageModels} videoModels={videoModels} defaultTextModel={defaultTextModel} defaultImageModel={defaultImageModel} />}
                         {activeTab === 2 && <ApiReference primaryTextModel={primaryTextModel} primaryImageModel={primaryImageModel} primaryVideoModel={primaryVideoModel} />}
                         {activeTab === 3 && <CodeExamples primaryTextModel={primaryTextModel} primaryImageModel={primaryImageModel} primaryVideoModel={primaryVideoModel} />}
                     </div>
@@ -240,7 +164,7 @@ export default function Docs() {
                 <AppShell title="可用模型" description="模型、价格和当前接入状态。">
                     <div className="docs-shell-page">
                         <div className="docs-content glass-card">
-                            <ModelsAndPricing textModels={textModels} imageModels={imageModels} videoModels={videoModels} defaultTextModel={defaultTextModel} defaultImageModel={defaultImageModel} defaultVideoModel={defaultVideoModel} />
+                            <ModelsAndPricing textModels={textModels} imageModels={imageModels} videoModels={videoModels} defaultTextModel={defaultTextModel} defaultImageModel={defaultImageModel} />
                         </div>
                     </div>
                 </AppShell>
@@ -277,7 +201,7 @@ export default function Docs() {
 
                         <div className="docs-content glass-card">
                             {activeTab === 0 && <QuickStart primaryTextModel={primaryTextModel} primaryImageModel={primaryImageModel} />}
-                            {activeTab === 1 && <ModelsAndPricing textModels={textModels} imageModels={imageModels} videoModels={videoModels} defaultTextModel={defaultTextModel} defaultImageModel={defaultImageModel} defaultVideoModel={defaultVideoModel} />}
+                            {activeTab === 1 && <ModelsAndPricing textModels={textModels} imageModels={imageModels} videoModels={videoModels} defaultTextModel={defaultTextModel} defaultImageModel={defaultImageModel} />}
                             {activeTab === 2 && <ApiReference primaryTextModel={primaryTextModel} primaryImageModel={primaryImageModel} primaryVideoModel={primaryVideoModel} />}
                             {activeTab === 3 && <CodeExamples primaryTextModel={primaryTextModel} primaryImageModel={primaryImageModel} primaryVideoModel={primaryVideoModel} />}
                         </div>
@@ -526,19 +450,9 @@ claude --model claude-opus-4-8`}</pre>
     )
 }
 
-function StatusCard({ label, value, tone = 'neutral', action }) {
-    return (
-        <div className={`access-status-card ${tone}`}>
-            <span>{label}</span>
-            <strong>{value}</strong>
-            {action}
-        </div>
-    )
-}
-
-function ModelsAndPricing({ textModels, imageModels, videoModels, defaultTextModel, defaultImageModel, defaultVideoModel }) {
-    const { activeDeveloperKeyCount, effectiveApiKey, hasDeveloperKey, isLoggedIn } = useAuth()
-    const [balance, setBalance] = useState({ status: 'idle', data: null })
+function ModelsAndPricing({ textModels, imageModels, videoModels, defaultTextModel, defaultImageModel }) {
+    const { effectiveApiKey } = useAuth()
+    const [activeCategory, setActiveCategory] = useState('all')
     const [copied, setCopied] = useState('')
     const openaiBaseUrl = `${SITE}/v1`
     const claudeBaseUrl = SITE
@@ -548,24 +462,45 @@ function ModelsAndPricing({ textModels, imageModels, videoModels, defaultTextMod
   -H "Content-Type: application/json" \\
   -d '{"model":"${defaultTextModel?.id || textModels[0]?.id || 'opus'}","messages":[{"role":"user","content":"Reply with only: OK"}]}'`
 
-    useEffect(() => {
-        if (!isLoggedIn) {
-            setBalance({ status: 'idle', data: null })
-            return undefined
-        }
-        let active = true
-        setBalance({ status: 'loading', data: null })
-        getBalance()
-            .then((data) => {
-                if (active) setBalance({ status: 'ready', data })
-            })
-            .catch(() => {
-                if (active) setBalance({ status: 'error', data: null })
-            })
-        return () => {
-            active = false
-        }
-    }, [isLoggedIn])
+    const modelRows = useMemo(() => {
+        const rows = [
+            ...textModels.map((model) => ({
+                model,
+                category: getModelCategory(model, 'text'),
+                defaultFor: (model.coincoin_default_for || []).includes('text') ? '默认文本' : '',
+                primaryPrice: formatUsdPerMillion(model.coincoin_price_input_per_million),
+                outputPrice: formatUsdPerMillion(model.coincoin_price_output_per_million),
+                cachedPrice: formatUsdPerMillion(getCachedInputPricePerMillion(model), 3),
+            })),
+            ...imageModels.map((model) => ({
+                model,
+                category: 'image',
+                defaultFor: (model.coincoin_default_for || []).includes('image') ? '默认图片' : '',
+                primaryPrice: formatImagePrice(model.coincoin_price_per_image_cents),
+                outputPrice: '不适用',
+                cachedPrice: '不适用',
+            })),
+            ...videoModels.map((model) => ({
+                model,
+                category: 'video',
+                defaultFor: (model.coincoin_default_for || []).includes('video') ? '默认视频' : '',
+                primaryPrice: formatVideoPrice(model.coincoin_price_per_video_cents),
+                outputPrice: '不适用',
+                cachedPrice: '不适用',
+            })),
+        ]
+        return rows
+    }, [textModels, imageModels, videoModels])
+
+    const categories = MODEL_CATEGORY_KEYS.map((key) => ({
+        key,
+        label: MODEL_CATEGORY_LABELS[key],
+        count: key === 'all' ? modelRows.length : modelRows.filter((row) => row.category === key).length,
+    }))
+
+    const visibleRows = activeCategory === 'all'
+        ? modelRows
+        : modelRows.filter((row) => row.category === activeCategory)
 
     const copy = async (text, label) => {
         await navigator.clipboard.writeText(text)
@@ -576,200 +511,59 @@ function ModelsAndPricing({ textModels, imageModels, videoModels, defaultTextMod
     return (
         <div className="doc-section animate-fade-in">
             <h2>可用模型</h2>
-            <div className="access-status-grid">
-                {isLoggedIn && (
-                    <StatusCard
-                        label="余额"
-                        value={balance.status === 'ready' ? `$${Number(balance.data?.balance_usd || 0).toFixed(2)}` : balance.status === 'loading' ? '读取中' : '读取失败'}
-                        tone={balance.status === 'ready' && balance.data?.balance_usd > 0 ? 'ok' : 'warn'}
-                        action={<Link className="btn btn-ghost btn-sm" to="/recharge?section=recharge">充值</Link>}
-                    />
-                )}
-                {isLoggedIn && (
-                    <StatusCard
-                        label="开发者 Key"
-                        value={hasDeveloperKey ? `${activeDeveloperKeyCount || 1} 把可用` : '未生成'}
-                        tone={hasDeveloperKey ? 'ok' : 'warn'}
-                        action={<Link className="btn btn-ghost btn-sm" to="/api-keys">管理</Link>}
-                    />
-                )}
-                <StatusCard
-                    label="文本模型"
-                    value={defaultTextModel?.id || textModels[0]?.id || '未配置'}
-                    tone={textModels.length ? 'ok' : 'warn'}
-                />
-                <StatusCard
-                    label="图片模型"
-                    value={defaultImageModel?.id || imageModels[0]?.id || '未配置'}
-                    tone={imageModels.length ? 'ok' : 'neutral'}
-                />
-                <StatusCard
-                    label="视频模型"
-                    value={defaultVideoModel?.id || videoModels[0]?.id || '未配置'}
-                    tone={videoModels.length ? 'ok' : 'neutral'}
-                />
-            </div>
-
             <div className="endpoint-strip">
                 <button onClick={() => copy(openaiBaseUrl, 'openai')}><span>OpenAI Base URL</span><code>{openaiBaseUrl}</code><strong>{copied === 'openai' ? '已复制' : '复制'}</strong></button>
                 <button onClick={() => copy(claudeBaseUrl, 'claude')}><span>Claude Code Base URL</span><code>{claudeBaseUrl}</code><strong>{copied === 'claude' ? '已复制' : '复制'}</strong></button>
                 <button onClick={() => copy(firstCurl, 'curl')}><span>第一条请求</span><code>curl chat/completions</code><strong>{copied === 'curl' ? '已复制' : '复制'}</strong></button>
             </div>
 
-            <h3>文本模型</h3>
-            <div className="official-price-callout">
-                <div>
-                    <span className="docs-shell-kicker">Pricing Reference</span>
-                    <strong>公开模型价格按来源写入默认目录</strong>
-                    <p>页面展示来自 <code>/v1/models</code>；生产环境如果配置了价格环境变量，会以线上返回值为准。</p>
+            <div className="model-catalog-head">
+                <h3>模型目录</h3>
+                <div className="model-category-tabs" role="tablist" aria-label="模型分类">
+                    {categories.map((category) => (
+                        <button
+                            key={category.key}
+                            type="button"
+                            className={`model-category-tab ${activeCategory === category.key ? 'active' : ''}`}
+                            onClick={() => setActiveCategory(category.key)}
+                            aria-selected={activeCategory === category.key}
+                        >
+                            <span>{category.label}</span>
+                            <strong>{category.count}</strong>
+                        </button>
+                    ))}
                 </div>
-                <a href="https://platform.claude.com/docs/en/about-claude/models/overview" target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm">查看 Claude 价格</a>
             </div>
             <div className="pricing-table-wrap">
-                <table className="data-table pricing-table pricing-table-text">
+                <table className="data-table pricing-table model-catalog-table">
                     <thead>
                         <tr>
                             <th>模型名称</th>
-                            <th>输入价格</th>
+                            <th>分类</th>
+                            <th>输入/媒体价格</th>
                             <th>输出价格</th>
                             <th>缓存读取</th>
                             <th>倍率</th>
-                            <th>官方对标</th>
-                            <th>描述</th>
                             <th>状态</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {textModels.map((model) => {
-                            const isDefault = (model.coincoin_default_for || []).includes('text')
-                            const reference = getReferencePricing(model)
+                        {visibleRows.map(({ model, category, defaultFor, primaryPrice, outputPrice, cachedPrice }) => {
                             return (
                                 <tr key={model.id}>
                                     <td>
                                         <div className="model-name-cell">
                                             <code className="model-tag-sm">{model.id}</code>
-                                            {isDefault && <span className="inline-badge">默认文本</span>}
+                                            {defaultFor && <span className="inline-badge">{defaultFor}</span>}
                                         </div>
                                     </td>
-                                    <td className="price-cell">{formatUsdPerMillion(model.coincoin_price_input_per_million)}</td>
-                                    <td className="price-cell">{formatUsdPerMillion(model.coincoin_price_output_per_million)}</td>
-                                    <td className="price-cell">{formatUsdPerMillion(getCachedInputPricePerMillion(model), 3)}</td>
+                                    <td><span className="model-category-pill">{MODEL_CATEGORY_LABELS[category]}</span></td>
+                                    <td className="price-cell">{primaryPrice}</td>
+                                    <td className={`price-cell ${outputPrice === '不适用' ? 'muted' : ''}`}>{outputPrice}</td>
+                                    <td className={`price-cell ${cachedPrice === '不适用' ? 'muted' : ''}`}>{cachedPrice}</td>
                                     <td className="price-cell">
                                         <span>{formatMultiplier(model)}</span>
                                         {hasModelPricingMultiplier(model) && <small>基础 {formatUsdPerMillion(model.coincoin_base_price_input_per_million)}</small>}
-                                    </td>
-                                    <td>
-                                        {reference ? (
-                                            <div className="official-price-cell">
-                                                <strong>{reference.providerModel}</strong>
-                                                <span>{reference.input} · {reference.output}</span>
-                                                <em>{reference.source}</em>
-                                            </div>
-                                        ) : (
-                                            <span className="table-subtle">{getProviderName(model)}</span>
-                                        )}
-                                    </td>
-                                    <td>
-                                        <div>{describePublicModel(model)}</div>
-                                        <div className="table-subtle">{formatCaps(model)}</div>
-                                    </td>
-                                    <td><span className={`badge ${model.coincoin_metadata?.tier === 'preview' ? 'badge-warning' : 'badge-success'}`}>{formatTier(model)}</span></td>
-                                </tr>
-                            )
-                        })}
-                    </tbody>
-                </table>
-            </div>
-
-            <h3>图片模型</h3>
-            <div className="pricing-table-wrap">
-                <table className="data-table pricing-table pricing-table-image">
-                    <thead>
-                        <tr>
-                            <th>模型名称</th>
-                            <th>图片价格</th>
-                            <th>倍率</th>
-                            <th>官方对标</th>
-                            <th>描述</th>
-                            <th>状态</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {imageModels.map((model) => {
-                            const reference = getReferencePricing(model)
-                            return (
-                                <tr key={model.id}>
-                                    <td>
-                                        <div className="model-name-cell">
-                                            <code className="model-tag-sm">{model.id}</code>
-                                            {(model.coincoin_default_for || []).includes('image') && <span className="inline-badge">默认图片</span>}
-                                        </div>
-                                    </td>
-                                    <td className="price-cell">{formatImagePrice(model.coincoin_price_per_image_cents)}</td>
-                                    <td className="price-cell">{formatMultiplier(model)}</td>
-                                    <td>
-                                        {reference ? (
-                                            <div className="official-price-cell">
-                                                <strong>{reference.providerModel}</strong>
-                                                <span>{reference.image}</span>
-                                                <em>{reference.source}</em>
-                                            </div>
-                                        ) : (
-                                            <span className="table-subtle">{getProviderName(model)}</span>
-                                        )}
-                                    </td>
-                                    <td>
-                                        <div>{describePublicModel(model)}</div>
-                                        <div className="table-subtle">{formatCaps(model)}</div>
-                                    </td>
-                                    <td><span className={`badge ${model.coincoin_metadata?.tier === 'preview' ? 'badge-warning' : 'badge-success'}`}>{formatTier(model)}</span></td>
-                                </tr>
-                            )
-                        })}
-                    </tbody>
-                </table>
-            </div>
-
-            <h3>视频模型</h3>
-            <div className="pricing-table-wrap">
-                <table className="data-table pricing-table pricing-table-image">
-                    <thead>
-                        <tr>
-                            <th>模型名称</th>
-                            <th>视频价格</th>
-                            <th>倍率</th>
-                            <th>上游合同价</th>
-                            <th>描述</th>
-                            <th>状态</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {videoModels.map((model) => {
-                            const reference = getReferencePricing(model)
-                            return (
-                                <tr key={model.id}>
-                                    <td>
-                                        <div className="model-name-cell">
-                                            <code className="model-tag-sm">{model.id}</code>
-                                            {(model.coincoin_default_for || []).includes('video') && <span className="inline-badge">默认视频</span>}
-                                        </div>
-                                    </td>
-                                    <td className="price-cell">{formatVideoPrice(model.coincoin_price_per_video_cents)}</td>
-                                    <td className="price-cell">{formatMultiplier(model)}</td>
-                                    <td>
-                                        {reference ? (
-                                            <div className="official-price-cell">
-                                                <strong>{reference.providerModel}</strong>
-                                                <span>{reference.video}</span>
-                                                <em>{reference.source}</em>
-                                            </div>
-                                        ) : (
-                                            <span className="table-subtle">{getProviderName(model)}</span>
-                                        )}
-                                    </td>
-                                    <td>
-                                        <div>{describePublicModel(model)}</div>
-                                        <div className="table-subtle">{formatCaps(model)}</div>
                                     </td>
                                     <td><span className={`badge ${model.coincoin_metadata?.tier === 'preview' ? 'badge-warning' : 'badge-success'}`}>{formatTier(model)}</span></td>
                                 </tr>
@@ -814,17 +608,9 @@ function ModelsAndPricing({ textModels, imageModels, videoModels, defaultTextMod
             <h3>计费说明</h3>
             <ul className="doc-list">
                 <li>文本模型按 Input / Cached Read / Output Token 计费；图片模型按图片张数计费；视频模型按任务次数计费。</li>
-                <li>Cached input 表示缓存读取 token，使用模型目录返回的单独缓存读取价格计费，不要按普通 Input 价格估算。</li>
-                <li><code>gpt-image-2</code> 默认图片价格按 OpenAI 官方 medium <code>1024x1024</code> 参考价展示；实际成本会随质量、尺寸和上游计费策略变化。</li>
-                <li><code>gemini-image</code> 价格对标 Google Gemini API 官方价格，当前按 Gemini 3.1 Flash Image Preview 的 <code>$0.067 / 1K image</code> 展示。</li>
-                <li><code>seedance-v2-720p</code> 等视频模型价格按 wgspai 上游合同单次价格折算展示，生产环境以 <code>/v1/models</code> 返回值为准。</li>
                 <li>同一个账户余额同时覆盖文本模型、图片模型和视频模型，不需要分开充值。</li>
                 <li>老客户端不传 <code>model</code> 时，仍然走默认文本模型，以保证兼容。</li>
             </ul>
-            <div className="doc-callout">
-                <strong>缓存读取价格怎么读</strong>
-                <p>例如 <code>Input $0.99 / M · Cached $0.099 / M · Output $6.99 / M</code>，表示命中缓存读取的输入 token 会按目录里的 Cached 价格单独计费。</p>
-            </div>
         </div>
     )
 }
@@ -971,8 +757,19 @@ function ApiReference({ primaryTextModel, primaryImageModel, primaryVideoModel }
   "prompt": "镜头缓慢推进，人物转身微笑，电影感光影",
   "params": {
     "ratio": "16:9",
-    "images": ["https://example.com/ref.jpg"]
+    "images": ["https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?w=1280&q=80"]
   }
+}`}</pre>
+            <pre className="code-block">{`// 创建成功返回异步任务，先用 id 查询状态。
+{
+  "id": "job_xxxxx",
+  "object": "video.generation",
+  "task_id": "job_xxxxx",
+  "upstream_task_id": "task_xxxxx",
+  "status": "queued",
+  "model": "${videoModelId}",
+  "charged_cents": 98,
+  "refunded_cents": 0
 }`}</pre>
 
             <div className="endpoint-block">
@@ -981,6 +778,19 @@ function ApiReference({ primaryTextModel, primaryImageModel, primaryVideoModel }
             </div>
             <pre className="code-block">{`curl ${SITE}/v1/videos/generations/job_xxxxx \\
   -H "Authorization: Bearer sk_cc_xxxxx"`}</pre>
+            <pre className="code-block">{`// status 变成 completed 后，从 output.url 取视频地址。
+{
+  "id": "job_xxxxx",
+  "object": "video.generation",
+  "status": "completed",
+  "model": "${videoModelId}",
+  "charged_cents": 98,
+  "refunded_cents": 0,
+  "output": {
+    "type": "video",
+    "url": "https://..."
+  }
+}`}</pre>
 
             <ul className="doc-list">
                 <li>当前图片编辑分为两条公开契约：<code>1-2</code> 张输入图继续走同步 <code>/v1/images/edits</code>，<code>3-8</code> 张输入图改走异步 <code>/v1/image-jobs/edits</code>。</li>
@@ -989,6 +799,7 @@ function ApiReference({ primaryTextModel, primaryImageModel, primaryVideoModel }
                 <li>当前图片编辑不支持 <code>mask</code> 上传；如果传了掩码，会返回 <code>mask_not_supported</code>。</li>
                 <li>如果平台侧图片运行时暂不可用，图片请求会返回配置错误，而不是偷偷回退到别的模型。</li>
                 <li>视频生成是异步任务；创建成功后会先扣费，失败任务会按本地记录退款一次。</li>
+                <li>视频参考图请使用可直接访问的 <code>200 image/*</code> 直链，避免跳转、防盗链或需要登录的地址。</li>
                 <li>Seedance 纯文本视频请求会被拒绝；普通模型不能传 <code>reference_video</code> 或 <code>reference_audio</code>，需要时使用 <code>-video</code> 模型。</li>
             </ul>
 
@@ -1100,16 +911,23 @@ console.log(data.data[0]);`}</pre>
     prompt: '镜头缓慢推进，人物转身微笑，电影感光影',
     params: {
       ratio: '16:9',
-      images: ['https://example.com/ref.jpg']
+      images: ['https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?w=1280&q=80']
     }
   })
 });
 
 const job = await createRes.json();
-const resultRes = await fetch('${SITE}/v1/videos/generations/' + job.id, {
-  headers: { Authorization: 'Bearer sk_cc_xxxxx' }
-});
-console.log(await resultRes.json());`}</pre>
+let result = job;
+
+while (!['completed', 'failed'].includes(result.status)) {
+  await new Promise(resolve => setTimeout(resolve, 10000));
+  const resultRes = await fetch('${SITE}/v1/videos/generations/' + job.id, {
+    headers: { Authorization: 'Bearer sk_cc_xxxxx' }
+  });
+  result = await resultRes.json();
+}
+
+console.log(result.output?.url || result);`}</pre>
 
             <h3>Codex CLI</h3>
             <pre className="code-block">{`model = "${CODEX_MODEL_ID}"

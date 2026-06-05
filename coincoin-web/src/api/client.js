@@ -351,8 +351,12 @@ export async function listOrders(limit = 20) {
     const res = await fetch(`${PROXY_BASE}/v1/orders?limit=${limit}`, {
         headers: authHeaders()
     })
-    if (!res.ok) throw new Error('Failed to fetch orders')
-    return res.json()
+    const data = await parseJsonResponse(res, 'Failed to fetch orders')
+    if (Array.isArray(data)) return data
+    if (Array.isArray(data?.orders)) return data.orders
+    if (Array.isArray(data?.data)) return data.data
+    if (Array.isArray(data?.items)) return data.items
+    return []
 }
 
 /** Confirm payment order. Prefer signed proof_url from return page; fallback to backend reconciliation. */

@@ -169,7 +169,6 @@ function ShellGroup({ title, items, location }) {
                         <span className="shell-link-icon"><ShellIcon kind={item.icon} /></span>
                         <span className="shell-link-copy">
                             <span className="shell-link-label">{item.label}</span>
-                            {item.caption ? <span className="shell-link-caption">{item.caption}</span> : null}
                         </span>
                     </Link>
                 ))}
@@ -230,29 +229,27 @@ export default function AppShell({ title, description, actions, children }) {
             {
                 title: '工作台',
                 items: [
-                    { to: '/dashboard', pathname: '/dashboard', label: '控制台', caption: '余额、密钥、最近请求', icon: 'dashboard' },
-                    { to: '/api-keys', pathname: '/api-keys', label: 'API 密钥', caption: '多把 Key 管理与禁用', icon: 'key' },
-                    { to: '/usage', pathname: '/usage', label: '使用记录', caption: '状态码、计量、请求明细', icon: 'logs' },
-                    { to: '/account', pathname: '/account', label: '个人中心', caption: '账号资料', icon: 'settings' },
+                    { to: '/dashboard', pathname: '/dashboard', label: '控制台', icon: 'dashboard' },
+                    { to: '/api-keys', pathname: '/api-keys', label: 'API 密钥', icon: 'key' },
+                    { to: '/usage', pathname: '/usage', label: '使用记录', icon: 'logs' },
+                    { to: '/account', pathname: '/account', label: '个人中心', icon: 'settings' },
                 ],
             },
             {
                 title: '资金',
                 items: [
-                    { to: '/recharge?section=recharge', pathname: '/recharge', search: { section: 'recharge' }, label: '充值', caption: '套餐与支付', icon: 'billing' },
-                    { to: '/referrals', pathname: '/referrals', label: '邀请朋友', caption: '邀请记录与额度奖励', icon: 'invite' },
-                    { to: '/recharge?section=orders', pathname: '/recharge', search: { section: 'orders' }, label: '我的订单', caption: '最近订单与到账状态', icon: 'order' },
-                    { to: '/recharge?section=redeem', pathname: '/recharge', search: { section: 'redeem' }, label: '兑换', caption: '兑换码入账', icon: 'redeem' },
+                    { to: '/recharge?section=recharge', pathname: '/recharge', search: { section: 'recharge' }, label: '充值', icon: 'billing' },
+                    { to: '/referrals', pathname: '/referrals', label: '邀请朋友', icon: 'invite' },
                 ],
             },
             {
                 title: '接入指南',
                 items: [
-                    { to: '/docs?tab=models', pathname: '/docs', search: { tab: 'models' }, label: '可用模型', caption: '模型、价格、接入状态', icon: 'pricing' },
-                    { to: '/guides/api-quickstart', pathname: '/guides/api-quickstart', label: 'API 快速接入', caption: '第一条请求怎么发', icon: 'docs' },
-                    { to: '/guides/codex', pathname: '/guides/codex', label: 'Codex 接入', caption: '写好 config.toml', icon: 'terminal' },
-                    { to: '/guides/claude-code', pathname: '/guides/claude-code', label: 'Claude Code 接入', caption: 'Anthropic 兼容配置', icon: 'access' },
-                    { to: '/guides/other', pathname: '/guides/other', label: '其他接入', caption: 'OpenCode、Continue、Aider、图片', icon: 'docs' },
+                    { to: '/docs?tab=models', pathname: '/docs', search: { tab: 'models' }, label: '可用模型', icon: 'pricing' },
+                    { to: '/guides/api-quickstart', pathname: '/guides/api-quickstart', label: 'API 快速接入', icon: 'docs' },
+                    { to: '/guides/codex', pathname: '/guides/codex', label: 'Codex 接入', icon: 'terminal' },
+                    { to: '/guides/claude-code', pathname: '/guides/claude-code', label: 'Claude Code 接入', icon: 'access' },
+                    { to: '/guides/other', pathname: '/guides/other', label: '其他接入', icon: 'docs' },
                 ],
             },
         ]
@@ -261,7 +258,7 @@ export default function AppShell({ title, description, actions, children }) {
             groups.push({
                 title: '分发',
                 items: [
-                    { to: '/station', pathname: '/station', label: '站长中心', caption: '下游用户、分润、结算', icon: 'station' },
+                    { to: '/station', pathname: '/station', label: '站长中心', icon: 'station' },
                 ],
             })
         }
@@ -307,7 +304,6 @@ export default function AppShell({ title, description, actions, children }) {
                         <section className="app-page-intro">
                             <div className="app-page-intro-copy">
                                 {title ? <h1 className="app-page-intro-title">{title}</h1> : null}
-                                {description ? <p className="app-page-intro-desc">{description}</p> : null}
                             </div>
                             {actions ? <div className="app-page-intro-actions">{actions}</div> : null}
                         </section>
