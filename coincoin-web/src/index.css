@@ -237,6 +237,29 @@ pre {
   font-size: 1.05rem;
 }
 
+.btn:disabled,
+.btn[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.58;
+  transform: none;
+  box-shadow: none;
+}
+
+.btn-primary:disabled,
+.btn-primary[aria-disabled="true"] {
+  background: color-mix(in srgb, #6366f1 55%, #94a3b8 45%);
+  color: rgba(255, 255, 255, 0.94);
+}
+
+.btn-secondary:disabled,
+.btn-secondary[aria-disabled="true"],
+.btn-ghost:disabled,
+.btn-ghost[aria-disabled="true"] {
+  color: var(--text-tertiary);
+  border-color: var(--border-color);
+  background: var(--bg-glass);
+}
+
 /* --- Input --- */
 .input-field {
   width: 100%;

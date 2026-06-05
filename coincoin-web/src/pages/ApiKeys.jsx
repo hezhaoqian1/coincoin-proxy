@@ -258,9 +258,24 @@ export default function ApiKeys() {
             title="API 密钥"
             description="给不同项目分配 Key，按需限制额度、过期时间和服务端 IP。"
             actions={
-                <button className="btn btn-primary btn-sm" onClick={() => setShowCreate((value) => !value)} disabled={authMode === 'api'}>
-                    {showCreate ? '收起' : '新建 Key'}
-                </button>
+                authMode === 'api' ? (
+                    <div className="api-keys-header-actions">
+                        <span className="api-keys-action-note">开发者 Key 直登不可新建</span>
+                        <button
+                            className="btn btn-primary btn-sm"
+                            type="button"
+                            disabled
+                            aria-disabled="true"
+                            title="请退出后使用控制台账号登录，再创建新的开发者 Key"
+                        >
+                            仅控制台可新建
+                        </button>
+                    </div>
+                ) : (
+                    <button className="btn btn-primary btn-sm" type="button" onClick={() => setShowCreate((value) => !value)}>
+                        {showCreate ? '收起' : '新建 Key'}
+                    </button>
+                )
             }
         >
             <div className="api-keys-page">

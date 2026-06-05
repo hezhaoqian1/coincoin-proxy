@@ -92,6 +92,20 @@
     gap: var(--space-sm);
 }
 
+.api-keys-header-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: var(--space-sm);
+}
+
+.api-keys-action-note {
+    color: var(--text-tertiary);
+    font-size: 0.82rem;
+    font-weight: 600;
+}
+
 .api-keys-search,
 .api-keys-filter,
 .api-key-form-grid input,
@@ -256,6 +270,13 @@
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
+}
+
+@media (max-width: 768px) {
+    .api-keys-header-actions {
+        width: 100%;
+        justify-content: flex-start;
+    }
 }
 
 .api-key-ip-list code {
