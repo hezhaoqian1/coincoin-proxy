@@ -17,6 +17,7 @@ from . import gemini_cpa
 from .prompt_cache import build_claude_code_prompt_cache_key
 from .proxy import (
     _build_upstream_headers, _ensure_content_text, _sanitize_encrypted_ids,
+    _build_openai_responses_upstream_url,
     _collect_responses_event_stream_payload, _responses_payload_is_empty_success,
     _chat_completion_chunk_line,
     _normalize_openai_base_url, _responses_tools_to_chat_tools,
@@ -1157,7 +1158,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
         if field in payload:
             resp_payload[field] = payload[field]
 
-    upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/responses"
+    upstream_url = _build_openai_responses_upstream_url(used_cfg.upstream_url)
 
     def build_chat_response(resp: Dict, model_id: str) -> Dict:
         usage = resp.get("usage") or {}
@@ -1261,7 +1262,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                 for field in ("temperature", "top_p", "presence_penalty", "frequency_penalty"):
                     if field in payload:
                         send_payload[field] = payload[field]
-            stream_upstream_url = f"{cfg.upstream_url.rstrip('/')}/responses"
+            stream_upstream_url = _build_openai_responses_upstream_url(cfg.upstream_url)
             stream_headers = _build_upstream_headers(cfg)
             req = stream_client.build_request("POST", stream_upstream_url, json=send_payload, headers=stream_headers)
             return await stream_client.send(req, stream=True)
@@ -1547,7 +1548,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
             for field in ("temperature", "top_p", "presence_penalty", "frequency_penalty"):
                 if field in payload:
                     send_payload[field] = payload[field]
-        req_url = f"{cfg.upstream_url.rstrip('/')}/responses"
+        req_url = _build_openai_responses_upstream_url(cfg.upstream_url)
         req_headers = _build_upstream_headers(cfg)
         t0 = time.monotonic()
         r = await client.post(req_url, json=send_payload, headers=req_headers)

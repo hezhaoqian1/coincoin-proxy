@@ -529,6 +529,48 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-4o-mini")
         self.assertEqual(upstream_client.calls[0]["headers"]["api-key"], "legacy-key")
 
+    async def test_chat_normalizes_root_base_url_for_responses_upstream(self) -> None:
+        self._add_root_base_text_model()
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "resp_chat_root_base",
+                        "output": [
+                            {
+                                "type": "message",
+                                "content": [{"type": "output_text", "text": "OK"}],
+                            }
+                        ],
+                        "usage": {"input_tokens": 3, "output_tokens": 1, "total_tokens": 4},
+                    }
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(openai_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                openai_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(openai_module.usage_buffer, "add", AsyncMock()):
+                response = await client.post(
+                    "/v1/chat/completions",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={
+                        "model": "root-base-model",
+                        "messages": [{"role": "user", "content": "Reply with only: OK"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["choices"][0]["message"]["content"], "OK")
+        self.assertEqual(upstream_client.calls[0]["url"], "https://root-base.example/v1/responses")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "root-upstream-model")
+        self.assertEqual(upstream_client.calls[0]["headers"]["authorization"], "Bearer root-key")
+
     async def test_fallback_alert_deduplicates_same_failure(self) -> None:
         settings.fallback_alert_webhook_url = "https://dingtalk.example/robot"
         settings.fallback_alert_keyword = "CoinCoinAlert"
