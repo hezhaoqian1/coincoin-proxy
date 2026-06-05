@@ -287,7 +287,6 @@ export default function Usage() {
     return (
         <AppShell
             title="请求日志"
-            description="看每次请求的模型、缓存读取、缓存写入、计量和花费。"
             actions={<button className="btn btn-secondary btn-sm" onClick={exportCSV}>导出 CSV</button>}
         >
             <div className="usage-page">
