@@ -332,6 +332,88 @@ export async function getUsageLogs(limit = 50, offset = 0, filters = {}) {
     return parseJsonResponse(res, 'Failed to fetch usage')
 }
 
+export async function getMediaArtifacts(limit = 50, offset = 0, filters = {}) {
+    const params = new URLSearchParams({ limit, offset })
+    Object.entries(filters || {}).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== '') params.set(key, value)
+    })
+    const res = await fetch(`${PROXY_BASE}/v1/media-artifacts?${params}`, {
+        headers: authHeaders()
+    })
+    return parseJsonResponse(res, 'Failed to fetch media')
+}
+
+// ===== Workbench media APIs =====
+
+function workbenchJsonHeaders(apiKey) {
+    return {
+        'Authorization': `Bearer ${apiKey || getApiKey()}`,
+        'Content-Type': 'application/json'
+    }
+}
+
+function workbenchMultipartHeaders(apiKey) {
+    return {
+        'Authorization': `Bearer ${apiKey || getApiKey()}`
+    }
+}
+
+export async function createImageGeneration(apiKey, payload, options = {}) {
+    const res = await fetch(`${PROXY_BASE}/v1/images/generations`, {
+        method: 'POST',
+        headers: workbenchJsonHeaders(apiKey),
+        body: JSON.stringify(payload || {}),
+        signal: options.signal,
+    })
+    return parseJsonResponse(res, 'Failed to generate image')
+}
+
+export async function createImageEdit(apiKey, formData, options = {}) {
+    const res = await fetch(`${PROXY_BASE}/v1/images/edits`, {
+        method: 'POST',
+        headers: workbenchMultipartHeaders(apiKey),
+        body: formData,
+        signal: options.signal,
+    })
+    return parseJsonResponse(res, 'Failed to edit image')
+}
+
+export async function createImageEditJob(apiKey, formData, options = {}) {
+    const res = await fetch(`${PROXY_BASE}/v1/image-jobs/edits`, {
+        method: 'POST',
+        headers: workbenchMultipartHeaders(apiKey),
+        body: formData,
+        signal: options.signal,
+    })
+    return parseJsonResponse(res, 'Failed to create image job')
+}
+
+export async function getImageJob(apiKey, jobId, options = {}) {
+    const res = await fetch(`${PROXY_BASE}/v1/image-jobs/${encodeURIComponent(jobId)}`, {
+        headers: workbenchJsonHeaders(apiKey),
+        signal: options.signal,
+    })
+    return parseJsonResponse(res, 'Failed to fetch image job')
+}
+
+export async function createVideoGeneration(apiKey, payload, options = {}) {
+    const res = await fetch(`${PROXY_BASE}/v1/videos/generations`, {
+        method: 'POST',
+        headers: workbenchJsonHeaders(apiKey),
+        body: JSON.stringify(payload || {}),
+        signal: options.signal,
+    })
+    return parseJsonResponse(res, 'Failed to create video task')
+}
+
+export async function getVideoGeneration(apiKey, jobId, options = {}) {
+    const res = await fetch(`${PROXY_BASE}/v1/videos/generations/${encodeURIComponent(jobId)}`, {
+        headers: workbenchJsonHeaders(apiKey),
+        signal: options.signal,
+    })
+    return parseJsonResponse(res, 'Failed to fetch video task')
+}
+
 // ===== Payment APIs =====
 
 /** Create order via proxy (proxy creates order + calls payment service) */

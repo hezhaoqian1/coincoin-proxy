@@ -8,7 +8,7 @@ import httpx
 
 from app.config import settings
 from app.main import app
-from app.models import RequestLog, UsageDaily, VideoJob
+from app.models import MediaArtifact, RequestLog, UsageDaily, VideoJob
 from app.router import registry
 import app.video_jobs as video_jobs_module
 
@@ -33,6 +33,7 @@ class _VideoJobStore:
         self.jobs = {}
         self.user = user
         self.request_logs = []
+        self.media_artifacts = []
         self.ledger_entries = []
         self.other_added = []
 
@@ -88,6 +89,9 @@ class _FakeVideoDBSession:
             return
         if isinstance(item, UsageDaily):
             self.store.other_added.append(item)
+            return
+        if isinstance(item, MediaArtifact):
+            self.store.media_artifacts.append(item)
             return
         if item.__class__.__name__ == "BillingLedgerEntry":
             self.store.ledger_entries.append(item)
@@ -425,6 +429,16 @@ class VideoJobsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.store.jobs[job.id].upstream_request_id, "req_seedance_query_1")
         self.assertEqual(upstream_client.calls[0]["url"], "https://api.wgspai.cn/v1/task/query")
         self.assertEqual(upstream_client.calls[0]["json"], {"task_id": job.upstream_task_id})
+        self.assertEqual(len(self.store.media_artifacts), 1)
+        artifact = self.store.media_artifacts[0]
+        self.assertEqual(artifact.media_type, "video")
+        self.assertEqual(artifact.endpoint, "videos/generations")
+        self.assertEqual(artifact.url, "https://example.com/generated.mp4")
+        self.assertEqual(artifact.user_id, self.fake_user.id)
+        self.assertEqual(artifact.api_key_id, "k_video_user")
+        self.assertEqual(artifact.source_type, "video_job")
+        self.assertEqual(artifact.source_id, job.id)
+        self.assertEqual(artifact.cost_cents, 98)
 
     async def test_failed_video_generation_query_refunds_once(self) -> None:
         self.fake_user.balance = 902

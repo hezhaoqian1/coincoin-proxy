@@ -899,10 +899,10 @@ export default function Dashboard() {
                             </div>
                         </Link>
                         <Link to="/playground" className="shortcut-card">
-                            <span className="shortcut-icon">&#9881;</span>
+                            <span className="shortcut-icon">&#9654;</span>
                             <div>
-                                <strong>测试请求</strong>
-                                <p>发起一条测试请求。</p>
+                                <strong>工作台</strong>
+                                <p>对话、图片和视频。</p>
                             </div>
                         </Link>
                         <a href="#developer-key" className="shortcut-card">

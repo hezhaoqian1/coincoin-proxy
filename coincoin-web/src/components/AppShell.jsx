@@ -181,8 +181,8 @@ function MobileBottomNav({ location }) {
     const items = [
         { to: '/dashboard', pathname: '/dashboard', label: '概览', icon: 'dashboard' },
         { to: '/recharge?section=recharge', pathname: '/recharge', search: { section: 'recharge' }, label: '充值', icon: 'billing' },
+        { to: '/playground', pathname: '/playground', label: '工作台', icon: 'playground' },
         { to: '/api-keys', pathname: '/api-keys', label: '密钥', icon: 'key' },
-        { to: '/usage', pathname: '/usage', label: '日志', icon: 'logs' },
         { to: '/account', pathname: '/account', label: '我的', icon: 'settings' },
     ]
 
@@ -230,6 +230,7 @@ export default function AppShell({ title, description, actions, children }) {
                 title: '工作台',
                 items: [
                     { to: '/dashboard', pathname: '/dashboard', label: '控制台', icon: 'dashboard' },
+                    { to: '/playground', pathname: '/playground', label: '工作台', icon: 'playground' },
                     { to: '/api-keys', pathname: '/api-keys', label: 'API 密钥', icon: 'key' },
                     { to: '/usage', pathname: '/usage', label: '使用记录', icon: 'logs' },
                     { to: '/account', pathname: '/account', label: '个人中心', icon: 'settings' },
