@@ -2689,303 +2689,226 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             can_fallback = False
             is_cheap = False
 
-    try:
-        upstream, duration_ms = await _post_json(used_cfg)
-    except (httpx.TimeoutException, httpx.RequestError) as exc:
-        if cpa_channel is not None:
-            gemini_cpa.record_failure(cpa_channel)
-        _record_channel_failure(used_cfg, error_code="upstream_unreachable")
-        route_fallback_cfg = None
-        route_fallback_reason = ""
-        if _should_try_channel_fallback(used_cfg, error_code="upstream_unreachable"):
-            route_fallback_cfg, route_fallback_reason = _next_provider_or_system_fallback_config(
-                public_model,
-                used_cfg,
-                "responses",
-                messages_for_route,
-                tools_for_route,
-                lock_model_selection=resolved_model.lock_model_selection,
-                reason="upstream_unreachable",
-            )
-        if route_fallback_cfg is not None:
-            used_cfg = route_fallback_cfg
-            used_route_reason = route_fallback_reason
-            _mark_system_fallback_terminal()
-            try:
-                upstream, duration_ms = await _post_json(used_cfg, is_fallback=True)
-            except (httpx.TimeoutException, httpx.RequestError):
-                _record_channel_failure(used_cfg, error_code="upstream_unreachable")
-                system_fallback_cfg = _system_fallback_config(
-                    public_model,
-                    used_cfg,
-                    "responses",
-                    messages_for_route,
-                    tools_for_route,
-                    lock_model_selection=resolved_model.lock_model_selection,
-                    reason="upstream_unreachable",
-                )
-                if system_fallback_cfg is not None:
-                    used_cfg = system_fallback_cfg
-                    used_route_reason = _system_fallback_route_reason("upstream_unreachable")
-                    _mark_system_fallback_terminal()
-                    try:
-                        upstream, duration_ms = await _post_json(used_cfg, is_fallback=True)
-                    except (httpx.TimeoutException, httpx.RequestError):
-                        _record_channel_failure(used_cfg, error_code="upstream_unreachable")
-                        _notify_fallback_exhausted(
-                            endpoint="responses",
-                            model=display_model,
-                            status_code=502,
-                            reason="upstream_unreachable",
-                            cfg=used_cfg,
-                            route_reason=used_route_reason,
-                        )
-                        return JSONResponse(
-                            content={"error": {"message": "Upstream request failed", "type": "server_error", "code": "upstream_unreachable"}},
-                            status_code=502,
-                        )
-                else:
-                    _notify_fallback_exhausted(
-                        endpoint="responses",
-                        model=display_model,
-                        status_code=502,
-                        reason="upstream_unreachable",
-                        cfg=used_cfg,
-                        route_reason=used_route_reason,
-                    )
-                    return JSONResponse(
-                        content={"error": {"message": "Upstream request failed", "type": "server_error", "code": "upstream_unreachable"}},
-                        status_code=502,
-                    )
-            except gemini_cpa.GeminiCpaChannelUnavailable as exc:
-                return JSONResponse(
-                    content={"error": {"message": str(exc), "type": "server_error", "code": "gemini_cpa_channel_cooling_down"}},
-                    status_code=503,
-                )
-        elif can_fallback:
-            _fb = "cheap" if is_cheap else "premium"
-            logger.warning("primary %s failed (%s: %s), falling back", _fb, type(exc).__name__, exc)
-            used_cfg = _channel_fallback_config(used_cfg, fallback_cfg)
-            used_route_reason = f"{_fb}_fallback_timeout"
-            can_fallback = False
-            is_cheap = False
-            upstream, duration_ms = await _post_json(used_cfg, is_fallback=True)
+    def _record_current_failure(*, status_code: int | None = None, error_code: str = "") -> None:
+        if status_code in {401, 403}:
+            _record_channel_failure(used_cfg, error_code=str(status_code))
+        elif status_code is not None:
+            _record_channel_failure(used_cfg, status_code=status_code)
         else:
-            logger.error("upstream request error: %s", exc)
+            _record_channel_failure(used_cfg, error_code=error_code)
+
+    def _select_provider_or_system_fallback(
+        reason: str,
+        *,
+        status_code: int | None = None,
+        error_code: str = "",
+    ):
+        channel_id = str(getattr(used_cfg, "channel_id", "") or "")
+        upstream_auth_failure = bool(channel_id and not channel_id.startswith("system:") and status_code in {401, 403})
+        if not upstream_auth_failure and not _should_try_channel_fallback(used_cfg, status_code=status_code, error_code=error_code):
+            return None, ""
+        return _next_provider_or_system_fallback_config(
+            public_model,
+            used_cfg,
+            "responses",
+            messages_for_route,
+            tools_for_route,
+            lock_model_selection=resolved_model.lock_model_selection,
+            reason=reason,
+        )
+
+    def _notify_responses_fallback_exhausted(
+        *,
+        status_code: int,
+        reason: str,
+        upstream_request_id: str = "",
+    ) -> None:
+        if getattr(used_cfg, "channel_id", "") or getattr(used_cfg, "fallback_from_channel_id", ""):
+            _notify_fallback_exhausted(
+                endpoint="responses",
+                model=display_model,
+                status_code=status_code,
+                reason=reason,
+                cfg=used_cfg,
+                route_reason=used_route_reason,
+                upstream_request_id=upstream_request_id,
+            )
+
+    while True:
+        try:
+            upstream, duration_ms = await _post_json(used_cfg)
+        except (httpx.TimeoutException, httpx.RequestError):
+            if cpa_channel is not None:
+                gemini_cpa.record_failure(cpa_channel)
+            _record_current_failure(error_code="upstream_unreachable")
+            route_fallback_cfg, route_fallback_reason = _select_provider_or_system_fallback(
+                "upstream_unreachable",
+                error_code="upstream_unreachable",
+            )
+            if route_fallback_cfg is not None:
+                used_cfg = route_fallback_cfg
+                used_route_reason = route_fallback_reason
+                _mark_system_fallback_terminal()
+                continue
+            if can_fallback:
+                _fb = "cheap" if is_cheap else "premium"
+                used_cfg = _channel_fallback_config(used_cfg, fallback_cfg)
+                used_route_reason = f"{_fb}_fallback_timeout"
+                can_fallback = False
+                is_cheap = False
+                continue
+            _notify_responses_fallback_exhausted(status_code=502, reason="upstream_unreachable")
             return JSONResponse(
                 content={"error": {"message": "Upstream request failed", "type": "server_error", "code": "upstream_unreachable"}},
                 status_code=502,
             )
 
-    if (
-        upstream.status_code >= 400
-        and _should_try_channel_fallback(used_cfg, status_code=upstream.status_code)
-    ):
-        route_fallback_cfg, route_fallback_reason = _next_provider_or_system_fallback_config(
-            public_model,
-            used_cfg,
-            "responses",
-            messages_for_route,
-            tools_for_route,
-            lock_model_selection=resolved_model.lock_model_selection,
-            reason=str(upstream.status_code),
-        )
-        if route_fallback_cfg is not None:
-            fallback_target = route_fallback_cfg.channel_id or route_fallback_cfg.provider_platform or "catalog"
-            logger.warning("provider channel %s returned %s: %s; falling back to %s",
-                           used_cfg.channel_id, upstream.status_code, str(upstream.text)[:500], fallback_target)
-            _record_channel_failure(used_cfg, status_code=upstream.status_code)
-            used_cfg = route_fallback_cfg
-            used_route_reason = route_fallback_reason
-            _mark_system_fallback_terminal()
-            upstream, duration_ms = await _post_json(used_cfg, is_fallback=True)
+        if cpa_channel is not None:
+            if upstream.status_code < 400:
+                gemini_cpa.record_success(cpa_channel)
+            elif gemini_cpa.should_record_failure(upstream.status_code):
+                gemini_cpa.record_failure(cpa_channel)
 
-    if (
-        upstream.status_code >= 400
-        and _should_try_channel_fallback(used_cfg, status_code=upstream.status_code)
-    ):
-        system_fallback_cfg = _system_fallback_config(
-            public_model,
-            used_cfg,
-            "responses",
-            messages_for_route,
-            tools_for_route,
-            lock_model_selection=resolved_model.lock_model_selection,
-            reason=str(upstream.status_code),
-        )
-        if system_fallback_cfg is not None:
-            _record_channel_failure(used_cfg, status_code=upstream.status_code)
-            used_cfg = system_fallback_cfg
-            used_route_reason = _system_fallback_route_reason(str(upstream.status_code))
-            _mark_system_fallback_terminal()
-            upstream, duration_ms = await _post_json(used_cfg, is_fallback=True)
-
-    if (
-        can_fallback
-        and upstream.status_code >= 400
-        and (
-            not getattr(used_cfg, "channel_id", "")
-            or should_record_channel_failure(upstream.status_code)
-        )
-    ):
-        _fb = "cheap" if is_cheap else "premium"
-        logger.warning("primary %s returned %s: %s — falling back",
-                       _fb, upstream.status_code, str(upstream.text)[:500])
-        _record_channel_failure(used_cfg, status_code=upstream.status_code)
-        used_cfg = _channel_fallback_config(used_cfg, fallback_cfg)
-        used_route_reason = f"{_fb}_fallback_{upstream.status_code}"
-        can_fallback = False
-        is_cheap = False
-        upstream, duration_ms = await _post_json(used_cfg, is_fallback=True)
-    if cpa_channel is not None:
-        if upstream.status_code < 400:
-            gemini_cpa.record_success(cpa_channel)
-        elif gemini_cpa.should_record_failure(upstream.status_code):
-            gemini_cpa.record_failure(cpa_channel)
-    if upstream.status_code >= 400:
-        _record_channel_failure(used_cfg, status_code=upstream.status_code)
-    response_headers = filter_headers(dict(upstream.headers))
-    response_headers.pop("content-length", None)
-
-    content_type = upstream.headers.get("content-type", "application/json")
-    upstream_request_id = extract_upstream_request_id(upstream.headers)
-    if (
-        "application/json" not in content_type
-        and _should_try_channel_fallback(used_cfg, error_code="upstream_unexpected_content_type")
-    ):
-        route_fallback_cfg, route_fallback_reason = _next_provider_or_system_fallback_config(
-            public_model,
-            used_cfg,
-            "responses",
-            messages_for_route,
-            tools_for_route,
-            lock_model_selection=resolved_model.lock_model_selection,
-            reason="upstream_unexpected_content_type",
-        )
-        if route_fallback_cfg is not None:
-            _record_channel_failure(used_cfg, error_code="upstream_unexpected_content_type")
-            used_cfg = route_fallback_cfg
-            used_route_reason = route_fallback_reason
-            _mark_system_fallback_terminal()
-            upstream, duration_ms = await _post_json(used_cfg, is_fallback=True)
-            response_headers = filter_headers(dict(upstream.headers))
-            response_headers.pop("content-length", None)
-            content_type = upstream.headers.get("content-type", "application/json")
-            upstream_request_id = extract_upstream_request_id(upstream.headers)
-
-    if can_fallback and "application/json" not in content_type:
-        _fb = "cheap" if is_cheap else "premium"
-        _record_channel_failure(used_cfg, error_code="upstream_unexpected_content_type")
-        used_cfg = _channel_fallback_config(used_cfg, fallback_cfg)
-        used_route_reason = f"{_fb}_fallback_unexpected"
-        can_fallback = False
-        is_cheap = False
-        upstream, duration_ms = await _post_json(used_cfg, is_fallback=True)
         response_headers = filter_headers(dict(upstream.headers))
         response_headers.pop("content-length", None)
         content_type = upstream.headers.get("content-type", "application/json")
         upstream_request_id = extract_upstream_request_id(upstream.headers)
 
-    if "application/json" in content_type:
-        try:
-            data = upstream.json()
-        except Exception:
-            route_fallback_cfg = None
-            route_fallback_reason = ""
-            if _should_try_channel_fallback(used_cfg, error_code="upstream_invalid_json"):
-                route_fallback_cfg, route_fallback_reason = _next_provider_or_system_fallback_config(
-                    public_model,
-                    used_cfg,
-                    "responses",
-                    messages_for_route,
-                    tools_for_route,
-                    lock_model_selection=resolved_model.lock_model_selection,
-                    reason="upstream_invalid_json",
-                )
+        if upstream.status_code >= 400:
+            route_fallback_cfg, route_fallback_reason = _select_provider_or_system_fallback(
+                str(upstream.status_code),
+                status_code=upstream.status_code,
+            )
             if route_fallback_cfg is not None:
-                _record_channel_failure(used_cfg, error_code="upstream_invalid_json")
+                _record_current_failure(status_code=upstream.status_code)
                 used_cfg = route_fallback_cfg
                 used_route_reason = route_fallback_reason
                 _mark_system_fallback_terminal()
-                upstream, duration_ms = await _post_json(used_cfg, is_fallback=True)
-                response_headers = filter_headers(dict(upstream.headers))
-                response_headers.pop("content-length", None)
-                content_type = upstream.headers.get("content-type", "application/json")
-                upstream_request_id = extract_upstream_request_id(upstream.headers)
-                try:
-                    data = upstream.json() if "application/json" in content_type else upstream.text
-                except Exception:
-                    _notify_fallback_exhausted(
-                        endpoint="responses",
-                        model=display_model,
-                        status_code=502,
-                        reason="upstream_invalid_json",
-                        cfg=used_cfg,
-                        route_reason=used_route_reason,
-                        upstream_request_id=upstream_request_id,
-                    )
-                    return JSONResponse(
-                        content={"error": {"message": "Upstream returned invalid JSON", "type": "server_error", "code": "upstream_invalid_json"}},
-                        status_code=502, headers=response_headers,
-                    )
-            elif can_fallback:
+                continue
+            if can_fallback and (
+                not getattr(used_cfg, "channel_id", "")
+                or should_record_channel_failure(upstream.status_code)
+            ):
                 _fb = "cheap" if is_cheap else "premium"
-                _record_channel_failure(used_cfg, error_code="upstream_invalid_json")
+                _record_current_failure(status_code=upstream.status_code)
+                used_cfg = _channel_fallback_config(used_cfg, fallback_cfg)
+                used_route_reason = f"{_fb}_fallback_{upstream.status_code}"
+                can_fallback = False
+                is_cheap = False
+                continue
+
+        if "application/json" not in content_type:
+            route_fallback_cfg, route_fallback_reason = _select_provider_or_system_fallback(
+                "upstream_unexpected_content_type",
+                error_code="upstream_unexpected_content_type",
+            )
+            if route_fallback_cfg is not None:
+                _record_current_failure(error_code="upstream_unexpected_content_type")
+                used_cfg = route_fallback_cfg
+                used_route_reason = route_fallback_reason
+                _mark_system_fallback_terminal()
+                continue
+            if can_fallback:
+                _fb = "cheap" if is_cheap else "premium"
+                _record_current_failure(error_code="upstream_unexpected_content_type")
                 used_cfg = _channel_fallback_config(used_cfg, fallback_cfg)
                 used_route_reason = f"{_fb}_fallback_unexpected"
                 can_fallback = False
                 is_cheap = False
-                upstream, duration_ms = await _post_json(used_cfg, is_fallback=True)
-                response_headers = filter_headers(dict(upstream.headers))
-                response_headers.pop("content-length", None)
-                content_type = upstream.headers.get("content-type", "application/json")
-                upstream_request_id = extract_upstream_request_id(upstream.headers)
-                try:
-                    data = upstream.json() if "application/json" in content_type else upstream.text
-                except Exception:
-                    _notify_fallback_exhausted(
-                        endpoint="responses",
-                        model=display_model,
-                        status_code=502,
-                        reason="upstream_invalid_json",
-                        cfg=used_cfg,
-                        route_reason=used_route_reason,
-                        upstream_request_id=upstream_request_id,
-                    )
-                    return JSONResponse(
-                        content={"error": {"message": "Upstream returned invalid JSON", "type": "server_error", "code": "upstream_invalid_json"}},
-                        status_code=502, headers=response_headers,
-                    )
-            else:
-                _record_channel_failure(used_cfg, error_code="upstream_invalid_json")
-                _notify_fallback_exhausted(
-                    endpoint="responses",
-                    model=display_model,
-                    status_code=502,
-                    reason="upstream_invalid_json",
-                    cfg=used_cfg,
-                    route_reason=used_route_reason,
-                    upstream_request_id=upstream_request_id,
-                )
-                return JSONResponse(
-                    content={"error": {"message": "Upstream returned invalid JSON", "type": "server_error", "code": "upstream_invalid_json"}},
-                    status_code=502, headers=response_headers,
-                )
-    else:
-        data = upstream.text
+                continue
+            _record_current_failure(error_code="upstream_unexpected_content_type")
+            _notify_responses_fallback_exhausted(
+                status_code=502,
+                reason="upstream_unexpected_content_type",
+                upstream_request_id=upstream_request_id,
+            )
+            return JSONResponse(
+                content={"error": {"message": "Upstream returned unexpected content type", "type": "server_error", "code": "upstream_unexpected_content_type"}},
+                status_code=502,
+                headers=response_headers,
+            )
+
+        try:
+            data = upstream.json()
+        except Exception:
+            route_fallback_cfg, route_fallback_reason = _select_provider_or_system_fallback(
+                "upstream_invalid_json",
+                error_code="upstream_invalid_json",
+            )
+            if route_fallback_cfg is not None:
+                _record_current_failure(error_code="upstream_invalid_json")
+                used_cfg = route_fallback_cfg
+                used_route_reason = route_fallback_reason
+                _mark_system_fallback_terminal()
+                continue
+            if can_fallback:
+                _fb = "cheap" if is_cheap else "premium"
+                _record_current_failure(error_code="upstream_invalid_json")
+                used_cfg = _channel_fallback_config(used_cfg, fallback_cfg)
+                used_route_reason = f"{_fb}_fallback_unexpected"
+                can_fallback = False
+                is_cheap = False
+                continue
+            _record_current_failure(error_code="upstream_invalid_json")
+            _notify_responses_fallback_exhausted(
+                status_code=502,
+                reason="upstream_invalid_json",
+                upstream_request_id=upstream_request_id,
+            )
+            return JSONResponse(
+                content={"error": {"message": "Upstream returned invalid JSON", "type": "server_error", "code": "upstream_invalid_json"}},
+                status_code=502,
+                headers=response_headers,
+            )
+
+        if upstream.status_code < 400 and isinstance(data, dict) and cpa_channel is not None:
+            data = gemini_cpa.translate_chat_response_to_responses(data, display_model)
+
+        if upstream.status_code < 400 and isinstance(data, dict) and _responses_payload_is_empty_success(data):
+            logger.error("responses upstream returned empty success payload for model=%s", display_model)
+            if cpa_channel is not None:
+                gemini_cpa.record_failure(cpa_channel)
+            _record_current_failure(error_code="upstream_empty_response")
+            route_fallback_cfg, route_fallback_reason = _select_provider_or_system_fallback(
+                "upstream_empty_response",
+                error_code="upstream_empty_response",
+            )
+            if route_fallback_cfg is not None:
+                used_cfg = route_fallback_cfg
+                used_route_reason = route_fallback_reason
+                _mark_system_fallback_terminal()
+                continue
+            _notify_responses_fallback_exhausted(
+                status_code=502,
+                reason="upstream_empty_response",
+                upstream_request_id=upstream_request_id,
+            )
+            return JSONResponse(
+                content={
+                    "error": {
+                        "message": "Upstream completed without returning assistant text or tool calls",
+                        "type": "server_error",
+                        "code": "upstream_empty_response",
+                    }
+                },
+                status_code=502,
+                headers=response_headers,
+            )
+
+        break
 
     input_tokens_delta = 0
     output_tokens_delta = 0
     cache_read_tokens_delta = 0
     cache_creation_tokens_delta = 0
     if isinstance(data, dict) and isinstance(data.get("error"), dict):
-        _notify_fallback_exhausted(
-            endpoint="responses",
-            model=display_model,
+        _record_current_failure(
+            status_code=upstream.status_code if upstream.status_code >= 400 else None,
+            error_code=str(data["error"].get("code") or "upstream_error"),
+        )
+        _notify_responses_fallback_exhausted(
             status_code=upstream.status_code if upstream.status_code >= 400 else 502,
-            reason=str((data.get("error") or {}).get("code") or upstream.status_code or "upstream_error"),
-            cfg=used_cfg,
-            route_reason=used_route_reason,
+            reason=str(data["error"].get("code") or upstream.status_code or "upstream_error"),
             upstream_request_id=upstream_request_id,
         )
         return JSONResponse(
@@ -2994,61 +2917,6 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             headers=response_headers,
         )
     if upstream.status_code < 400 and isinstance(data, dict):
-        if cpa_channel is not None:
-            data = gemini_cpa.translate_chat_response_to_responses(data, display_model)
-        while upstream.status_code < 400 and isinstance(data, dict) and _responses_payload_is_empty_success(data):
-            logger.error("responses upstream returned empty success payload for model=%s", display_model)
-            if cpa_channel is not None:
-                gemini_cpa.record_failure(cpa_channel)
-            _record_channel_failure(used_cfg, error_code="upstream_empty_response")
-            route_fallback_cfg = None
-            route_fallback_reason = ""
-            if _should_try_channel_fallback(used_cfg, error_code="upstream_empty_response"):
-                route_fallback_cfg, route_fallback_reason = _next_provider_or_system_fallback_config(
-                    public_model,
-                    used_cfg,
-                    "responses",
-                    messages_for_route,
-                    tools_for_route,
-                    lock_model_selection=resolved_model.lock_model_selection,
-                    reason="upstream_empty_response",
-                )
-            if route_fallback_cfg is None:
-                _notify_fallback_exhausted(
-                    endpoint="responses",
-                    model=display_model,
-                    status_code=502,
-                    reason="upstream_empty_response",
-                    cfg=used_cfg,
-                    route_reason=used_route_reason,
-                    upstream_request_id=upstream_request_id,
-                )
-                return JSONResponse(
-                    content={
-                        "error": {
-                            "message": "Upstream completed without returning assistant text or tool calls",
-                            "type": "server_error",
-                            "code": "upstream_empty_response",
-                        }
-                    },
-                    status_code=502,
-                    headers=response_headers,
-                )
-
-            used_cfg = route_fallback_cfg
-            used_route_reason = route_fallback_reason
-            _mark_system_fallback_terminal()
-            upstream, duration_ms = await _post_json(used_cfg, is_fallback=True)
-            response_headers = filter_headers(dict(upstream.headers))
-            response_headers.pop("content-length", None)
-            content_type = upstream.headers.get("content-type", "application/json")
-            upstream_request_id = extract_upstream_request_id(upstream.headers)
-            try:
-                data = upstream.json() if "application/json" in content_type else upstream.text
-            except Exception:
-                data = {"error": {"message": "Upstream returned invalid JSON", "type": "server_error", "code": "upstream_invalid_json"}}
-            if upstream.status_code < 400 and isinstance(data, dict) and cpa_channel is not None:
-                data = gemini_cpa.translate_chat_response_to_responses(data, display_model)
         if isinstance(data, dict):
             usage = data.get("usage") or {}
             input_tokens_delta = extract_total_input_tokens(usage)
@@ -3088,30 +2956,23 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             **usage_pricing_kwargs(public_model, station_model),
         )
     elif isinstance(data, (dict, str)):
+        _record_current_failure(status_code=upstream.status_code if upstream.status_code >= 400 else None)
         logger.error("upstream error %s: %s", upstream.status_code, str(data)[:500])
 
     if isinstance(data, dict):
         data["model"] = display_model
         if upstream.status_code >= 400:
-            _notify_fallback_exhausted(
-                endpoint="responses",
-                model=display_model,
+            _notify_responses_fallback_exhausted(
                 status_code=upstream.status_code,
                 reason=str((data.get("error") or {}).get("code") if isinstance(data.get("error"), dict) else upstream.status_code),
-                cfg=used_cfg,
-                route_reason=used_route_reason,
                 upstream_request_id=upstream_request_id,
             )
         return JSONResponse(content=data, status_code=upstream.status_code, headers=response_headers)
 
     if upstream.status_code >= 400:
-        _notify_fallback_exhausted(
-            endpoint="responses",
-            model=display_model,
+        _notify_responses_fallback_exhausted(
             status_code=upstream.status_code,
             reason=str(upstream.status_code or "upstream_error"),
-            cfg=used_cfg,
-            route_reason=used_route_reason,
             upstream_request_id=upstream_request_id,
         )
     return Response(content=str(data), status_code=upstream.status_code, headers=response_headers, media_type=content_type)
