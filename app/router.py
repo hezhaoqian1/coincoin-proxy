@@ -807,12 +807,13 @@ class ModelRegistry:
         excluded = tuple(dict.fromkeys(
             item for item in (*exclude_channel_ids, previous_channel_id) if item
         ))
+        fallback_from_channel_id = ",".join(excluded)
         return self._apply_channel_route(
             public_model,
             previous_backend,
             endpoint,
             exclude_channel_ids=excluded,
-            fallback_from_channel_id=previous_channel_id,
+            fallback_from_channel_id=fallback_from_channel_id,
             route_attempt=int(previous_backend.route_attempt or 0) + 1,
         )
 
@@ -829,6 +830,10 @@ class ModelRegistry:
         previous_channel_id = (previous_backend.channel_id or "").strip()
         if not previous_channel_id or previous_channel_id.startswith("system:"):
             return None
+        attempted = []
+        for raw in ((previous_backend.fallback_from_channel_id or ""), previous_channel_id):
+            attempted.extend(item.strip() for item in str(raw or "").split(",") if item.strip())
+        fallback_from_channel_id = ",".join(dict.fromkeys(attempted))
 
         execution_profile = self._resolve_execution_profile(public_model, endpoint)
         if endpoint in EMBEDDING_ENDPOINTS:
@@ -884,7 +889,7 @@ class ModelRegistry:
             provider_account_fingerprint=backend.provider_account_fingerprint,
             transform_profile=backend.transform_profile,
             cost_tier=backend.cost_tier,
-            fallback_from_channel_id=previous_channel_id,
+            fallback_from_channel_id=fallback_from_channel_id,
             route_attempt=int(previous_backend.route_attempt or 0) + 1,
         )
         return ResolvedModel(

@@ -1612,6 +1612,116 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(usage_kwargs["channel_id"], "ch_chat_html_backup")
         self.assertEqual(usage_kwargs["fallback_from_channel_id"], "ch_chat_html_primary")
 
+    async def test_chat_provider_channel_can_fallback_across_multiple_routes(self) -> None:
+        channel_router.set_snapshot(
+            [
+                ProviderChannelSnapshot(
+                    channel_id="ch_chat_primary",
+                    provider_platform="new_api",
+                    base_url="https://primary-channel.example",
+                    api_key="primary-key",
+                    auth_style="bearer",
+                    priority=0,
+                    allowed_fails=99,
+                    cooldown_seconds=30,
+                ),
+                ProviderChannelSnapshot(
+                    channel_id="ch_chat_second",
+                    provider_platform="sub2api",
+                    base_url="https://second-channel.example",
+                    api_key="second-key",
+                    auth_style="bearer",
+                    priority=5,
+                    allowed_fails=99,
+                    cooldown_seconds=30,
+                ),
+                ProviderChannelSnapshot(
+                    channel_id="ch_chat_third",
+                    provider_platform="sub2api",
+                    base_url="https://third-channel.example",
+                    api_key="third-key",
+                    auth_style="bearer",
+                    priority=10,
+                ),
+            ],
+            [
+                ModelChannelRouteSnapshot(
+                    route_id="mcr_chat_primary",
+                    public_model_id="gpt-5.4",
+                    endpoint="chat/completions",
+                    channel_id="ch_chat_primary",
+                ),
+                ModelChannelRouteSnapshot(
+                    route_id="mcr_chat_second",
+                    public_model_id="gpt-5.4",
+                    endpoint="chat/completions",
+                    channel_id="ch_chat_second",
+                ),
+                ModelChannelRouteSnapshot(
+                    route_id="mcr_chat_third",
+                    public_model_id="gpt-5.4",
+                    endpoint="chat/completions",
+                    channel_id="ch_chat_third",
+                ),
+            ],
+        )
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {"error": {"message": "primary failed", "type": "server_error", "code": "500"}},
+                    status_code=500,
+                ),
+                _FakeUpstreamResponse(
+                    {
+                        "id": "resp_empty_second",
+                        "output": [],
+                        "usage": {"input_tokens": 3, "output_tokens": 0, "total_tokens": 3},
+                    }
+                ),
+                _FakeUpstreamResponse(
+                    {
+                        "id": "resp_chat_multi_fallback",
+                        "output": [
+                            {
+                                "type": "message",
+                                "content": [{"type": "output_text", "text": "OK"}],
+                            }
+                        ],
+                        "usage": {"input_tokens": 4, "output_tokens": 1, "total_tokens": 5},
+                    }
+                ),
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(openai_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                openai_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(openai_module.usage_buffer, "add", AsyncMock()) as add_usage:
+                response = await client.post(
+                    "/v1/chat/completions",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={
+                        "model": "gpt-5.4",
+                        "messages": [{"role": "user", "content": "Reply with only: OK"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["choices"][0]["message"]["content"], "OK")
+        self.assertEqual(len(upstream_client.calls), 3)
+        self.assertEqual(upstream_client.calls[0]["url"], "https://primary-channel.example/v1/responses")
+        self.assertEqual(upstream_client.calls[1]["url"], "https://second-channel.example/v1/responses")
+        self.assertEqual(upstream_client.calls[2]["url"], "https://third-channel.example/v1/responses")
+        add_usage.assert_awaited_once()
+        usage_kwargs = add_usage.await_args.kwargs
+        self.assertEqual(usage_kwargs["route_reason"], "channel_fallback:upstream_empty_response")
+        self.assertEqual(usage_kwargs["channel_id"], "ch_chat_third")
+        self.assertEqual(usage_kwargs["fallback_from_channel_id"], "ch_chat_primary,ch_chat_second")
+        self.assertEqual(usage_kwargs["route_attempt"], 2)
+
     async def test_chat_claude_code_alias_maps_response_cached_tokens(self) -> None:
         self._add_claude_code_model()
         fake_user = SimpleNamespace(id="u_test", _api_key_id="k_claude_chat")
