@@ -17,6 +17,10 @@ from .image_jobs import (
     openai_router as image_jobs_openai_router,
     router as image_jobs_router,
 )
+from .video_jobs import (
+    openai_router as video_jobs_openai_router,
+    router as video_jobs_router,
+)
 from .keys import router as keys_router
 from .monitoring import admin_router as admin_monitoring_router, ops_router as monitoring_ops_router
 from .proxy import router as proxy_router, close_http_client
@@ -86,7 +90,9 @@ async def _run_migrations(conn):
         ("coincoin_request_logs", "api_key_id", "VARCHAR(32) NULL"),
         ("coincoin_request_logs", "route_reason", "VARCHAR(64) DEFAULT ''"),
         ("coincoin_usage_daily", "images_total", "BIGINT DEFAULT 0"),
+        ("coincoin_usage_daily", "videos_total", "BIGINT DEFAULT 0"),
         ("coincoin_request_logs", "image_count", "BIGINT DEFAULT 0"),
+        ("coincoin_request_logs", "video_count", "BIGINT DEFAULT 0"),
         ("coincoin_request_logs", "provider_model", "VARCHAR(128) DEFAULT ''"),
         ("coincoin_request_logs", "customer_model_alias", "VARCHAR(128) DEFAULT ''"),
         ("coincoin_request_logs", "usage_unit_type", "VARCHAR(32) DEFAULT 'tokens'"),
@@ -110,6 +116,13 @@ async def _run_migrations(conn):
         ("coincoin_user_finance_summary", "total_paid_orders", "BIGINT DEFAULT 0"),
         ("coincoin_user_finance_summary", "last_payment_at", "DATETIME NULL"),
         ("coincoin_image_jobs", "api_key_id", "VARCHAR(32) NULL"),
+        ("coincoin_video_jobs", "api_key_id", "VARCHAR(32) NULL"),
+        ("coincoin_video_jobs", "subscription_debit_cents", "BIGINT DEFAULT 0"),
+        ("coincoin_video_jobs", "subscription_id", "VARCHAR(32) DEFAULT ''"),
+        ("coincoin_video_jobs", "subscription_plan_id", "VARCHAR(64) DEFAULT ''"),
+        ("coincoin_video_jobs", "traffic_pack_debit_cents", "BIGINT DEFAULT 0"),
+        ("coincoin_video_jobs", "traffic_pack_debits_json", "TEXT NULL"),
+        ("coincoin_video_jobs", "legacy_debit_cents", "BIGINT DEFAULT 0"),
         ("coincoin_stations", "commission_rate", "DOUBLE DEFAULT 0.15"),
         ("coincoin_stations", "mode", "VARCHAR(32) DEFAULT 'commission_station'"),
         ("coincoin_stations", "balance_cents", "BIGINT DEFAULT 0"),
@@ -133,9 +146,12 @@ async def _run_migrations(conn):
         ("coincoin_request_logs", "output_multiplier", "DOUBLE DEFAULT 1"),
         ("coincoin_request_logs", "cache_read_multiplier", "DOUBLE DEFAULT 0"),
         ("coincoin_request_logs", "image_multiplier", "DOUBLE DEFAULT 1"),
+        ("coincoin_request_logs", "video_multiplier", "DOUBLE DEFAULT 1"),
         ("coincoin_request_logs", "base_price_input_per_million", "BIGINT DEFAULT 0"),
         ("coincoin_request_logs", "base_price_output_per_million", "BIGINT DEFAULT 0"),
         ("coincoin_request_logs", "base_price_per_image_cents", "DOUBLE DEFAULT 0"),
+        ("coincoin_request_logs", "base_price_per_video_cents", "DOUBLE DEFAULT 0"),
+        ("coincoin_request_logs", "price_per_video_cents", "DOUBLE DEFAULT 0"),
         ("coincoin_request_logs", "effective_cached_input_per_million", "DOUBLE DEFAULT 0"),
         ("coincoin_station_payout_batches", "payment_reference", "VARCHAR(128) DEFAULT ''"),
         ("coincoin_station_payout_batches", "payment_screenshot_url", "VARCHAR(512) DEFAULT ''"),
@@ -376,12 +392,56 @@ async def _run_migrations(conn):
             output_multiplier DOUBLE DEFAULT 1,
             cache_read_multiplier DOUBLE DEFAULT 0,
             image_multiplier DOUBLE DEFAULT 1,
+            video_multiplier DOUBLE DEFAULT 1,
             pricing_mode VARCHAR(32) DEFAULT 'multiplier',
             price_version BIGINT DEFAULT 1,
             updated_by VARCHAR(64) DEFAULT '',
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             INDEX ix_model_pricing_overrides_updated_at (updated_at)
+        )
+        """,
+        """
+        CREATE TABLE coincoin_video_jobs (
+            id VARCHAR(32) PRIMARY KEY,
+            user_id VARCHAR(32) NOT NULL,
+            api_key_id VARCHAR(32) NULL,
+            status VARCHAR(16) DEFAULT 'queued',
+            endpoint VARCHAR(32) DEFAULT 'videos/generations',
+            public_model VARCHAR(128) DEFAULT '',
+            provider_model VARCHAR(128) DEFAULT '',
+            route_reason VARCHAR(64) DEFAULT '',
+            upstream_task_id VARCHAR(128) DEFAULT '',
+            request_payload_json TEXT NOT NULL,
+            result_payload_json LONGTEXT NULL,
+            error_code VARCHAR(64) DEFAULT '',
+            error_message TEXT NULL,
+            upstream_request_id VARCHAR(128) DEFAULT '',
+            channel_id VARCHAR(32) DEFAULT '',
+            channel_type VARCHAR(32) DEFAULT '',
+            provider_platform VARCHAR(64) DEFAULT '',
+            provider_account_fingerprint VARCHAR(128) DEFAULT '',
+            charged_cents BIGINT DEFAULT 0,
+            refunded_cents BIGINT DEFAULT 0,
+            subscription_debit_cents BIGINT DEFAULT 0,
+            subscription_id VARCHAR(32) DEFAULT '',
+            subscription_plan_id VARCHAR(64) DEFAULT '',
+            traffic_pack_debit_cents BIGINT DEFAULT 0,
+            traffic_pack_debits_json TEXT NULL,
+            legacy_debit_cents BIGINT DEFAULT 0,
+            attempt_count BIGINT DEFAULT 0,
+            duration_ms BIGINT DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            started_at DATETIME NULL,
+            completed_at DATETIME NULL,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX ix_video_jobs_user_id (user_id),
+            INDEX ix_video_jobs_api_key_id (api_key_id),
+            INDEX ix_video_jobs_status (status),
+            INDEX ix_video_jobs_upstream_task_id (upstream_task_id),
+            INDEX ix_video_jobs_channel_id (channel_id),
+            INDEX ix_video_jobs_created_at (created_at),
+            INDEX ix_video_jobs_status_created (status, created_at)
         )
         """,
         """
@@ -813,6 +873,8 @@ app.include_router(anthropic_router)
 app.include_router(openai_router)
 app.include_router(image_jobs_router)
 app.include_router(image_jobs_openai_router)
+app.include_router(video_jobs_router)
+app.include_router(video_jobs_openai_router)
 app.include_router(keys_router)
 app.include_router(admin_router)
 app.include_router(admin_monitoring_router)

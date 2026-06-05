@@ -600,6 +600,10 @@ export const PUBLIC_MODEL_CATALOG_FALLBACK = [
     { id: 'gpt-5-codex', object: 'model', owned_by: 'openai', coincoin_capabilities: ['chat/completions', 'responses'], coincoin_billable_sku: 'legacy-gpt-5-codex-text', coincoin_routing_mode: 'legacy_auto', coincoin_default_for: [], coincoin_metadata: {}, coincoin_price_input_per_million: 175, coincoin_price_cached_input_per_million: 17.5, coincoin_price_output_per_million: 1400, coincoin_price_per_image_cents: 0 },
     { id: 'gpt-5-codex-mini', object: 'model', owned_by: 'openai', coincoin_capabilities: ['chat/completions', 'responses'], coincoin_billable_sku: 'legacy-gpt-5-codex-mini-text', coincoin_routing_mode: 'legacy_auto', coincoin_default_for: [], coincoin_metadata: {}, coincoin_price_input_per_million: 75, coincoin_price_cached_input_per_million: 7.5, coincoin_price_output_per_million: 450, coincoin_price_per_image_cents: 0 },
     { id: 'gpt-image-2', object: 'model', owned_by: 'openai', coincoin_capabilities: ['images/generations', 'images/edits'], coincoin_billable_sku: 'openai-image', coincoin_routing_mode: 'direct', coincoin_delivery_lane: 'upstream_direct', coincoin_default_for: ['image'], coincoin_metadata: { tier: 'stable', official_price_source: 'OpenAI image generation pricing', official_price_basis: 'gpt-image-2 medium 1024x1024 reference price' }, coincoin_price_input_per_million: 0, coincoin_price_output_per_million: 0, coincoin_price_per_image_cents: 5.3 },
+    { id: 'seedance-v2-720p', object: 'model', owned_by: 'bytedance', coincoin_capabilities: ['videos/generations'], coincoin_billable_sku: 'seedance-v2-720p-video-task', coincoin_routing_mode: 'direct', coincoin_delivery_lane: 'upstream_direct', coincoin_default_for: ['video'], coincoin_metadata: { tier: 'stable', output_resolution: '720p', upstream_contract_price_source: 'wgspai Seedance 2.0 video generation PDF' }, coincoin_price_input_per_million: 0, coincoin_price_output_per_million: 0, coincoin_price_per_image_cents: 0, coincoin_price_per_video_cents: 98 },
+    { id: 'seedance-v2-720p-video', object: 'model', owned_by: 'bytedance', coincoin_capabilities: ['videos/generations'], coincoin_billable_sku: 'seedance-v2-720p-video-reference-task', coincoin_routing_mode: 'direct', coincoin_delivery_lane: 'upstream_direct', coincoin_default_for: [], coincoin_metadata: { tier: 'stable', output_resolution: '720p', upstream_contract_price_source: 'wgspai Seedance 2.0 video generation PDF' }, coincoin_price_input_per_million: 0, coincoin_price_output_per_million: 0, coincoin_price_per_image_cents: 0, coincoin_price_per_video_cents: 112 },
+    { id: 'seedance-v2-1080p', object: 'model', owned_by: 'bytedance', coincoin_capabilities: ['videos/generations'], coincoin_billable_sku: 'seedance-v2-1080p-video-task', coincoin_routing_mode: 'direct', coincoin_delivery_lane: 'upstream_direct', coincoin_default_for: [], coincoin_metadata: { tier: 'stable', output_resolution: '1080p', upstream_contract_price_source: 'wgspai Seedance 2.0 video generation PDF' }, coincoin_price_input_per_million: 0, coincoin_price_output_per_million: 0, coincoin_price_per_image_cents: 0, coincoin_price_per_video_cents: 224 },
+    { id: 'seedance-v2-1080p-video', object: 'model', owned_by: 'bytedance', coincoin_capabilities: ['videos/generations'], coincoin_billable_sku: 'seedance-v2-1080p-video-reference-task', coincoin_routing_mode: 'direct', coincoin_delivery_lane: 'upstream_direct', coincoin_default_for: [], coincoin_metadata: { tier: 'stable', output_resolution: '1080p', upstream_contract_price_source: 'wgspai Seedance 2.0 video generation PDF' }, coincoin_price_input_per_million: 0, coincoin_price_output_per_million: 0, coincoin_price_per_image_cents: 0, coincoin_price_per_video_cents: 280 },
     { id: 'gemini-balanced', object: 'model', owned_by: 'google', coincoin_capabilities: ['chat/completions', 'responses'], coincoin_billable_sku: 'gemini-balanced-text', coincoin_routing_mode: 'direct', coincoin_delivery_lane: 'cpa_gemini', coincoin_default_for: [], coincoin_metadata: { tier: 'stable', official_price_source: 'Google Gemini API pricing' }, coincoin_price_input_per_million: 10, coincoin_price_cached_input_per_million: 1, coincoin_price_output_per_million: 40, coincoin_price_per_image_cents: 0 },
     { id: 'gemini-fast', object: 'model', owned_by: 'google', coincoin_capabilities: ['chat/completions', 'responses'], coincoin_billable_sku: 'gemini-fast-text', coincoin_routing_mode: 'direct', coincoin_delivery_lane: 'cpa_gemini', coincoin_default_for: [], coincoin_metadata: { tier: 'stable', official_price_source: 'Google Gemini API pricing' }, coincoin_price_input_per_million: 30, coincoin_price_cached_input_per_million: 3, coincoin_price_output_per_million: 250, coincoin_price_per_image_cents: 0 },
     { id: 'gemini-reasoning', object: 'model', owned_by: 'google', coincoin_capabilities: ['chat/completions', 'responses'], coincoin_billable_sku: 'gemini-reasoning-text', coincoin_routing_mode: 'direct', coincoin_delivery_lane: 'cpa_gemini', coincoin_default_for: [], coincoin_metadata: { tier: 'stable', official_price_source: 'Google Gemini API pricing' }, coincoin_price_input_per_million: 125, coincoin_price_cached_input_per_million: 12.5, coincoin_price_output_per_million: 1000, coincoin_price_per_image_cents: 0 },
@@ -634,6 +638,11 @@ export function isImageCapableModel(model) {
     return capabilities.includes('images/generations') || capabilities.includes('images/edits')
 }
 
+export function isVideoCapableModel(model) {
+    const capabilities = model?.coincoin_capabilities || []
+    return capabilities.includes('videos/generations')
+}
+
 export function getDefaultTextModel(models = PUBLIC_MODEL_CATALOG_FALLBACK) {
     return models.find(model => (model.coincoin_default_for || []).includes('text'))
         || models.find(isTextCapableModel)
@@ -646,9 +655,19 @@ export function getDefaultImageModel(models = PUBLIC_MODEL_CATALOG_FALLBACK) {
         || null
 }
 
+export function getDefaultVideoModel(models = PUBLIC_MODEL_CATALOG_FALLBACK) {
+    return models.find(model => (model.coincoin_default_for || []).includes('video'))
+        || models.find(isVideoCapableModel)
+        || null
+}
+
 export function describePublicModel(model) {
     const id = model?.id || ''
     const capabilities = model?.coincoin_capabilities || []
+    if (capabilities.includes('videos/generations')) {
+        if (id.endsWith('-video')) return 'Seedance 多模态参考视频模型'
+        return 'Seedance 视频模型'
+    }
     if (capabilities.includes('images/generations') || capabilities.includes('images/edits')) {
         if (id === 'gpt-image-2') return '默认图片模型，支持文生图和图生图，适合高质量生成、编辑和文字较多的图片'
         if (id === 'gemini-image') return 'Gemini 图片模型，显式传 model 时使用，适合 Gemini 生图和图生图工作流'
@@ -690,10 +709,15 @@ export function hasModelPricingMultiplier(model) {
     return Number(model?.coincoin_model_multiplier || 1) !== 1
         || Number(model?.coincoin_output_multiplier || 1) !== 1
         || Number(model?.coincoin_image_multiplier || 1) !== 1
+        || Number(model?.coincoin_video_multiplier || 1) !== 1
         || model?.coincoin_pricing_mode === 'multiplier'
 }
 
 export function formatModelPrice(model) {
+    if (isVideoCapableModel(model)) {
+        const cents = model?.coincoin_price_per_video_cents || 0
+        return cents > 0 ? `$${(cents / 100).toFixed(3)} / video` : '按后台配置计费'
+    }
     if (isImageCapableModel(model)) {
         const cents = model?.coincoin_price_per_image_cents || 0
         return cents > 0 ? `$${(cents / 100).toFixed(3)} / image` : '按后台配置计费'

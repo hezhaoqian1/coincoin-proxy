@@ -189,9 +189,11 @@ def public_model_pricing_kwargs(public_model: Any) -> dict:
         "output_multiplier": getattr(public_model, "output_multiplier", 1.0) or 1.0,
         "cache_read_multiplier": getattr(public_model, "cache_read_multiplier", 0.0) or 0.0,
         "image_multiplier": getattr(public_model, "image_multiplier", 1.0) or 1.0,
+        "video_multiplier": getattr(public_model, "video_multiplier", 1.0) or 1.0,
         "base_price_input_per_million": getattr(public_model, "base_price_input_per_million", 0) or 0,
         "base_price_output_per_million": getattr(public_model, "base_price_output_per_million", 0) or 0,
         "base_price_per_image_cents": getattr(public_model, "base_price_per_image_cents", 0.0) or 0.0,
+        "base_price_per_video_cents": getattr(public_model, "base_price_per_video_cents", 0.0) or 0.0,
         "effective_cached_input_per_million": getattr(public_model, "effective_cached_input_per_million", 0.0) or 0.0,
         "price_version": getattr(public_model, "price_version", 0) or 0,
     }

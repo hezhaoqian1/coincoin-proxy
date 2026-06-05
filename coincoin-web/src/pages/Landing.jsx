@@ -90,7 +90,7 @@ const FAQS = [
     },
     {
         question: '余额和计费怎么处理？',
-        answer: '充值后按模型用量扣费，文本和图片共用同一个账户余额。控制台会展示余额、请求日志和开发者 Key。',
+        answer: '充值后按模型用量扣费，文本、图片等能力共用同一个账户余额。控制台会展示余额、请求日志和开发者 Key。',
     },
 ]
 
@@ -105,7 +105,7 @@ function PricingPreview({ isLoggedIn }) {
                         <span className="landing-eyebrow">Pricing</span>
                         <h2>按月选预算，用完可补量</h2>
                     </div>
-                    <p>月付套餐给清晰预算感，文本和图片最终仍从同一个余额扣费。</p>
+                    <p>月付套餐给清晰预算感，多模型调用最终仍从同一个余额扣费。</p>
                 </div>
                 <div className="landing-pricing-grid">
                     {featuredPlans.map((plan) => (
@@ -198,7 +198,7 @@ export default function Landing() {
                         <div className="landing-panel-head">
                             <div>
                                 <span className="landing-console-label">Routing Console</span>
-                                <strong>一把 Key，三类接入路径</strong>
+                                <strong>一把 Key，多类能力入口</strong>
                             </div>
                             <span className="landing-console-status">Live</span>
                         </div>

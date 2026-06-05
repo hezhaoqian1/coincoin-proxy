@@ -217,6 +217,44 @@ class UsageBufferUnitsTests(unittest.TestCase):
         self.assertEqual(request_logs[0]["usage_unit_count"], 2)
         self.assertEqual(request_logs[0]["provider_model"], "gemini-3.1-flash-image")
 
+    def test_tracks_video_generation_units_and_cost(self) -> None:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        buffer = UsageBuffer()
+
+        async def scenario():
+            await buffer.add(
+                "u_video",
+                requests=1,
+                endpoint="videos/generations",
+                model="seedance-v2-720p",
+                customer_model_alias="seedance-v2-720p",
+                provider_model="seedance-v2-720p",
+                usage_unit_type="videos",
+                usage_unit_count=2,
+                video_count=2,
+                price_per_video_cents=98,
+                base_price_per_video_cents=98,
+                video_multiplier=1,
+                billable_sku="seedance-v2-720p-video-task",
+            )
+            return await buffer.snapshot_and_reset()
+
+        try:
+            daily, usage_by_user, request_logs = loop.run_until_complete(scenario())
+        finally:
+            asyncio.set_event_loop(None)
+            loop.close()
+
+        self.assertEqual(daily[("u_video", china_today())]["videos_total"], 2)
+        self.assertEqual(round(usage_by_user["u_video"]["cost_cents_f"]), 196)
+        self.assertEqual(request_logs[0]["usage_unit_type"], "videos")
+        self.assertEqual(request_logs[0]["usage_unit_count"], 2)
+        self.assertEqual(request_logs[0]["video_count"], 2)
+        self.assertEqual(request_logs[0]["price_per_video_cents"], 98)
+        self.assertEqual(request_logs[0]["base_price_per_video_cents"], 98)
+        self.assertEqual(request_logs[0]["video_multiplier"], 1)
+
     def test_image_cost_keeps_sub_cent_official_prices_until_flush_rounding(self) -> None:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -307,8 +345,10 @@ class UsageBufferUnitsTests(unittest.TestCase):
                 output_multiplier=2,
                 cache_read_multiplier=0.2,
                 image_multiplier=1,
+                video_multiplier=1,
                 base_price_input_per_million=100,
                 base_price_output_per_million=200,
+                base_price_per_video_cents=98,
                 effective_cached_input_per_million=30,
                 price_version=7,
             )
@@ -325,8 +365,10 @@ class UsageBufferUnitsTests(unittest.TestCase):
         self.assertEqual(request_logs[0]["model_multiplier"], 1.5)
         self.assertEqual(request_logs[0]["output_multiplier"], 2)
         self.assertEqual(request_logs[0]["cache_read_multiplier"], 0.2)
+        self.assertEqual(request_logs[0]["video_multiplier"], 1)
         self.assertEqual(request_logs[0]["base_price_input_per_million"], 100)
         self.assertEqual(request_logs[0]["base_price_output_per_million"], 200)
+        self.assertEqual(request_logs[0]["base_price_per_video_cents"], 98)
         self.assertEqual(request_logs[0]["effective_cached_input_per_million"], 30)
         self.assertEqual(request_logs[0]["price_version"], 7)
 

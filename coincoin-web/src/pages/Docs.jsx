@@ -22,7 +22,7 @@ const TABS = [
     {
         label: 'API 参考',
         kicker: 'Protocol',
-        intro: '看端点、认证方式和图片接口边界。'
+        intro: '看端点、认证方式和图片/视频接口边界。'
     },
     {
         label: '代码示例',
@@ -43,7 +43,8 @@ const TAB_KEY_BY_INDEX = ['quickstart', 'models', 'api', 'snippets']
 const GEMINI_OFFICIAL_PRICE_SOURCE = 'Google Gemini API pricing · checked 2026-05-09'
 const OPENAI_IMAGE_OFFICIAL_PRICE_SOURCE = 'OpenAI image generation pricing · checked 2026-05-09'
 const CLAUDE_OFFICIAL_PRICE_SOURCE = 'Anthropic Claude pricing · checked 2026-05-31'
-const OFFICIAL_PRICING = {
+const SEEDANCE_UPSTREAM_PRICE_SOURCE = 'wgspai 上游合同价 · checked 2026-06-05'
+const REFERENCE_PRICING = {
     'claude-opus-4-8': {
         providerModel: 'Claude Opus 4.8 alias',
         input: '$5.00 / 1M input tokens',
@@ -99,6 +100,26 @@ const OFFICIAL_PRICING = {
         image: '$0.067 / 1K image',
         source: GEMINI_OFFICIAL_PRICE_SOURCE,
     },
+    'seedance-v2-720p': {
+        providerModel: 'Seedance 2.0 720p',
+        video: '¥7 / video task',
+        source: SEEDANCE_UPSTREAM_PRICE_SOURCE,
+    },
+    'seedance-v2-720p-video': {
+        providerModel: 'Seedance 2.0 720p video-reference',
+        video: '¥8 / video task',
+        source: SEEDANCE_UPSTREAM_PRICE_SOURCE,
+    },
+    'seedance-v2-1080p': {
+        providerModel: 'Seedance 2.0 1080p',
+        video: '¥16 / video task',
+        source: SEEDANCE_UPSTREAM_PRICE_SOURCE,
+    },
+    'seedance-v2-1080p-video': {
+        providerModel: 'Seedance 2.0 1080p video-reference',
+        video: '¥20 / video task',
+        source: SEEDANCE_UPSTREAM_PRICE_SOURCE,
+    },
 }
 
 function formatCaps(model) {
@@ -125,15 +146,22 @@ function formatImagePrice(cents) {
     return `$${(value / 100).toFixed(3)} / image`
 }
 
+function formatVideoPrice(cents) {
+    const value = Number(cents || 0)
+    if (!value) return '后台配置'
+    return `$${(value / 100).toFixed(3)} / video`
+}
+
 function formatMultiplier(model) {
     if (!hasModelPricingMultiplier(model)) return '默认'
     const modelRatio = Number(model.coincoin_model_multiplier || 1).toFixed(2)
     const outputRatio = Number(model.coincoin_output_multiplier || 1).toFixed(2)
-    return `${modelRatio}x · out ${outputRatio}x`
+    const mediaRatio = Number(model.coincoin_video_multiplier || model.coincoin_image_multiplier || 1).toFixed(2)
+    return `${modelRatio}x · out ${outputRatio}x · media ${mediaRatio}x`
 }
 
-function getOfficialPricing(model) {
-    return OFFICIAL_PRICING[model?.id || ''] || null
+function getReferencePricing(model) {
+    return REFERENCE_PRICING[model?.id || ''] || null
 }
 
 function getProviderName(model) {
@@ -145,9 +173,10 @@ export default function Docs() {
     const [searchParams, setSearchParams] = useSearchParams()
     const requestedTab = searchParams.get('tab')
     const [activeTab, setActiveTab] = useState(TAB_INDEX_BY_KEY[requestedTab] ?? 0)
-    const { models, textModels, imageModels, defaultTextModel, defaultImageModel } = usePublicModels()
+    const { models, textModels, imageModels, videoModels, defaultTextModel, defaultImageModel, defaultVideoModel } = usePublicModels()
     const primaryTextModel = defaultTextModel || textModels[0] || models[0]
     const primaryImageModel = defaultImageModel || imageModels[0] || null
+    const primaryVideoModel = defaultVideoModel || videoModels[0] || null
     const activeSection = TABS[activeTab]
 
     useEffect(() => {
@@ -196,9 +225,9 @@ export default function Docs() {
 
                     <div className="docs-content glass-card">
                         {activeTab === 0 && <QuickStart primaryTextModel={primaryTextModel} primaryImageModel={primaryImageModel} />}
-                        {activeTab === 1 && <ModelsAndPricing textModels={textModels} imageModels={imageModels} defaultTextModel={defaultTextModel} defaultImageModel={defaultImageModel} />}
-                        {activeTab === 2 && <ApiReference primaryTextModel={primaryTextModel} primaryImageModel={primaryImageModel} />}
-                        {activeTab === 3 && <CodeExamples primaryTextModel={primaryTextModel} primaryImageModel={primaryImageModel} />}
+                        {activeTab === 1 && <ModelsAndPricing textModels={textModels} imageModels={imageModels} videoModels={videoModels} defaultTextModel={defaultTextModel} defaultImageModel={defaultImageModel} defaultVideoModel={defaultVideoModel} />}
+                        {activeTab === 2 && <ApiReference primaryTextModel={primaryTextModel} primaryImageModel={primaryImageModel} primaryVideoModel={primaryVideoModel} />}
+                        {activeTab === 3 && <CodeExamples primaryTextModel={primaryTextModel} primaryImageModel={primaryImageModel} primaryVideoModel={primaryVideoModel} />}
                     </div>
                 </div>
             </div>
@@ -211,7 +240,7 @@ export default function Docs() {
                 <AppShell title="可用模型" description="模型、价格和当前接入状态。">
                     <div className="docs-shell-page">
                         <div className="docs-content glass-card">
-                            <ModelsAndPricing textModels={textModels} imageModels={imageModels} defaultTextModel={defaultTextModel} defaultImageModel={defaultImageModel} />
+                            <ModelsAndPricing textModels={textModels} imageModels={imageModels} videoModels={videoModels} defaultTextModel={defaultTextModel} defaultImageModel={defaultImageModel} defaultVideoModel={defaultVideoModel} />
                         </div>
                     </div>
                 </AppShell>
@@ -248,9 +277,9 @@ export default function Docs() {
 
                         <div className="docs-content glass-card">
                             {activeTab === 0 && <QuickStart primaryTextModel={primaryTextModel} primaryImageModel={primaryImageModel} />}
-                            {activeTab === 1 && <ModelsAndPricing textModels={textModels} imageModels={imageModels} defaultTextModel={defaultTextModel} defaultImageModel={defaultImageModel} />}
-                            {activeTab === 2 && <ApiReference primaryTextModel={primaryTextModel} primaryImageModel={primaryImageModel} />}
-                            {activeTab === 3 && <CodeExamples primaryTextModel={primaryTextModel} primaryImageModel={primaryImageModel} />}
+                            {activeTab === 1 && <ModelsAndPricing textModels={textModels} imageModels={imageModels} videoModels={videoModels} defaultTextModel={defaultTextModel} defaultImageModel={defaultImageModel} defaultVideoModel={defaultVideoModel} />}
+                            {activeTab === 2 && <ApiReference primaryTextModel={primaryTextModel} primaryImageModel={primaryImageModel} primaryVideoModel={primaryVideoModel} />}
+                            {activeTab === 3 && <CodeExamples primaryTextModel={primaryTextModel} primaryImageModel={primaryImageModel} primaryVideoModel={primaryVideoModel} />}
                         </div>
                     </div>
                 </div>
@@ -507,7 +536,7 @@ function StatusCard({ label, value, tone = 'neutral', action }) {
     )
 }
 
-function ModelsAndPricing({ textModels, imageModels, defaultTextModel, defaultImageModel }) {
+function ModelsAndPricing({ textModels, imageModels, videoModels, defaultTextModel, defaultImageModel, defaultVideoModel }) {
     const { activeDeveloperKeyCount, effectiveApiKey, hasDeveloperKey, isLoggedIn } = useAuth()
     const [balance, setBalance] = useState({ status: 'idle', data: null })
     const [copied, setCopied] = useState('')
@@ -574,6 +603,11 @@ function ModelsAndPricing({ textModels, imageModels, defaultTextModel, defaultIm
                     value={defaultImageModel?.id || imageModels[0]?.id || '未配置'}
                     tone={imageModels.length ? 'ok' : 'neutral'}
                 />
+                <StatusCard
+                    label="视频模型"
+                    value={defaultVideoModel?.id || videoModels[0]?.id || '未配置'}
+                    tone={videoModels.length ? 'ok' : 'neutral'}
+                />
             </div>
 
             <div className="endpoint-strip">
@@ -585,9 +619,9 @@ function ModelsAndPricing({ textModels, imageModels, defaultTextModel, defaultIm
             <h3>文本模型</h3>
             <div className="official-price-callout">
                 <div>
-                    <span className="docs-shell-kicker">Official Benchmark</span>
-                    <strong>公开模型价格按官方价格写入默认目录</strong>
-                    <p>页面展示的价格来自 <code>/v1/models</code>；生产环境如果配置了价格环境变量，会以线上返回值为准。</p>
+                    <span className="docs-shell-kicker">Pricing Reference</span>
+                    <strong>公开模型价格按来源写入默认目录</strong>
+                    <p>页面展示来自 <code>/v1/models</code>；生产环境如果配置了价格环境变量，会以线上返回值为准。</p>
                 </div>
                 <a href="https://platform.claude.com/docs/en/about-claude/models/overview" target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm">查看 Claude 价格</a>
             </div>
@@ -608,7 +642,7 @@ function ModelsAndPricing({ textModels, imageModels, defaultTextModel, defaultIm
                     <tbody>
                         {textModels.map((model) => {
                             const isDefault = (model.coincoin_default_for || []).includes('text')
-                            const official = getOfficialPricing(model)
+                            const reference = getReferencePricing(model)
                             return (
                                 <tr key={model.id}>
                                     <td>
@@ -625,11 +659,11 @@ function ModelsAndPricing({ textModels, imageModels, defaultTextModel, defaultIm
                                         {hasModelPricingMultiplier(model) && <small>基础 {formatUsdPerMillion(model.coincoin_base_price_input_per_million)}</small>}
                                     </td>
                                     <td>
-                                        {official ? (
+                                        {reference ? (
                                             <div className="official-price-cell">
-                                                <strong>{official.providerModel}</strong>
-                                                <span>{official.input} · {official.output}</span>
-                                                <em>{official.source}</em>
+                                                <strong>{reference.providerModel}</strong>
+                                                <span>{reference.input} · {reference.output}</span>
+                                                <em>{reference.source}</em>
                                             </div>
                                         ) : (
                                             <span className="table-subtle">{getProviderName(model)}</span>
@@ -662,7 +696,7 @@ function ModelsAndPricing({ textModels, imageModels, defaultTextModel, defaultIm
                     </thead>
                     <tbody>
                         {imageModels.map((model) => {
-                            const official = getOfficialPricing(model)
+                            const reference = getReferencePricing(model)
                             return (
                                 <tr key={model.id}>
                                     <td>
@@ -674,11 +708,60 @@ function ModelsAndPricing({ textModels, imageModels, defaultTextModel, defaultIm
                                     <td className="price-cell">{formatImagePrice(model.coincoin_price_per_image_cents)}</td>
                                     <td className="price-cell">{formatMultiplier(model)}</td>
                                     <td>
-                                        {official ? (
+                                        {reference ? (
                                             <div className="official-price-cell">
-                                                <strong>{official.providerModel}</strong>
-                                                <span>{official.image}</span>
-                                                <em>{official.source}</em>
+                                                <strong>{reference.providerModel}</strong>
+                                                <span>{reference.image}</span>
+                                                <em>{reference.source}</em>
+                                            </div>
+                                        ) : (
+                                            <span className="table-subtle">{getProviderName(model)}</span>
+                                        )}
+                                    </td>
+                                    <td>
+                                        <div>{describePublicModel(model)}</div>
+                                        <div className="table-subtle">{formatCaps(model)}</div>
+                                    </td>
+                                    <td><span className={`badge ${model.coincoin_metadata?.tier === 'preview' ? 'badge-warning' : 'badge-success'}`}>{formatTier(model)}</span></td>
+                                </tr>
+                            )
+                        })}
+                    </tbody>
+                </table>
+            </div>
+
+            <h3>视频模型</h3>
+            <div className="pricing-table-wrap">
+                <table className="data-table pricing-table pricing-table-image">
+                    <thead>
+                        <tr>
+                            <th>模型名称</th>
+                            <th>视频价格</th>
+                            <th>倍率</th>
+                            <th>上游合同价</th>
+                            <th>描述</th>
+                            <th>状态</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {videoModels.map((model) => {
+                            const reference = getReferencePricing(model)
+                            return (
+                                <tr key={model.id}>
+                                    <td>
+                                        <div className="model-name-cell">
+                                            <code className="model-tag-sm">{model.id}</code>
+                                            {(model.coincoin_default_for || []).includes('video') && <span className="inline-badge">默认视频</span>}
+                                        </div>
+                                    </td>
+                                    <td className="price-cell">{formatVideoPrice(model.coincoin_price_per_video_cents)}</td>
+                                    <td className="price-cell">{formatMultiplier(model)}</td>
+                                    <td>
+                                        {reference ? (
+                                            <div className="official-price-cell">
+                                                <strong>{reference.providerModel}</strong>
+                                                <span>{reference.video}</span>
+                                                <em>{reference.source}</em>
                                             </div>
                                         ) : (
                                             <span className="table-subtle">{getProviderName(model)}</span>
@@ -730,11 +813,12 @@ function ModelsAndPricing({ textModels, imageModels, defaultTextModel, defaultIm
 
             <h3>计费说明</h3>
             <ul className="doc-list">
-                <li>文本模型按 Input / Cached Read / Output Token 计费；图片模型按图片张数计费。</li>
+                <li>文本模型按 Input / Cached Read / Output Token 计费；图片模型按图片张数计费；视频模型按任务次数计费。</li>
                 <li>Cached input 表示缓存读取 token，使用模型目录返回的单独缓存读取价格计费，不要按普通 Input 价格估算。</li>
                 <li><code>gpt-image-2</code> 默认图片价格按 OpenAI 官方 medium <code>1024x1024</code> 参考价展示；实际成本会随质量、尺寸和上游计费策略变化。</li>
                 <li><code>gemini-image</code> 价格对标 Google Gemini API 官方价格，当前按 Gemini 3.1 Flash Image Preview 的 <code>$0.067 / 1K image</code> 展示。</li>
-                <li>同一个账户余额同时覆盖文本模型和图片模型，不需要分开充值。</li>
+                <li><code>seedance-v2-720p</code> 等视频模型价格按 wgspai 上游合同单次价格折算展示，生产环境以 <code>/v1/models</code> 返回值为准。</li>
+                <li>同一个账户余额同时覆盖文本模型、图片模型和视频模型，不需要分开充值。</li>
                 <li>老客户端不传 <code>model</code> 时，仍然走默认文本模型，以保证兼容。</li>
             </ul>
             <div className="doc-callout">
@@ -745,9 +829,10 @@ function ModelsAndPricing({ textModels, imageModels, defaultTextModel, defaultIm
     )
 }
 
-function ApiReference({ primaryTextModel, primaryImageModel }) {
+function ApiReference({ primaryTextModel, primaryImageModel, primaryVideoModel }) {
     const textModelId = primaryTextModel?.id || 'opus'
     const imageModelId = primaryImageModel?.id || 'gpt-image-2'
+    const videoModelId = primaryVideoModel?.id || 'seedance-v2-720p'
 
     return (
         <div className="doc-section animate-fade-in">
@@ -876,18 +961,42 @@ function ApiReference({ primaryTextModel, primaryImageModel }) {
             <pre className="code-block">{`curl ${SITE}/v1/image-jobs/job_xxxxx \\
   -H "Authorization: Bearer sk_cc_xxxxx"`}</pre>
 
+            <h3>Videos: Seedance 生成</h3>
+            <div className="endpoint-block">
+                <span className="method post">POST</span>
+                <code>/v1/videos/generations</code>
+            </div>
+            <pre className="code-block">{`{
+  "model": "${videoModelId}",
+  "prompt": "镜头缓慢推进，人物转身微笑，电影感光影",
+  "params": {
+    "ratio": "16:9",
+    "images": ["https://example.com/ref.jpg"]
+  }
+}`}</pre>
+
+            <div className="endpoint-block">
+                <span className="method get">GET</span>
+                <code>/v1/videos/generations/{'{job_id}'}</code>
+            </div>
+            <pre className="code-block">{`curl ${SITE}/v1/videos/generations/job_xxxxx \\
+  -H "Authorization: Bearer sk_cc_xxxxx"`}</pre>
+
             <ul className="doc-list">
                 <li>当前图片编辑分为两条公开契约：<code>1-2</code> 张输入图继续走同步 <code>/v1/images/edits</code>，<code>3-8</code> 张输入图改走异步 <code>/v1/image-jobs/edits</code>。</li>
                 <li>如果你把 <code>3+</code> 张输入图直接发到 <code>/v1/images/edits</code>，接口会明确返回 <code>image_job_required</code>，而不是随机超时。</li>
                 <li>图片模型当前输出候选数只支持 <code>n=1</code>。</li>
                 <li>当前图片编辑不支持 <code>mask</code> 上传；如果传了掩码，会返回 <code>mask_not_supported</code>。</li>
                 <li>如果平台侧图片运行时暂不可用，图片请求会返回配置错误，而不是偷偷回退到别的模型。</li>
+                <li>视频生成是异步任务；创建成功后会先扣费，失败任务会按本地记录退款一次。</li>
+                <li>Seedance 纯文本视频请求会被拒绝；普通模型不能传 <code>reference_video</code> 或 <code>reference_audio</code>，需要时使用 <code>-video</code> 模型。</li>
             </ul>
 
             <h3>默认兼容规则</h3>
             <ul className="doc-list">
                 <li>如果文本请求里省略 <code>model</code>，ClawFather 会保持默认文本模型的兼容行为。</li>
                 <li>如果图片请求里省略 <code>model</code>，ClawFather 会自动选择默认图片模型 <code>gpt-image-2</code>。</li>
+                <li>如果视频请求里省略 <code>model</code>，ClawFather 会自动选择默认视频模型 <code>seedance-v2-720p</code>。</li>
                 <li>如果要用 Gemini 生图或 Gemini 图生图，请显式传入 <code>model: "gemini-image"</code>。</li>
                 <li>显式指定某个模型后，如果该模型请求失败，不会偷偷回退到另一个模型。</li>
             </ul>
@@ -902,6 +1011,8 @@ function ApiReference({ primaryTextModel, primaryImageModel }) {
                     <tr><td>400</td><td><code>image_candidate_count_not_supported</code></td><td>图片模型当前只支持 <code>n=1</code></td></tr>
                     <tr><td>400</td><td><code>image_job_required</code></td><td>同步图生图请求里传了 <code>3+</code> 张输入图，请改用 <code>/v1/image-jobs/edits</code></td></tr>
                     <tr><td>400</td><td><code>mask_not_supported</code></td><td>当前图片编辑不支持 <code>mask</code> 上传</td></tr>
+                    <tr><td>400</td><td><code>missing_reference_media</code></td><td>Seedance 视频请求缺少图片、首帧、首尾帧或多模态参考</td></tr>
+                    <tr><td>400</td><td><code>video_reference_requires_video_model</code></td><td>视频/音频参考只能使用带 <code>-video</code> 后缀的 Seedance 模型</td></tr>
                     <tr><td>401</td><td>认证失败</td><td>API Key 缺失或无效</td></tr>
                     <tr><td>402</td><td>余额不足</td><td>请充值后重试</td></tr>
                     <tr><td>403</td><td>禁止访问</td><td>Key 被禁用、用户被封禁，或使用了 session key 访问 API</td></tr>
@@ -918,9 +1029,10 @@ function ApiReference({ primaryTextModel, primaryImageModel }) {
     )
 }
 
-function CodeExamples({ primaryTextModel, primaryImageModel }) {
+function CodeExamples({ primaryTextModel, primaryImageModel, primaryVideoModel }) {
     const textModelId = primaryTextModel?.id || 'opus'
     const imageModelId = primaryImageModel?.id || 'gpt-image-2'
+    const videoModelId = primaryVideoModel?.id || 'seedance-v2-720p'
 
     return (
         <div className="doc-section animate-fade-in">
@@ -975,6 +1087,29 @@ print(response.choices[0].message.content)`}</pre>
 
 const data = await res.json();
 console.log(data.data[0]);`}</pre>
+
+            <h3>JavaScript (fetch, Seedance 视频任务)</h3>
+            <pre className="code-block">{`const createRes = await fetch('${SITE}/v1/videos/generations', {
+  method: 'POST',
+  headers: {
+    'Authorization': 'Bearer sk_cc_xxxxx',
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    model: '${videoModelId}',
+    prompt: '镜头缓慢推进，人物转身微笑，电影感光影',
+    params: {
+      ratio: '16:9',
+      images: ['https://example.com/ref.jpg']
+    }
+  })
+});
+
+const job = await createRes.json();
+const resultRes = await fetch('${SITE}/v1/videos/generations/' + job.id, {
+  headers: { Authorization: 'Bearer sk_cc_xxxxx' }
+});
+console.log(await resultRes.json());`}</pre>
 
             <h3>Codex CLI</h3>
             <pre className="code-block">{`model = "${CODEX_MODEL_ID}"

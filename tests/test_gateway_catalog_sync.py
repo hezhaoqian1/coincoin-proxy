@@ -5,6 +5,7 @@ from pathlib import Path
 IMAGE_CAPABILITIES = {"images/generations", "images/edits"}
 EMBEDDING_CAPABILITIES = {"embeddings"}
 TEXT_CAPABILITIES = {"chat/completions", "responses"}
+VIDEO_CAPABILITIES = {"videos/generations"}
 FIXED_TEXT_PRICE = (500, 3000)
 CHEAP_TEXT_PRICE = (75, 450)
 CLAUDE_OPUS_PRICE = (500, 2500)
@@ -101,6 +102,12 @@ OFFICIAL_DEFAULT_IMAGE_PRICES = {
     "vertex-gemini-2.5-flash-image": 6.7,
     "vertex-gemini-3.1-flash-image-preview": 6.7,
 }
+OFFICIAL_DEFAULT_VIDEO_PRICES = {
+    "seedance-v2-720p": 98,
+    "seedance-v2-720p-video": 112,
+    "seedance-v2-1080p": 224,
+    "seedance-v2-1080p-video": 280,
+}
 
 
 def _placeholder_default(value):
@@ -168,11 +175,14 @@ class GatewayCatalogSyncTests(unittest.TestCase):
 
         default_text_model = self.catalog.get("default_text_model")
         default_image_model = self.catalog.get("default_image_model")
+        default_video_model = self.catalog.get("default_video_model")
 
         self.assertIn(default_text_model, public_models)
         self.assertIn("chat/completions", public_models[default_text_model].get("capabilities") or [])
         self.assertIn(default_image_model, public_models)
         self.assertIn("images/generations", public_models[default_image_model].get("capabilities") or [])
+        self.assertIn(default_video_model, public_models)
+        self.assertIn("videos/generations", public_models[default_video_model].get("capabilities") or [])
 
     def test_legacy_gpt_5_4_stays_public_when_fixed_model_changes(self) -> None:
         public_models = {
@@ -330,6 +340,15 @@ class GatewayCatalogSyncTests(unittest.TestCase):
                     self.assertEqual(model.get("auth_style"), expected_auth_style)
                     continue
 
+                if capabilities.intersection(VIDEO_CAPABILITIES):
+                    self.assertEqual(capabilities, VIDEO_CAPABILITIES)
+                    self.assertEqual(model.get("provider_name"), "Seedance")
+                    self.assertEqual(model.get("upstream_model"), model.get("provider_model"))
+                    self.assertEqual(model.get("upstream_url"), "${COINCOIN_SEEDANCE_BASE_URL:-https://api.wgspai.cn}")
+                    self.assertEqual(model.get("api_key"), "${COINCOIN_SEEDANCE_API_KEY}")
+                    self.assertEqual(model.get("auth_style"), "bearer")
+                    continue
+
                 self.fail(f"unexpected upstream_direct capability set for {model['id']}: {sorted(capabilities)}")
 
     def test_billable_public_models_have_official_default_prices(self) -> None:
@@ -354,15 +373,25 @@ class GatewayCatalogSyncTests(unittest.TestCase):
                 actual = float(_placeholder_default(model.get("price_per_image_cents")))
                 self.assertEqual(actual, expected_price)
 
+        for model_id, expected_price in OFFICIAL_DEFAULT_VIDEO_PRICES.items():
+            with self.subTest(model=model_id):
+                model = public_models[model_id]
+                actual = float(_placeholder_default(model.get("price_per_video_cents")))
+                self.assertEqual(actual, expected_price)
+
         zero_default_fields = []
         for model in public_models.values():
             capabilities = set(model.get("capabilities") or [])
-            for field in ("price_input_per_million", "price_output_per_million", "price_per_image_cents"):
+            for field in ("price_input_per_million", "price_output_per_million", "price_per_image_cents", "price_per_video_cents"):
                 if field == "price_output_per_million" and capabilities == EMBEDDING_CAPABILITIES:
                     continue
                 if field == "price_per_image_cents" and not capabilities.intersection(IMAGE_CAPABILITIES):
                     continue
+                if field == "price_per_video_cents" and not capabilities.intersection(VIDEO_CAPABILITIES):
+                    continue
                 if field in {"price_input_per_million", "price_output_per_million"} and capabilities.intersection(IMAGE_CAPABILITIES):
+                    continue
+                if field in {"price_input_per_million", "price_output_per_million"} and capabilities.intersection(VIDEO_CAPABILITIES):
                     continue
                 if _placeholder_default(model.get(field)) == "0":
                     zero_default_fields.append(f"{model['id']}:{field}")

@@ -183,6 +183,11 @@
     color: var(--accent-amber);
 }
 
+.usage-pill.videos {
+    background: rgba(236, 72, 153, 0.12);
+    color: #ec4899;
+}
+
 .stat-subvalue {
     margin-top: 4px;
     font-size: 0.78rem;

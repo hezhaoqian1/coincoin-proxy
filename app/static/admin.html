@@ -342,6 +342,26 @@
     .card-body { padding: 24px; }
     .card-body.flush { padding: 0; }
 
+    .card.collapsible-card.is-collapsed .card-body {
+      display: none;
+    }
+
+    .card-collapse-btn {
+      min-width: 72px;
+      padding: 8px 12px;
+      font-size: 12px;
+    }
+
+    .card-collapse-btn .chevron {
+      display: inline-block;
+      font-size: 11px;
+      transition: transform 0.15s ease;
+    }
+
+    .card.collapsible-card.is-collapsed .card-collapse-btn .chevron {
+      transform: rotate(-90deg);
+    }
+
     .grid-2 {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -1328,7 +1348,7 @@
               <svg width="22" height="22" fill="none" stroke="white" stroke-width="2" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
             </div>
             <div class="stat-value" id="statReqToday">-</div>
-            <div class="stat-label">今日请求 / 图片</div>
+            <div class="stat-label">今日请求 / 图片 / 视频</div>
           </div>
         </div>
 
@@ -1747,12 +1767,16 @@
           <h1 class="page-title">上游渠道</h1>
           <p class="page-desc">集中管理可用上游 URL、Key、优先级、权重和保底 route。用户仍只看到 CoinCoin 公共 API。</p>
         </div>
-        <div class="card" style="margin-bottom:20px">
+        <div class="card collapsible-card" id="defaultProviderChannelsCard" data-collapse-key="default-provider-channels" style="margin-bottom:20px">
           <div class="card-header">
             <div>
               <span class="card-title">系统默认渠道</span>
               <div class="text-sm text-muted" id="defaultProviderChannelSummary">加载中...</div>
             </div>
+            <button class="btn btn-secondary btn-sm card-collapse-btn" type="button" onclick="toggleCollapsibleCard('default-provider-channels')">
+              <span class="chevron">▾</span>
+              <span class="label">收起</span>
+            </button>
           </div>
           <div class="card-body flush">
             <div class="table-wrapper">
@@ -1772,13 +1796,17 @@
             </div>
           </div>
         </div>
-        <div class="card" style="margin-bottom:20px">
+        <div class="card collapsible-card" id="providerChannelStabilityCard" data-collapse-key="provider-channel-stability" style="margin-bottom:20px">
           <div class="card-header">
             <div>
               <span class="card-title">渠道稳定性</span>
               <div class="text-sm text-muted" id="providerChannelStabilitySummary">真实请求聚合，展示可用率、延迟和 fallback 流向</div>
             </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button class="btn btn-secondary btn-sm card-collapse-btn" type="button" onclick="toggleCollapsibleCard('provider-channel-stability')">
+                <span class="chevron">▾</span>
+                <span class="label">收起</span>
+              </button>
               <button class="btn btn-secondary btn-sm" data-stability-period="7d" onclick="setProviderChannelStabilityPeriod('7d')">7天</button>
               <button class="btn btn-secondary btn-sm" data-stability-period="15d" onclick="setProviderChannelStabilityPeriod('15d')">15天</button>
               <button class="btn btn-secondary btn-sm" data-stability-period="30d" onclick="setProviderChannelStabilityPeriod('30d')">30天</button>
@@ -1789,13 +1817,17 @@
             <div id="providerChannelStabilityGrid" class="channel-stability-grid"></div>
           </div>
         </div>
-        <div class="card" style="margin-bottom:20px">
+        <div class="card collapsible-card" id="providerChannelMonitorCard" data-collapse-key="provider-channel-monitor" style="margin-bottom:20px">
           <div class="card-header">
             <div>
               <span class="card-title">主动监控</span>
               <div class="text-sm text-muted" id="providerChannelMonitorSummary">按渠道定期主动探测模型，可手动 run now。</div>
             </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button class="btn btn-secondary btn-sm card-collapse-btn" type="button" onclick="toggleCollapsibleCard('provider-channel-monitor')">
+                <span class="chevron">▾</span>
+                <span class="label">收起</span>
+              </button>
               <button class="btn btn-secondary btn-sm" data-monitor-period="7d" onclick="setProviderChannelMonitorPeriod('7d')">7天</button>
               <button class="btn btn-secondary btn-sm" data-monitor-period="15d" onclick="setProviderChannelMonitorPeriod('15d')">15天</button>
               <button class="btn btn-secondary btn-sm" data-monitor-period="30d" onclick="setProviderChannelMonitorPeriod('30d')">30天</button>
@@ -1837,13 +1869,17 @@
             </div>
           </div>
         </div>
-        <div class="card" style="margin-bottom:20px">
+        <div class="card collapsible-card" id="providerChannelsCard" data-collapse-key="provider-channels" style="margin-bottom:20px">
           <div class="card-header">
             <div>
               <span class="card-title">Provider Channels</span>
               <div class="text-sm text-muted" id="providerChannelSummary">加载中...</div>
             </div>
             <div style="display:flex;gap:10px;flex-wrap:wrap">
+              <button class="btn btn-secondary btn-sm card-collapse-btn" type="button" onclick="toggleCollapsibleCard('provider-channels')">
+                <span class="chevron">▾</span>
+                <span class="label">收起</span>
+              </button>
               <button class="btn btn-secondary" onclick="loadProviderChannels()">刷新</button>
               <button class="btn btn-primary" onclick="openProviderChannelModal()">+ 新增渠道</button>
             </div>
@@ -1868,13 +1904,19 @@
             </div>
           </div>
         </div>
-        <div class="card">
+        <div class="card collapsible-card" id="modelChannelRoutesCard" data-collapse-key="model-channel-routes">
           <div class="card-header">
             <div>
               <span class="card-title">Model Routes</span>
               <div class="text-sm text-muted" id="modelChannelRouteSummary">加载中...</div>
             </div>
-            <button class="btn btn-primary" onclick="openModelChannelRouteModal()">+ 新增 route</button>
+            <div style="display:flex;gap:10px;flex-wrap:wrap">
+              <button class="btn btn-secondary btn-sm card-collapse-btn" type="button" onclick="toggleCollapsibleCard('model-channel-routes')">
+                <span class="chevron">▾</span>
+                <span class="label">收起</span>
+              </button>
+              <button class="btn btn-primary" onclick="openModelChannelRouteModal()">+ 新增 route</button>
+            </div>
           </div>
           <div class="card-body">
             <div class="filter-bar">
@@ -2172,7 +2214,7 @@
             <div class="table-wrapper">
               <table>
                 <thead>
-                  <tr><th>日期</th><th>用户</th><th>请求数</th><th>输入 Tokens</th><th>输出 Tokens</th><th>图片数</th><th>费用</th></tr>
+                  <tr><th>日期</th><th>用户</th><th>请求数</th><th>输入 Tokens</th><th>输出 Tokens</th><th>图片数</th><th>视频数</th><th>费用</th></tr>
                 </thead>
                 <tbody id="usageBody"></tbody>
               </table>
@@ -2499,8 +2541,12 @@
             <label class="form-label">图片倍率</label>
             <input type="number" id="modelPricingImageMultiplier" class="form-input" min="0" step="0.01" />
           </div>
+          <div class="form-group">
+            <label class="form-label">视频倍率</label>
+            <input type="number" id="modelPricingVideoMultiplier" class="form-input" min="0" step="0.01" />
+          </div>
         </div>
-        <div class="form-help">实际文本输入价 = 基础输入价 × 模型倍率；实际输出价 = 基础输出价 × 模型倍率 × 输出倍率。</div>
+        <div class="form-help">实际文本输入价 = 基础输入价 × 模型倍率；实际输出价 = 基础输出价 × 模型倍率 × 输出倍率；图片/视频按单次基础价 × 对应倍率计费。</div>
       </div>
       <div class="modal-footer" style="justify-content:space-between">
         <button class="btn btn-danger" onclick="clearModelPricingOverride()">恢复默认定价</button>
@@ -2568,7 +2614,7 @@
           <div class="form-group"><label class="form-label">渠道</label><select id="providerChannelMonitorChannel" class="form-select"></select></div>
         </div>
         <div class="form-row">
-          <div class="form-group"><label class="form-label">Endpoint</label><select id="providerChannelMonitorEndpoint" class="form-select"><option value="responses">responses</option><option value="chat/completions">chat/completions</option></select></div>
+          <div class="form-group"><label class="form-label">Endpoint</label><select id="providerChannelMonitorEndpoint" class="form-select"><option value="responses">responses</option><option value="chat/completions">chat/completions</option><option value="images/generations">images/generations</option><option value="images/edits">images/edits</option><option value="videos/generations">videos/generations</option><option value="embeddings">embeddings</option></select></div>
           <div class="form-group"><label class="form-label">状态</label><select id="providerChannelMonitorStatus" class="form-select"><option value="active">active</option><option value="disabled">disabled</option></select></div>
         </div>
         <div class="form-row">
@@ -2661,7 +2707,7 @@
         <input type="hidden" id="modelChannelRouteId" />
         <div class="form-row">
           <div class="form-group"><label class="form-label">公开模型</label><input id="modelChannelRoutePublicModel" class="form-input" placeholder="gpt-5.3-codex" /></div>
-          <div class="form-group"><label class="form-label">Endpoint</label><select id="modelChannelRouteEndpoint" class="form-select"><option value="">全部</option><option value="responses">responses</option><option value="chat/completions">chat/completions</option><option value="images/generations">images/generations</option><option value="images/edits">images/edits</option><option value="embeddings">embeddings</option></select></div>
+          <div class="form-group"><label class="form-label">Endpoint</label><select id="modelChannelRouteEndpoint" class="form-select"><option value="">全部</option><option value="responses">responses</option><option value="chat/completions">chat/completions</option><option value="images/generations">images/generations</option><option value="images/edits">images/edits</option><option value="videos/generations">videos/generations</option><option value="embeddings">embeddings</option></select></div>
         </div>
         <div class="form-group"><label class="form-label">渠道</label><select id="modelChannelRouteChannel" class="form-select"></select></div>
         <div class="form-row">
@@ -3072,6 +3118,38 @@
       document.getElementById('sidebarBackdrop').classList.toggle('active');
     }
 
+    function collapsibleCardStorageKey(key) {
+      return `cc_admin_card_collapsed:${key}`;
+    }
+
+    function applyCollapsibleCardState(card, collapsed) {
+      if (!card) return;
+      card.classList.toggle('is-collapsed', !!collapsed);
+      const btn = card.querySelector('.card-collapse-btn');
+      if (!btn) return;
+      btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      const label = btn.querySelector('.label');
+      if (label) label.textContent = collapsed ? '展开' : '收起';
+      btn.title = collapsed ? '展开栏目' : '收起栏目';
+    }
+
+    function toggleCollapsibleCard(key) {
+      const card = document.querySelector(`.collapsible-card[data-collapse-key="${key}"]`);
+      if (!card) return;
+      const nextCollapsed = !card.classList.contains('is-collapsed');
+      applyCollapsibleCardState(card, nextCollapsed);
+      localStorage.setItem(collapsibleCardStorageKey(key), nextCollapsed ? '1' : '0');
+    }
+
+    function initCollapsibleCards(scope = document) {
+      const cards = scope.querySelectorAll('.collapsible-card[data-collapse-key]');
+      cards.forEach(card => {
+        const key = card.dataset.collapseKey;
+        const collapsed = localStorage.getItem(collapsibleCardStorageKey(key)) === '1';
+        applyCollapsibleCardState(card, collapsed);
+      });
+    }
+
     const tokenInput = document.getElementById('token');
     const saved = localStorage.getItem('cc_admin_token');
     if (saved) tokenInput.value = saved;
@@ -3407,7 +3485,7 @@
         document.getElementById('statTotalUsers').textContent = formatNum(d.total_users);
         document.getElementById('statActiveUsers').textContent = formatNum(d.active_users);
         document.getElementById('statTotalTokens').textContent = formatNum(d.total_tokens);
-        document.getElementById('statReqToday').textContent = `${formatNum(d.total_requests_today)} / ${formatNum(d.total_images_today || 0)}`;
+        document.getElementById('statReqToday').textContent = `${formatNum(d.total_requests_today)} / ${formatNum(d.total_images_today || 0)} / ${formatNum(d.total_videos_today || 0)}`;
         document.getElementById('statPaidToday').textContent = formatMoney(d.paid_today_cents || 0);
         document.getElementById('statConsumedToday').textContent = formatMoney(d.consumed_today_cents || 0);
         document.getElementById('statNetToday').textContent = formatMoney(d.net_today_cents || 0);
@@ -3426,7 +3504,7 @@
           <td>${r.username || (r.user_id||'').slice(0, 10)}</td>
           <td>${formatNum(r.requests_total)}</td>
           <td>${formatNum(r.tokens_total)}</td>
-          <td>${formatNum(r.images_total || 0)}</td>
+          <td>${formatNum(r.images_total || 0)} / ${formatNum(r.videos_total || 0)}</td>
         </tr>`).join('') : '<tr><td colspan="4" class="text-muted" style="text-align:center;padding:20px">暂无数据</td></tr>';
       } catch (e) { console.error(e); }
     }
@@ -3436,7 +3514,7 @@
       if (!body) return;
       body.innerHTML = rows.length ? rows.slice(0, 5).map(row => `
         <tr>
-          <td><div class="user-info"><strong>#${row.rank} ${escapeHtml(row.display_name || row.user_id || '-')}</strong><span>${formatNum(row.tokens_total || 0)} tokens · ${formatNum(row.images_total || 0)} img</span></div></td>
+          <td><div class="user-info"><strong>#${row.rank} ${escapeHtml(row.display_name || row.user_id || '-')}</strong><span>${formatNum(row.tokens_total || 0)} tokens · ${formatNum(row.images_total || 0)} img · ${formatNum(row.videos_total || 0)} video</span></div></td>
           <td><strong>${formatMoney(row.cost_cents || 0)}</strong></td>
           <td>${formatNum(row.requests_total || 0)}</td>
         </tr>
@@ -3546,7 +3624,7 @@
         const usageRows = usage.data || [];
         document.getElementById('analyticsUsageStructureBody').innerHTML = usageRows.length ? usageRows.map(row => `
           <tr>
-            <td><strong>${escapeHtml(row.model || '-')}</strong><div class="text-sm text-muted">${escapeHtml(row.billable_sku || '-')} · ${escapeHtml(row.task_type || '-')}</div></td>
+            <td><strong>${escapeHtml(row.model || '-')}</strong><div class="text-sm text-muted">${escapeHtml(row.billable_sku || '-')} · ${escapeHtml(row.task_type || '-')} · ${formatNum(row.images || 0)} img · ${formatNum(row.videos || 0)} video</div></td>
             <td>${formatMoney(row.user_charge_cents || 0)}<div class="text-sm text-muted">${formatNum(row.requests || 0)} req</div></td>
             <td>${formatMoney(row.upstream_cost_cents || 0)}</td>
             <td>${formatPct(row.failure_rate || 0)}</td>
@@ -4030,22 +4108,32 @@
       return `$${(value / 100).toFixed(3)}`;
     }
 
+    function hasModelCapability(model, prefix) {
+      return (model.capabilities || []).some(cap => String(cap).startsWith(prefix));
+    }
+
     function renderPricingBase(model) {
-      if ((model.capabilities || []).some(cap => String(cap).startsWith('images/'))) {
+      if (hasModelCapability(model, 'videos/')) {
+        return `<div>${formatAdminImageCents(model.base_price_per_video_cents)} / video</div>`;
+      }
+      if (hasModelCapability(model, 'images/')) {
         return `<div>${formatAdminImageCents(model.base_price_per_image_cents)} / image</div>`;
       }
       return `<div>入 ${formatAdminCents(model.base_price_input_per_million)} / 1M</div><div class="text-sm text-muted">出 ${formatAdminCents(model.base_price_output_per_million)} / 1M</div>`;
     }
 
     function renderPricingEffective(model) {
-      if ((model.capabilities || []).some(cap => String(cap).startsWith('images/'))) {
+      if (hasModelCapability(model, 'videos/')) {
+        return `<div>${formatAdminImageCents(model.price_per_video_cents)} / video</div>`;
+      }
+      if (hasModelCapability(model, 'images/')) {
         return `<div>${formatAdminImageCents(model.price_per_image_cents)} / image</div>`;
       }
       return `<div>入 ${formatAdminCents(model.price_input_per_million)} / 1M</div><div class="text-sm text-muted">缓存 ${formatAdminCents(model.effective_cached_input_per_million, 3)} · 出 ${formatAdminCents(model.price_output_per_million)} / 1M</div>`;
     }
 
     function renderPricingMultipliers(model) {
-      return `<div>模型 ${Number(model.model_multiplier || 1).toFixed(2)}x · 输出 ${Number(model.output_multiplier || 1).toFixed(2)}x</div><div class="text-sm text-muted">缓存 ${Number(model.cache_read_multiplier || 0).toFixed(2)}x · 图片 ${Number(model.image_multiplier || 1).toFixed(2)}x</div>`;
+      return `<div>模型 ${Number(model.model_multiplier || 1).toFixed(2)}x · 输出 ${Number(model.output_multiplier || 1).toFixed(2)}x</div><div class="text-sm text-muted">缓存 ${Number(model.cache_read_multiplier || 0).toFixed(2)}x · 图片 ${Number(model.image_multiplier || 1).toFixed(2)}x · 视频 ${Number(model.video_multiplier || 1).toFixed(2)}x</div>`;
     }
 
     async function loadModelPricing() {
@@ -4093,6 +4181,7 @@
         document.getElementById('modelPricingOutputMultiplier').value = Number(model.output_multiplier || 1);
         document.getElementById('modelPricingCacheMultiplier').value = Number(model.cache_read_multiplier || 0);
         document.getElementById('modelPricingImageMultiplier').value = Number(model.image_multiplier || 1);
+        document.getElementById('modelPricingVideoMultiplier').value = Number(model.video_multiplier || 1);
         openModal('modelPricingModal');
       } catch (e) {
         console.error(e);
@@ -4111,7 +4200,8 @@
         model_multiplier: readPricingNumber('modelPricingModelMultiplier'),
         output_multiplier: readPricingNumber('modelPricingOutputMultiplier'),
         cache_read_multiplier: readPricingNumber('modelPricingCacheMultiplier'),
-        image_multiplier: readPricingNumber('modelPricingImageMultiplier')
+        image_multiplier: readPricingNumber('modelPricingImageMultiplier'),
+        video_multiplier: readPricingNumber('modelPricingVideoMultiplier')
       };
       if (Object.values(payload).some(value => value === null)) return toast('倍率必须是非负数字', 'error');
       try {
@@ -5008,7 +5098,7 @@
       const model = providerChannelModelsPublicCache.find(item => item.id === publicModelId) || {};
       const capabilities = (model.capabilities && model.capabilities.length)
         ? model.capabilities
-        : ['responses', 'chat/completions', 'images/generations', 'images/edits', 'embeddings'];
+        : ['responses', 'chat/completions', 'images/generations', 'images/edits', 'videos/generations', 'embeddings'];
       const values = [''].concat(capabilities.filter((item, index, list) => list.indexOf(item) === index));
       return values.map(value => `
         <option value="${escapeHtml(value)}" ${value === selected ? 'selected' : ''}>${escapeHtml(value || '全部')}</option>
@@ -5296,7 +5386,7 @@
         const data = await r.json();
         const body = document.getElementById('usageBody');
         if (!data.length) {
-          body.innerHTML = '<tr><td colspan="7"><div class="empty-state"><div class="empty-state-icon">📊</div><h3>暂无数据</h3><p>用量数据会显示在这里</p></div></td></tr>';
+          body.innerHTML = '<tr><td colspan="8"><div class="empty-state"><div class="empty-state-icon">📊</div><h3>暂无数据</h3><p>用量数据会显示在这里</p></div></td></tr>';
           return;
         }
         body.innerHTML = data.map(r => `<tr>
@@ -5306,6 +5396,7 @@
           <td>${formatNum(r.input_tokens||0)}</td>
           <td>${formatNum(r.output_tokens||0)}</td>
           <td>${formatNum(r.images_total||0)}</td>
+          <td>${formatNum(r.videos_total||0)}</td>
           <td class="text-success">$${((r.cost_cents||0)/100).toFixed(4)}</td>
         </tr>`).join('');
       } catch (e) { console.error(e); }
@@ -5338,7 +5429,9 @@
             const sc = l.status_code < 400 ? 'badge-success' : 'badge-error';
             const usageLabel = l.usage_unit_type === 'images'
               ? `${formatNum(l.image_count || l.usage_unit_count || 0)} 张图片`
-              : `输入 ${formatNum(l.input_tokens || 0)} / 输出 ${formatNum(l.output_tokens || 0)}`;
+              : l.usage_unit_type === 'videos'
+                ? `${formatNum(l.video_count || l.usage_unit_count || 0)} 个视频`
+                : `输入 ${formatNum(l.input_tokens || 0)} / 输出 ${formatNum(l.output_tokens || 0)}`;
             const cacheLabel = `读 ${formatNum(l.cache_read_tokens || l.cached_tokens || 0)} / 写 ${formatNum(l.cache_creation_tokens || 0)}`;
             const routeMeta = [
               l.channel_id ? `${escapeHtml(l.provider_platform || l.channel_type || 'channel')} · ${escapeHtml(l.channel_id)}` : '',
@@ -6250,6 +6343,7 @@
     }
 
     function loadAll() {
+      initCollapsibleCards();
       loadCurrentPage();
     }
 

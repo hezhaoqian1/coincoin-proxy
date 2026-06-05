@@ -239,15 +239,18 @@ def _pricing_payload(model_id: str):
         "base_price_input_per_million": model.base_price_input_per_million,
         "base_price_output_per_million": model.base_price_output_per_million,
         "base_price_per_image_cents": model.base_price_per_image_cents,
+        "base_price_per_video_cents": model.base_price_per_video_cents,
         "price_input_per_million": model.price_input_per_million,
         "price_output_per_million": model.price_output_per_million,
         "price_per_image_cents": model.price_per_image_cents,
+        "price_per_video_cents": model.price_per_video_cents,
         "effective_cached_input_per_million": model.effective_cached_input_per_million,
         "pricing_mode": model.pricing_mode,
         "model_multiplier": model.model_multiplier,
         "output_multiplier": model.output_multiplier,
         "cache_read_multiplier": model.cache_read_multiplier,
         "image_multiplier": model.image_multiplier,
+        "video_multiplier": model.video_multiplier,
         "price_version": model.price_version,
         "override_active": model.public_id in model_registry.pricing_overrides,
     }
@@ -1354,6 +1357,8 @@ async def update_model_pricing(model_id: str, payload: AdminModelPricingUpdate, 
         existing.cache_read_multiplier = float(payload.cache_read_multiplier)
     if payload.image_multiplier is not None:
         existing.image_multiplier = float(payload.image_multiplier)
+    if payload.video_multiplier is not None:
+        existing.video_multiplier = float(payload.video_multiplier)
     existing.pricing_mode = "multiplier"
     existing.price_version = int(existing.price_version or 0) + 1
     existing.updated_by = "admin"
@@ -2126,6 +2131,7 @@ async def list_users(
                 func.count(RequestLog.id).label("period_requests_total"),
                 func.coalesce(func.sum(RequestLog.input_tokens + RequestLog.output_tokens), 0).label("period_tokens_total"),
                 func.coalesce(func.sum(RequestLog.image_count), 0).label("period_images_total"),
+                func.coalesce(func.sum(RequestLog.video_count), 0).label("period_videos_total"),
                 func.coalesce(func.sum(request_charge), 0).label("period_cost_cents"),
             )
             .where(RequestLog.created_at >= since)
@@ -2142,6 +2148,7 @@ async def list_users(
             usage_columns.c.period_requests_total,
             usage_columns.c.period_tokens_total,
             usage_columns.c.period_images_total,
+            usage_columns.c.period_videos_total,
             usage_columns.c.period_cost_cents,
         ).outerjoin(usage_columns, usage_columns.c.usage_user_id == User.id)
     if search:
@@ -2179,7 +2186,8 @@ async def list_users(
                 "requests_total": int((row[3] if len(row) > 3 else 0) or 0),
                 "tokens_total": int((row[4] if len(row) > 4 else 0) or 0),
                 "images_total": int((row[5] if len(row) > 5 else 0) or 0),
-                "cost_cents": int((row[6] if len(row) > 6 else 0) or 0),
+                "videos_total": int((row[6] if len(row) > 6 else 0) or 0),
+                "cost_cents": int((row[7] if len(row) > 7 else 0) or 0),
             }
         billing = await _admin_billing_state(db, u)
         items.append({
@@ -2614,6 +2622,7 @@ async def list_daily_usage(
             "input_tokens": usage.input_tokens,
             "output_tokens": usage.output_tokens,
             "images_total": getattr(usage, "images_total", 0),
+            "videos_total": getattr(usage, "videos_total", 0),
             "cost_cents": usage.cost_cents,
             "cost_usd": usage.cost_cents / 100,  # 分转美元
             "requests_total": usage.requests_total,
@@ -2637,6 +2646,9 @@ async def summary_metrics(db: AsyncSession = Depends(get_db)):
     total_images_today = await db.scalar(
         select(func.coalesce(func.sum(UsageDaily.images_total), 0)).where(UsageDaily.day == today)
     )
+    total_videos_today = await db.scalar(
+        select(func.coalesce(func.sum(UsageDaily.videos_total), 0)).where(UsageDaily.day == today)
+    )
     paid_today_cents = await db.scalar(
         select(func.coalesce(func.sum(PaymentOrder.add_balance_cents), 0)).where(
             PaymentOrder.status == "confirmed",
@@ -2653,6 +2665,7 @@ async def summary_metrics(db: AsyncSession = Depends(get_db)):
         "total_tokens": int(total_tokens or 0),
         "total_requests_today": int(total_requests_today or 0),
         "total_images_today": int(total_images_today or 0),
+        "total_videos_today": int(total_videos_today or 0),
         "paid_today_cents": int(paid_today_cents or 0),
         "paid_today_usd": int(paid_today_cents or 0) / 100,
         "consumed_today_cents": int(consumed_today_cents or 0),
@@ -2686,6 +2699,7 @@ async def analytics_overview(period: str = "today", db: AsyncSession = Depends(g
                     func.coalesce(func.sum(RequestLog.output_tokens), 0).label("output_tokens"),
                     func.coalesce(func.sum(RequestLog.input_tokens + RequestLog.output_tokens), 0).label("tokens_total"),
                     func.coalesce(func.sum(RequestLog.image_count), 0).label("images_total"),
+                    func.coalesce(func.sum(RequestLog.video_count), 0).label("videos_total"),
                     func.coalesce(func.sum(request_charge), 0).label("cost_cents"),
                 ).where(RequestLog.created_at >= since)
             )
@@ -2700,6 +2714,7 @@ async def analytics_overview(period: str = "today", db: AsyncSession = Depends(g
                     func.coalesce(func.sum(UsageDaily.output_tokens), 0).label("output_tokens"),
                     func.coalesce(func.sum(UsageDaily.tokens_total), 0).label("tokens_total"),
                     func.coalesce(func.sum(UsageDaily.images_total), 0).label("images_total"),
+                    func.coalesce(func.sum(UsageDaily.videos_total), 0).label("videos_total"),
                     func.coalesce(func.sum(UsageDaily.cost_cents), 0).label("cost_cents"),
                 ).where(UsageDaily.day >= start_day)
             )
@@ -2721,6 +2736,7 @@ async def analytics_overview(period: str = "today", db: AsyncSession = Depends(g
         "output_tokens": int(_row_value(usage_row, "output_tokens", 0) or 0),
         "tokens_total": int(_row_value(usage_row, "tokens_total", 0) or 0),
         "images_total": int(_row_value(usage_row, "images_total", 0) or 0),
+        "videos_total": int(_row_value(usage_row, "videos_total", 0) or 0),
         "user_charge_cents": user_charge_cents,
         "user_charge_usd": user_charge_cents / 100,
         "paid_cents": paid_cents,
@@ -2746,6 +2762,7 @@ async def analytics_top_users(
             "requests_total": func.count(RequestLog.id),
             "tokens_total": func.coalesce(func.sum(RequestLog.input_tokens + RequestLog.output_tokens), 0),
             "images_total": func.coalesce(func.sum(RequestLog.image_count), 0),
+            "videos_total": func.coalesce(func.sum(RequestLog.video_count), 0),
         }
         order_metric = metric_map.get(metric)
         if order_metric is None:
@@ -2762,6 +2779,7 @@ async def analytics_top_users(
                 func.coalesce(func.sum(RequestLog.output_tokens), 0).label("output_tokens"),
                 func.coalesce(func.sum(RequestLog.input_tokens + RequestLog.output_tokens), 0).label("tokens_total"),
                 func.coalesce(func.sum(RequestLog.image_count), 0).label("images_total"),
+                func.coalesce(func.sum(RequestLog.video_count), 0).label("videos_total"),
                 func.coalesce(func.sum(request_charge), 0).label("cost_cents"),
             )
             .join(User, RequestLog.user_id == User.id)
@@ -2776,6 +2794,7 @@ async def analytics_top_users(
             "requests_total": func.coalesce(func.sum(UsageDaily.requests_total), 0),
             "tokens_total": func.coalesce(func.sum(UsageDaily.tokens_total), 0),
             "images_total": func.coalesce(func.sum(UsageDaily.images_total), 0),
+            "videos_total": func.coalesce(func.sum(UsageDaily.videos_total), 0),
         }
         order_metric = metric_map.get(metric)
         if order_metric is None:
@@ -2792,6 +2811,7 @@ async def analytics_top_users(
                 func.coalesce(func.sum(UsageDaily.output_tokens), 0).label("output_tokens"),
                 func.coalesce(func.sum(UsageDaily.tokens_total), 0).label("tokens_total"),
                 func.coalesce(func.sum(UsageDaily.images_total), 0).label("images_total"),
+                func.coalesce(func.sum(UsageDaily.videos_total), 0).label("videos_total"),
                 func.coalesce(func.sum(UsageDaily.cost_cents), 0).label("cost_cents"),
             )
             .join(User, UsageDaily.user_id == User.id)
@@ -2826,6 +2846,7 @@ async def analytics_top_users(
                 "output_tokens": int(_row_value(row, "output_tokens", 0) or 0),
                 "tokens_total": int(_row_value(row, "tokens_total", 0) or 0),
                 "images_total": int(_row_value(row, "images_total", 0) or 0),
+                "videos_total": int(_row_value(row, "videos_total", 0) or 0),
                 "cost_cents": int(_row_value(row, "cost_cents", 0) or 0),
             }
             for idx, row in enumerate(rows)
@@ -2850,6 +2871,7 @@ async def usage_leaderboard(
         "requests_total": func.count(RequestLog.id),
         "tokens_total": func.coalesce(func.sum(RequestLog.input_tokens + RequestLog.output_tokens), 0),
         "images_total": func.coalesce(func.sum(RequestLog.image_count), 0),
+        "videos_total": func.coalesce(func.sum(RequestLog.video_count), 0),
     }
     order_metric = metric_map.get(metric)
     if order_metric is None:
@@ -2866,6 +2888,7 @@ async def usage_leaderboard(
             func.coalesce(func.sum(RequestLog.output_tokens), 0).label("output_tokens"),
             func.coalesce(func.sum(RequestLog.input_tokens + RequestLog.output_tokens), 0).label("tokens_total"),
             func.coalesce(func.sum(RequestLog.image_count), 0).label("images_total"),
+            func.coalesce(func.sum(RequestLog.video_count), 0).label("videos_total"),
             func.coalesce(func.sum(request_charge), 0).label("cost_cents"),
         )
         .join(User, RequestLog.user_id == User.id)
@@ -2902,6 +2925,7 @@ async def usage_leaderboard(
                 "output_tokens": int(_row_value(row, "output_tokens", 0) or 0),
                 "tokens_total": int(_row_value(row, "tokens_total", 0) or 0),
                 "images_total": int(_row_value(row, "images_total", 0) or 0),
+                "videos_total": int(_row_value(row, "videos_total", 0) or 0),
                 "cost_cents": int(_row_value(row, "cost_cents", 0) or 0),
             }
             for idx, row in enumerate(rows)
@@ -2928,6 +2952,7 @@ async def analytics_low_balance_users(
             func.coalesce(func.sum(UsageDaily.requests_total), 0).label("requests_total"),
             func.coalesce(func.sum(UsageDaily.tokens_total), 0).label("tokens_total"),
             func.coalesce(func.sum(UsageDaily.images_total), 0).label("images_total"),
+            func.coalesce(func.sum(UsageDaily.videos_total), 0).label("videos_total"),
             func.coalesce(func.sum(UsageDaily.cost_cents), 0).label("cost_cents"),
         )
         .join(User, UsageDaily.user_id == User.id)
@@ -2965,6 +2990,7 @@ async def analytics_low_balance_users(
             "requests_total": int(_row_value(row, "requests_total", 0) or 0),
             "tokens_total": int(_row_value(row, "tokens_total", 0) or 0),
             "images_total": int(_row_value(row, "images_total", 0) or 0),
+            "videos_total": int(_row_value(row, "videos_total", 0) or 0),
         })
     return {"period": period, "days": days, "limit": limit, "data": items}
 
@@ -3312,6 +3338,7 @@ async def analytics_usage_structure(
                 func.count(RequestLog.id).label("requests"),
                 func.coalesce(func.sum(RequestLog.input_tokens + RequestLog.output_tokens), 0).label("tokens"),
                 func.coalesce(func.sum(RequestLog.image_count), 0).label("images"),
+                func.coalesce(func.sum(RequestLog.video_count), 0).label("videos"),
                 func.coalesce(func.sum(request_charge), 0).label("user_charge_cents"),
                 func.coalesce(func.sum(upstream_cost), 0).label("upstream_cost_cents"),
                 func.coalesce(func.avg(RequestLog.duration_ms), 0).label("avg_latency_ms"),
@@ -3338,6 +3365,7 @@ async def analytics_usage_structure(
             "request_share": _safe_rate(requests, total_requests),
             "tokens": int(_row_value(row, "tokens", 0) or 0),
             "images": int(_row_value(row, "images", 0) or 0),
+            "videos": int(_row_value(row, "videos", 0) or 0),
             "user_charge_cents": charge,
             "upstream_cost_cents": cost,
             "gross_margin_cents": charge - cost,
@@ -4078,6 +4106,7 @@ async def list_user_request_logs(
                 "cache_read_tokens": getattr(log, "cache_read_tokens", 0) or getattr(log, "cached_tokens", 0),
                 "cache_creation_tokens": getattr(log, "cache_creation_tokens", 0),
                 "image_count": getattr(log, "image_count", 0),
+                "video_count": getattr(log, "video_count", 0),
                 "usage_unit_type": getattr(log, "usage_unit_type", "tokens"),
                 "usage_unit_count": getattr(log, "usage_unit_count", 0),
                 "billable_sku": getattr(log, "billable_sku", "") or (getattr(log, "customer_model_alias", "") or log.model),

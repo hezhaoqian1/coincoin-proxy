@@ -174,6 +174,7 @@ class AdminModelPricingUpdate(BaseModel):
     output_multiplier: Optional[float] = Field(default=None, ge=0)
     cache_read_multiplier: Optional[float] = Field(default=None, ge=0)
     image_multiplier: Optional[float] = Field(default=None, ge=0)
+    video_multiplier: Optional[float] = Field(default=None, ge=0)
 
 
 class AdminProviderChannelCreate(BaseModel):

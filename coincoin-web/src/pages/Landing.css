@@ -476,7 +476,7 @@
     position: relative;
     z-index: 2;
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 10px;
 }
 
@@ -524,6 +524,11 @@
 .landing-lane-amber {
     --lane-accent: #d97706;
     --lane-accent-soft: rgba(245, 158, 11, 0.13);
+}
+
+.landing-lane-emerald {
+    --lane-accent: #059669;
+    --lane-accent-soft: rgba(16, 185, 129, 0.12);
 }
 
 .landing-lane strong {
