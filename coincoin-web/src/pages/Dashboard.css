@@ -157,9 +157,6 @@
     margin-top: 4px;
 }
 
-/* Quick Actions */
-.quick-actions h3,
-.pricing-info h3,
 .recent-usage h3 {
     font-size: 1rem;
     font-weight: 700;
@@ -221,138 +218,6 @@
     font-weight: 600;
     color: var(--accent-indigo);
     white-space: nowrap;
-}
-
-.station-card {
-    margin-top: var(--space-lg);
-}
-
-.station-card-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: var(--space-lg);
-    margin-bottom: var(--space-lg);
-}
-
-.station-card-header h3 {
-    margin: 0 0 var(--space-xs);
-    font-size: 1rem;
-    font-weight: 700;
-}
-
-.station-card-desc {
-    margin: 0;
-    max-width: 760px;
-    color: var(--text-secondary);
-    font-size: 0.9rem;
-    line-height: 1.7;
-}
-
-.station-badge {
-    display: inline-flex;
-    align-items: center;
-    padding: 8px 12px;
-    border-radius: var(--radius-full);
-    border: 1px solid rgba(245, 158, 11, 0.24);
-    background: rgba(245, 158, 11, 0.1);
-    color: var(--accent-amber);
-    font-size: 0.78rem;
-    font-weight: 700;
-    white-space: nowrap;
-}
-
-.station-form {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-md);
-}
-
-.station-form-grid,
-.station-summary-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: var(--space-md);
-}
-
-.station-field,
-.station-summary-item {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    padding: var(--space-md);
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-md);
-    background: var(--bg-glass);
-}
-
-.station-field span,
-.station-summary-label {
-    font-size: 0.8rem;
-    font-weight: 700;
-    color: var(--text-tertiary);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-}
-
-.station-field input,
-.station-field textarea {
-    width: 100%;
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-sm);
-    background: rgba(255, 255, 255, 0.68);
-    padding: 12px 14px;
-    color: var(--text-primary);
-    font: inherit;
-}
-
-.station-field textarea {
-    resize: vertical;
-}
-
-.station-field-wide,
-.station-summary-item-wide {
-    grid-column: 1 / -1;
-}
-
-.station-summary-item strong,
-.station-summary-item code,
-.station-summary-item p {
-    margin: 0;
-}
-
-.station-summary-item p {
-    color: var(--text-secondary);
-    line-height: 1.7;
-}
-
-.station-actions {
-    display: flex;
-    align-items: center;
-    gap: var(--space-md);
-    flex-wrap: wrap;
-}
-
-.station-hint {
-    color: var(--text-tertiary);
-    font-size: 0.82rem;
-}
-
-.station-error {
-    margin: 0;
-    color: var(--accent-rose);
-    font-size: 0.85rem;
-}
-
-@media (max-width: 900px) {
-    .station-card-header {
-        flex-direction: column;
-    }
-
-    .station-form-grid,
-    .station-summary-grid {
-        grid-template-columns: 1fr;
-    }
 }
 
 .action-links {
@@ -555,186 +420,6 @@
 .referral-nudge-meta strong {
     color: var(--accent-indigo);
     font-size: 0.88rem;
-}
-
-.quick-actions-header {
-    display: flex;
-    justify-content: space-between;
-    gap: var(--space-lg);
-    align-items: flex-start;
-    margin-bottom: var(--space-lg);
-}
-
-.quick-actions-desc {
-    margin: 8px 0 0;
-    color: var(--text-tertiary);
-    font-size: 0.88rem;
-    line-height: 1.7;
-}
-
-.base-url-card {
-    display: flex;
-    align-items: center;
-    gap: var(--space-md);
-    padding: var(--space-lg);
-    margin-bottom: var(--space-lg);
-    border-radius: var(--radius-lg);
-    border: 1px solid rgba(6, 182, 212, 0.18);
-    background: linear-gradient(135deg, rgba(6, 182, 212, 0.08), rgba(99, 102, 241, 0.08));
-    cursor: pointer;
-    transition: all var(--transition-fast);
-}
-
-.base-url-card:hover {
-    transform: translateY(-1px);
-    border-color: rgba(6, 182, 212, 0.28);
-}
-
-.base-url-card-secondary {
-    border-color: rgba(99, 102, 241, 0.18);
-    background: linear-gradient(135deg, rgba(99, 102, 241, 0.08), rgba(6, 182, 212, 0.05));
-}
-
-.base-url-icon {
-    width: 44px;
-    height: 44px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 14px;
-    background: rgba(15, 23, 42, 0.8);
-    font-size: 1.1rem;
-    flex-shrink: 0;
-}
-
-.base-url-copy {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    min-width: 0;
-    flex: 1;
-}
-
-.base-url-label {
-    font-size: 0.78rem;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--text-tertiary);
-}
-
-.base-url-copy code {
-    font-size: 0.92rem;
-    color: var(--accent-cyan);
-    overflow-wrap: anywhere;
-}
-
-.shortcut-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: var(--space-md);
-}
-
-.shortcut-card {
-    display: flex;
-    gap: 12px;
-    padding: var(--space-lg);
-    border-radius: var(--radius-lg);
-    border: 1px solid var(--border-color);
-    background: var(--bg-glass);
-    color: inherit;
-    text-decoration: none;
-    transition: all var(--transition-fast);
-}
-
-.shortcut-card:hover {
-    transform: translateY(-2px);
-    border-color: rgba(99, 102, 241, 0.28);
-    background: var(--bg-glass-strong);
-}
-
-.shortcut-card-primary {
-    border-color: rgba(16, 185, 129, 0.24);
-    background: linear-gradient(135deg, rgba(16, 185, 129, 0.12), rgba(6, 182, 212, 0.06));
-}
-
-.shortcut-card-highlight {
-    border-color: rgba(99, 102, 241, 0.22);
-    background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(6, 182, 212, 0.06));
-}
-
-.shortcut-icon {
-    width: 40px;
-    height: 40px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 12px;
-    background: rgba(15, 23, 42, 0.72);
-    flex-shrink: 0;
-    font-size: 1rem;
-}
-
-.shortcut-card strong {
-    display: block;
-    margin-bottom: 6px;
-    font-size: 0.92rem;
-}
-
-.shortcut-card p {
-    margin: 0;
-    color: var(--text-tertiary);
-    font-size: 0.82rem;
-    line-height: 1.6;
-}
-
-/* Pricing Info */
-.price-row {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: var(--space-md);
-}
-
-.pricing-note-row {
-    margin: 0 0 var(--space-lg);
-    color: var(--text-tertiary);
-    font-size: 0.84rem;
-    line-height: 1.7;
-}
-
-.price-item {
-    text-align: center;
-    padding: var(--space-lg);
-    background: var(--bg-glass);
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border-color);
-}
-
-.price-label {
-    display: block;
-    font-size: 0.78rem;
-    color: var(--text-tertiary);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    margin-bottom: var(--space-sm);
-}
-
-.price-val {
-    font-size: 1.2rem;
-    font-weight: 700;
-    color: var(--text-primary);
-}
-
-.price-val small {
-    font-size: 0.75rem;
-    font-weight: 400;
-    color: var(--text-tertiary);
-}
-
-.model-tag {
-    font-family: var(--font-mono);
-    font-size: 0.9rem !important;
-    color: var(--accent-cyan) !important;
 }
 
 /* Recent Usage */
@@ -1050,18 +735,13 @@
     }
 
     .trend-card,
-    .quick-actions,
-    .pricing-info,
     .recent-usage,
-    .referral-card,
-    .station-card {
+    .referral-card {
         padding: 16px;
         margin-bottom: 14px;
     }
 
     .section-row,
-    .quick-actions-header,
-    .station-card-header,
     .low-balance-banner,
     .announcement-banner,
     .referral-nudge-card {
@@ -1092,30 +772,6 @@
         padding: 8px 6px;
     }
 
-    .price-row {
-        grid-template-columns: 1fr;
-        gap: 8px;
-    }
-
-    .price-item {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        padding: 13px 14px;
-        text-align: left;
-    }
-
-    .price-label {
-        margin-bottom: 0;
-        font-size: 0.72rem;
-    }
-
-    .price-val {
-        font-size: 1rem;
-        text-align: right;
-    }
-
     .action-links {
         flex-direction: column;
     }
@@ -1123,50 +779,6 @@
     .key-secondary-actions {
         flex-direction: column;
         align-items: stretch;
-    }
-
-    .quick-actions-header {
-        flex-direction: column;
-    }
-
-    .base-url-card {
-        align-items: flex-start;
-        flex-wrap: wrap;
-        gap: 12px;
-        padding: 14px;
-        margin-bottom: 10px;
-    }
-
-    .base-url-icon {
-        width: 36px;
-        height: 36px;
-        border-radius: 12px;
-    }
-
-    .base-url-copy code {
-        font-size: 0.78rem;
-    }
-
-    .shortcut-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 10px;
-    }
-
-    .shortcut-card {
-        padding: 13px;
-        gap: 10px;
-    }
-
-    .shortcut-icon {
-        width: 34px;
-        height: 34px;
-        border-radius: 10px;
-    }
-
-    .shortcut-card p,
-    .quick-actions-desc,
-    .pricing-note-row {
-        display: none;
     }
 
     .key-secret-actions {
@@ -1196,10 +808,4 @@
         gap: 10px;
     }
 
-}
-
-@media (max-width: 430px) {
-    .shortcut-grid {
-        grid-template-columns: 1fr;
-    }
 }

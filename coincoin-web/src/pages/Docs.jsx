@@ -515,7 +515,6 @@ function ModelsAndPricing({ textModels, imageModels, videoModels, defaultTextMod
     const [activeCategory, setActiveCategory] = useState('all')
     const [copied, setCopied] = useState('')
     const openaiBaseUrl = `${SITE}/v1`
-    const claudeBaseUrl = SITE
     const snippetKey = effectiveApiKey || 'sk_cc_xxxxx'
     const firstCurl = `curl ${openaiBaseUrl}/chat/completions \\
   -H "Authorization: Bearer ${snippetKey}" \\
@@ -573,7 +572,6 @@ function ModelsAndPricing({ textModels, imageModels, videoModels, defaultTextMod
             <h2>可用模型</h2>
             <div className="endpoint-strip">
                 <button onClick={() => copy(openaiBaseUrl, 'openai')}><span>OpenAI Base URL</span><code>{openaiBaseUrl}</code><strong>{copied === 'openai' ? '已复制' : '复制'}</strong></button>
-                <button onClick={() => copy(claudeBaseUrl, 'claude')}><span>Claude Code Base URL</span><code>{claudeBaseUrl}</code><strong>{copied === 'claude' ? '已复制' : '复制'}</strong></button>
                 <button onClick={() => copy(firstCurl, 'curl')}><span>第一条请求</span><code>curl chat/completions</code><strong>{copied === 'curl' ? '已复制' : '复制'}</strong></button>
             </div>
 
@@ -642,9 +640,9 @@ function ModelsAndPricing({ textModels, imageModels, videoModels, defaultTextMod
             <h3>图片生成怎么用</h3>
             <div className="gemini-usage-grid">
                 <div className="gemini-usage-card">
-                    <span className="inline-badge">Default</span>
+                    <span className="inline-badge">Image</span>
                     <strong><code>{defaultImageModel?.id || imageModels[0]?.id || 'gpt-image-2'}</code></strong>
-                    <p>文生图走 <code>/v1/images/generations</code>。不传 <code>model</code> 时自动选择默认图片模型；也可以显式传入这个模型。</p>
+                    <p>文生图走 <code>/v1/images/generations</code>，请求里显式传入图片模型。</p>
                 </div>
                 <div className="gemini-usage-card">
                     <span className="inline-badge">Gemini</span>
@@ -675,7 +673,6 @@ function ModelsAndPricing({ textModels, imageModels, videoModels, defaultTextMod
             <ul className="doc-list">
                 <li>文本模型按 Input / Cached Read / Output Token 计费；图片模型按图片张数计费；视频模型按任务次数计费。</li>
                 <li>同一个账户余额同时覆盖文本模型、图片模型和视频模型，不需要分开充值。</li>
-                <li>老客户端不传 <code>model</code> 时，仍然走默认文本模型，以保证兼容。</li>
             </ul>
         </div>
     )
@@ -867,15 +864,6 @@ function ApiReference({ primaryTextModel, primaryImageModel, primaryVideoModel }
                 <li>视频生成是异步任务；创建成功后会先扣费，失败任务会按本地记录退款一次。</li>
                 <li>视频参考图请使用可直接访问的 <code>200 image/*</code> 直链，避免跳转、防盗链或需要登录的地址。</li>
                 <li>Seedance 纯文本视频请求会被拒绝；普通模型不能传 <code>reference_video</code> 或 <code>reference_audio</code>，需要时使用 <code>-video</code> 模型。</li>
-            </ul>
-
-            <h3>默认兼容规则</h3>
-            <ul className="doc-list">
-                <li>如果文本请求里省略 <code>model</code>，ClawFather 会保持默认文本模型的兼容行为。</li>
-                <li>如果图片请求里省略 <code>model</code>，ClawFather 会自动选择默认图片模型 <code>gpt-image-2</code>。</li>
-                <li>如果视频请求里省略 <code>model</code>，ClawFather 会自动选择默认视频模型 <code>seedance-v2-720p</code>。</li>
-                <li>如果要用 Gemini 生图或 Gemini 图生图，请显式传入 <code>model: "gemini-image"</code>。</li>
-                <li>显式指定某个模型后，如果该模型请求失败，不会偷偷回退到另一个模型。</li>
             </ul>
 
             <h3>错误码</h3>
