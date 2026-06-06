@@ -474,8 +474,8 @@ aider --model openai/${codingModel?.id || 'gpt-5.3-codex'}`
                 description: '文生图和图片编辑走同一个公开 `/v1` 入口，成功产出图片后按张计费。',
                 commandGroup: [
                     {
-                        title: '默认文生图',
-                        summary: '不传模型时也会自动走默认图片模型；当前默认是 `gpt-image-2`。',
+                        title: '文生图',
+                        summary: '请求里显式传入图片模型，例如 `gpt-image-2`。',
                         code: imageGenerationCommand,
                     },
                     {

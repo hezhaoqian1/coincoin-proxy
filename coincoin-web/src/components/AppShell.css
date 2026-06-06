@@ -1,7 +1,7 @@
 .app-shell {
     min-height: 100vh;
     display: grid;
-    grid-template-columns: 292px minmax(0, 1fr);
+    grid-template-columns: 252px minmax(0, 1fr);
     background:
         radial-gradient(circle at top left, rgba(14, 165, 233, 0.06), transparent 26%),
         linear-gradient(180deg, color-mix(in srgb, var(--bg-primary) 94%, #ffffff 6%), var(--bg-primary));
@@ -13,8 +13,8 @@
     height: 100vh;
     display: flex;
     flex-direction: column;
-    gap: 20px;
-    padding: 22px 16px 16px;
+    gap: 18px;
+    padding: 20px 12px 14px;
     border-right: 1px solid rgba(15, 23, 42, 0.08);
     background:
         linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.9)),
@@ -26,7 +26,7 @@
 .app-sidebar-top {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 10px;
 }
 
 .app-sidebar-brand {
@@ -69,7 +69,7 @@
 .app-sidebar-nav {
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: 12px;
     flex: 1;
     min-height: 0;
     overflow-y: auto;
@@ -100,9 +100,9 @@
 .shell-link {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
     min-height: 44px;
-    padding: 10px 12px;
+    padding: 10px;
     border-radius: 12px;
     border: 1px solid transparent;
     color: var(--text-secondary);
@@ -226,7 +226,7 @@
 
 @media (max-width: 1180px) {
     .app-shell {
-        grid-template-columns: 236px minmax(0, 1fr);
+        grid-template-columns: 218px minmax(0, 1fr);
     }
 }
 

@@ -2,10 +2,9 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { Line } from 'react-chartjs-2'
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler } from 'chart.js'
-import { getBalance, getUsageLogs, getAnnouncements, activateKey, getStationApplication, applyForStation, setGeneratedKey as storeGeneratedKey } from '../api/client'
+import { getBalance, getUsageLogs, getAnnouncements, activateKey, setGeneratedKey as storeGeneratedKey } from '../api/client'
 import useOrderConfirm from '../hooks/useOrderConfirm'
 import { useAuth } from '../hooks/useAuth'
-import { usePublicModels } from '../hooks/usePublicModels'
 import AppShell from '../components/AppShell'
 import { formatLocalTime, getLocalDateRangeIso, getLocalIsoDate, getLocalTodayRangeIso, getRecentLocalIsoDates } from '../utils/time'
 import './Dashboard.css'
@@ -302,174 +301,7 @@ function DeveloperAccessPanel(props) {
     )
 }
 
-function StationCard({ stationState, onSubmitted }) {
-    const [submitting, setSubmitting] = useState(false)
-    const [error, setError] = useState('')
-    const [form, setForm] = useState({
-        station_name: '',
-        contact_handle: '',
-        traffic_source: '',
-        audience_note: '',
-        settlement_payee_name: '',
-        settlement_payee_account: '',
-        settlement_qr_url: '',
-    })
-
-    const app = stationState?.application
-    const station = stationState?.station
-
-    const handleChange = (key, value) => {
-        setForm((prev) => ({ ...prev, [key]: value }))
-    }
-
-    const handleSubmit = async (e) => {
-        e.preventDefault()
-        setSubmitting(true)
-        setError('')
-        try {
-            await applyForStation({
-                station_name: form.station_name,
-                contact_handle: form.contact_handle,
-                traffic_source: form.traffic_source,
-                audience_note: form.audience_note,
-                settlement_method: 'alipay_manual',
-                settlement_payee_name: form.settlement_payee_name,
-                settlement_payee_account: form.settlement_payee_account,
-                settlement_qr_url: form.settlement_qr_url,
-            })
-            onSubmitted?.()
-        } catch (err) {
-            setError(err.message || '申请失败')
-        } finally {
-            setSubmitting(false)
-        }
-    }
-
-    if (station) {
-        return (
-            <div className="station-card glass-card animate-fade-in-up" style={{ animationDelay: '275ms' }}>
-                <div className="station-card-header">
-                    <div>
-                        <h3>站长中心</h3>
-                        <p className="station-card-desc">站长资格已经开通。这里继续处理下游用户、分润和人工结算。</p>
-                    </div>
-                    <span className={`badge ${station.status === 'active' ? 'badge-success' : 'badge-warning'}`}>
-                        {station.status === 'active' ? '已开通' : station.status}
-                    </span>
-                </div>
-                <div className="station-summary-grid">
-                    <div className="station-summary-item">
-                        <span className="station-summary-label">站点名称</span>
-                        <strong>{station.display_name}</strong>
-                    </div>
-                    <div className="station-summary-item">
-                        <span className="station-summary-label">站点标识</span>
-                        <code>{station.slug}</code>
-                    </div>
-                    <div className="station-summary-item">
-                        <span className="station-summary-label">结算方式</span>
-                        <strong>{station.settlement_method === 'alipay_manual' ? '支付宝人工打款' : station.settlement_method}</strong>
-                    </div>
-                    <div className="station-summary-item">
-                        <span className="station-summary-label">收款账户</span>
-                        <strong>{station.settlement_payee_account || '待补充'}</strong>
-                    </div>
-                </div>
-            </div>
-        )
-    }
-
-    if (app) {
-        return (
-            <div className="station-card glass-card animate-fade-in-up" style={{ animationDelay: '275ms' }}>
-                <div className="station-card-header">
-                    <div>
-                        <h3>站长申请</h3>
-                        <p className="station-card-desc">申请已经提交。当前还是审核制，避免影响现有支付和用户链路。</p>
-                    </div>
-                    <span className={`badge ${app.status === 'pending' ? 'badge-warning' : app.status === 'approved' ? 'badge-success' : 'badge-error'}`}>
-                        {app.status === 'pending' ? '审核中' : app.status === 'approved' ? '已通过' : '已驳回'}
-                    </span>
-                </div>
-                <div className="station-summary-grid">
-                    <div className="station-summary-item">
-                        <span className="station-summary-label">申请站点</span>
-                        <strong>{app.station_name}</strong>
-                    </div>
-                    <div className="station-summary-item">
-                        <span className="station-summary-label">联系方式</span>
-                        <strong>{app.contact_handle || '未填写'}</strong>
-                    </div>
-                    <div className="station-summary-item station-summary-item-wide">
-                        <span className="station-summary-label">流量来源 / 受众说明</span>
-                        <p>{app.traffic_source || '未填写流量来源'}</p>
-                        <p>{app.audience_note}</p>
-                    </div>
-                    {app.review_note && (
-                        <div className="station-summary-item station-summary-item-wide">
-                            <span className="station-summary-label">审核备注</span>
-                            <p>{app.review_note}</p>
-                        </div>
-                    )}
-                </div>
-            </div>
-        )
-    }
-
-    return (
-        <div className="station-card glass-card animate-fade-in-up" style={{ animationDelay: '275ms' }}>
-            <div className="station-card-header">
-                <div>
-                    <h3>申请成为站长</h3>
-                    <p className="station-card-desc">想做自己的站长，就先提交申请。第一期先走审核制，不影响你当前使用。</p>
-                </div>
-                <span className="station-badge">站长内测</span>
-            </div>
-            <form className="station-form" onSubmit={handleSubmit}>
-                <div className="station-form-grid">
-                    <label className="station-field">
-                        <span>站点名称</span>
-                        <input value={form.station_name} onChange={(e) => handleChange('station_name', e.target.value)} placeholder="例如：AI 工具分发站" required />
-                    </label>
-                    <label className="station-field">
-                        <span>联系方式</span>
-                        <input value={form.contact_handle} onChange={(e) => handleChange('contact_handle', e.target.value)} placeholder="微信 / TG / 邮箱" />
-                    </label>
-                    <label className="station-field station-field-wide">
-                        <span>流量来源</span>
-                        <input value={form.traffic_source} onChange={(e) => handleChange('traffic_source', e.target.value)} placeholder="公众号、社群、私域、B 站、客户资源等" />
-                    </label>
-                    <label className="station-field station-field-wide">
-                        <span>受众说明</span>
-                        <textarea value={form.audience_note} onChange={(e) => handleChange('audience_note', e.target.value)} placeholder="写清楚你服务谁、预估规模，以及你准备怎么运营" rows={4} required />
-                    </label>
-                    <label className="station-field">
-                        <span>支付宝姓名</span>
-                        <input value={form.settlement_payee_name} onChange={(e) => handleChange('settlement_payee_name', e.target.value)} placeholder="人工打款收款人" />
-                    </label>
-                    <label className="station-field">
-                        <span>支付宝账号</span>
-                        <input value={form.settlement_payee_account} onChange={(e) => handleChange('settlement_payee_account', e.target.value)} placeholder="手机号 / 邮箱 / UID" />
-                    </label>
-                    <label className="station-field station-field-wide">
-                        <span>收款码图片地址</span>
-                        <input value={form.settlement_qr_url} onChange={(e) => handleChange('settlement_qr_url', e.target.value)} placeholder="先填可访问的图片 URL，后续再做上传" />
-                    </label>
-                </div>
-                {error && <p className="station-error">{error}</p>}
-                <div className="station-actions">
-                    <button className="btn btn-primary btn-sm" type="submit" disabled={submitting}>
-                        {submitting ? '提交中...' : '提交站长申请'}
-                    </button>
-                    <span className="station-hint">当前先走审核制。通过后会开通站长资格和结算资料。</span>
-                </div>
-            </form>
-        </div>
-    )
-}
-
 export default function Dashboard() {
-    const { defaultTextModel, defaultImageModel, defaultVideoModel } = usePublicModels()
     const {
         activeDeveloperKeyCount,
         authMode,
@@ -502,7 +334,6 @@ export default function Dashboard() {
     const [recentSignup, setRecentSignup] = useState(() => {
         try { return localStorage.getItem('coincoin_recent_signup') === '1' } catch { return false }
     })
-    const [stationState, setStationState] = useState(null)
     const { confirmResult: orderConfirmed, dismiss: dismissOrder } = useOrderConfirm()
     const orderAvailableUsd = orderConfirmed
         ? Number(orderConfirmed.available_usd ?? orderConfirmed.new_balance_usd ?? 0)
@@ -540,18 +371,9 @@ export default function Dashboard() {
             }
             try { setDailyData(await getLocalDailyUsage(7)) } catch { /* ignore */ }
             try { setAnnouncements(await getAnnouncements()) } catch { /* ignore */ }
-            try { setStationState(await getStationApplication()) } catch { /* ignore */ }
         }
         load()
     }, [])
-
-    const reloadStationState = async () => {
-        try {
-            setStationState(await getStationApplication())
-        } catch {
-            // ignore
-        }
-    }
 
     const copy = (text, label) => {
         navigator.clipboard.writeText(text)
@@ -592,7 +414,7 @@ export default function Dashboard() {
 
     if (!balance) {
         return (
-            <AppShell title="概览" description="先看余额、Key 状态和最近请求。">
+            <AppShell title="概览">
                 <div className="dashboard-page">
                     {loadError ? (
                         <div className="loading-state error-state">
@@ -836,120 +658,6 @@ export default function Dashboard() {
                         </div>
                     </div>
                 )}
-
-                {/* Quick Links */}
-                <div className="quick-actions glass-card animate-fade-in-up" style={{ animationDelay: '250ms' }}>
-                    <div className="quick-actions-header">
-                        <div>
-                            <h3>快速操作</h3>
-                            <p className="quick-actions-desc">常用入口都收在这里。</p>
-                        </div>
-                        <Link to="/recharge" className="btn btn-primary btn-sm">进入充值中心</Link>
-                    </div>
-                    <div className="base-url-card" onClick={() => copy(window.location.origin + '/v1', 'url')}>
-                        <div className="base-url-icon">&#127760;</div>
-                        <div className="base-url-copy">
-                            <span className="base-url-label">统一 Base URL</span>
-                            <code>{window.location.origin}/v1</code>
-                        </div>
-                        <span className="action-btn">{copied === 'url' ? '&#10003; 已复制' : '复制'}</span>
-                    </div>
-                    <div className="base-url-card base-url-card-secondary" onClick={() => copy(window.location.origin, 'anthropic')}>
-                        <div className="base-url-icon">&#129302;</div>
-                        <div className="base-url-copy">
-                            <span className="base-url-label">Claude Code Base URL</span>
-                            <code>{window.location.origin}</code>
-                        </div>
-                        <span className="action-btn">{copied === 'anthropic' ? '&#10003; 已复制' : '复制'}</span>
-                    </div>
-                    <div className="shortcut-grid">
-                        <Link to="/guides/claude-code" className="shortcut-card shortcut-card-highlight">
-                            <span className="shortcut-icon">&#129302;</span>
-                            <div>
-                                <strong>Claude Code</strong>
-                                <p>查看 Claude Code 的环境变量配置。</p>
-                            </div>
-                        </Link>
-                        <Link to="/recharge" className="shortcut-card shortcut-card-primary">
-                            <span className="shortcut-icon">&#128176;</span>
-                            <div>
-                                <strong>充值</strong>
-                                <p>给账户补余额。</p>
-                            </div>
-                        </Link>
-                        <Link to="/usage" className="shortcut-card">
-                            <span className="shortcut-icon">&#128202;</span>
-                            <div>
-                                <strong>请求日志</strong>
-                                <p>查看请求明细和状态码。</p>
-                            </div>
-                        </Link>
-                        <Link to="/account" className="shortcut-card">
-                            <span className="shortcut-icon">&#9881;</span>
-                            <div>
-                                <strong>个人中心</strong>
-                                <p>修改邮箱和登录密码。</p>
-                            </div>
-                        </Link>
-                        <Link to="/docs" className="shortcut-card">
-                            <span className="shortcut-icon">&#128214;</span>
-                            <div>
-                                <strong>接入文档</strong>
-                                <p>查看接口、模型和示例。</p>
-                            </div>
-                        </Link>
-                        <Link to="/playground" className="shortcut-card">
-                            <span className="shortcut-icon">&#9654;</span>
-                            <div>
-                                <strong>工作台</strong>
-                                <p>对话、图片和视频。</p>
-                            </div>
-                        </Link>
-                        <a href="#developer-key" className="shortcut-card">
-                            <span className="shortcut-icon">&#128273;</span>
-                            <div>
-                                <strong>开发者 Key</strong>
-                                <p>生成或复制开发者 Key。</p>
-                            </div>
-                        </a>
-                    </div>
-                </div>
-
-                <StationCard stationState={stationState} onSubmitted={reloadStationState} />
-
-                {/* Pricing Info */}
-                <div className="pricing-info glass-card animate-fade-in-up" style={{ animationDelay: '300ms' }}>
-                    <h3>当前价格</h3>
-                    <p className="pricing-note-row">这里只展示简表。完整模型目录和接入示例在文档页。</p>
-                    <div className="price-row">
-                        <div className="price-item">
-                            <span className="price-label">Input Token</span>
-                            <span className="price-val">${balance.price_input_per_million} <small>/ 百万</small></span>
-                        </div>
-                        <div className="price-item">
-                            <span className="price-label">Cached Read</span>
-                            <span className="price-val">${balance.price_cached_input_per_million} <small>/ 百万</small></span>
-                        </div>
-                        <div className="price-item">
-                            <span className="price-label">Output Token</span>
-                            <span className="price-val">${balance.price_output_per_million} <small>/ 百万</small></span>
-                        </div>
-                    </div>
-                    <div className="price-row">
-                        <div className="price-item">
-                            <span className="price-label">默认文本模型</span>
-                            <span className="price-val model-tag">{defaultTextModel?.id || 'opus'}</span>
-                        </div>
-                        <div className="price-item">
-                            <span className="price-label">默认图片模型</span>
-                            <span className="price-val model-tag">{defaultImageModel?.id || 'gpt-image-2'}</span>
-                        </div>
-                        <div className="price-item">
-                            <span className="price-label">默认视频模型</span>
-                            <span className="price-val model-tag">{defaultVideoModel?.id || 'seedance-v2-720p'}</span>
-                        </div>
-                    </div>
-                </div>
 
                 {/* Recent usage */}
                 {usage && usage.data.length > 0 && (
