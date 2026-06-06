@@ -362,6 +362,71 @@
       transform: rotate(-90deg);
     }
 
+    .finance-kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin-bottom: 20px;
+    }
+
+    .finance-kpi {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg-card);
+      padding: 16px;
+      min-width: 0;
+    }
+
+    .finance-kpi-label {
+      font-size: 12px;
+      color: var(--text-tertiary);
+      margin-bottom: 6px;
+    }
+
+    .finance-kpi-value {
+      font-size: 24px;
+      line-height: 1.2;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+
+    .finance-kpi-note {
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    .finance-filter-grid {
+      display: grid;
+      grid-template-columns: minmax(260px, 1.4fr) repeat(4, minmax(130px, 1fr)) auto;
+      gap: 10px;
+      align-items: center;
+      width: 100%;
+    }
+
+    .finance-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .money-positive { color: var(--success); font-weight: 700; }
+    .money-negative { color: var(--error); font-weight: 700; }
+
+    .source-chip {
+      display: inline-flex;
+      align-items: center;
+      max-width: 220px;
+      padding: 4px 8px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg-primary);
+      font-size: 12px;
+      color: var(--text-secondary);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
     .grid-2 {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -1134,6 +1199,8 @@
 
     @media (max-width: 1200px) {
       .stats-grid { grid-template-columns: repeat(2, 1fr); }
+      .finance-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .finance-filter-grid { grid-template-columns: 1fr 1fr; }
       .grid-2 { grid-template-columns: 1fr; }
       .monitoring-hero { grid-template-columns: 1fr; }
       .monitoring-layer-grid { grid-template-columns: 1fr; }
@@ -1153,6 +1220,8 @@
       .sidebar.open { left: 0; }
       .main { padding: 16px; }
       .stats-grid { grid-template-columns: 1fr 1fr; }
+      .finance-kpi-grid { grid-template-columns: 1fr; }
+      .finance-filter-grid { grid-template-columns: 1fr; }
       .page-title { font-size: 22px; }
       .page-header { margin-bottom: 20px; }
       .monitoring-kpis { grid-template-columns: 1fr; }
@@ -1254,6 +1323,10 @@
           <div class="nav-item" data-page="finance-summary">
             <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 17l6-6 4 4 8-8"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 7h7v7"/></svg>
             财务汇总
+          </div>
+          <div class="nav-item" data-page="finance-ledger">
+            <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 7h6M9 11h6M9 15h3"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2z"/></svg>
+            财务流水
           </div>
           <div class="nav-item" data-page="recharge">
             <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
@@ -1993,7 +2066,10 @@
       <div id="page-finance-summary" class="page">
         <div class="page-header">
           <h1 class="page-title">财务汇总</h1>
-          <p class="page-desc">按用户查看预聚合财务数据，并展示订阅额度、流量包和历史余额拆分。</p>
+          <p class="page-desc">运营视角查看充值、后台加款、赠送、消耗和用户额度分布。</p>
+        </div>
+        <div class="finance-kpi-grid" id="financeOverviewCards">
+          <div class="finance-kpi"><div class="finance-kpi-label">加载中</div><div class="finance-kpi-value">-</div><div class="finance-kpi-note">财务指标会显示在这里</div></div>
         </div>
         <div class="card">
           <div class="card-header">
@@ -2004,9 +2080,62 @@
             <div class="table-wrapper">
               <table>
                 <thead>
-                  <tr><th>用户</th><th>可用额度</th><th>套餐 / 流量包</th><th>历史余额</th><th>累计实付</th><th>后台加款 / 赠送</th><th>累计消耗</th><th>最后支付</th></tr>
+                  <tr><th>用户</th><th>当前可用</th><th>实付充值</th><th>后台加款</th><th>赠送额度</th><th>累计消耗</th><th>近 7/30 天</th><th>最后支付</th><th>操作</th></tr>
                 </thead>
                 <tbody id="financeSummaryBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- =============== Finance Ledger =============== -->
+      <div id="page-finance-ledger" class="page">
+        <div class="page-header">
+          <h1 class="page-title">财务流水</h1>
+          <p class="page-desc">聚合支付订单、充值记录、兑换码、邀请奖励和额度池账本；逐请求扣费仍在请求日志里查看。</p>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <div class="finance-filter-grid">
+              <input type="text" id="financeLedgerSearch" class="form-input" placeholder="搜索用户、订单号、source_id、备注..." oninput="debounceFinanceLedgerSearch()" />
+              <select id="financeLedgerType" class="form-select" onchange="loadFinanceLedger()">
+                <option value="">全部类型</option>
+                <option value="payment">支付订单</option>
+                <option value="recharge">充值记录</option>
+                <option value="admin">后台调整</option>
+                <option value="redemption">兑换码</option>
+                <option value="referral">邀请奖励</option>
+                <option value="billing">额度池账本</option>
+                <option value="credit">入账</option>
+                <option value="debit">出账</option>
+              </select>
+              <input type="date" id="financeLedgerFrom" class="form-input" onchange="loadFinanceLedger()" />
+              <input type="date" id="financeLedgerTo" class="form-input" onchange="loadFinanceLedger()" />
+              <select id="financeLedgerLimit" class="form-select" onchange="loadFinanceLedger()">
+                <option value="100">100 条</option>
+                <option value="200">200 条</option>
+                <option value="300">300 条</option>
+              </select>
+              <button class="btn btn-secondary" onclick="loadFinanceLedger()">刷新</button>
+            </div>
+          </div>
+          <div class="card-body flush">
+            <div class="table-wrapper">
+              <table>
+                <thead>
+                  <tr>
+                    <th>时间</th>
+                    <th>用户</th>
+                    <th>类型</th>
+                    <th>金额</th>
+                    <th>现金</th>
+                    <th>来源</th>
+                    <th>产品 / 余额后</th>
+                    <th>备注</th>
+                  </tr>
+                </thead>
+                <tbody id="financeLedgerBody"></tbody>
               </table>
             </div>
           </div>
@@ -2046,6 +2175,7 @@
         <div class="card">
           <div class="card-header">
             <div class="filter-bar">
+              <input type="text" id="orderSearch" class="form-input" style="width:260px" placeholder="搜索 user_id、订单号、交易号..." oninput="debouncePaymentOrderSearch()" />
               <select id="orderStatusFilter" class="form-select" onchange="loadPaymentOrders()">
                 <option value="">全部状态</option>
                 <option value="pending">待确认</option>
@@ -3097,10 +3227,12 @@
     let providerChannelMonitorSearchTimeout = null;
     let modelChannelRouteSearchTimeout = null;
     let currentProviderChannelModelsChannelId = '';
-    let providerChannelModelsCache = [];
-    let providerChannelModelsPublicCache = [];
-    let providerChannelModelsLastPayload = null;
-    let claudeCompatSettingsCache = null;
+	    let providerChannelModelsCache = [];
+	    let providerChannelModelsPublicCache = [];
+	    let providerChannelModelsLastPayload = null;
+	    let claudeCompatSettingsCache = null;
+	    let financeLedgerSearchTimeout = null;
+	    let paymentOrderSearchTimeout = null;
     const ADMIN_TRAFFIC_PACK_VALID_DAYS = 180;
     const ADMIN_MONTHLY_PRODUCTS = [
       { id: 'monthly_light', name: '轻量月卡', balance_cents: 8000 },
@@ -3154,46 +3286,52 @@
     const saved = localStorage.getItem('cc_admin_token');
     if (saved) tokenInput.value = saved;
 
-    function getPageLoader(page) {
-      const loaders = {
-        dashboard: loadDashboard,
-        analytics: loadAnalytics,
-        users: loadUsers,
-        'finance-summary': loadFinanceSummary,
-        keys: loadAllKeys,
-        'model-aliases': loadModelAliases,
-        'model-pricing': loadModelPricing,
-        'provider-channels': loadProviderChannels,
-        stations: loadStations,
-        'station-applications': loadStationApplications,
-        'station-commission': loadStationCommissionLedger,
-        'station-payouts': loadStationPayoutBatches,
-        recharge: loadRecharges,
-        usage: loadFullUsage,
-        monitoring: loadMonitoringSummary,
-        orders: loadPaymentOrders,
-        codes: loadRedemptionCodes,
-        announcements: loadAnnouncements,
-      };
-      return loaders[page] || null;
-    }
+	    function getPageLoader(page) {
+	      const loaders = {
+	        dashboard: loadDashboard,
+	        analytics: loadAnalytics,
+	        users: loadUsers,
+	        'finance-summary': loadFinanceSummary,
+	        'finance-ledger': loadFinanceLedger,
+	        keys: loadAllKeys,
+	        'model-aliases': loadModelAliases,
+	        'model-pricing': loadModelPricing,
+	        'provider-channels': loadProviderChannels,
+	        stations: loadStations,
+	        'station-applications': loadStationApplications,
+	        'station-commission': loadStationCommissionLedger,
+	        'station-payouts': loadStationPayoutBatches,
+	        recharge: loadRecharges,
+	        usage: loadFullUsage,
+	        monitoring: loadMonitoringSummary,
+	        orders: loadPaymentOrders,
+	        codes: loadRedemptionCodes,
+	        announcements: loadAnnouncements,
+	      };
+	      return loaders[page] || null;
+	    }
 
-    // Navigation
-    document.querySelectorAll('.nav-item[data-page]').forEach(item => {
-      item.addEventListener('click', () => {
-        const page = item.dataset.page;
-        if (!page) return;
-        document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-        document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-        item.classList.add('active');
-        document.getElementById('page-' + page).classList.add('active');
-        document.getElementById('sidebar').classList.remove('open');
-        document.getElementById('sidebarBackdrop').classList.remove('active');
+	    function openAdminPage(page) {
+	      if (!page) return;
+	      const item = document.querySelector(`.nav-item[data-page="${page}"]`);
+	      const pageNode = document.getElementById('page-' + page);
+	      if (!item || !pageNode) return;
+	      document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+	      document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+	      item.classList.add('active');
+	      pageNode.classList.add('active');
+	      document.getElementById('sidebar').classList.remove('open');
+	      document.getElementById('sidebarBackdrop').classList.remove('active');
+	      const loader = getPageLoader(page);
+	      if (loader) loader();
+	    }
 
-        const loader = getPageLoader(page);
-        if (loader) loader();
-      });
-    });
+	    // Navigation
+	    document.querySelectorAll('.nav-item[data-page]').forEach(item => {
+	      item.addEventListener('click', () => {
+	        openAdminPage(item.dataset.page);
+	      });
+	    });
 
     function saveToken() {
       localStorage.setItem('cc_admin_token', tokenInput.value.trim());
@@ -5318,40 +5456,201 @@
     // ==================== Finance Summary ====================
     let financeSearchTimeout = null;
 
-    function debounceFinanceSearch() {
-      clearTimeout(financeSearchTimeout);
-      financeSearchTimeout = setTimeout(loadFinanceSummary, 300);
-    }
+	    function debounceFinanceSearch() {
+	      clearTimeout(financeSearchTimeout);
+	      financeSearchTimeout = setTimeout(loadFinanceSummary, 300);
+	    }
 
-    async function loadFinanceSummary() {
-      try {
-        const search = document.getElementById('financeSearch')?.value.trim() || '';
-        const url = search ? `/admin/finance/summary?search=${encodeURIComponent(search)}` : '/admin/finance/summary';
-        const r = await fetch(url, { headers: adminHeaders() });
-        if (!r.ok) return toast('加载失败', 'error');
-        const data = await r.json();
-        const body = document.getElementById('financeSummaryBody');
-        if (!body) return;
-        if (!data.length) {
-          body.innerHTML = '<tr><td colspan="8"><div class="empty-state"><div class="empty-state-icon">📈</div><h3>暂无财务数据</h3><p>财务汇总会显示在这里</p></div></td></tr>';
-          return;
-        }
-        body.innerHTML = data.map(row => {
-          const f = row.finance_summary || {};
-          const b = row.billing_summary || {};
-          return `<tr>
-            <td><div class="user-cell"><div class="user-avatar">${getInitials(row.username || row.email || row.external_id || row.user_id)}</div><div class="user-info"><strong>${escapeHtml(row.username || row.external_id || row.user_id)}</strong><span>${escapeHtml(row.email || row.user_id)}</span><span>${escapeHtml(row.user_id)}</span></div></div></td>
-            <td><strong>${formatMoney(b.available_cents || 0)}</strong><div class="text-sm text-muted">${b.subscription_active ? escapeHtml(b.subscription_plan_name || b.subscription_plan_id || '有效月卡') : '无有效月卡'}</div></td>
-            <td>${formatMoney(b.subscription_remaining_cents || 0)}<div class="text-sm text-muted">流量包 ${formatMoney(b.traffic_pack_remaining_cents || 0)}</div></td>
-            <td>${formatMoney(b.legacy_balance_cents || 0)}</td>
-            <td>${formatMoney(f.total_paid_balance_cents || 0)}<div class="text-sm text-muted">人民币 ${formatMoney(f.total_paid_rmb_cents || 0)}</div></td>
-            <td>${formatMoney((f.total_ops_credit_cents || 0) + (f.total_bonus_cents || 0))}<div class="text-sm text-muted">后台 ${formatMoney(f.total_ops_credit_cents || 0)} · 赠送 ${formatMoney(f.total_bonus_cents || 0)}</div></td>
-            <td>${formatMoney(f.total_consumed_cents || 0)}</td>
-            <td class="text-sm text-muted">${formatDateFull(f.last_payment_at)}</td>
-          </tr>`;
-        }).join('');
-      } catch (e) { console.error(e); toast('加载失败', 'error'); }
-    }
+	    function renderFinanceOverviewCards(data) {
+	      const node = document.getElementById('financeOverviewCards');
+	      if (!node) return;
+	      const today = data.today || {};
+	      const month = data.month || {};
+	      const totals = data.totals || {};
+	      node.innerHTML = `
+	        <div class="finance-kpi">
+	          <div class="finance-kpi-label">今日确认充值</div>
+	          <div class="finance-kpi-value">${formatMoney(today.paid_balance_cents || 0)}</div>
+	          <div class="finance-kpi-note">实收人民币 ${formatMoney(today.paid_rmb_cents || 0)} · ${formatNum(today.paid_order_count || 0)} 单</div>
+	        </div>
+	        <div class="finance-kpi">
+	          <div class="finance-kpi-label">本月确认充值</div>
+	          <div class="finance-kpi-value">${formatMoney(month.paid_balance_cents || 0)}</div>
+	          <div class="finance-kpi-note">实收人民币 ${formatMoney(month.paid_rmb_cents || 0)} · ${formatNum(month.paid_user_count || 0)} 用户</div>
+	        </div>
+	        <div class="finance-kpi">
+	          <div class="finance-kpi-label">当前可用额度</div>
+	          <div class="finance-kpi-value">${formatMoney(totals.available_cents || 0)}</div>
+	          <div class="finance-kpi-note">历史余额 ${formatMoney(totals.legacy_balance_cents || 0)} · 套餐 ${formatMoney(totals.subscription_remaining_cents || 0)} · 流量包 ${formatMoney(totals.traffic_pack_remaining_cents || 0)}</div>
+	        </div>
+	        <div class="finance-kpi">
+	          <div class="finance-kpi-label">累计后台加款</div>
+	          <div class="finance-kpi-value">${formatMoney(totals.ops_credit_cents || 0)}</div>
+	          <div class="finance-kpi-note">后台扣款 ${formatMoney(totals.ops_debit_cents || 0)}</div>
+	        </div>
+	        <div class="finance-kpi">
+	          <div class="finance-kpi-label">累计赠送额度</div>
+	          <div class="finance-kpi-value">${formatMoney(totals.bonus_cents || 0)}</div>
+	          <div class="finance-kpi-note">邀请奖励和兑换码等非现金入账</div>
+	        </div>
+	        <div class="finance-kpi">
+	          <div class="finance-kpi-label">累计消耗</div>
+	          <div class="finance-kpi-value">${formatMoney(totals.consumed_cents || 0)}</div>
+	          <div class="finance-kpi-note">按 finance summary 预聚合读取</div>
+	        </div>
+	      `;
+	    }
+
+	    async function loadFinanceOverview() {
+	      const node = document.getElementById('financeOverviewCards');
+	      try {
+	        const r = await fetch('/admin/finance/overview', { headers: adminHeaders() });
+	        if (!r.ok) throw new Error('overview failed');
+	        renderFinanceOverviewCards(await r.json());
+	      } catch (e) {
+	        console.error(e);
+	        if (node) node.innerHTML = '<div class="finance-kpi"><div class="finance-kpi-label">加载失败</div><div class="finance-kpi-value">-</div><div class="finance-kpi-note">请稍后刷新财务汇总</div></div>';
+	      }
+	    }
+
+	    function jumpToFinanceLedger(userId, type = '') {
+	      openAdminPage('finance-ledger');
+	      const search = document.getElementById('financeLedgerSearch');
+	      const typeSelect = document.getElementById('financeLedgerType');
+	      if (search) search.value = userId || '';
+	      if (typeSelect) typeSelect.value = type;
+	      loadFinanceLedger();
+	    }
+
+	    function jumpToPaymentOrders(userId) {
+	      openAdminPage('orders');
+	      const search = document.getElementById('orderSearch');
+	      if (search) search.value = userId || '';
+	      loadPaymentOrders();
+	    }
+
+	    async function loadFinanceSummary() {
+	      try {
+	        loadFinanceOverview();
+	        const search = document.getElementById('financeSearch')?.value.trim() || '';
+	        const url = search ? `/admin/finance/summary?search=${encodeURIComponent(search)}` : '/admin/finance/summary';
+	        const r = await fetch(url, { headers: adminHeaders() });
+	        if (!r.ok) return toast('加载失败', 'error');
+	        const data = await r.json();
+	        const body = document.getElementById('financeSummaryBody');
+	        if (!body) return;
+	        if (!data.length) {
+	          body.innerHTML = '<tr><td colspan="9"><div class="empty-state"><div class="empty-state-icon">📈</div><h3>暂无财务数据</h3><p>财务汇总会显示在这里</p></div></td></tr>';
+	          return;
+	        }
+	        body.innerHTML = data.map(row => {
+	          const f = row.finance_summary || {};
+	          const b = row.billing_summary || {};
+	          const displayName = row.username || row.external_id || row.email || row.user_id;
+	          const paidMeta = [
+	            `${formatNum(f.total_paid_orders || 0)} 单`,
+	            `人民币 ${formatMoney(f.total_paid_rmb_cents || 0)}`
+	          ].join(' · ');
+	          return `<tr>
+	            <td><div class="user-cell"><div class="user-avatar">${getInitials(displayName)}</div><div class="user-info"><strong>${escapeHtml(displayName)}</strong><span>${escapeHtml(row.email || row.user_id)}</span><span>${escapeHtml(row.user_id)}</span></div></div></td>
+	            <td><strong>${formatMoney(b.available_cents || 0)}</strong><div class="text-sm text-muted">套餐 ${formatMoney(b.subscription_remaining_cents || 0)} · 流量包 ${formatMoney(b.traffic_pack_remaining_cents || 0)} · 历史 ${formatMoney(b.legacy_balance_cents || 0)}</div></td>
+	            <td>${formatMoney(f.total_paid_balance_cents || 0)}<div class="text-sm text-muted">${paidMeta}</div></td>
+	            <td>${formatMoney(f.total_ops_credit_cents || 0)}<div class="text-sm text-muted">扣款 ${formatMoney(f.total_ops_debit_cents || 0)}</div></td>
+	            <td>${formatMoney(f.total_bonus_cents || 0)}</td>
+	            <td>${formatMoney(f.total_consumed_cents || 0)}</td>
+	            <td>${formatMoney(f.consumed_7d_cents || 0)}<div class="text-sm text-muted">30 天 ${formatMoney(f.consumed_30d_cents || 0)}</div></td>
+	            <td class="text-sm text-muted">${formatDateFull(f.last_payment_at)}</td>
+	            <td><div class="finance-actions"><button class="btn btn-sm btn-secondary" onclick="jumpToFinanceLedger('${escapeHtml(row.user_id)}')">流水</button><button class="btn btn-sm btn-secondary" onclick="jumpToPaymentOrders('${escapeHtml(row.user_id)}')">订单</button><button class="btn btn-sm btn-secondary" onclick="openUserModal('${escapeHtml(row.user_id)}')">详情</button></div></td>
+	          </tr>`;
+	        }).join('');
+	      } catch (e) { console.error(e); toast('加载失败', 'error'); }
+	    }
+
+	    function financeEventLabel(type, group) {
+	      const map = {
+	        payment_confirmed: '支付确认',
+	        webhook_payment_credit: 'Webhook 支付',
+	        webhook_credit: 'Webhook 加款',
+	        redemption_credit: '兑换码',
+	        admin_subscription_adjust: '后台调套餐',
+	        admin_traffic_pack_grant: '后台发包',
+	        admin_traffic_pack_adjust: '后台调包',
+	        usage_subscription_debit: '套餐扣费',
+	        usage_traffic_pack_debit: '流量包扣费',
+	        usage_legacy_balance_debit: '余额扣费',
+	        usage_legacy_balance_refund: '余额退款',
+	      };
+	      if (map[type]) return map[type];
+	      if (String(type || '').startsWith('referral_')) return '邀请奖励';
+	      if (group === 'billing') return '额度池账本';
+	      return type || '-';
+	    }
+
+	    function financeEventBadge(type, amount) {
+	      const n = Number(amount || 0);
+	      const cls = n < 0 ? 'badge-error' : String(type || '').includes('admin') ? 'badge-warning' : 'badge-info';
+	      return `<span class="badge ${cls}">${escapeHtml(financeEventLabel(type))}</span>`;
+	    }
+
+	    function financeMoneyHtml(cents) {
+	      const n = Number(cents || 0);
+	      const cls = n < 0 ? 'money-negative' : n > 0 ? 'money-positive' : 'text-muted';
+	      return `<span class="${cls}">${n > 0 ? '+' : ''}${formatMoney(n)}</span>`;
+	    }
+
+	    function debounceFinanceLedgerSearch() {
+	      clearTimeout(financeLedgerSearchTimeout);
+	      financeLedgerSearchTimeout = setTimeout(loadFinanceLedger, 300);
+	    }
+
+	    function financeLedgerUrl() {
+	      const params = new URLSearchParams();
+	      const search = document.getElementById('financeLedgerSearch')?.value.trim() || '';
+	      const type = document.getElementById('financeLedgerType')?.value || '';
+	      const from = document.getElementById('financeLedgerFrom')?.value || '';
+	      const to = document.getElementById('financeLedgerTo')?.value || '';
+	      const limit = document.getElementById('financeLedgerLimit')?.value || '100';
+	      if (search) params.set('search', search);
+	      if (type) params.set('type_filter', type);
+	      if (from) params.set('date_from', from);
+	      if (to) params.set('date_to', to);
+	      params.set('limit', limit);
+	      return `/admin/finance/ledger?${params.toString()}`;
+	    }
+
+	    async function loadFinanceLedger() {
+	      try {
+	        const r = await fetch(financeLedgerUrl(), { headers: adminHeaders() });
+	        if (!r.ok) return toast('加载失败', 'error');
+	        const payload = await r.json();
+	        const items = payload.items || [];
+	        const body = document.getElementById('financeLedgerBody');
+	        if (!body) return;
+	        if (!items.length) {
+	          body.innerHTML = '<tr><td colspan="8"><div class="empty-state"><div class="empty-state-icon">账</div><h3>暂无财务流水</h3><p>调整筛选条件后再试</p></div></td></tr>';
+	          return;
+	        }
+	        body.innerHTML = items.map(item => {
+	          const user = item.user || {};
+	          const sourceId = item.source_id || '-';
+	          const product = item.product || {};
+	          const productLabelText = product.product_name || item.product_id || '-';
+	          const balanceAfter = item.balance_after_cents === null || item.balance_after_cents === undefined
+	            ? ''
+	            : `<div class="text-sm text-muted">余额后 ${formatMoney(item.balance_after_cents || 0)}</div>`;
+	          return `<tr>
+	            <td class="text-sm text-muted">${formatDateFull(item.created_at)}</td>
+	            <td><div class="user-info"><strong>${escapeHtml(user.display_name || user.user_id || '-')}</strong><span>${escapeHtml(user.email || user.user_id || '')}</span></div></td>
+	            <td>${financeEventBadge(item.event_type, item.amount_cents)}<div class="text-sm text-muted">${escapeHtml(item.event_type || '-')}</div></td>
+	            <td>${financeMoneyHtml(item.amount_cents)}</td>
+	            <td>${item.cash_rmb_cents ? `¥${(Number(item.cash_rmb_cents || 0) / 100).toFixed(2)}` : '-'}</td>
+	            <td><span class="source-chip" title="${escapeHtml(sourceId)}">${escapeHtml(item.source_type || '-')}: ${escapeHtml(sourceId)}</span></td>
+	            <td>${escapeHtml(productLabelText)}${balanceAfter}</td>
+	            <td class="text-sm text-muted">${escapeHtml(item.note || '-')}</td>
+	          </tr>`;
+	        }).join('');
+	      } catch (e) { console.error(e); toast('加载失败', 'error'); }
+	    }
 
     // ==================== Billing ====================
     async function loadRecharges() {
@@ -5460,15 +5759,24 @@
       } catch (e) { console.error(e); toast('加载失败', 'error'); }
     }
 
-    function logsPage(dir) { logsOffset = Math.max(0, logsOffset + dir * LOGS_LIMIT); loadRequestLogs(); }
+	    function logsPage(dir) { logsOffset = Math.max(0, logsOffset + dir * LOGS_LIMIT); loadRequestLogs(); }
 
-    // ==================== Payment Orders ====================
-    async function loadPaymentOrders() {
-      try {
-        const sf = document.getElementById('orderStatusFilter').value;
-        let url = '/admin/payment-orders';
-        if (sf) url += `?status_filter=${sf}`;
-        const r = await fetch(url, { headers: adminHeaders() });
+	    // ==================== Payment Orders ====================
+	    function debouncePaymentOrderSearch() {
+	      clearTimeout(paymentOrderSearchTimeout);
+	      paymentOrderSearchTimeout = setTimeout(loadPaymentOrders, 300);
+	    }
+
+	    async function loadPaymentOrders() {
+	      try {
+	        const params = new URLSearchParams();
+	        const sf = document.getElementById('orderStatusFilter')?.value || '';
+	        const search = document.getElementById('orderSearch')?.value.trim() || '';
+	        if (sf) params.set('status_filter', sf);
+	        if (search) params.set('search', search);
+	        const query = params.toString();
+	        const url = query ? `/admin/payment-orders?${query}` : '/admin/payment-orders';
+	        const r = await fetch(url, { headers: adminHeaders() });
         if (!r.ok) return toast('加载失败', 'error');
         const data = await r.json();
         const body = document.getElementById('ordersBody');
