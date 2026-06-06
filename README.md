@@ -19,18 +19,33 @@
 </p>
 
 <p align="center">
+  <a href="#sponsors">Sponsors</a>
+  ·
   <a href="#quick-start">Quick Start</a>
   ·
   <a href="#api-examples">API Examples</a>
   ·
   <a href="#model-routing">Model Routing</a>
   ·
-  <a href="#sponsors">Sponsors</a>
-  ·
   <a href="./README.zh-CN.md">中文文档</a>
 </p>
 
 ---
+
+## Sponsors
+
+CoinCoin Proxy is made possible by sponsors from university alumni communities, technology companies, and overseas Chinese builder networks. Thank you for backing the project and helping keep the public API experience stable, affordable, and developer-friendly.
+
+| Sponsor | Thank you |
+| --- | --- |
+| <a href="https://www.reading.ac.uk/alumni/community/reading-alumni-groups/china"><img src="https://www.google.com/s2/favicons?domain=reading.ac.uk&sz=96" width="56" height="56" alt="University of Reading logo"></a><br><strong>University of Reading</strong><br><sub>Chinese Alumni Association</sub> | Huge thanks to the [University of Reading China alumni community](https://www.reading.ac.uk/alumni/community/reading-alumni-groups/china) for sponsoring this project. Your support helps CoinCoin keep improving its OpenAI-compatible control plane, public model catalog, and documentation for Chinese-speaking builders. |
+| <img src="./docs/assets/sponsors/hailv-plus.svg" width="56" height="56" alt="Hailv PLUS sponsor badge"><br><strong>Hailv PLUS</strong><br><sub>海归 PLUS</sub> | Thanks to **Hailv PLUS** for sponsoring CoinCoin Proxy and supporting overseas Chinese developers, founders, and returning-student communities. Hailv PLUS helps connect internationally educated builders with practical resources, peer networks, and launch support. |
+| <a href="https://wrexham.ac.uk/alumni/"><img src="https://www.google.com/s2/favicons?domain=wrexham.ac.uk&sz=96" width="56" height="56" alt="Wrexham University logo"></a><br><strong>Wrexham Glyndwr University</strong><br><sub>Wrexham University</sub> | Thanks to the [Wrexham University Alumni Association](https://wrexham.ac.uk/alumni/) for supporting the project. Their backing helps us keep the gateway approachable for students, alumni teams, and early-stage technical communities building with AI APIs. |
+| <a href="https://www.nio.com/en_US"><img src="https://www.google.com/s2/favicons?domain=nio.com&sz=96" width="56" height="56" alt="NIO logo"></a><br><strong>NIO</strong><br><sub>Technology sponsor</sub> | Huge thanks to [NIO](https://www.nio.com/en_US) for sponsoring this project. NIO's support reflects a shared belief in developer infrastructure, intelligent systems, and practical tools that help teams ship faster. |
+| <a href="https://alumni.xjtlu.edu.cn/"><img src="https://www.google.com/s2/favicons?domain=xjtlu.edu.cn&sz=96" width="56" height="56" alt="XJTLU logo"></a><br><strong>XJTLU</strong><br><sub>Suzhou Alumni Group / 主办方</sub> | Thanks to the [XJTLU alumni network](https://alumni.xjtlu.edu.cn/) and Suzhou alumni organizers for sponsoring CoinCoin Proxy. Your support helps the project serve bilingual engineering teams and alumni founders working across China and global markets. |
+| <a href="https://www.york.ac.uk/alumni/"><img src="https://www.google.com/s2/favicons?domain=york.ac.uk&sz=96" width="56" height="56" alt="University of York logo"></a><br><strong>University of York</strong><br><sub>Alumni community</sub> | Thanks to the [University of York alumni community](https://www.york.ac.uk/alumni/) for sponsoring this project and supporting practical AI tooling for graduates, student builders, and independent teams. |
+| <img src="./docs/assets/sponsors/eau.svg" width="56" height="56" alt="EAU sponsor badge"><br><strong>EAU</strong><br><sub>European Alumni Union / 欧洲校友会联合会</sub> | Thanks to **EAU, the European Alumni Union**, for sponsoring CoinCoin Proxy and supporting cross-border alumni collaboration. Your support helps keep the project useful for distributed communities that build, learn, and operate across regions. |
+| <a href="https://uom.ac.cn/alumni/committee"><img src="https://www.google.com/s2/favicons?domain=uom.ac.cn&sz=96" width="56" height="56" alt="University of Manchester logo"></a><br><strong>The University of Manchester</strong><br><sub>China Alumni Association</sub> | Huge thanks to the [University of Manchester China alumni community](https://uom.ac.cn/alumni/committee) for sponsoring the project. Your support helps CoinCoin keep improving the developer experience for Chinese alumni builders and AI product teams. |
 
 ## What Is CoinCoin Proxy?
 
@@ -56,21 +71,6 @@ End users only talk to CoinCoin's public API and public model names. Internal ga
 | Provider routing | Add OpenAI-compatible upstream channels, route public models to them, and fail over when a channel cools down. |
 | Image workflows | Serve `/v1/images/generations`, synchronous image edits, and async multi-image editing jobs. |
 | Admin operations | Manage users, keys, usage, recharge records, model routes, channel health, and monitoring probes. |
-
-## Sponsors
-
-CoinCoin Proxy is made possible by sponsors from university alumni communities, technology companies, and overseas Chinese builder networks. Thank you for backing the project and helping keep the public API experience stable, affordable, and developer-friendly.
-
-| Sponsor | Thank you |
-| --- | --- |
-| **University of Reading**<br><sub>Chinese Alumni Association</sub> | Huge thanks to the [University of Reading China alumni community](https://www.reading.ac.uk/alumni/community/reading-alumni-groups/china) for sponsoring this project. Your support helps CoinCoin keep improving its OpenAI-compatible control plane, public model catalog, and documentation for Chinese-speaking builders. |
-| **Hailv PLUS**<br><sub>海归 PLUS</sub> | Thanks to **Hailv PLUS** for sponsoring CoinCoin Proxy and supporting overseas Chinese developers, founders, and returning-student communities. Hailv PLUS helps connect internationally educated builders with practical resources, peer networks, and launch support. |
-| **Wrexham Glyndwr University**<br><sub>Wrexham University</sub> | Thanks to the [Wrexham University Alumni Association](https://wrexham.ac.uk/alumni/) for supporting the project. Their backing helps us keep the gateway approachable for students, alumni teams, and early-stage technical communities building with AI APIs. |
-| **NIO**<br><sub>Technology sponsor</sub> | Huge thanks to [NIO](https://www.nio.com/en_US) for sponsoring this project. NIO's support reflects a shared belief in developer infrastructure, intelligent systems, and practical tools that help teams ship faster. |
-| **XJTLU**<br><sub>Suzhou Alumni Group / 主办方</sub> | Thanks to the [XJTLU alumni network](https://alumni.xjtlu.edu.cn/) and Suzhou alumni organizers for sponsoring CoinCoin Proxy. Your support helps the project serve bilingual engineering teams and alumni founders working across China and global markets. |
-| **University of York**<br><sub>Alumni community</sub> | Thanks to the [University of York alumni community](https://www.york.ac.uk/alumni/) for sponsoring this project and supporting practical AI tooling for graduates, student builders, and independent teams. |
-| **EAU**<br><sub>European Alumni Union / 欧洲校友会联合会</sub> | Thanks to **EAU, the European Alumni Union**, for sponsoring CoinCoin Proxy and supporting cross-border alumni collaboration. Your support helps keep the project useful for distributed communities that build, learn, and operate across regions. |
-| **The University of Manchester**<br><sub>China Alumni Association</sub> | Huge thanks to the [University of Manchester China alumni community](https://uom.ac.cn/alumni/committee) for sponsoring the project. Your support helps CoinCoin keep improving the developer experience for Chinese alumni builders and AI product teams. |
 
 ## Core Features
 

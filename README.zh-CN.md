@@ -6,9 +6,34 @@
   <a href="./README.zh-CN.md">简体中文</a>
 </p>
 
+<p align="center">
+  <a href="#赞助方">赞助方</a>
+  ·
+  <a href="#快速开始">快速开始</a>
+  ·
+  <a href="#模型兼容规则">模型兼容规则</a>
+  ·
+  <a href="./README.md">English README</a>
+</p>
+
 > 这是 CoinCoin Proxy 的完整中文说明。英文首页用于 GitHub 开源展示和快速浏览。
 
 OpenAI 兼容的 API 控制平面，负责客户密钥、余额、用量控制和公开模型目录。当前长期架构里，旧 GPT/Codex 继续走 legacy lane，Gemini 文本和图片走 CoinCoin 内置的 native Gemini CPA lane，不再把 LiteLLM 作为正式 Gemini 数据面。
+
+## 赞助方
+
+CoinCoin Proxy 感谢来自大学校友会、科技公司和海外华人开发者网络的赞助支持。你们的支持让这个 OpenAI 兼容控制面能持续打磨公开模型目录、计费治理、文档和开发者体验。
+
+| 赞助方 | 致谢 |
+| --- | --- |
+| <a href="https://www.reading.ac.uk/alumni/community/reading-alumni-groups/china"><img src="https://www.google.com/s2/favicons?domain=reading.ac.uk&sz=96" width="56" height="56" alt="University of Reading logo"></a><br><strong>University of Reading</strong><br><sub>Chinese Alumni Association</sub> | 感谢 [University of Reading China alumni community](https://www.reading.ac.uk/alumni/community/reading-alumni-groups/china) 赞助 CoinCoin Proxy，支持我们继续完善 OpenAI 兼容控制面、公开模型目录和面向中文开发者的文档。 |
+| <img src="./docs/assets/sponsors/hailv-plus.svg" width="56" height="56" alt="Hailv PLUS sponsor badge"><br><strong>Hailv PLUS</strong><br><sub>海归 PLUS</sub> | 感谢 **Hailv PLUS** 赞助 CoinCoin Proxy，并支持海外华人开发者、创业者与归国留学生社区。Hailv PLUS 帮助连接国际化背景的建设者、实践资源、同伴网络和启动支持。 |
+| <a href="https://wrexham.ac.uk/alumni/"><img src="https://www.google.com/s2/favicons?domain=wrexham.ac.uk&sz=96" width="56" height="56" alt="Wrexham University logo"></a><br><strong>Wrexham Glyndwr University</strong><br><sub>Wrexham University</sub> | 感谢 [Wrexham University Alumni Association](https://wrexham.ac.uk/alumni/) 支持本项目。你们的赞助帮助我们让网关能力更适合学生、校友团队和早期技术社区使用。 |
+| <a href="https://www.nio.com/en_US"><img src="https://www.google.com/s2/favicons?domain=nio.com&sz=96" width="56" height="56" alt="NIO logo"></a><br><strong>NIO</strong><br><sub>Technology sponsor</sub> | 感谢 [NIO](https://www.nio.com/en_US) 赞助本项目。NIO 的支持体现了对开发者基础设施、智能系统和实用工具的共同信念。 |
+| <a href="https://alumni.xjtlu.edu.cn/"><img src="https://www.google.com/s2/favicons?domain=xjtlu.edu.cn&sz=96" width="56" height="56" alt="XJTLU logo"></a><br><strong>XJTLU</strong><br><sub>Suzhou Alumni Group / 主办方</sub> | 感谢 [XJTLU alumni network](https://alumni.xjtlu.edu.cn/) 和苏州校友组织者赞助 CoinCoin Proxy。你们的支持帮助项目服务更多跨中国与全球市场工作的双语工程团队和校友创业者。 |
+| <a href="https://www.york.ac.uk/alumni/"><img src="https://www.google.com/s2/favicons?domain=york.ac.uk&sz=96" width="56" height="56" alt="University of York logo"></a><br><strong>University of York</strong><br><sub>Alumni community</sub> | 感谢 [University of York alumni community](https://www.york.ac.uk/alumni/) 赞助本项目，并支持面向毕业生、学生开发者和独立团队的实用 AI 工具。 |
+| <img src="./docs/assets/sponsors/eau.svg" width="56" height="56" alt="EAU sponsor badge"><br><strong>EAU</strong><br><sub>European Alumni Union / 欧洲校友会联合会</sub> | 感谢 **EAU, the European Alumni Union** 赞助 CoinCoin Proxy，并支持跨区域校友协作。你们的支持让项目更好服务分布式社区的构建、学习与运营。 |
+| <a href="https://uom.ac.cn/alumni/committee"><img src="https://www.google.com/s2/favicons?domain=uom.ac.cn&sz=96" width="56" height="56" alt="University of Manchester logo"></a><br><strong>The University of Manchester</strong><br><sub>China Alumni Association</sub> | 感谢 [University of Manchester China alumni community](https://uom.ac.cn/alumni/committee) 赞助本项目。你们的支持帮助 CoinCoin 持续改善中文校友开发者和 AI 产品团队的使用体验。 |
 
 ## 功能特性
 

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96" role="img" aria-labelledby="title desc">
+  <title id="title">Hailv PLUS sponsor badge</title>
+  <desc id="desc">A neutral text badge for the Hailv PLUS sponsor entry.</desc>
+  <rect width="96" height="96" rx="18" fill="#F0FDF4"/>
+  <rect x="8" y="8" width="80" height="80" rx="14" fill="#FFFFFF" stroke="#86EFAC" stroke-width="2"/>
+  <text x="48" y="38" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="700" fill="#166534">Hailv</text>
+  <text x="48" y="58" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="700" fill="#15803D">PLUS</text>
+  <text x="48" y="73" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="10" fill="#16A34A">海归 PLUS</text>
+</svg>
