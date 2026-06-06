@@ -18,6 +18,9 @@ import { formatLocalTime } from '../utils/time'
 import './Playground.css'
 
 const HISTORY_KEY = 'coincoin_workbench_history_v1'
+const HISTORY_MEDIA_DB = 'coincoin_workbench_media_cache_v1'
+const HISTORY_MEDIA_STORE = 'media'
+const HISTORY_DATA_URL_LIMIT = 360_000
 const ACTIVE_TAB_KEY = 'coincoin_workbench_active_tab_v1'
 const WORKBENCH_TABS = ['chat', 'image', 'video']
 const IMAGE_SIZES = ['1024x1024', '1536x1024', '1024x1536', 'auto']
@@ -39,6 +42,7 @@ const EMPTY_IMAGE_RUN = {
 
 let imageRunState = { ...EMPTY_IMAGE_RUN }
 let imageRunController = null
+let historyMediaDbPromise = null
 const imageRunListeners = new Set()
 
 function nowId(prefix) {
@@ -66,14 +70,72 @@ function safeReadHistory() {
     }
 }
 
+function isLargeDataUrl(url) {
+    return typeof url === 'string' && url.startsWith('data:') && url.length > HISTORY_DATA_URL_LIMIT
+}
+
+function openHistoryMediaDb() {
+    if (typeof indexedDB === 'undefined') return Promise.reject(new Error('IndexedDB unavailable'))
+    if (!historyMediaDbPromise) {
+        historyMediaDbPromise = new Promise((resolve, reject) => {
+            const request = indexedDB.open(HISTORY_MEDIA_DB, 1)
+            request.onupgradeneeded = () => {
+                const db = request.result
+                if (!db.objectStoreNames.contains(HISTORY_MEDIA_STORE)) {
+                    db.createObjectStore(HISTORY_MEDIA_STORE)
+                }
+            }
+            request.onsuccess = () => resolve(request.result)
+            request.onerror = () => reject(request.error || new Error('Failed to open media cache'))
+        })
+    }
+    return historyMediaDbPromise
+}
+
+async function writeCachedHistoryMedia(cacheKey, url) {
+    if (!cacheKey || !url) return
+    const db = await openHistoryMediaDb()
+    await new Promise((resolve, reject) => {
+        const tx = db.transaction(HISTORY_MEDIA_STORE, 'readwrite')
+        tx.objectStore(HISTORY_MEDIA_STORE).put(url, cacheKey)
+        tx.oncomplete = resolve
+        tx.onerror = () => reject(tx.error || new Error('Failed to write media cache'))
+    })
+}
+
+async function readCachedHistoryMedia(cacheKey) {
+    if (!cacheKey) return ''
+    const db = await openHistoryMediaDb()
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(HISTORY_MEDIA_STORE, 'readonly')
+        const request = tx.objectStore(HISTORY_MEDIA_STORE).get(cacheKey)
+        request.onsuccess = () => resolve(typeof request.result === 'string' ? request.result : '')
+        request.onerror = () => reject(request.error || new Error('Failed to read media cache'))
+    })
+}
+
+function cacheHistoryMedia(cacheKey, url) {
+    writeCachedHistoryMedia(cacheKey, url).catch(() => {
+        // Best-effort browser cache. The history entry remains without preview if this fails.
+    })
+}
+
+function compactHistoryRecord(record) {
+    if (!isLargeDataUrl(record.url)) return record
+    const cacheKey = record.cacheKey || record.id || nowId('media_cache')
+    cacheHistoryMedia(cacheKey, record.url)
+    return {
+        ...record,
+        url: '',
+        cacheKey,
+        cachedMedia: true,
+        previewUnavailable: false,
+    }
+}
+
 function safeStoreHistory(records) {
     try {
-        const compact = records.slice(0, 24).map((record) => {
-            if (record.url?.startsWith('data:') && record.url.length > 360_000) {
-                return { ...record, url: '', previewUnavailable: true }
-            }
-            return record
-        })
+        const compact = records.slice(0, 24).map(compactHistoryRecord)
         localStorage.setItem(HISTORY_KEY, JSON.stringify(compact))
     } catch {
         // Best-effort local history. Large image data URLs can exceed browser quota.
@@ -97,17 +159,36 @@ function safeStoreActiveTab(tab) {
     }
 }
 
-function mergeStoredHistory(items) {
-    const next = [...items, ...safeReadHistory()]
+function dedupeHistory(items, limit = 30) {
     const seen = new Set()
-    const compact = next.filter((item) => {
-        const key = `${item.type}:${item.url || item.id}`
+    return items.filter((item) => {
+        const key = `${item.type}:${item.id || item.url}`
         if (seen.has(key)) return false
         seen.add(key)
         return true
-    }).slice(0, 30)
+    }).slice(0, limit)
+}
+
+function mergeStoredHistory(items) {
+    const compact = dedupeHistory([...items, ...safeReadHistory()])
     safeStoreHistory(compact)
     return compact
+}
+
+async function restoreCachedHistory(records) {
+    let changed = false
+    const restored = await Promise.all(records.map(async (record) => {
+        if (record.url || !record.cacheKey || !record.cachedMedia) return record
+        try {
+            const url = await readCachedHistoryMedia(record.cacheKey)
+            if (!url) return record
+            changed = true
+            return { ...record, url, previewUnavailable: false }
+        } catch {
+            return record
+        }
+    }))
+    return changed ? restored : records
 }
 
 function extractErrorMessage(error) {
@@ -952,7 +1033,7 @@ function MediaHistory({ history, activeTab, setVideoReference }) {
                             ) : item.url ? (
                                 <img src={item.url} alt={item.prompt || item.model} />
                             ) : (
-                                <div className="wb-history-missing">未缓存</div>
+                                <div className="wb-history-missing">{item.cachedMedia ? '加载中' : '已失效'}</div>
                             )}
                             <div>
                                 <strong>{item.model}</strong>
@@ -1015,6 +1096,16 @@ export default function Playground() {
     }, [history])
 
     useEffect(() => {
+        let active = true
+        restoreCachedHistory(history).then((restored) => {
+            if (active && restored !== history) setHistory(restored)
+        })
+        return () => {
+            active = false
+        }
+    }, [history])
+
+    useEffect(() => {
         safeStoreActiveTab(activeTab)
     }, [activeTab])
 
@@ -1059,7 +1150,7 @@ export default function Playground() {
     useEffect(() => subscribeImageRunState((state) => {
         if (state.loading || !state.resultImages?.length || syncedImageRunRef.current === state.runId) return
         syncedImageRunRef.current = state.runId
-        setHistory(safeReadHistory())
+        setHistory((current) => dedupeHistory([...state.resultImages, ...current]))
         reloadApiRecords()
     }), [reloadApiRecords])
 
