@@ -7,6 +7,8 @@
 </p>
 
 <p align="center">
+  <a href="#官方云服务">官方云服务</a>
+  ·
   <a href="#赞助方">赞助方</a>
   ·
   <a href="#快速开始">快速开始</a>
@@ -19,6 +21,18 @@
 > 这是 CoinCoin Proxy 的完整中文说明。英文首页用于 GitHub 开源展示和快速浏览。
 
 OpenAI 兼容的 API 控制平面，负责客户密钥、余额、用量控制和公开模型目录。当前长期架构里，旧 GPT/Codex 继续走 legacy lane，Gemini 文本和图片走 CoinCoin 内置的 native Gemini CPA lane，不再把 LiteLLM 作为正式 Gemini 数据面。
+
+## 官方云服务
+
+<p align="center">
+  <a href="https://coincoin.ai">
+    <img src="./docs/assets/coincoin-ai-banner.svg" alt="CoinCoin.ai 官方云服务横幅">
+  </a>
+</p>
+
+如果你不想自己部署控制面，可以直接使用官方云服务 [CoinCoin.ai](https://coincoin.ai)。它面向 Claude Code、Codex CLI、Gemini、cURL 和 OpenAI-compatible SDK，提供统一 Key、统一计费和公开模型目录。
+
+新用户注册即可获得 **$45 starter credits**，可以马上测试模型网关、计费控制和 coding-agent 通道。
 
 ## 赞助方
 

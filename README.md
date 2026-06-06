@@ -19,6 +19,8 @@
 </p>
 
 <p align="center">
+  <a href="#official-cloud">Official Cloud</a>
+  ·
   <a href="#sponsors">Sponsors</a>
   ·
   <a href="#quick-start">Quick Start</a>
@@ -31,6 +33,18 @@
 </p>
 
 ---
+
+## Official Cloud
+
+<p align="center">
+  <a href="https://coincoin.ai">
+    <img src="./docs/assets/coincoin-ai-banner.svg" alt="CoinCoin.ai official cloud banner">
+  </a>
+</p>
+
+Want the hosted experience instead of running your own control plane? [CoinCoin.ai](https://coincoin.ai) is the official CoinCoin cloud gateway for Claude Code, Codex CLI, Gemini, cURL, and OpenAI-compatible SDKs.
+
+New users get **$45 in starter credits** after registration, so you can test the public model catalog, unified billing, and coding-agent channels right away.
 
 ## Sponsors
 
