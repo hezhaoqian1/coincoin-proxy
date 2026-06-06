@@ -18,6 +18,8 @@ import { formatLocalTime } from '../utils/time'
 import './Playground.css'
 
 const HISTORY_KEY = 'coincoin_workbench_history_v1'
+const ACTIVE_TAB_KEY = 'coincoin_workbench_active_tab_v1'
+const WORKBENCH_TABS = ['chat', 'image', 'video']
 const IMAGE_SIZES = ['1024x1024', '1536x1024', '1024x1536', 'auto']
 const IMAGE_QUALITIES = [
     { value: 'auto', label: '自动' },
@@ -27,6 +29,17 @@ const IMAGE_QUALITIES = [
 ]
 const VIDEO_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9', 'adaptive']
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled', 'canceled'])
+const EMPTY_IMAGE_RUN = {
+    runId: '',
+    loading: false,
+    statusText: '',
+    error: '',
+    resultImages: [],
+}
+
+let imageRunState = { ...EMPTY_IMAGE_RUN }
+let imageRunController = null
+const imageRunListeners = new Set()
 
 function nowId(prefix) {
     return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
@@ -65,6 +78,36 @@ function safeStoreHistory(records) {
     } catch {
         // Best-effort local history. Large image data URLs can exceed browser quota.
     }
+}
+
+function safeReadActiveTab() {
+    try {
+        const value = sessionStorage.getItem(ACTIVE_TAB_KEY)
+        return WORKBENCH_TABS.includes(value) ? value : 'chat'
+    } catch {
+        return 'chat'
+    }
+}
+
+function safeStoreActiveTab(tab) {
+    try {
+        sessionStorage.setItem(ACTIVE_TAB_KEY, tab)
+    } catch {
+        // Best-effort workbench tab restore.
+    }
+}
+
+function mergeStoredHistory(items) {
+    const next = [...items, ...safeReadHistory()]
+    const seen = new Set()
+    const compact = next.filter((item) => {
+        const key = `${item.type}:${item.url || item.id}`
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
+    }).slice(0, 30)
+    safeStoreHistory(compact)
+    return compact
 }
 
 function extractErrorMessage(error) {
@@ -129,6 +172,19 @@ function formatCost(cents) {
     return `$${(value / 100).toFixed(2)}`
 }
 
+function normalizeTokenCount(...values) {
+    for (const value of values) {
+        if (value === null || value === undefined) continue
+        const number = Number(value)
+        if (Number.isFinite(number)) return number
+    }
+    return null
+}
+
+function formatTokenCount(value) {
+    return typeof value === 'number' && Number.isFinite(value) ? value.toLocaleString() : '-'
+}
+
 function canUseAsRemoteReference(url) {
     return /^https?:\/\//i.test(url || '')
 }
@@ -137,6 +193,87 @@ async function dataUrlToFile(url, filename = 'reference.png') {
     const res = await fetch(url)
     const blob = await res.blob()
     return new File([blob], filename, { type: blob.type || 'image/png' })
+}
+
+function emitImageRunState(patch) {
+    imageRunState = { ...imageRunState, ...patch }
+    imageRunListeners.forEach((listener) => listener(imageRunState))
+}
+
+function subscribeImageRunState(listener) {
+    imageRunListeners.add(listener)
+    listener(imageRunState)
+    return () => imageRunListeners.delete(listener)
+}
+
+function cancelImageRun() {
+    imageRunController?.abort()
+}
+
+async function pollImageRunJob(apiKey, job, signal) {
+    let current = job
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+        if (TERMINAL_STATUSES.has(current.status)) return current
+        emitImageRunState({ statusText: `图片任务 ${current.status || 'queued'} · ${attempt + 1}` })
+        await sleep(2500, signal)
+        current = await getImageJob(apiKey, current.id || current.job_id, { signal })
+    }
+    return current
+}
+
+async function startImageRun({ apiKey, modelId, prompt, mode, body, formData }) {
+    if (imageRunState.loading) return
+
+    const runId = nowId('image_run')
+    const controller = new AbortController()
+    imageRunController = controller
+    emitImageRunState({
+        runId,
+        loading: true,
+        error: '',
+        statusText: mode === 'edit-job' ? '提交图片任务' : (mode === 'edit' ? '提交图片编辑' : '提交图片生成'),
+        resultImages: [],
+    })
+
+    try {
+        let payload
+        if (mode === 'generation') {
+            payload = await createImageGeneration(apiKey, body, { signal: controller.signal })
+        } else if (mode === 'edit') {
+            payload = await createImageEdit(apiKey, formData, { signal: controller.signal })
+        } else {
+            const job = await createImageEditJob(apiKey, formData, { signal: controller.signal })
+            payload = await pollImageRunJob(apiKey, job, controller.signal)
+            if (payload.status === 'failed') {
+                throw new Error(payload.error?.message || '图片任务失败')
+            }
+        }
+
+        const images = extractImages(payload).map((image, index) => ({
+            ...image,
+            model: modelId,
+            prompt,
+            createdAt: new Date().toISOString(),
+            title: `图片 ${index + 1}`,
+        }))
+        if (!images.length) throw new Error('响应里没有图片结果')
+        mergeStoredHistory(images)
+        emitImageRunState({
+            runId,
+            loading: false,
+            statusText: '完成',
+            error: '',
+            resultImages: images,
+        })
+    } catch (err) {
+        if (err.name === 'AbortError') {
+            emitImageRunState({ runId, loading: false, statusText: '已停止', error: '' })
+        } else {
+            emitImageRunState({ runId, loading: false, error: extractErrorMessage(err) })
+        }
+    } finally {
+        if (imageRunState.runId === runId) imageRunController = null
+    }
 }
 
 function downloadMedia(url, filename) {
@@ -272,6 +409,7 @@ function ChatWorkspace({
                     temperature: parseFloat(temperature),
                     max_tokens: parseInt(maxTokens, 10),
                     stream: true,
+                    stream_options: { include_usage: true },
                 }),
                 signal: controller.signal,
             })
@@ -288,33 +426,44 @@ function ChatWorkspace({
             const decoder = new TextDecoder()
             let fullText = ''
             let usage = null
+            let sseBuffer = ''
+
+            const processSseLine = (line) => {
+                if (!line.startsWith('data:')) return
+                const data = line.slice(5).trim()
+                if (!data || data === '[DONE]') return
+                try {
+                    const evt = JSON.parse(data)
+                    const delta = evt.choices?.[0]?.delta
+                    if (delta?.content) {
+                        fullText += delta.content
+                        setResponse(fullText)
+                    }
+                    if (evt.usage && typeof evt.usage === 'object') usage = evt.usage
+                } catch {
+                    // Ignore malformed SSE data from interrupted streams.
+                }
+            }
 
             while (true) {
                 const { done, value } = await reader.read()
                 if (done) break
-                const chunk = decoder.decode(value, { stream: true })
-                for (const line of chunk.split('\n')) {
-                    if (!line.startsWith('data: ')) continue
-                    const data = line.slice(6).trim()
-                    if (data === '[DONE]') continue
-                    try {
-                        const evt = JSON.parse(data)
-                        const delta = evt.choices?.[0]?.delta
-                        if (delta?.content) {
-                            fullText += delta.content
-                            setResponse(fullText)
-                        }
-                        if (evt.usage) usage = evt.usage
-                    } catch {
-                        // Ignore partial SSE fragments.
-                    }
+                sseBuffer += decoder.decode(value, { stream: true })
+                const lines = sseBuffer.split(/\r?\n/)
+                sseBuffer = lines.pop() || ''
+                for (const line of lines) {
+                    processSseLine(line)
                 }
+            }
+            sseBuffer += decoder.decode()
+            if (sseBuffer.trim()) {
+                for (const line of sseBuffer.split(/\r?\n/)) processSseLine(line)
             }
 
             setStats({
                 duration: Math.round(performance.now() - t0),
-                input_tokens: usage?.prompt_tokens || usage?.input_tokens || 0,
-                output_tokens: usage?.completion_tokens || usage?.output_tokens || 0,
+                input_tokens: normalizeTokenCount(usage?.prompt_tokens, usage?.input_tokens),
+                output_tokens: normalizeTokenCount(usage?.completion_tokens, usage?.output_tokens),
                 model: selectedModel,
             })
         } catch (error) {
@@ -377,8 +526,8 @@ function ChatWorkspace({
                         <div className="wb-stats">
                             <span>{stats.model}</span>
                             <span>{(stats.duration / 1000).toFixed(1)}s</span>
-                            <span>输入 {stats.input_tokens.toLocaleString()}</span>
-                            <span>输出 {stats.output_tokens.toLocaleString()}</span>
+                            <span>输入 {formatTokenCount(stats.input_tokens)}</span>
+                            <span>输出 {formatTokenCount(stats.output_tokens)}</span>
                         </div>
                     ) : null}
                 </div>
@@ -415,10 +564,8 @@ function ImageWorkspace({
     selectedModel,
     setSelectedModel,
     selectedModelInfo,
-    addHistory,
     history,
     setVideoReference,
-    reloadApiRecords,
 }) {
     const [customModel, setCustomModel] = useState('')
     const [prompt, setPrompt] = useState('')
@@ -426,17 +573,16 @@ function ImageWorkspace({
     const [quality, setQuality] = useState('auto')
     const [count, setCount] = useState(1)
     const [references, setReferences] = useState([])
-    const [resultImages, setResultImages] = useState([])
-    const [loading, setLoading] = useState(false)
-    const [error, setError] = useState('')
-    const [statusText, setStatusText] = useState('')
-    const abortRef = useRef(null)
+    const [runState, setRunState] = useState(imageRunState)
+
+    useEffect(() => subscribeImageRunState(setRunState), [])
 
     useEffect(() => () => {
         references.forEach((item) => URL.revokeObjectURL(item.previewUrl))
     }, [references])
 
     const modelId = customModel.trim() || selectedModel
+    const { loading, error, statusText, resultImages } = runState
 
     const handleReferenceChange = (event) => {
         const files = Array.from(event.target.files || []).slice(0, 8)
@@ -468,73 +614,34 @@ function ImageWorkspace({
         return form
     }
 
-    const pollImageJob = async (job, signal) => {
-        let current = job
-        for (let attempt = 0; attempt < 80; attempt += 1) {
-            if (TERMINAL_STATUSES.has(current.status)) return current
-            setStatusText(`图片任务 ${current.status || 'queued'} · ${attempt + 1}`)
-            await sleep(2500, signal)
-            current = await getImageJob(effectiveApiKey, current.id || current.job_id, { signal })
-        }
-        return current
-    }
-
     const handleGenerate = async () => {
         if (!prompt.trim() || !modelId || loading) return
         if (!effectiveApiKey) {
-            setError('当前没有可用的开发者 API Key。')
+            emitImageRunState({ error: '当前没有可用的开发者 API Key。' })
             return
         }
 
-        const controller = new AbortController()
-        abortRef.current = controller
-        setLoading(true)
-        setError('')
-        setStatusText(references.length ? '提交图片编辑' : '提交图片生成')
+        const trimmedPrompt = prompt.trim()
+        const body = references.length === 0 ? {
+            model: modelId,
+            prompt: trimmedPrompt,
+            n: Math.max(1, Math.min(4, Number(count) || 1)),
+        } : null
+        if (body && size !== 'auto') body.size = size
+        if (body && quality !== 'auto') body.quality = quality
 
-        try {
-            let payload
-            if (references.length === 0) {
-                const body = {
-                    model: modelId,
-                    prompt: prompt.trim(),
-                    n: Math.max(1, Math.min(4, Number(count) || 1)),
-                }
-                if (size !== 'auto') body.size = size
-                if (quality !== 'auto') body.quality = quality
-                payload = await createImageGeneration(effectiveApiKey, body, { signal: controller.signal })
-            } else if (references.length <= 2) {
-                payload = await createImageEdit(effectiveApiKey, buildImageForm(), { signal: controller.signal })
-            } else {
-                const job = await createImageEditJob(effectiveApiKey, buildImageForm(), { signal: controller.signal })
-                payload = await pollImageJob(job, controller.signal)
-                if (payload.status === 'failed') {
-                    throw new Error(payload.error?.message || '图片任务失败')
-                }
-            }
-
-            const images = extractImages(payload).map((image, index) => ({
-                ...image,
-                model: modelId,
-                prompt: prompt.trim(),
-                createdAt: new Date().toISOString(),
-                title: `图片 ${index + 1}`,
-            }))
-            if (!images.length) throw new Error('响应里没有图片结果')
-            setResultImages(images)
-            addHistory(images)
-            setStatusText('完成')
-            reloadApiRecords()
-        } catch (err) {
-            if (err.name !== 'AbortError') setError(extractErrorMessage(err))
-        } finally {
-            setLoading(false)
-            abortRef.current = null
-        }
+        startImageRun({
+            apiKey: effectiveApiKey,
+            modelId,
+            prompt: trimmedPrompt,
+            mode: references.length === 0 ? 'generation' : (references.length <= 2 ? 'edit' : 'edit-job'),
+            body,
+            formData: references.length ? buildImageForm() : null,
+        })
     }
 
     const useResultAsReference = async (image) => {
-        setError('')
+        emitImageRunState({ error: '' })
         try {
             if (!image.url) return
             const file = await dataUrlToFile(image.url, 'generated-reference.png')
@@ -546,7 +653,7 @@ function ImageWorkspace({
                 previewUrl: URL.createObjectURL(file),
             }])
         } catch {
-            setError('无法读取该图片，请下载后上传。')
+            emitImageRunState({ error: '无法读取该图片，请下载后上传。' })
         }
     }
 
@@ -637,7 +744,7 @@ function ImageWorkspace({
                     <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="描述你想要的画面..." rows="4" />
                     <div className="wb-composer-actions">
                         {loading ? (
-                            <button className="btn btn-secondary" onClick={() => abortRef.current?.abort()}>停止</button>
+                            <button className="btn btn-secondary" onClick={cancelImageRun}>停止</button>
                         ) : (
                             <button className="btn btn-primary" onClick={handleGenerate} disabled={!prompt.trim() || !modelId || !effectiveApiKey}>开始生成</button>
                         )}
@@ -876,7 +983,7 @@ export default function Playground() {
         defaultVideoModel,
         loading: loadingModels,
     } = usePublicModels()
-    const [activeTab, setActiveTab] = useState('chat')
+    const [activeTab, setActiveTab] = useState(() => safeReadActiveTab())
     const [selectedTextModel, setSelectedTextModel] = useState('')
     const [selectedImageModel, setSelectedImageModel] = useState('')
     const [selectedVideoModel, setSelectedVideoModel] = useState('')
@@ -906,6 +1013,10 @@ export default function Playground() {
     useEffect(() => {
         safeStoreHistory(history)
     }, [history])
+
+    useEffect(() => {
+        safeStoreActiveTab(activeTab)
+    }, [activeTab])
 
     const selectedTextModelInfo = useMemo(
         () => textModels.find((model) => model.id === selectedTextModel) || defaultTextModel,
@@ -942,6 +1053,15 @@ export default function Playground() {
             setApiRecordsLoading(false)
         }
     }, [])
+
+    const syncedImageRunRef = useRef('')
+
+    useEffect(() => subscribeImageRunState((state) => {
+        if (state.loading || !state.resultImages?.length || syncedImageRunRef.current === state.runId) return
+        syncedImageRunRef.current = state.runId
+        setHistory(safeReadHistory())
+        reloadApiRecords()
+    }), [reloadApiRecords])
 
     useEffect(() => {
         reloadApiRecords()
@@ -1003,13 +1123,11 @@ export default function Playground() {
                             selectedModel={selectedImageModel}
                             setSelectedModel={setSelectedImageModel}
                             selectedModelInfo={selectedImageModelInfo}
-                            addHistory={addHistory}
                             history={history}
                             setVideoReference={(url) => {
                                 setVideoReference(url)
                                 setActiveTab('video')
                             }}
-                            reloadApiRecords={reloadApiRecords}
                         />
                         <div className="wb-bottom-panels">
                             <MediaHistory history={history} activeTab="image" setVideoReference={(url) => {

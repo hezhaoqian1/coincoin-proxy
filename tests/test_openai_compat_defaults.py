@@ -1590,6 +1590,46 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         add_usage.assert_awaited_once()
         self.assertEqual(add_usage.await_args.kwargs["endpoint"], "chat/completions:stream")
 
+    async def test_chat_claude_alias_stream_forwards_include_usage_to_kiro_go(self) -> None:
+        self._add_claude_code_model()
+        settings.claude_compat_provider = "kiro_go"
+        registry._initialized = False
+        registry.init_from_settings()
+        fake_user = SimpleNamespace(id="u_test", _api_key_id="k_claude_chat_stream_usage_kiro")
+        upstream_client = _RecordingStreamClient(
+            [
+                _FakeEventStreamResponse(
+                    [
+                        'data: {"id":"chatcmpl_kiro_usage","object":"chat.completion.chunk","created":1700000000,"model":"claude-opus-4.7","choices":[{"index":0,"delta":{"role":"assistant","content":"OK"},"finish_reason":null}]}',
+                        'data: {"id":"chatcmpl_kiro_usage","object":"chat.completion.chunk","created":1700000001,"model":"claude-opus-4.7","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":9,"completion_tokens":2,"total_tokens":11}}',
+                        'data: [DONE]',
+                    ]
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(openai_module, "authorize_request", AsyncMock(return_value=fake_user)), patch.object(
+                openai_module,
+                "get_stream_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(openai_module.usage_buffer, "add", AsyncMock()):
+                response = await client.post(
+                    "/v1/chat/completions",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={
+                        "model": "claude-opus-4-7",
+                        "stream": True,
+                        "stream_options": {"include_usage": True},
+                        "messages": [{"role": "user", "content": "Reply with only: OK"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn('"usage":{"prompt_tokens":9,"completion_tokens":2,"total_tokens":11}', response.text)
+        self.assertEqual(upstream_client.calls[0]["json"]["stream_options"], {"include_usage": True})
+
     async def test_responses_claude_alias_can_stream_from_kiro_go_chat_endpoint(self) -> None:
         self._add_claude_code_model()
         settings.claude_compat_provider = "kiro_go"
@@ -2647,6 +2687,46 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs["input_tokens"], 11)
         self.assertEqual(kwargs["output_tokens"], 2)
         self.assertEqual(kwargs["endpoint"], "chat/completions:stream")
+
+    async def test_chat_stream_include_usage_returns_usage_chunk_after_responses_stream(self) -> None:
+        settings.router_enabled = False
+        registry._initialized = False
+        registry.init_from_settings()
+        upstream_client = _RecordingStreamClient(
+            [
+                _FakeEventStreamResponse(
+                    [
+                        'data: {"type":"response.created","response":{"id":"resp_usage_stream","status":"in_progress","model":"gpt-5.4","output":[]}}',
+                        'data: {"type":"response.output_text.delta","delta":"ok"}',
+                        'data: {"type":"response.completed","response":{"id":"resp_usage_stream","status":"completed","model":"gpt-5.4","output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":11,"output_tokens":2,"total_tokens":13}}}',
+                        "data: [DONE]",
+                    ]
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(openai_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                openai_module,
+                "get_stream_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(openai_module.usage_buffer, "add", AsyncMock()):
+                response = await client.post(
+                    "/v1/chat/completions",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={
+                        "model": "gpt-5.4",
+                        "stream": True,
+                        "stream_options": {"include_usage": True},
+                        "messages": [{"role": "user", "content": "Say ok"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn('"choices": []', response.text)
+        self.assertIn('"usage": {"prompt_tokens": 11, "completion_tokens": 2, "total_tokens": 13}', response.text)
+        self.assertNotIn("stream_options", upstream_client.calls[0]["json"])
 
     async def test_explicit_image_generation_uses_native_cpa_gemini_lane_without_vertex_key(self) -> None:
         upstream_client = _RecordingClient(
