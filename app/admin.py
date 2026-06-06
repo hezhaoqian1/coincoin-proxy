@@ -45,6 +45,7 @@ from .models import (
     UsageDaily,
     User,
     Account,
+    UserFinanceSummary,
     UserSubscription,
 )
 from .model_alias_overrides import (
@@ -154,6 +155,33 @@ def _normalize_utc_naive(value: Optional[datetime]) -> Optional[datetime]:
     if value.tzinfo is not None:
         return value.astimezone(timezone.utc).replace(tzinfo=None)
     return value
+
+
+def _money_text_to_minor_cents(value: Any) -> int:
+    text = str(value or "").strip()
+    if not text:
+        return 0
+    try:
+        return int(round(float(text) * 100))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _parse_admin_date(value: Optional[str], *, end_of_day: bool = False) -> Optional[datetime]:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            parsed_date = date.fromisoformat(text)
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid date filter")
+        parsed = datetime.combine(parsed_date, datetime.max.time() if end_of_day else datetime.min.time())
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
 
 
 async def _admin_billing_state(db: AsyncSession, user: User) -> dict:
@@ -3893,6 +3921,347 @@ async def finance_summary(
     return rows
 
 
+@router.get("/finance/overview", dependencies=[Depends(admin_guard)])
+async def finance_overview(db: AsyncSession = Depends(get_db)):
+    now = datetime.utcnow()
+    today_start = datetime.combine(date.today(), datetime.min.time())
+    month_start = datetime.combine(date.today().replace(day=1), datetime.min.time())
+
+    confirmed_orders = (
+        await db.execute(
+            select(PaymentOrder).where(
+                PaymentOrder.status == "confirmed",
+                PaymentOrder.confirmed_at >= month_start,
+            )
+        )
+    ).scalars().all()
+    today_orders = [
+        order for order in confirmed_orders
+        if getattr(order, "confirmed_at", None) and order.confirmed_at >= today_start
+    ]
+
+    total_paid_balance_cents = await db.scalar(
+        select(func.coalesce(func.sum(UserFinanceSummary.total_paid_balance_cents), 0))
+    ) or 0
+    total_paid_rmb_cents = await db.scalar(
+        select(func.coalesce(func.sum(UserFinanceSummary.total_paid_rmb_cents), 0))
+    ) or 0
+    total_ops_credit_cents = await db.scalar(
+        select(func.coalesce(func.sum(UserFinanceSummary.total_ops_credit_cents), 0))
+    ) or 0
+    total_bonus_cents = await db.scalar(
+        select(func.coalesce(func.sum(UserFinanceSummary.total_bonus_cents), 0))
+    ) or 0
+    total_consumed_cents = await db.scalar(
+        select(func.coalesce(func.sum(UserFinanceSummary.total_consumed_cents), 0))
+    ) or 0
+    total_ops_debit_cents = await db.scalar(
+        select(func.coalesce(func.sum(UserFinanceSummary.total_ops_debit_cents), 0))
+    ) or 0
+
+    legacy_balance_cents = await db.scalar(select(func.coalesce(func.sum(User.balance), 0))) or 0
+    subscription_remaining_cents = await db.scalar(
+        select(func.coalesce(func.sum(UserSubscription.quota_cents - UserSubscription.used_cents), 0)).where(
+            UserSubscription.status == "active",
+            UserSubscription.paid_until > now,
+            UserSubscription.quota_cents > UserSubscription.used_cents,
+        )
+    ) or 0
+    traffic_pack_remaining_cents = await db.scalar(
+        select(func.coalesce(func.sum(TrafficPackBalance.remaining_cents), 0)).where(
+            TrafficPackBalance.status == "active",
+            TrafficPackBalance.expires_at > now,
+            TrafficPackBalance.remaining_cents > 0,
+        )
+    ) or 0
+
+    return {
+        "generated_at": now,
+        "today": {
+            "paid_order_count": len(today_orders),
+            "paid_user_count": len({order.user_id for order in today_orders}),
+            "paid_rmb_cents": sum(_money_text_to_minor_cents(order.amount_rmb) for order in today_orders),
+            "paid_balance_cents": sum(int(order.add_balance_cents or 0) for order in today_orders),
+        },
+        "month": {
+            "paid_order_count": len(confirmed_orders),
+            "paid_user_count": len({order.user_id for order in confirmed_orders}),
+            "paid_rmb_cents": sum(_money_text_to_minor_cents(order.amount_rmb) for order in confirmed_orders),
+            "paid_balance_cents": sum(int(order.add_balance_cents or 0) for order in confirmed_orders),
+        },
+        "totals": {
+            "paid_rmb_cents": int(total_paid_rmb_cents),
+            "paid_balance_cents": int(total_paid_balance_cents),
+            "ops_credit_cents": int(total_ops_credit_cents),
+            "ops_debit_cents": int(total_ops_debit_cents),
+            "bonus_cents": int(total_bonus_cents),
+            "consumed_cents": int(total_consumed_cents),
+            "available_cents": int(legacy_balance_cents) + int(subscription_remaining_cents) + int(traffic_pack_remaining_cents),
+            "legacy_balance_cents": int(legacy_balance_cents),
+            "subscription_remaining_cents": int(subscription_remaining_cents),
+            "traffic_pack_remaining_cents": int(traffic_pack_remaining_cents),
+        },
+    }
+
+
+def _finance_user_payload(user: Optional[User]) -> dict:
+    if not user:
+        return {
+            "user_id": "",
+            "username": "",
+            "email": "",
+            "external_id": "",
+            "display_name": "",
+        }
+    return {
+        "user_id": user.id,
+        "username": user.username,
+        "email": getattr(user, "email", None),
+        "external_id": user.external_id,
+        "display_name": _display_name(user.username, getattr(user, "email", None), user.external_id, user.id),
+    }
+
+
+@router.get("/finance/ledger", dependencies=[Depends(admin_guard)])
+async def finance_ledger(
+    search: Optional[str] = None,
+    type_filter: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db),
+):
+    limit = max(1, min(limit, 300))
+    normalized_type = (type_filter or "").strip().lower()
+    search_text = (search or "").strip()
+    start_at = _parse_admin_date(date_from)
+    end_at = _parse_admin_date(date_to, end_of_day=True)
+
+    def in_window(value: Optional[datetime]) -> bool:
+        if value is None:
+            return False
+        value = _normalize_utc_naive(value)
+        if start_at and value < start_at:
+            return False
+        if end_at and value > end_at:
+            return False
+        return True
+
+    events: list[dict] = []
+
+    if normalized_type in {"", "payment", "credit"}:
+        query = select(PaymentOrder, User).join(User, PaymentOrder.user_id == User.id).where(
+            PaymentOrder.status == "confirmed",
+            PaymentOrder.confirmed_at.is_not(None),
+        )
+        if start_at:
+            query = query.where(PaymentOrder.confirmed_at >= start_at)
+        if end_at:
+            query = query.where(PaymentOrder.confirmed_at <= end_at)
+        if search_text:
+            pat = f"%{search_text}%"
+            query = query.where(
+                User.username.ilike(pat)
+                | User.email.ilike(pat)
+                | User.external_id.ilike(pat)
+                | User.id.ilike(pat)
+                | PaymentOrder.order_no.ilike(pat)
+                | PaymentOrder.trade_no.ilike(pat)
+            )
+        rows = (
+            await db.execute(query.order_by(PaymentOrder.confirmed_at.desc()).limit(limit))
+        ).all()
+        for order, user in rows:
+            events.append({
+                "event_id": f"payment:{order.order_no}",
+                "event_type": "payment_confirmed",
+                "event_group": "payment",
+                "created_at": order.confirmed_at,
+                "amount_cents": int(order.add_balance_cents or 0),
+                "cash_rmb_cents": _money_text_to_minor_cents(order.amount_rmb),
+                "balance_after_cents": None,
+                "source_type": "payment_order",
+                "source_id": order.order_no,
+                "product_id": order.product_id,
+                "product": _product_admin_payload(order.product_id),
+                "note": f"trade_no: {order.trade_no}" if order.trade_no else "",
+                "user": _finance_user_payload(user),
+            })
+
+    if normalized_type in {"", "recharge", "credit"}:
+        query = select(RechargeLog, User).join(User, RechargeLog.user_id == User.id)
+        if start_at:
+            query = query.where(RechargeLog.created_at >= start_at)
+        if end_at:
+            query = query.where(RechargeLog.created_at <= end_at)
+        if search_text:
+            pat = f"%{search_text}%"
+            query = query.where(
+                User.username.ilike(pat)
+                | User.email.ilike(pat)
+                | User.external_id.ilike(pat)
+                | User.id.ilike(pat)
+                | RechargeLog.order_id.ilike(pat)
+                | RechargeLog.note.ilike(pat)
+            )
+        rows = (
+            await db.execute(query.order_by(RechargeLog.created_at.desc()).limit(limit))
+        ).all()
+        for log, user in rows:
+            event_type = "webhook_payment_credit" if log.amount and log.balance_added > 0 else "webhook_credit"
+            events.append({
+                "event_id": f"recharge:{log.id}",
+                "event_type": event_type,
+                "event_group": "recharge",
+                "created_at": log.created_at,
+                "amount_cents": int(log.balance_added or 0),
+                "cash_rmb_cents": int(log.amount or 0),
+                "balance_after_cents": None,
+                "source_type": "recharge_log",
+                "source_id": log.order_id,
+                "product_id": "",
+                "product": _product_admin_payload(""),
+                "note": log.note or "",
+                "user": _finance_user_payload(user),
+            })
+
+    if normalized_type in {"", "billing", "admin", "usage", "credit", "debit"}:
+        query = select(BillingLedgerEntry, User).join(User, BillingLedgerEntry.user_id == User.id)
+        if start_at:
+            query = query.where(BillingLedgerEntry.created_at >= start_at)
+        if end_at:
+            query = query.where(BillingLedgerEntry.created_at <= end_at)
+        if normalized_type == "admin":
+            query = query.where(BillingLedgerEntry.source_type == "admin")
+        elif normalized_type == "usage":
+            query = query.where(BillingLedgerEntry.amount_cents < 0)
+        elif normalized_type == "credit":
+            query = query.where(BillingLedgerEntry.amount_cents > 0)
+        elif normalized_type == "debit":
+            query = query.where(BillingLedgerEntry.amount_cents < 0)
+        if search_text:
+            pat = f"%{search_text}%"
+            query = query.where(
+                User.username.ilike(pat)
+                | User.email.ilike(pat)
+                | User.external_id.ilike(pat)
+                | User.id.ilike(pat)
+                | BillingLedgerEntry.source_id.ilike(pat)
+                | BillingLedgerEntry.note.ilike(pat)
+                | BillingLedgerEntry.entry_type.ilike(pat)
+            )
+        rows = (
+            await db.execute(query.order_by(BillingLedgerEntry.created_at.desc()).limit(limit))
+        ).all()
+        for entry, user in rows:
+            events.append({
+                "event_id": f"billing:{entry.id}",
+                "event_type": entry.entry_type,
+                "event_group": "billing",
+                "created_at": entry.created_at,
+                "amount_cents": int(entry.amount_cents or 0),
+                "cash_rmb_cents": 0,
+                "balance_after_cents": int(entry.balance_after_cents or 0),
+                "source_type": entry.source_type,
+                "source_id": entry.source_id,
+                "product_id": entry.product_id,
+                "product": _product_admin_payload(entry.product_id),
+                "note": entry.note or "",
+                "user": _finance_user_payload(user),
+            })
+
+    if normalized_type in {"", "redemption", "bonus", "credit"}:
+        query = select(RedemptionCode, User).join(User, RedemptionCode.used_by == User.id).where(
+            RedemptionCode.status == "used",
+            RedemptionCode.used_at.is_not(None),
+        )
+        if start_at:
+            query = query.where(RedemptionCode.used_at >= start_at)
+        if end_at:
+            query = query.where(RedemptionCode.used_at <= end_at)
+        if search_text:
+            pat = f"%{search_text}%"
+            query = query.where(
+                User.username.ilike(pat)
+                | User.email.ilike(pat)
+                | User.external_id.ilike(pat)
+                | User.id.ilike(pat)
+                | RedemptionCode.code.ilike(pat)
+            )
+        rows = (
+            await db.execute(query.order_by(RedemptionCode.used_at.desc()).limit(limit))
+        ).all()
+        for code, user in rows:
+            events.append({
+                "event_id": f"redemption:{code.id}",
+                "event_type": "redemption_credit",
+                "event_group": "redemption",
+                "created_at": code.used_at,
+                "amount_cents": int(code.balance_cents or 0),
+                "cash_rmb_cents": 0,
+                "balance_after_cents": None,
+                "source_type": "redemption_code",
+                "source_id": code.code,
+                "product_id": "",
+                "product": _product_admin_payload(""),
+                "note": "兑换码入账",
+                "user": _finance_user_payload(user),
+            })
+
+    if normalized_type in {"", "referral", "bonus", "credit"}:
+        query = select(ReferralReward, User).join(
+            User,
+            func.coalesce(ReferralReward.recipient_id, ReferralReward.referrer_id) == User.id,
+        )
+        if start_at:
+            query = query.where(ReferralReward.created_at >= start_at)
+        if end_at:
+            query = query.where(ReferralReward.created_at <= end_at)
+        if search_text:
+            pat = f"%{search_text}%"
+            query = query.where(
+                User.username.ilike(pat)
+                | User.email.ilike(pat)
+                | User.external_id.ilike(pat)
+                | User.id.ilike(pat)
+                | ReferralReward.order_no.ilike(pat)
+                | ReferralReward.reward_type.ilike(pat)
+            )
+        rows = (
+            await db.execute(query.order_by(ReferralReward.created_at.desc()).limit(limit))
+        ).all()
+        for reward, user in rows:
+            events.append({
+                "event_id": f"referral:{reward.id}",
+                "event_type": f"referral_{reward.reward_type or 'reward'}",
+                "event_group": "referral",
+                "created_at": reward.created_at,
+                "amount_cents": int(reward.reward_cents or 0),
+                "cash_rmb_cents": 0,
+                "balance_after_cents": None,
+                "source_type": "referral_reward",
+                "source_id": reward.order_no or reward.id,
+                "product_id": "",
+                "product": _product_admin_payload(""),
+                "note": f"reward_type: {reward.reward_type}",
+                "user": _finance_user_payload(user),
+            })
+
+    events = [event for event in events if in_window(event.get("created_at"))]
+    events.sort(key=lambda item: item.get("created_at") or datetime.min, reverse=True)
+    return {
+        "items": events[:limit],
+        "limit": limit,
+        "filters": {
+            "search": search_text,
+            "type_filter": normalized_type,
+            "date_from": start_at,
+            "date_to": end_at,
+        },
+        "source_note": "聚合 PaymentOrder、RechargeLog、BillingLedgerEntry、RedemptionCode 和 ReferralReward；逐请求扣费仍在请求日志中查看。",
+    }
+
+
 @router.get("/keys", dependencies=[Depends(admin_guard)])
 async def list_keys(user_id: Optional[str] = None, db: AsyncSession = Depends(get_db)):
     """列出所有 Key"""
@@ -4272,12 +4641,20 @@ async def update_announcement(
 @router.get("/payment-orders", dependencies=[Depends(admin_guard)])
 async def list_payment_orders(
     status_filter: Optional[str] = None,
+    search: Optional[str] = None,
     limit: int = 50,
     db: AsyncSession = Depends(get_db),
 ):
     query = select(PaymentOrder).order_by(PaymentOrder.created_at.desc())
     if status_filter:
         query = query.where(PaymentOrder.status == status_filter)
+    if search:
+        pat = f"%{search.strip()}%"
+        query = query.where(
+            PaymentOrder.user_id.ilike(pat)
+            | PaymentOrder.order_no.ilike(pat)
+            | PaymentOrder.trade_no.ilike(pat)
+        )
     result = await db.execute(query.limit(limit))
     orders = result.scalars().all()
     return [
