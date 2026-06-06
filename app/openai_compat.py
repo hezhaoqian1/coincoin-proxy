@@ -80,6 +80,37 @@ def _model_resolution_to_openai_error(exc: Exception) -> JSONResponse:
     return openai_error("Unable to resolve model", "server_error", code="model_resolution_failed", status_code=500)
 
 
+def _chat_stream_include_usage(payload: Dict[str, Any]) -> bool:
+    stream_options = payload.get("stream_options")
+    return isinstance(stream_options, dict) and stream_options.get("include_usage") is True
+
+
+def _chat_usage_payload_from_counts(input_tokens: int, output_tokens: int, cache_read_tokens: int = 0) -> Dict[str, Any]:
+    prompt_tokens = max(0, int(input_tokens or 0))
+    completion_tokens = max(0, int(output_tokens or 0))
+    usage: Dict[str, Any] = {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": prompt_tokens + completion_tokens,
+    }
+    cache_read = max(0, int(cache_read_tokens or 0))
+    if cache_read:
+        usage["prompt_tokens_details"] = {"cached_tokens": cache_read}
+    return usage
+
+
+def _chat_completion_usage_chunk_line(*, stream_id: str, display_model: str, usage: Dict[str, Any]) -> str:
+    chunk = {
+        "id": stream_id,
+        "object": "chat.completion.chunk",
+        "created": int(time.time()),
+        "model": display_model,
+        "choices": [],
+        "usage": usage,
+    }
+    return f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+
+
 def _parse_usage_datetime_filter(value: Optional[str], *, is_end: bool = False):
     raw = (value or "").strip()
     if not raw:
@@ -860,6 +891,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
     api_key_id = getattr(user, _KEY_ID_ATTR, "")
     price_input_per_million = station_model.retail_input_per_million if station_model else public_model.price_input_per_million
     price_output_per_million = station_model.retail_output_per_million if station_model else public_model.price_output_per_million
+    stream_include_usage = _chat_stream_include_usage(payload)
 
     if public_model.delivery_lane == gemini_cpa.DELIVERY_LANE:
         return await _proxy_gemini_cpa_chat_completions(
@@ -895,6 +927,8 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
         prompt_cache_key = build_claude_code_prompt_cache_key(user, api_key_id, display_model, public_model)
         if prompt_cache_key:
             chat_payload["prompt_cache_key"] = prompt_cache_key
+        if chat_payload["stream"] and stream_include_usage:
+            chat_payload["stream_options"] = {"include_usage": True}
 
         headers = _build_upstream_headers(used_cfg)
         upstream_url = f"{_normalize_openai_base_url(used_cfg.upstream_url)}/chat/completions"
@@ -1365,9 +1399,10 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
         first_content_sent = False
         compat_stream_t0 = time.monotonic()
         _compat_stream_usage = {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0}
+        _compat_stream_usage_seen = False
 
         async def iter_events():
-            nonlocal tool_call_index, has_tool_calls, first_content_sent
+            nonlocal tool_call_index, has_tool_calls, first_content_sent, _compat_stream_usage_seen
             finish_sent = False
             try:
                 async for line in upstream.aiter_lines():
@@ -1384,6 +1419,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
 
                     usage = event.get("usage") or (event.get("response") or {}).get("usage")
                     if usage:
+                        _compat_stream_usage_seen = True
                         _compat_stream_usage["input"] = extract_total_input_tokens(usage)
                         _compat_stream_usage["output"] = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
                         _compat_stream_usage["cache_read"] = extract_cache_read_tokens(usage)
@@ -1497,6 +1533,16 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                             yield f"data: {json.dumps(finish)}\n\n"
                             finish_sent = True
                     if event_type == "response.completed":
+                        if stream_include_usage and _compat_stream_usage_seen:
+                            yield _chat_completion_usage_chunk_line(
+                                stream_id=stream_id,
+                                display_model=display_model,
+                                usage=_chat_usage_payload_from_counts(
+                                    _compat_stream_usage["input"],
+                                    _compat_stream_usage["output"],
+                                    _compat_stream_usage["cache_read"],
+                                ),
+                            )
                         break
                 yield "data: [DONE]\n\n"
             except Exception:
