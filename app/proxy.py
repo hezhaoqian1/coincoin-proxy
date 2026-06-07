@@ -1180,14 +1180,20 @@ def _record_channel_failure(cfg, *, status_code: int | None = None, error_code: 
         channel_router.record_failure(channel_id, error_code=error_code or str(status_code or "request_error"))
 
 
-def _channel_fallback_config(previous_cfg, fallback_cfg):
+def _channel_fallback_config(previous_cfg, fallback_cfg, *, lock_model_selection: bool = False):
     previous_channel_id = getattr(previous_cfg, "channel_id", "") or ""
     if not previous_channel_id:
         return fallback_cfg
+    model_id = getattr(previous_cfg, "model_id", "") if lock_model_selection else getattr(fallback_cfg, "model_id", "")
+    attempted = []
+    for raw in (getattr(fallback_cfg, "fallback_from_channel_id", "") or "", previous_channel_id):
+        attempted.extend(item.strip() for item in str(raw or "").split(",") if item.strip())
+    fallback_from_channel_id = ",".join(dict.fromkeys(attempted))
     try:
         return replace(
             fallback_cfg,
-            fallback_from_channel_id=previous_channel_id,
+            model_id=model_id or getattr(fallback_cfg, "model_id", ""),
+            fallback_from_channel_id=fallback_from_channel_id,
             route_attempt=int(getattr(previous_cfg, "route_attempt", 0) or 0) + 1,
         )
     except Exception:
@@ -1281,6 +1287,12 @@ def _next_provider_or_system_fallback_config(
         reason=reason,
     )
     if channel_fallback_cfg is not None:
+        if lock_model_selection:
+            channel_fallback_cfg = _channel_fallback_config(
+                previous_cfg,
+                channel_fallback_cfg,
+                lock_model_selection=True,
+            )
         return channel_fallback_cfg, _channel_fallback_route_reason(reason)
 
     system_fallback_cfg = _system_fallback_config(

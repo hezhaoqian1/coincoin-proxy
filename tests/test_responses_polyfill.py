@@ -3,13 +3,50 @@ import unittest
 from app.proxy import (
     ResponseConversationCache,
     _apply_previous_response_polyfill,
+    _channel_fallback_config,
     _expand_previous_response_input,
     _normalize_responses_input_items,
     _sanitize_encrypted_ids,
 )
+from app.router import ModelConfig
 
 
 class ResponsesPolyfillTests(unittest.TestCase):
+    def test_locked_channel_fallback_keeps_selected_model_id(self):
+        previous = ModelConfig(
+            model_id="gpt-5.4",
+            upstream_url="https://primary.example/v1",
+            api_key="primary-key",
+            price_input_per_million=250,
+            price_output_per_million=1500,
+            strip_unsupported=False,
+            auth_style="bearer",
+            channel_id="ch_primary",
+            fallback_from_channel_id="ch_seed",
+            route_attempt=2,
+        )
+        fallback = ModelConfig(
+            model_id="gpt-5.5",
+            upstream_url="https://backup.example/v1",
+            api_key="backup-key",
+            price_input_per_million=500,
+            price_output_per_million=3000,
+            strip_unsupported=False,
+            auth_style="bearer",
+            channel_id="ch_backup",
+            fallback_from_channel_id="ch_seed,ch_primary",
+            route_attempt=1,
+        )
+
+        locked = _channel_fallback_config(previous, fallback, lock_model_selection=True)
+
+        self.assertEqual(locked.model_id, "gpt-5.4")
+        self.assertEqual(locked.channel_id, "ch_backup")
+        self.assertEqual(locked.upstream_url, "https://backup.example/v1")
+        self.assertEqual(locked.api_key, "backup-key")
+        self.assertEqual(locked.fallback_from_channel_id, "ch_seed,ch_primary")
+        self.assertEqual(locked.route_attempt, 3)
+
     def test_sanitize_encrypted_ids_preserves_reasoning_encrypted_content(self):
         reasoning_blob = "gAAAAAB_reasoning_state"
         compaction_blob = "gBAAAAA_compaction_state"

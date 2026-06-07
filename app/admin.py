@@ -301,6 +301,27 @@ def _serialize_user_routing_override(row: Any) -> dict:
     }
 
 
+def _user_routing_override_payload(
+    *,
+    public_model_id: str,
+    provider_model: str,
+    upstream_model: str,
+    enabled: bool,
+    updated_by: str,
+    updated_at: Any = None,
+) -> dict:
+    public_model_id = str(public_model_id or "").strip()
+    return {
+        "public_model_id": public_model_id,
+        "provider_model": str(provider_model or "").strip(),
+        "upstream_model": str(upstream_model or "").strip(),
+        "enabled": bool(enabled),
+        "updated_by": str(updated_by or "").strip(),
+        "updated_at": updated_at,
+        "targets": model_registry.candidate_alias_targets(public_model_id),
+    }
+
+
 def _serialize_user_pricing_override(row: Any) -> dict:
     return {
         "public_model_id": str(getattr(row, "public_model_id", "") or "").strip(),
@@ -311,6 +332,23 @@ def _serialize_user_pricing_override(row: Any) -> dict:
         ),
         "updated_by": str(getattr(row, "updated_by", "") or "").strip(),
         "updated_at": getattr(row, "updated_at", None),
+    }
+
+
+def _user_pricing_override_payload(
+    *,
+    public_model_id: str,
+    cache_read_multiplier_override: Optional[float],
+    updated_by: str,
+    updated_at: Any = None,
+) -> dict:
+    return {
+        "public_model_id": str(public_model_id or "").strip(),
+        "cache_read_multiplier_override": (
+            None if cache_read_multiplier_override is None else float(cache_read_multiplier_override)
+        ),
+        "updated_by": str(updated_by or "").strip(),
+        "updated_at": updated_at,
     }
 
 
@@ -330,10 +368,10 @@ def _user_override_model_options() -> list[dict]:
 
 
 async def _invalidate_user_key_cache(db: AsyncSession, user_id: str) -> None:
-    keys = (
-        await db.execute(select(ApiKey).where(ApiKey.user_id == user_id))
-    ).scalars().all()
     try:
+        keys = (
+            await db.execute(select(ApiKey).where(ApiKey.user_id == user_id))
+        ).scalars().all()
         from .proxy import key_cache
 
         for key in keys:
@@ -2730,9 +2768,17 @@ async def upsert_user_model_routing_override(
     if "enabled" in override:
         row.enabled = 1 if override["enabled"] else 0
     row.updated_by = "admin"
+    response_payload = _user_routing_override_payload(
+        public_model_id=public_model_id,
+        provider_model=row.provider_model,
+        upstream_model=row.upstream_model,
+        enabled=bool(row.enabled),
+        updated_by=row.updated_by,
+        updated_at=getattr(row, "updated_at", None),
+    )
     await db.commit()
     await _invalidate_user_key_cache(db, user_id)
-    return _serialize_user_routing_override(row)
+    return response_payload
 
 
 @router.delete("/users/{user_id}/model-routing-overrides/{public_model_id}", dependencies=[Depends(admin_guard)])
@@ -2797,9 +2843,15 @@ async def upsert_user_model_pricing_override(
         db.add(row)
     row.cache_read_multiplier_override = float(payload.cache_read_multiplier_override)
     row.updated_by = "admin"
+    response_payload = _user_pricing_override_payload(
+        public_model_id=public_model_id,
+        cache_read_multiplier_override=row.cache_read_multiplier_override,
+        updated_by=row.updated_by,
+        updated_at=getattr(row, "updated_at", None),
+    )
     await db.commit()
     await _invalidate_user_key_cache(db, user_id)
-    return _serialize_user_pricing_override(row)
+    return response_payload
 
 
 @router.delete("/users/{user_id}/model-pricing-overrides/{public_model_id}", dependencies=[Depends(admin_guard)])
@@ -4713,6 +4765,16 @@ async def list_user_request_logs(
                 "usage_unit_count": getattr(log, "usage_unit_count", 0),
                 "billable_sku": getattr(log, "billable_sku", "") or (getattr(log, "customer_model_alias", "") or log.model),
                 "upstream_request_id": getattr(log, "upstream_request_id", ""),
+                "price_version": getattr(log, "price_version", 0),
+                "pricing_mode": getattr(log, "pricing_mode", ""),
+                "model_multiplier": getattr(log, "model_multiplier", 1.0),
+                "output_multiplier": getattr(log, "output_multiplier", 1.0),
+                "cache_read_multiplier": getattr(log, "cache_read_multiplier", 0.0),
+                "image_multiplier": getattr(log, "image_multiplier", 1.0),
+                "video_multiplier": getattr(log, "video_multiplier", 1.0),
+                "base_price_input_per_million": getattr(log, "base_price_input_per_million", 0),
+                "base_price_output_per_million": getattr(log, "base_price_output_per_million", 0),
+                "effective_cached_input_per_million": getattr(log, "effective_cached_input_per_million", 0.0),
                 "total_tokens": log.input_tokens + log.output_tokens,
                 "cost_cents": log.cost_cents,
                 "cost_usd": log.cost_cents / 100,

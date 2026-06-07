@@ -735,6 +735,16 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             provider_account_fingerprint="acct_test",
             fallback_from_channel_id="ch_primary",
             route_attempt=1,
+            price_version=7,
+            pricing_mode="multiplier",
+            model_multiplier=1.5,
+            output_multiplier=2.0,
+            cache_read_multiplier=1.0,
+            image_multiplier=1.0,
+            video_multiplier=1.0,
+            base_price_input_per_million=250,
+            base_price_output_per_million=1500,
+            effective_cached_input_per_million=375.0,
         )
         fake_db = _FakeDB(
             execute_results=[
@@ -766,10 +776,21 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(item["cache_creation_tokens"], 0)
         self.assertEqual(item["billable_sku"], "gemini-image")
         self.assertEqual(item["upstream_request_id"], "req_img_123")
+        self.assertEqual(item["price_version"], 7)
+        self.assertEqual(item["pricing_mode"], "multiplier")
+        self.assertEqual(item["cache_read_multiplier"], 1.0)
+        self.assertEqual(item["effective_cached_input_per_million"], 375.0)
         self.assertEqual(item["channel_id"], "ch_backup")
         self.assertEqual(item["provider_platform"], "sub2api")
         self.assertEqual(item["fallback_from_channel_id"], "ch_primary")
         self.assertEqual(item["route_attempt"], 1)
+
+    async def test_invalidate_user_key_cache_is_best_effort_when_query_fails(self) -> None:
+        class _FailingDB:
+            async def execute(self, _query):
+                raise RuntimeError("db unavailable after commit")
+
+        await admin_module._invalidate_user_key_cache(_FailingDB(), "u_1")
 
     async def test_ops_health_reports_provider_fallback_activity(self) -> None:
         recent_log = SimpleNamespace(
