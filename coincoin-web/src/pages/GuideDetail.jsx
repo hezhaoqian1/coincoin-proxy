@@ -12,7 +12,7 @@ const CLAUDE_DEFAULT_ALIAS = 'sonnet'
 const CLAUDE_DEFAULT_MODEL_ID = 'claude-sonnet-4-6'
 const CLAUDE_OPUS_OPTIONAL_MODEL_ID = 'claude-opus-4-8'
 
-function CopyButton({ text, idleLabel = '复制', doneLabel = '已复制' }) {
+function CopyButton({ text, idleLabel = '复制', doneLabel = '已复制', className = '', icon = false }) {
     const [copied, setCopied] = useState(false)
 
     const handleCopy = async () => {
@@ -22,8 +22,16 @@ function CopyButton({ text, idleLabel = '复制', doneLabel = '已复制' }) {
     }
 
     return (
-        <button className="btn btn-primary btn-sm" onClick={handleCopy}>
-            {copied ? `\u2713 ${doneLabel}` : idleLabel}
+        <button className={`btn btn-primary btn-sm ${className}`.trim()} onClick={handleCopy}>
+            {icon && !copied && (
+                <span className="guide-copy-button-icon" aria-hidden="true">
+                    <svg viewBox="0 0 16 16" focusable="false">
+                        <path d="M5 2.5A1.5 1.5 0 0 1 6.5 1h5A1.5 1.5 0 0 1 13 2.5v7A1.5 1.5 0 0 1 11.5 11h-5A1.5 1.5 0 0 1 5 9.5z" />
+                        <path d="M3.5 5A1.5 1.5 0 0 0 2 6.5v6A1.5 1.5 0 0 0 3.5 14h5A1.5 1.5 0 0 0 10 12.5V12H6.5A2.5 2.5 0 0 1 4 9.5V5z" />
+                    </svg>
+                </span>
+            )}
+            <span>{copied ? `\u2713 ${doneLabel}` : idleLabel}</span>
         </button>
     )
 }
@@ -31,13 +39,27 @@ function CopyButton({ text, idleLabel = '复制', doneLabel = '已复制' }) {
 function GuideCommand({ title, summary, code }) {
     return (
         <section className="guide-command glass-card">
+            <div className="guide-command-callout">
+                <div className="guide-command-callout-copy">
+                    <span className="guide-command-callout-tag">一键配置</span>
+                    <strong>复制后直接回终端粘贴回车</strong>
+                    <p>不需要手动分段操作，整段复制即可完成配置。</p>
+                </div>
+                <CopyButton
+                    text={code}
+                    idleLabel="一键复制整段命令"
+                    doneLabel="已复制整段命令"
+                    className="guide-copy-button-prominent"
+                    icon
+                />
+            </div>
             <div className="guide-command-header">
                 <div>
                     <span className="guide-kicker">Terminal</span>
                     <h2>{title}</h2>
                     <p>{summary}</p>
                 </div>
-                <CopyButton text={code} idleLabel="复制命令" />
+                <CopyButton text={code} idleLabel="复制命令" className="guide-copy-button-secondary" />
             </div>
             <pre className="guide-code-block">{code}</pre>
         </section>
