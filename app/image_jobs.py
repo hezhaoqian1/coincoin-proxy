@@ -33,7 +33,7 @@ from .proxy import (
     _record_channel_failure,
     _record_channel_success,
     authenticate_user,
-    authorize_request,
+    authorize_workbench_request,
     extract_upstream_request_id,
     get_image_stream_client,
     _KEY_ID_ATTR,
@@ -417,7 +417,7 @@ async def _create_image_edit_job(request: Request, db: AsyncSession) -> JSONResp
             status_code=503,
         )
 
-    user = await authorize_request(request, db)
+    user = await authorize_workbench_request(request, db)
     try:
         requested_model, form_fields, file_fields = await _parse_image_edit_form(request)
     except Exception as exc:

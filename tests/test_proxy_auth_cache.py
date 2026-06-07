@@ -30,13 +30,13 @@ class ProxyAuthCacheTests(unittest.IsolatedAsyncioTestCase):
         settings.billing_mode = self._billing_mode
 
     @staticmethod
-    def _request() -> Request:
+    def _request(headers: list[tuple[bytes, bytes]] | None = None) -> Request:
         return Request(
             {
                 "type": "http",
                 "method": "POST",
                 "path": "/v1/embeddings",
-                "headers": [(b"authorization", b"Bearer sk_cc_test")],
+                "headers": headers or [(b"authorization", b"Bearer sk_cc_test")],
             }
         )
 
@@ -257,3 +257,134 @@ class ProxyAuthCacheTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(ctx.exception.status_code, 429)
         self.assertEqual(ctx.exception.detail, "api key monthly quota exceeded")
+
+    async def test_authorize_request_still_rejects_console_session(self) -> None:
+        request = self._request()
+        db = SimpleNamespace(
+            execute=AsyncMock(
+                return_value=_ScalarResult(
+                    SimpleNamespace(
+                        id="u_test",
+                        status="active",
+                        balance=1000,
+                        token_limit=None,
+                        token_used=0,
+                        request_limit_per_minute=None,
+                        request_limit_per_day=None,
+                    )
+                )
+            )
+        )
+
+        with patch.object(proxy_module.model_registry, "ensure_initialized"), patch.object(
+            proxy_module.model_registry, "has_routable_models", return_value=True
+        ), patch.object(
+            proxy_module.key_cache,
+            "get",
+            AsyncMock(
+                return_value={
+                    "id": "u_test",
+                    proxy_module._KEY_ID_ATTR: "k_session",
+                    proxy_module._KEY_KIND_ATTR: "session",
+                    "controls": {},
+                }
+            ),
+        ):
+            with self.assertRaises(HTTPException) as ctx:
+                await proxy_module.authorize_request(request, db)
+
+        self.assertEqual(ctx.exception.status_code, 403)
+        self.assertEqual(ctx.exception.detail, "please generate an API key from your dashboard")
+
+    async def test_authorize_workbench_request_delegates_console_session_to_active_api_key(self) -> None:
+        request = self._request(
+            [
+                (b"authorization", b"Bearer sk_cc_session"),
+                (b"x-coincoin-workbench", b"1"),
+            ]
+        )
+        user = SimpleNamespace(
+            id="u_test",
+            status="active",
+            balance=1000,
+            token_limit=None,
+            token_used=0,
+            request_limit_per_minute=None,
+            request_limit_per_day=None,
+        )
+        developer_key = SimpleNamespace(
+            id="k_api",
+            monthly_quota_cents=None,
+            total_quota_cents=None,
+            ip_allowlist=None,
+            expires_at=None,
+        )
+        db = SimpleNamespace(
+            execute=AsyncMock(
+                side_effect=[
+                    _ScalarResult(user),
+                    _ScalarResult(developer_key),
+                    _ScalarResult(None),
+                ]
+            ),
+            commit=AsyncMock(),
+            rollback=AsyncMock(),
+        )
+
+        with patch.object(proxy_module.model_registry, "ensure_initialized"), patch.object(
+            proxy_module.model_registry, "has_routable_models", return_value=True
+        ), patch.object(
+            proxy_module.key_cache,
+            "get",
+            AsyncMock(
+                return_value={
+                    "id": "u_test",
+                    proxy_module._KEY_ID_ATTR: "k_session",
+                    proxy_module._KEY_KIND_ATTR: "session",
+                    "controls": {},
+                }
+            ),
+        ), patch.object(
+            proxy_module.usage_buffer, "get_pending_tokens", AsyncMock(return_value=0)
+        ), patch.object(
+            proxy_module.usage_buffer, "get_pending_cost", AsyncMock(return_value=0)
+        ), patch("app.billing.get_available_balance_cents", AsyncMock(return_value={"available_cents": 1000})):
+            authorized = await proxy_module.authorize_workbench_request(request, db)
+
+        self.assertEqual(authorized.id, "u_test")
+        self.assertEqual(getattr(authorized, proxy_module._KEY_KIND_ATTR), "api")
+        self.assertEqual(getattr(authorized, proxy_module._KEY_ID_ATTR), "k_api")
+        self.assertEqual(db.commit.await_count, 1)
+
+    async def test_authorize_workbench_request_rejects_console_session_without_workbench_header(self) -> None:
+        request = self._request([(b"authorization", b"Bearer sk_cc_session")])
+        user = SimpleNamespace(
+            id="u_test",
+            status="active",
+            balance=1000,
+            token_limit=None,
+            token_used=0,
+            request_limit_per_minute=None,
+            request_limit_per_day=None,
+        )
+        db = SimpleNamespace(execute=AsyncMock(return_value=_ScalarResult(user)))
+
+        with patch.object(proxy_module.model_registry, "ensure_initialized"), patch.object(
+            proxy_module.model_registry, "has_routable_models", return_value=True
+        ), patch.object(
+            proxy_module.key_cache,
+            "get",
+            AsyncMock(
+                return_value={
+                    "id": "u_test",
+                    proxy_module._KEY_ID_ATTR: "k_session",
+                    proxy_module._KEY_KIND_ATTR: "session",
+                    "controls": {},
+                }
+            ),
+        ):
+            with self.assertRaises(HTTPException) as ctx:
+                await proxy_module.authorize_workbench_request(request, db)
+
+        self.assertEqual(ctx.exception.status_code, 403)
+        self.assertEqual(ctx.exception.detail, "please generate an API key from your dashboard")
