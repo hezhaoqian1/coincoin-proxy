@@ -2300,6 +2300,7 @@
               <select id="codeStatusFilter" class="form-select" onchange="loadRedemptionCodes()">
                 <option value="">全部状态</option>
                 <option value="unused">未使用</option>
+                <option value="active">活动中</option>
                 <option value="used">已使用</option>
                 <option value="disabled">已禁用</option>
               </select>
@@ -2314,6 +2315,9 @@
                     <th>兑换码</th>
                     <th>面值</th>
                     <th>状态</th>
+                    <th>进度</th>
+                    <th>每用户</th>
+                    <th>备注</th>
                     <th>使用者</th>
                     <th>使用时间</th>
                     <th>创建时间</th>
@@ -2902,6 +2906,10 @@
         <button class="modal-close" onclick="closeModal('generateCodesModal')">&times;</button>
       </div>
       <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">自定义兑换码（可选）</label>
+          <input id="genCustomCode" class="form-input" maxlength="32" placeholder="留空则随机生成；例如 libertytalk0607" />
+        </div>
         <div class="form-row">
           <div class="form-group">
             <label class="form-label">数量（1-100）</label>
@@ -2912,7 +2920,21 @@
             <input type="number" id="genBalance" class="form-input" value="1000" min="1" placeholder="例如 1000 = $10" />
           </div>
         </div>
-        <p class="text-sm text-muted mb-4">每个兑换码被使用后，都会增加对应的余额（单位：分）。</p>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">总兑换次数</label>
+            <input type="number" id="genMaxRedemptions" class="form-input" value="1" min="0" placeholder="0 = 不限" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">每用户次数</label>
+            <input type="number" id="genPerUserLimit" class="form-input" value="1" min="0" placeholder="1 = 每用户一次" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">备注</label>
+          <input id="genNote" class="form-input" maxlength="256" placeholder="例如 LibertyTalk 0607 活动" />
+        </div>
+        <p class="text-sm text-muted mb-4">总兑换次数填 0 表示全站不限；每用户次数填 1 表示同一用户只能兑换一次。</p>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" onclick="closeModal('generateCodesModal')">取消</button>
@@ -5850,16 +5872,24 @@
         const data = await r.json();
         const body = document.getElementById('codesBody');
         if (!data.length) {
-          body.innerHTML = '<tr><td colspan="7"><div class="empty-state"><div class="empty-state-icon">🎟️</div><h3>暂无兑换码</h3><p>先生成一批兑换码吧</p></div></td></tr>';
+          body.innerHTML = '<tr><td colspan="10"><div class="empty-state"><div class="empty-state-icon">🎟️</div><h3>暂无兑换码</h3><p>先生成一批兑换码吧</p></div></td></tr>';
           return;
         }
         body.innerHTML = data.map(c => {
-          const badgeCls = c.status === 'unused' ? 'badge-success' : c.status === 'used' ? 'badge-info' : 'badge-error';
-          const canDisable = c.status === 'unused';
+          const statusLabel = c.status === 'unused' ? '未使用' : c.status === 'active' ? '活动中' : c.status === 'used' ? '已用完' : '已禁用';
+          const badgeCls = c.status === 'unused' || c.status === 'active' ? 'badge-success' : c.status === 'used' ? 'badge-info' : 'badge-error';
+          const maxRedemptions = Number(c.max_redemptions || 0);
+          const redemptionCount = Number(c.redemption_count || 0);
+          const progressText = maxRedemptions > 0 ? `${redemptionCount}/${maxRedemptions}` : `${redemptionCount}/不限`;
+          const perUserText = Number(c.per_user_limit || 0) > 0 ? `${c.per_user_limit} 次` : '不限';
+          const canDisable = c.status === 'unused' || c.status === 'active';
           return `<tr>
             <td class="text-mono text-sm">${c.code}</td>
             <td>$${(c.balance_cents/100).toFixed(2)} <span class="text-muted text-sm">(${c.balance_cents}¢)</span></td>
-            <td><span class="badge ${badgeCls}">${c.status === 'unused' ? '未使用' : c.status === 'used' ? '已使用' : '已禁用'}</span></td>
+            <td><span class="badge ${badgeCls}">${statusLabel}</span></td>
+            <td class="text-sm">${progressText}</td>
+            <td class="text-sm">${perUserText}</td>
+            <td class="text-sm">${c.note || '-'}</td>
             <td class="text-sm">${c.used_by || '-'}</td>
             <td class="text-sm text-muted">${formatDate(c.used_at)}</td>
             <td class="text-sm text-muted">${formatDate(c.created_at)}</td>
@@ -5872,18 +5902,27 @@
     async function generateCodes() {
       const count = parseInt(document.getElementById('genCount').value) || 10;
       const balance_cents = parseInt(document.getElementById('genBalance').value) || 1000;
+      const code = document.getElementById('genCustomCode').value.trim();
+      const max_redemptions = parseInt(document.getElementById('genMaxRedemptions').value);
+      const per_user_limit = parseInt(document.getElementById('genPerUserLimit').value);
+      const note = document.getElementById('genNote').value.trim();
       if (count < 1 || count > 100) return toast('数量必须在 1 到 100 之间', 'error');
+      if (code && count !== 1) return toast('自定义兑换码数量必须是 1', 'error');
       if (balance_cents < 1) return toast('面值必须大于 0', 'error');
+      if (!Number.isFinite(max_redemptions) || max_redemptions < 0) return toast('总兑换次数不能小于 0', 'error');
+      if (!Number.isFinite(per_user_limit) || per_user_limit < 0) return toast('每用户次数不能小于 0', 'error');
       try {
         const r = await fetch('/admin/redemption-codes/generate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...adminHeaders() },
-          body: JSON.stringify({ count, balance_cents })
+          body: JSON.stringify({ count, balance_cents, code: code || null, max_redemptions, per_user_limit, note })
         });
         const d = await r.json();
         if (r.ok) {
           closeModal('generateCodesModal');
-          document.getElementById('codesResultInfo').textContent = `已生成 ${d.count} 个兑换码，每个面值 $${(d.balance_cents/100).toFixed(2)}（${d.balance_cents}¢）`;
+          const maxText = d.max_redemptions > 0 ? `总次数 ${d.max_redemptions}` : '总次数不限';
+          const perUserText = d.per_user_limit > 0 ? `每用户 ${d.per_user_limit} 次` : '每用户不限';
+          document.getElementById('codesResultInfo').textContent = `已生成 ${d.count} 个兑换码，每个面值 $${(d.balance_cents/100).toFixed(2)}（${d.balance_cents}¢），${maxText}，${perUserText}`;
           document.getElementById('codesResultList').textContent = d.codes.join('\n');
           openModal('codesResultModal');
           loadRedemptionCodes();

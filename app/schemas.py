@@ -373,11 +373,18 @@ class RedeemResponse(BaseModel):
 class RedemptionGenerateRequest(BaseModel):
     count: int = Field(default=1, ge=1, le=100, description="生成数量")
     balance_cents: int = Field(..., ge=1, description="每张面额（分）")
+    code: Optional[str] = Field(default=None, min_length=3, max_length=32, pattern=r"^[A-Za-z0-9_-]+$", description="自定义兑换码；留空则随机生成")
+    max_redemptions: int = Field(default=1, ge=0, description="总兑换次数，0 表示不限")
+    per_user_limit: int = Field(default=1, ge=0, description="每用户可兑换次数，0 表示不限")
+    note: Optional[str] = Field(default="", max_length=256, description="运营备注")
 
 class RedemptionGenerateResponse(BaseModel):
     codes: List[str]
     balance_cents: int
     count: int
+    max_redemptions: int = 1
+    per_user_limit: int = 1
+    note: str = ""
 
 
 # ===== Announcements =====
