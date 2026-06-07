@@ -2292,7 +2292,7 @@
             <h1 class="page-title">兑换码</h1>
             <p class="page-desc">生成并管理预充值兑换码</p>
           </div>
-          <button class="btn btn-primary" onclick="openModal('generateCodesModal')">+ 生成兑换码</button>
+          <button class="btn btn-primary" onclick="openGenerateCodesModal()">+ 生成兑换码</button>
         </div>
         <div class="card">
           <div class="card-header">
@@ -2907,12 +2907,12 @@
       </div>
       <div class="modal-body">
         <div class="form-group">
-          <label class="form-label">自定义兑换码（可选）</label>
-          <input id="genCustomCode" class="form-input" maxlength="32" placeholder="留空则随机生成；例如 libertytalk0607" />
+          <label class="form-label">指定兑换码（可选）</label>
+          <input id="genCustomCode" class="form-input" maxlength="32" placeholder="例如 libertytalk0607；留空则随机生成" oninput="updateGenerateCodeMode()" />
         </div>
         <div class="form-row">
           <div class="form-group">
-            <label class="form-label">数量（1-100）</label>
+            <label class="form-label" id="genCountLabel">随机码个数（1-100）</label>
             <input type="number" id="genCount" class="form-input" value="10" min="1" max="100" />
           </div>
           <div class="form-group">
@@ -2934,6 +2934,7 @@
           <label class="form-label">备注</label>
           <input id="genNote" class="form-input" maxlength="256" placeholder="例如 LibertyTalk 0607 活动" />
         </div>
+        <p class="text-sm text-muted mb-4" id="genModeHint">不填指定兑换码时，系统会按“随机码个数”生成多个不同随机码。填了指定兑换码时，只会创建这一个码。</p>
         <p class="text-sm text-muted mb-4">总兑换次数填 0 表示全站不限；每用户次数填 1 表示同一用户只能兑换一次。</p>
       </div>
       <div class="modal-footer">
@@ -5957,15 +5958,37 @@
       } catch (e) { console.error(e); toast('加载失败', 'error'); }
     }
 
+    function openGenerateCodesModal() {
+      updateGenerateCodeMode();
+      openModal('generateCodesModal');
+    }
+
+    function updateGenerateCodeMode() {
+      const customCode = document.getElementById('genCustomCode').value.trim();
+      const countInput = document.getElementById('genCount');
+      const countLabel = document.getElementById('genCountLabel');
+      const hint = document.getElementById('genModeHint');
+      if (customCode) {
+        countInput.value = '1';
+        countInput.disabled = true;
+        countLabel.textContent = '创建数量（指定码固定 1）';
+        hint.textContent = '已填写指定兑换码，本次只会创建这一个码。它能被兑换多少次由“总兑换次数”和“每用户次数”控制。';
+      } else {
+        countInput.disabled = false;
+        countLabel.textContent = '随机码个数（1-100）';
+        hint.textContent = '不填指定兑换码时，系统会按“随机码个数”生成多个不同随机码。填了指定兑换码时，只会创建这一个码。';
+      }
+    }
+
     async function generateCodes() {
-      const count = parseInt(document.getElementById('genCount').value) || 10;
-      const balance_cents = parseInt(document.getElementById('genBalance').value) || 1000;
+      updateGenerateCodeMode();
       const code = document.getElementById('genCustomCode').value.trim();
+      const count = code ? 1 : (parseInt(document.getElementById('genCount').value) || 10);
+      const balance_cents = parseInt(document.getElementById('genBalance').value) || 1000;
       const max_redemptions = parseInt(document.getElementById('genMaxRedemptions').value);
       const per_user_limit = parseInt(document.getElementById('genPerUserLimit').value);
       const note = document.getElementById('genNote').value.trim();
       if (count < 1 || count > 100) return toast('数量必须在 1 到 100 之间', 'error');
-      if (code && count !== 1) return toast('自定义兑换码数量必须是 1', 'error');
       if (balance_cents < 1) return toast('面值必须大于 0', 'error');
       if (!Number.isFinite(max_redemptions) || max_redemptions < 0) return toast('总兑换次数不能小于 0', 'error');
       if (!Number.isFinite(per_user_limit) || per_user_limit < 0) return toast('每用户次数不能小于 0', 'error');
