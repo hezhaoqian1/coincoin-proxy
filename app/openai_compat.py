@@ -36,11 +36,13 @@ from .router import (
 )
 from .schemas import BalanceResponse, ReferralCodeUpdateRequest
 from .station_runtime import resolve_station_model_for_user, usage_pricing_kwargs, user_station_context
+from .user_model_overrides import apply_user_overrides_to_resolution
 from .usage_buffer import (
     china_today,
     extract_cache_creation_tokens,
     extract_cache_read_tokens,
     extract_total_input_tokens,
+    schedule_usage_add,
     usage_buffer,
 )
 from .finance_summary import ensure_finance_summary_initialized, increment_finance_summary
@@ -920,6 +922,13 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
         )
     except Exception as exc:
         return _model_resolution_to_openai_error(exc)
+    (
+        resolved_model,
+        station_model,
+        _routing_override,
+        user_cache_read_multiplier_override,
+        _effective_provider_model,
+    ) = apply_user_overrides_to_resolution(user, resolved_model, station_model)
     public_model = resolved_model.public_model
     display_model = station_model.display_model if station_model else public_model.public_id
     used_cfg = resolved_model.backend
@@ -941,6 +950,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
             price_input_per_million=price_input_per_million,
             price_output_per_million=price_output_per_million,
             station_model=station_model,
+            user_cache_read_multiplier_override=user_cache_read_multiplier_override,
         )
 
     if public_model.delivery_lane == CLAUDE_COMPAT_PROVIDER_KIRO_GO:
@@ -960,7 +970,13 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
         for field in ("temperature", "top_p", "stop", "tool_choice"):
             if field in payload:
                 chat_payload[field] = payload[field]
-        prompt_cache_key = build_claude_code_prompt_cache_key(user, api_key_id, display_model, public_model)
+        prompt_cache_key = build_claude_code_prompt_cache_key(
+            user,
+            api_key_id,
+            display_model,
+            public_model,
+            effective_backend_model=used_cfg.model_id,
+        )
         if prompt_cache_key:
             chat_payload["prompt_cache_key"] = prompt_cache_key
         if chat_payload["stream"] and stream_include_usage:
@@ -1038,7 +1054,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                     if upstream.status_code < 400:
                         dur = int((time.monotonic() - stream_t0) * 1000)
                         _record_channel_success(used_cfg, duration_ms=dur)
-                        asyncio.create_task(usage_buffer.add(
+                        schedule_usage_add(
                             user.id,
                             api_key_id=api_key_id,
                             input_tokens=stream_usage["input"],
@@ -1049,7 +1065,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                             endpoint="chat/completions:stream",
                             model=display_model,
                             customer_model_alias=display_model,
-                            provider_model=public_model.provider_model or used_cfg.model_id,
+                            provider_model=used_cfg.model_id or _effective_provider_model,
                             route_reason=used_route_reason,
                             duration_ms=dur,
                             status_code=upstream.status_code,
@@ -1059,8 +1075,12 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                             billable_sku=public_model.billable_sku or display_model,
                             upstream_request_id=extract_upstream_request_id(upstream.headers),
                             **_channel_usage_kwargs(used_cfg),
-                            **usage_pricing_kwargs(public_model, station_model),
-                        ))
+                            **usage_pricing_kwargs(
+                                public_model,
+                                station_model,
+                                user_cache_read_multiplier_override=user_cache_read_multiplier_override,
+                            ),
+                        )
                     else:
                         _record_channel_failure(used_cfg, status_code=upstream.status_code)
 
@@ -1119,7 +1139,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
             endpoint="chat/completions",
             model=display_model,
             customer_model_alias=display_model,
-            provider_model=public_model.provider_model or used_cfg.model_id,
+            provider_model=used_cfg.model_id or _effective_provider_model,
             route_reason=used_route_reason,
             duration_ms=duration_ms,
             status_code=upstream.status_code,
@@ -1129,7 +1149,11 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
             billable_sku=public_model.billable_sku or display_model,
             upstream_request_id=upstream_request_id,
             **_channel_usage_kwargs(used_cfg),
-            **usage_pricing_kwargs(public_model, station_model),
+            **usage_pricing_kwargs(
+                public_model,
+                station_model,
+                user_cache_read_multiplier_override=user_cache_read_multiplier_override,
+            ),
         )
 
         data["model"] = display_model
@@ -1141,7 +1165,13 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
         "input": converted_messages,
         "stream": bool(payload.get("stream")),
     }
-    prompt_cache_key = build_claude_code_prompt_cache_key(user, api_key_id, display_model, public_model)
+    prompt_cache_key = build_claude_code_prompt_cache_key(
+        user,
+        api_key_id,
+        display_model,
+        public_model,
+        effective_backend_model=used_cfg.model_id,
+    )
     if prompt_cache_key:
         resp_payload["prompt_cache_key"] = prompt_cache_key
 
@@ -1336,6 +1366,17 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
         async def _send_stream(cfg):
             send_payload = dict(resp_payload)
             send_payload["model"] = cfg.model_id
+            stream_prompt_cache_key = build_claude_code_prompt_cache_key(
+                user,
+                api_key_id,
+                display_model,
+                public_model,
+                effective_backend_model=cfg.model_id,
+            )
+            if stream_prompt_cache_key:
+                send_payload["prompt_cache_key"] = stream_prompt_cache_key
+            else:
+                send_payload.pop("prompt_cache_key", None)
             if cfg.strip_unsupported:
                 for field in _STRIP_PARAMS:
                     send_payload.pop(field, None)
@@ -1588,7 +1629,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                 if upstream.status_code < 400:
                     dur = int((time.monotonic() - compat_stream_t0) * 1000)
                     _record_channel_success(used_cfg, duration_ms=dur)
-                    asyncio.create_task(usage_buffer.add(
+                    schedule_usage_add(
                         user.id,
                         api_key_id=api_key_id,
                         input_tokens=_compat_stream_usage["input"],
@@ -1599,7 +1640,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                         endpoint="chat/completions:stream",
                         model=display_model,
                         customer_model_alias=display_model,
-                        provider_model=public_model.provider_model or used_cfg.model_id,
+                        provider_model=used_cfg.model_id or _effective_provider_model,
                         route_reason=used_route_reason,
                         duration_ms=dur,
                         status_code=upstream.status_code,
@@ -1609,8 +1650,12 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                         billable_sku=public_model.billable_sku or display_model,
                         upstream_request_id=extract_upstream_request_id(upstream.headers),
                         **_channel_usage_kwargs(used_cfg),
-                        **usage_pricing_kwargs(public_model, station_model),
-                    ))
+                        **usage_pricing_kwargs(
+                            public_model,
+                            station_model,
+                            user_cache_read_multiplier_override=user_cache_read_multiplier_override,
+                        ),
+                    )
                 else:
                     _record_channel_failure(used_cfg, status_code=upstream.status_code)
         stream_headers = filter_headers(dict(upstream.headers))
@@ -1685,6 +1730,17 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
     async def _post_json(cfg):
         send_payload = dict(resp_payload)
         send_payload["model"] = cfg.model_id
+        json_prompt_cache_key = build_claude_code_prompt_cache_key(
+            user,
+            api_key_id,
+            display_model,
+            public_model,
+            effective_backend_model=cfg.model_id,
+        )
+        if json_prompt_cache_key:
+            send_payload["prompt_cache_key"] = json_prompt_cache_key
+        else:
+            send_payload.pop("prompt_cache_key", None)
         if cfg.strip_unsupported:
             for field in _STRIP_PARAMS:
                 send_payload.pop(field, None)
@@ -1871,7 +1927,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
             endpoint="chat/completions",
             model=display_model,
             customer_model_alias=display_model,
-            provider_model=public_model.provider_model or used_cfg.model_id,
+            provider_model=used_cfg.model_id or _effective_provider_model,
             route_reason=used_route_reason,
             duration_ms=duration_ms,
             status_code=upstream.status_code,
@@ -1881,7 +1937,11 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
             billable_sku=public_model.billable_sku or display_model,
             upstream_request_id=upstream_request_id,
             **_channel_usage_kwargs(used_cfg),
-            **usage_pricing_kwargs(public_model, station_model),
+            **usage_pricing_kwargs(
+                public_model,
+                station_model,
+                user_cache_read_multiplier_override=user_cache_read_multiplier_override,
+            ),
         )
     else:
         _record_channel_failure(used_cfg, status_code=upstream.status_code)
@@ -1915,6 +1975,7 @@ async def _proxy_gemini_cpa_chat_completions(
     price_input_per_million: int,
     price_output_per_million: int,
     station_model,
+    user_cache_read_multiplier_override: float | None = None,
 ):
     try:
         channel = gemini_cpa.select_channel(public_model, used_cfg)
@@ -1992,7 +2053,7 @@ async def _proxy_gemini_cpa_chat_completions(
             endpoint="chat/completions",
             model=display_model,
             customer_model_alias=display_model,
-            provider_model=public_model.provider_model or channel.provider_model,
+            provider_model=channel.provider_model or used_cfg.model_id,
             route_reason=used_route_reason,
             duration_ms=duration_ms,
             status_code=upstream.status_code,
@@ -2002,7 +2063,11 @@ async def _proxy_gemini_cpa_chat_completions(
             billable_sku=public_model.billable_sku or display_model,
             upstream_request_id=upstream_request_id,
             **_channel_usage_kwargs(used_cfg, channel),
-            **usage_pricing_kwargs(public_model, station_model),
+            **usage_pricing_kwargs(
+                public_model,
+                station_model,
+                user_cache_read_multiplier_override=user_cache_read_multiplier_override,
+            ),
         )
 
     if upstream.status_code >= 400:
@@ -2049,6 +2114,13 @@ async def embeddings(request: Request, db: AsyncSession = Depends(get_db)):
         resolved_model = station_model.resolved_model if station_model else model_registry.resolve_public_model(requested_model, "embeddings")
     except Exception as exc:
         return _model_resolution_to_openai_error(exc)
+    (
+        resolved_model,
+        station_model,
+        _routing_override,
+        user_cache_read_multiplier_override,
+        _effective_provider_model,
+    ) = apply_user_overrides_to_resolution(user, resolved_model, station_model)
 
     public_model = resolved_model.public_model
     display_model = station_model.display_model if station_model else public_model.public_id
@@ -2107,7 +2179,7 @@ async def embeddings(request: Request, db: AsyncSession = Depends(get_db)):
             endpoint="embeddings",
             model=display_model,
             customer_model_alias=display_model,
-            provider_model=public_model.provider_model or used_cfg.model_id,
+            provider_model=used_cfg.model_id or _effective_provider_model,
             route_reason=used_route_reason,
             duration_ms=duration_ms,
             status_code=upstream.status_code,
@@ -2117,12 +2189,17 @@ async def embeddings(request: Request, db: AsyncSession = Depends(get_db)):
             billable_sku=public_model.billable_sku or display_model,
             upstream_request_id=upstream_request_id,
             **_channel_usage_kwargs(used_cfg),
-            **usage_pricing_kwargs(public_model, station_model),
+            **usage_pricing_kwargs(
+                public_model,
+                station_model,
+                user_cache_read_multiplier_override=user_cache_read_multiplier_override,
+            ),
         )
     else:
         _record_channel_failure(used_cfg, status_code=upstream.status_code)
 
     if isinstance(data, dict):
+        data["model"] = display_model
         return JSONResponse(content=data, status_code=upstream.status_code, headers=response_headers)
 
     return Response(content=str(data), status_code=upstream.status_code, headers=response_headers, media_type=content_type)

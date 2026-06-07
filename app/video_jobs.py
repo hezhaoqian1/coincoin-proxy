@@ -4,6 +4,7 @@ import json
 import logging
 import secrets
 import time
+from copy import deepcopy
 from datetime import datetime
 from typing import Any, Dict, Optional
 from urllib.parse import urlsplit, urlunsplit
@@ -44,7 +45,8 @@ from .proxy import (
 from .router import ModelConfig, registry as model_registry
 from .security import generate_id
 from .config import settings
-from .station_runtime import public_model_pricing_kwargs
+from .station_runtime import public_model_pricing_kwargs, resolve_station_model_for_user
+from .user_model_overrides import apply_user_overrides_to_resolution
 from .usage_buffer import china_today, usage_buffer
 from .referral import process_first_usage_referral_reward
 
@@ -80,21 +82,20 @@ def _video_job_response(job: VideoJob) -> Dict[str, Any]:
         "status": job.status,
         "endpoint": job.endpoint,
         "model": job.public_model,
-        "provider_model": job.provider_model,
         "attempt_count": int(job.attempt_count or 0),
         "charged_cents": int(job.charged_cents or 0),
         "refunded_cents": int(job.refunded_cents or 0),
-        "route_reason": job.route_reason,
         "created_at": job.created_at.isoformat() if job.created_at else None,
         "started_at": job.started_at.isoformat() if job.started_at else None,
         "completed_at": job.completed_at.isoformat() if job.completed_at else None,
     }
     result = _json_loads(job.result_payload_json)
     if isinstance(result, dict):
-        output = _extract_output(result)
+        public_result = _public_video_result_payload(job.public_model, result)
+        output = _extract_output(public_result)
         if output:
             payload["output"] = output
-        payload["result"] = result
+        payload["result"] = public_result
     if job.status == JOB_STATUS_FAILED:
         payload["error"] = {
             "code": job.error_code or "video_job_failed",
@@ -110,6 +111,16 @@ def _json_loads(raw: str | None) -> Any:
         return json.loads(raw)
     except Exception:
         return {"raw": raw}
+
+
+def _public_video_result_payload(public_model: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    public_payload = deepcopy(payload)
+    if isinstance(public_payload.get("model"), str):
+        public_payload["model"] = public_model
+    data = public_payload.get("data")
+    if isinstance(data, dict) and isinstance(data.get("model"), str):
+        data["model"] = public_model
+    return public_payload
 
 
 def _extract_output(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -680,9 +691,19 @@ async def _create_video_generation(request: Request, db: AsyncSession) -> JSONRe
 
     requested_model = str(payload.get("model") or "").strip()
     try:
-        resolved = model_registry.resolve_public_model(requested_model, "videos/generations")
+        station_model = None
+        if requested_model:
+            station_model = await resolve_station_model_for_user(db, user, requested_model, "videos/generations")
+        resolved = station_model.resolved_model if station_model else model_registry.resolve_public_model(requested_model, "videos/generations")
     except Exception as exc:
         return _model_resolution_error_response(exc)
+    (
+        resolved,
+        station_model,
+        _routing_override,
+        _user_cache_read_multiplier_override,
+        _effective_provider_model,
+    ) = apply_user_overrides_to_resolution(user, resolved, station_model)
 
     public_model = resolved.public_model
     used_cfg = resolved.backend
@@ -777,7 +798,7 @@ async def _create_video_generation(request: Request, db: AsyncSession) -> JSONRe
         status=status,
         endpoint="videos/generations",
         public_model=public_model.public_id,
-        provider_model=used_cfg.model_id or public_model.provider_model,
+        provider_model=used_cfg.model_id or _effective_provider_model,
         route_reason=resolved.route_reason,
         upstream_task_id=upstream_task_id,
         request_payload_json=json.dumps(upstream_payload, ensure_ascii=False),

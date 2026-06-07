@@ -47,6 +47,8 @@ from .models import (
     User,
     Account,
     UserFinanceSummary,
+    UserModelPricingOverride,
+    UserModelRoutingOverride,
     UserSubscription,
 )
 from .model_alias_overrides import (
@@ -62,8 +64,9 @@ from .schemas import (
     AdminClaudeCompatSettingsUpdate, AdminModelAliasUpdate, AdminModelChannelRouteCreate,
     AdminModelChannelRouteUpdate, AdminModelPricingUpdate, AdminProviderChannelCreate,
     AdminProviderChannelMonitorCreate, AdminProviderChannelMonitorUpdate,
-    AdminProviderChannelUpdate, AnnouncementCreate, AnnouncementUpdate,
-    RedemptionCodeUpdateRequest, RedemptionGenerateRequest, RedemptionGenerateResponse,
+    AdminProviderChannelUpdate, AdminUserModelPricingOverrideUpsert,
+    AdminUserModelRoutingOverrideUpsert, AnnouncementCreate, AnnouncementUpdate,
+    RedemptionGenerateRequest, RedemptionGenerateResponse,
 )
 from .channel_monitoring import (
     monitor_availability_rows,
@@ -283,6 +286,60 @@ def _pricing_payload(model_id: str):
         "price_version": model.price_version,
         "override_active": model.public_id in model_registry.pricing_overrides,
     }
+
+
+def _serialize_user_routing_override(row: Any) -> dict:
+    public_model_id = str(getattr(row, "public_model_id", "") or "").strip()
+    return {
+        "public_model_id": public_model_id,
+        "provider_model": str(getattr(row, "provider_model", "") or "").strip(),
+        "upstream_model": str(getattr(row, "upstream_model", "") or "").strip(),
+        "enabled": bool(getattr(row, "enabled", 1)),
+        "updated_by": str(getattr(row, "updated_by", "") or "").strip(),
+        "updated_at": getattr(row, "updated_at", None),
+        "targets": model_registry.candidate_alias_targets(public_model_id),
+    }
+
+
+def _serialize_user_pricing_override(row: Any) -> dict:
+    return {
+        "public_model_id": str(getattr(row, "public_model_id", "") or "").strip(),
+        "cache_read_multiplier_override": (
+            None
+            if getattr(row, "cache_read_multiplier_override", None) is None
+            else float(getattr(row, "cache_read_multiplier_override"))
+        ),
+        "updated_by": str(getattr(row, "updated_by", "") or "").strip(),
+        "updated_at": getattr(row, "updated_at", None),
+    }
+
+
+def _user_override_model_options() -> list[dict]:
+    model_registry.ensure_initialized()
+    return [
+        {
+            "id": model.public_id,
+            "provider_name": model.provider_name,
+            "delivery_lane": model.delivery_lane,
+            "capabilities": list(model.capabilities or ()),
+            "targets": model_registry.candidate_alias_targets(model.public_id),
+        }
+        for model in model_registry.list_public_models()
+        if str(model.public_id or "").strip()
+    ]
+
+
+async def _invalidate_user_key_cache(db: AsyncSession, user_id: str) -> None:
+    keys = (
+        await db.execute(select(ApiKey).where(ApiKey.user_id == user_id))
+    ).scalars().all()
+    try:
+        from .proxy import key_cache
+
+        for key in keys:
+            await key_cache.delete(getattr(key, "key_hash", ""))
+    except Exception:
+        pass
 
 
 def _csv_from_list(items: Optional[list[str]]) -> str:
@@ -2516,6 +2573,7 @@ async def reset_user_password(
 @router.get("/users/{user_id}", dependencies=[Depends(admin_guard)])
 async def get_user_detail(user_id: str, db: AsyncSession = Depends(get_db)):
     """获取用户详情，包含该用户的所有 Key"""
+    model_registry.ensure_initialized()
     result = await db.execute(
         select(User, StationCustomerLink, Station)
         .outerjoin(StationCustomerLink, StationCustomerLink.user_id == User.id)
@@ -2535,6 +2593,20 @@ async def get_user_detail(user_id: str, db: AsyncSession = Depends(get_db)):
     )
     keys = keys_result.scalars().all()
     billing = await _admin_billing_state(db, user)
+    routing_rows = (
+        await db.execute(
+            select(UserModelRoutingOverride)
+            .where(UserModelRoutingOverride.user_id == user_id)
+            .order_by(UserModelRoutingOverride.public_model_id.asc())
+        )
+    ).scalars().all()
+    pricing_rows = (
+        await db.execute(
+            select(UserModelPricingOverride)
+            .where(UserModelPricingOverride.user_id == user_id)
+            .order_by(UserModelPricingOverride.public_model_id.asc())
+        )
+    ).scalars().all()
     
     return {
         "id": user.id,
@@ -2556,6 +2628,9 @@ async def get_user_detail(user_id: str, db: AsyncSession = Depends(get_db)):
         "billing": billing,
         "billing_summary": _billing_summary_for_admin(billing),
         "finance_summary": await build_user_finance_snapshot(db, user.id, user.balance),
+        "model_routing_overrides": [_serialize_user_routing_override(row) for row in routing_rows],
+        "model_pricing_overrides": [_serialize_user_pricing_override(row) for row in pricing_rows],
+        "user_model_override_options": _user_override_model_options(),
         "station_attribution": None if not station else {
             "station_id": station.id,
             "station_name": station.display_name,
@@ -2586,6 +2661,166 @@ async def get_user_detail(user_id: str, db: AsyncSession = Depends(get_db)):
             "message": "New keys are stored encrypted for admin recovery. Older keys created before this change may still be unrecoverable. All keys under the same user share one balance.",
         },
     }
+
+
+@router.get("/users/{user_id}/model-routing-overrides", dependencies=[Depends(admin_guard)])
+async def list_user_model_routing_overrides(user_id: str, db: AsyncSession = Depends(get_db)):
+    rows = (
+        await db.execute(
+            select(UserModelRoutingOverride)
+            .where(UserModelRoutingOverride.user_id == user_id)
+            .order_by(UserModelRoutingOverride.public_model_id.asc())
+        )
+    ).scalars().all()
+    return {
+        "items": [_serialize_user_routing_override(row) for row in rows],
+        "count": len(rows),
+    }
+
+
+@router.put("/users/{user_id}/model-routing-overrides/{public_model_id}", dependencies=[Depends(admin_guard)])
+async def upsert_user_model_routing_override(
+    user_id: str,
+    public_model_id: str,
+    payload: AdminUserModelRoutingOverrideUpsert,
+    db: AsyncSession = Depends(get_db),
+):
+    user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
+    if not model_registry.get_public_model(public_model_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="model not found")
+
+    override = {}
+    if payload.target_alias:
+        target = _matching_target(public_model_id, payload.target_alias.strip())
+        if not target:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="target alias is not compatible")
+        override["provider_model"] = target.get("provider_model") or ""
+        override["upstream_model"] = target.get("upstream_model") or target.get("provider_model") or ""
+    else:
+        provider_model = payload.provider_model.strip() if payload.provider_model is not None else ""
+        upstream_model = payload.upstream_model.strip() if payload.upstream_model is not None else ""
+        if provider_model or upstream_model:
+            target = _matching_target_by_models(public_model_id, provider_model, upstream_model or provider_model)
+            if not target:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="target model is not compatible")
+            override["provider_model"] = target.get("provider_model") or ""
+            override["upstream_model"] = target.get("upstream_model") or target.get("provider_model") or ""
+    if payload.enabled is not None:
+        override["enabled"] = payload.enabled
+    if not override:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="no override fields provided")
+
+    row = (
+        await db.execute(
+            select(UserModelRoutingOverride).where(
+                UserModelRoutingOverride.user_id == user_id,
+                UserModelRoutingOverride.public_model_id == public_model_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        row = UserModelRoutingOverride(user_id=user_id, public_model_id=public_model_id)
+        db.add(row)
+    if "provider_model" in override:
+        row.provider_model = override["provider_model"]
+    if "upstream_model" in override:
+        row.upstream_model = override["upstream_model"]
+    if "enabled" in override:
+        row.enabled = 1 if override["enabled"] else 0
+    row.updated_by = "admin"
+    await db.commit()
+    await _invalidate_user_key_cache(db, user_id)
+    return _serialize_user_routing_override(row)
+
+
+@router.delete("/users/{user_id}/model-routing-overrides/{public_model_id}", dependencies=[Depends(admin_guard)])
+async def delete_user_model_routing_override(
+    user_id: str,
+    public_model_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    row = (
+        await db.execute(
+            select(UserModelRoutingOverride).where(
+                UserModelRoutingOverride.user_id == user_id,
+                UserModelRoutingOverride.public_model_id == public_model_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if row is not None:
+        await db.delete(row)
+        await db.commit()
+        await _invalidate_user_key_cache(db, user_id)
+    return {"user_id": user_id, "public_model_id": public_model_id, "deleted": row is not None}
+
+
+@router.get("/users/{user_id}/model-pricing-overrides", dependencies=[Depends(admin_guard)])
+async def list_user_model_pricing_overrides(user_id: str, db: AsyncSession = Depends(get_db)):
+    rows = (
+        await db.execute(
+            select(UserModelPricingOverride)
+            .where(UserModelPricingOverride.user_id == user_id)
+            .order_by(UserModelPricingOverride.public_model_id.asc())
+        )
+    ).scalars().all()
+    return {
+        "items": [_serialize_user_pricing_override(row) for row in rows],
+        "count": len(rows),
+    }
+
+
+@router.put("/users/{user_id}/model-pricing-overrides/{public_model_id}", dependencies=[Depends(admin_guard)])
+async def upsert_user_model_pricing_override(
+    user_id: str,
+    public_model_id: str,
+    payload: AdminUserModelPricingOverrideUpsert,
+    db: AsyncSession = Depends(get_db),
+):
+    user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
+    if not model_registry.get_public_model(public_model_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="model not found")
+
+    row = (
+        await db.execute(
+            select(UserModelPricingOverride).where(
+                UserModelPricingOverride.user_id == user_id,
+                UserModelPricingOverride.public_model_id == public_model_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        row = UserModelPricingOverride(user_id=user_id, public_model_id=public_model_id)
+        db.add(row)
+    row.cache_read_multiplier_override = float(payload.cache_read_multiplier_override)
+    row.updated_by = "admin"
+    await db.commit()
+    await _invalidate_user_key_cache(db, user_id)
+    return _serialize_user_pricing_override(row)
+
+
+@router.delete("/users/{user_id}/model-pricing-overrides/{public_model_id}", dependencies=[Depends(admin_guard)])
+async def delete_user_model_pricing_override(
+    user_id: str,
+    public_model_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    row = (
+        await db.execute(
+            select(UserModelPricingOverride).where(
+                UserModelPricingOverride.user_id == user_id,
+                UserModelPricingOverride.public_model_id == public_model_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if row is not None:
+        await db.delete(row)
+        await db.commit()
+        await _invalidate_user_key_cache(db, user_id)
+    return {"user_id": user_id, "public_model_id": public_model_id, "deleted": row is not None}
 
 
 @router.post("/users/{user_id}/keys", dependencies=[Depends(admin_guard)])
@@ -4573,39 +4808,14 @@ async def list_redemption_codes(
 
 
 @router.patch("/redemption-codes/{code_id}", dependencies=[Depends(admin_guard)])
-async def update_redemption_code(
-    code_id: str,
-    payload: RedemptionCodeUpdateRequest,
-    db: AsyncSession = Depends(get_db),
-):
+async def disable_redemption_code(code_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(RedemptionCode).where(RedemptionCode.id == code_id))
     code = result.scalar_one_or_none()
     if not code:
         raise HTTPException(status_code=404, detail="code not found")
-    current_count = int(getattr(code, "redemption_count", 0) or 0)
-    if payload.max_redemptions is not None and payload.max_redemptions > 0 and payload.max_redemptions < current_count:
-        raise HTTPException(status_code=400, detail="max_redemptions cannot be lower than redemption_count")
-    if payload.balance_cents is not None:
-        code.balance_cents = payload.balance_cents
-    if payload.max_redemptions is not None:
-        code.max_redemptions = payload.max_redemptions
-    if payload.per_user_limit is not None:
-        code.per_user_limit = payload.per_user_limit
-    if payload.note is not None:
-        code.note = payload.note.strip()
-    if payload.status is not None:
-        code.status = payload.status
+    code.status = "disabled"
     await db.commit()
-    return {
-        "id": code.id,
-        "code": code.code,
-        "balance_cents": code.balance_cents,
-        "status": code.status,
-        "max_redemptions": int(getattr(code, "max_redemptions", 1) or 0),
-        "per_user_limit": int(getattr(code, "per_user_limit", 1) or 0),
-        "redemption_count": current_count,
-        "note": getattr(code, "note", "") or "",
-    }
+    return {"id": code.id, "status": code.status}
 
 
 # ============== Announcement Management ==============

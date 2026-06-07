@@ -149,6 +149,50 @@ class StationResellerRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(log["wholesale_cost_cents"], 525)
         self.assertEqual(log["price_version"], 3)
 
+    def test_usage_pricing_kwargs_can_override_cached_input_to_full_station_price(self):
+        public_model = SimpleNamespace(
+            pricing_mode="multiplier",
+            model_multiplier=1.0,
+            output_multiplier=1.0,
+            cache_read_multiplier=0.1,
+            image_multiplier=1.0,
+            video_multiplier=1.0,
+            base_price_input_per_million=100,
+            base_price_output_per_million=500,
+            base_price_per_image_cents=0.0,
+            base_price_per_video_cents=0.0,
+            effective_cached_input_per_million=12.0,
+            price_input_per_million=120,
+            price_version=4,
+        )
+        station_model = station_runtime.StationResolvedModel(
+            resolved_model=SimpleNamespace(
+                public_model=public_model,
+                backend=SimpleNamespace(model_id="gpt-5.4-mini"),
+            ),
+            display_model="fast",
+            station_id="st_1",
+            station_alias="fast",
+            resolved_public_model="gpt-5.4-mini",
+            retail_input_per_million=180,
+            retail_output_per_million=720,
+            retail_price_per_image_cents=0.0,
+            wholesale_input_per_million=75,
+            wholesale_output_per_million=450,
+            wholesale_price_per_image_cents=0.0,
+            price_version=3,
+        )
+
+        payload = station_runtime.usage_pricing_kwargs(
+            public_model,
+            station_model,
+            user_cache_read_multiplier_override=1.0,
+        )
+
+        self.assertEqual(payload["cache_read_multiplier"], 1.0)
+        self.assertEqual(payload["effective_cached_input_per_million"], 180)
+        self.assertEqual(payload["price_version"], 3)
+
 
 if __name__ == "__main__":
     unittest.main()

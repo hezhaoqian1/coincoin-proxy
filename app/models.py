@@ -340,6 +340,36 @@ class ModelPricingOverride(Base):
     )
 
 
+class UserModelRoutingOverride(Base):
+    """Admin-only per-user backend routing exception for one public model."""
+    __tablename__ = "coincoin_user_model_routing_overrides"
+
+    user_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_users.id"), primary_key=True)
+    public_model_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    provider_model: Mapped[str] = mapped_column(String(128), default="")
+    upstream_model: Mapped[str] = mapped_column(String(128), default="")
+    enabled: Mapped[int] = mapped_column(BigInteger, default=1)
+    updated_by: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), index=True
+    )
+
+
+class UserModelPricingOverride(Base):
+    """Admin-only per-user pricing exception for one public model."""
+    __tablename__ = "coincoin_user_model_pricing_overrides"
+
+    user_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_users.id"), primary_key=True)
+    public_model_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    cache_read_multiplier_override: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    updated_by: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), index=True
+    )
+
+
 class SystemSetting(Base):
     """Small persistent key/value store for runtime control-plane switches."""
     __tablename__ = "coincoin_system_settings"

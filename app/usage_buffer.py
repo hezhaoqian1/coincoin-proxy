@@ -495,6 +495,10 @@ class UsageBuffer:
 usage_buffer = UsageBuffer()
 
 
+def schedule_usage_add(*args, **kwargs) -> asyncio.Task:
+    return asyncio.create_task(usage_buffer.add(*args, **kwargs))
+
+
 async def flush_once() -> None:
     """将缓冲区数据刷新到数据库"""
     daily, usage_by_user, request_logs = await usage_buffer.snapshot_and_reset()

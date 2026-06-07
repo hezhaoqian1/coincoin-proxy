@@ -232,6 +232,90 @@ class ImageJobsTests(unittest.IsolatedAsyncioTestCase):
         for file_info in manifest["files"]:
             self.assertTrue((Path(job.storage_dir) / file_info["stored_name"]).is_file())
 
+    async def test_create_image_edit_job_user_override_preserves_public_model_and_hides_backend_identity(self) -> None:
+        self.fake_user._model_routing_overrides = {
+            "gemini-image": {
+                "public_model_id": "gemini-image",
+                "provider_model": "gemini-3.1-flash-image-preview",
+                "upstream_model": "gemini-3.1-flash-image-preview",
+                "enabled": True,
+            }
+        }
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(image_jobs_module, "authorize_request", AsyncMock(return_value=self.fake_user)):
+                response = await client.post(
+                    "/v1/image-jobs/edits",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    data={"model": "gemini-image", "prompt": "Blend these references", "n": "1"},
+                    files=[
+                        ("image", ("input-1.png", b"fake_image_data_1", "image/png")),
+                        ("image", ("input-2.png", b"fake_image_data_2", "image/png")),
+                        ("image", ("input-3.png", b"fake_image_data_3", "image/png")),
+                    ],
+                )
+
+        self.assertEqual(response.status_code, 202, response.text)
+        payload = response.json()
+        self.assertEqual(payload["model"], "gemini-image")
+        self.assertNotIn("provider_model", payload)
+        self.assertNotIn("route_reason", payload)
+
+        job = next(iter(self.store.jobs.values()))
+        self.assertEqual(job.public_model, "gemini-image")
+        self.assertEqual(job.provider_model, "gemini-3.1-flash-image-preview")
+        self.assertIn(":user_override", job.route_reason)
+
+    async def test_create_image_edit_job_station_alias_preserves_display_and_billing_snapshot(self) -> None:
+        resolved = registry.resolve_public_model("gemini-image", "images/edits")
+        station_model = SimpleNamespace(
+            resolved_model=resolved,
+            display_model="stone-image-fast",
+            station_id="st_1",
+            station_alias="stone-image-fast",
+            resolved_public_model="gemini-image",
+            retail_input_per_million=0,
+            retail_output_per_million=0,
+            retail_price_per_image_cents=42.0,
+            wholesale_input_per_million=0,
+            wholesale_output_per_million=0,
+            wholesale_price_per_image_cents=11.0,
+            price_version=7,
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(image_jobs_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                image_jobs_module,
+                "resolve_station_model_for_user",
+                AsyncMock(return_value=station_model),
+            ):
+                response = await client.post(
+                    "/v1/image-jobs/edits",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    data={"model": "stone-image-fast", "prompt": "Blend these references", "n": "1"},
+                    files=[
+                        ("image", ("input-1.png", b"fake_image_data_1", "image/png")),
+                        ("image", ("input-2.png", b"fake_image_data_2", "image/png")),
+                        ("image", ("input-3.png", b"fake_image_data_3", "image/png")),
+                    ],
+                )
+
+        self.assertEqual(response.status_code, 202, response.text)
+        payload = response.json()
+        self.assertEqual(payload["model"], "stone-image-fast")
+
+        job = next(iter(self.store.jobs.values()))
+        self.assertEqual(job.public_model, "stone-image-fast")
+        manifest = json.loads(job.request_payload_json)
+        snapshot = manifest["coincoin_snapshot"]
+        self.assertEqual(snapshot["display_model"], "stone-image-fast")
+        self.assertEqual(snapshot["resolved_public_model"], "gemini-image")
+        self.assertEqual(snapshot["retail_price_per_image_cents"], 42.0)
+        self.assertEqual(snapshot["station_usage"]["station_alias"], "stone-image-fast")
+        self.assertEqual(snapshot["station_usage"]["wholesale_price_per_image_cents"], 11.0)
+
     async def test_get_image_job_returns_existing_job(self) -> None:
         job = ImageJob(
             id="job_get_1",
@@ -263,6 +347,8 @@ class ImageJobsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["id"], job.id)
         self.assertEqual(payload["status"], image_jobs_module.JOB_STATUS_COMPLETED)
         self.assertEqual(payload["result"]["data"][0]["b64_json"], "edited")
+        self.assertNotIn("provider_model", payload)
+        self.assertNotIn("route_reason", payload)
 
     async def test_process_image_edit_job_completes_and_records_usage(self) -> None:
         job_id = "job_worker_1"
@@ -359,6 +445,122 @@ class ImageJobsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(add_usage.await_args.kwargs["endpoint"], "image-jobs/edits")
         self.assertEqual(add_usage.await_args.kwargs["usage_unit_count"], 1)
         self.assertEqual(self.store.media_artifacts, [])
+
+    async def test_process_image_edit_job_uses_stored_backend_snapshot(self) -> None:
+        job_id = "job_worker_override"
+        job_dir = Path(self._tmpdir.name) / job_id
+        job_dir.mkdir(parents=True, exist_ok=True)
+        manifest = {
+            "requested_model": "gemini-image",
+            "coincoin_snapshot": {
+                "display_model": "stone-image-fast",
+                "resolved_public_model": "gemini-image",
+                "retail_price_per_image_cents": 42.0,
+                "public_pricing": {
+                    "pricing_mode": "multiplier",
+                    "model_multiplier": 1.0,
+                    "output_multiplier": 1.0,
+                    "cache_read_multiplier": 0.0,
+                    "image_multiplier": 1.0,
+                    "video_multiplier": 1.0,
+                    "base_price_input_per_million": 0,
+                    "base_price_output_per_million": 0,
+                    "base_price_per_image_cents": 18.0,
+                    "base_price_per_video_cents": 0.0,
+                    "effective_cached_input_per_million": 0.0,
+                    "price_version": 5,
+                },
+                "station_usage": {
+                    "station_id": "st_1",
+                    "station_alias": "stone-image-fast",
+                    "resolved_public_model": "gemini-image",
+                    "wholesale_price_input_per_million": 0,
+                    "wholesale_price_output_per_million": 0,
+                    "wholesale_price_per_image_cents": 11.0,
+                    "price_version": 7,
+                },
+            },
+            "form_fields": [["prompt", "Blend these images"], ["n", "1"]],
+            "files": [
+                {
+                    "field_name": "image",
+                    "filename": "input-1.png",
+                    "stored_name": "00-input-1.png",
+                    "mime_type": "image/png",
+                },
+                {
+                    "field_name": "image",
+                    "filename": "input-2.png",
+                    "stored_name": "01-input-2.png",
+                    "mime_type": "image/png",
+                },
+                {
+                    "field_name": "image",
+                    "filename": "input-3.png",
+                    "stored_name": "02-input-3.png",
+                    "mime_type": "image/png",
+                },
+            ],
+        }
+        for idx, file_info in enumerate(manifest["files"], start=1):
+            (job_dir / file_info["stored_name"]).write_bytes(f"fake-image-{idx}".encode("utf-8"))
+
+        job = ImageJob(
+            id=job_id,
+            user_id=self.fake_user.id,
+            api_key_id="k_image_job",
+            status=image_jobs_module.JOB_STATUS_RUNNING,
+            endpoint="images/edits",
+            public_model="stone-image-fast",
+            provider_model="gemini-3.1-flash-image-preview",
+            route_reason="catalog:gemini-image:cpa_gemini:user_override",
+            image_count=3,
+            request_payload_json=json.dumps(manifest),
+            storage_dir=str(job_dir),
+            created_at=datetime.utcnow(),
+            started_at=datetime.utcnow(),
+        )
+        self.store.jobs[job.id] = job
+
+        upstream_client = _RecordingStreamClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "choices": [
+                            {
+                                "message": {
+                                    "images": [
+                                        {
+                                            "image_url": {
+                                                "url": "data:image/png;base64,edited-result"
+                                            }
+                                        }
+                                    ]
+                                }
+                            }
+                        ]
+                    },
+                    headers={"x-request-id": "req_image_job_override"},
+                )
+            ]
+        )
+
+        with patch.object(image_jobs_module, "SessionLocal", _FakeSessionFactory(self.store)), patch.object(
+            image_jobs_module,
+            "get_image_stream_client",
+            AsyncMock(return_value=upstream_client),
+        ), patch.object(image_jobs_module.usage_buffer, "add", AsyncMock()) as add_usage:
+            await image_jobs_module._process_image_edit_job(job.id)
+
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gemini-3.1-flash-image-preview")
+        self.assertEqual(add_usage.await_args.kwargs["model"], "stone-image-fast")
+        self.assertEqual(add_usage.await_args.kwargs["customer_model_alias"], "stone-image-fast")
+        self.assertEqual(add_usage.await_args.kwargs["provider_model"], "gemini-3.1-flash-image-preview")
+        self.assertEqual(add_usage.await_args.kwargs["route_reason"], "catalog:gemini-image:cpa_gemini:user_override")
+        self.assertEqual(add_usage.await_args.kwargs["station_alias"], "stone-image-fast")
+        self.assertEqual(add_usage.await_args.kwargs["resolved_public_model"], "gemini-image")
+        self.assertEqual(add_usage.await_args.kwargs["price_per_image_cents"], 42.0)
+        self.assertEqual(add_usage.await_args.kwargs["wholesale_price_per_image_cents"], 11.0)
 
     async def test_mark_image_job_completed_records_http_artifact(self) -> None:
         job = ImageJob(

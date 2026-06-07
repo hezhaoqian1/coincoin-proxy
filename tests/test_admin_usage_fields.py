@@ -215,6 +215,21 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("周期消耗", admin_html)
         self.assertIn("u.period_usage", admin_html)
 
+    def test_admin_ui_wires_user_model_override_sections(self) -> None:
+        admin_html = (Path(admin_module.__file__).parent / "static" / "admin.html").read_text()
+
+        self.assertIn("模型转发例外", admin_html)
+        self.assertIn("缓存计费例外", admin_html)
+        self.assertIn("saveUserRoutingOverride", admin_html)
+        self.assertIn("saveNewUserRoutingOverride", admin_html)
+        self.assertIn("userRoutingNewModel", admin_html)
+        self.assertIn("userRoutingNewTarget", admin_html)
+        self.assertIn("deleteUserRoutingOverride", admin_html)
+        self.assertIn("saveUserPricingOverride", admin_html)
+        self.assertIn("saveNewUserPricingOverride", admin_html)
+        self.assertIn("userPricingNewModel", admin_html)
+        self.assertIn("deleteUserPricingOverride", admin_html)
+
     def test_admin_ui_surfaces_provider_fallback_observability(self) -> None:
         admin_html = (Path(admin_module.__file__).parent / "static" / "admin.html").read_text()
 
@@ -2063,6 +2078,8 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                 _FakeEntityResult(None),
                 _FakeScalarsResult([]),
                 _FakeScalarsResult([]),
+                _FakeScalarsResult([]),
+                _FakeScalarsResult([]),
                 _FakeEntityResult(finance_summary),
             ],
             scalar_results=[120, 450],
@@ -2092,6 +2109,8 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["station_attribution"]["station_id"], "st_1")
         self.assertEqual(payload["station_attribution"]["station_name"], "Alpha Station")
         self.assertEqual(payload["station_attribution"]["station_owner_user_id"], "u_owner")
+        self.assertEqual(payload["model_routing_overrides"], [])
+        self.assertEqual(payload["model_pricing_overrides"], [])
 
     async def test_update_user_can_clear_usage_limits(self) -> None:
         user = SimpleNamespace(
@@ -2188,6 +2207,8 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                 _FakeEntityResult(None),
                 _FakeScalarsResult([]),
                 _FakeScalarsResult([]),
+                _FakeScalarsResult([]),
+                _FakeScalarsResult([]),
                 _FakeEntityResult(finance_summary),
             ],
             scalar_results=[0, 0],
@@ -2219,6 +2240,289 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["billing_summary"]["available_cents"], 2500)
         self.assertEqual(payload["billing_summary"]["legacy_balance_cents"], 2500)
         self.assertEqual(payload["billing"]["available"]["remaining_cents"], 2500)
+
+    async def test_user_detail_exposes_user_model_override_summaries(self) -> None:
+        user = SimpleNamespace(
+            id="u_1",
+            username="alice",
+            external_id="ext_alice",
+            status="active",
+            balance=2500,
+            token_limit=None,
+            token_used=0,
+            input_tokens_used=0,
+            output_tokens_used=0,
+            request_limit_per_minute=None,
+            request_limit_per_day=None,
+            created_at=datetime(2026, 3, 25, 10, 0, 0),
+            updated_at=datetime(2026, 3, 25, 10, 0, 0),
+        )
+        finance_summary = SimpleNamespace(
+            user_id="u_1",
+            initialized_from_history=1,
+            total_paid_rmb_cents=0,
+            total_paid_balance_cents=0,
+            total_ops_credit_cents=0,
+            total_bonus_cents=0,
+            total_consumed_cents=0,
+            total_ops_debit_cents=0,
+            legacy_unclassified_cents=0,
+            total_paid_orders=0,
+            last_payment_at=None,
+        )
+        routing_override = SimpleNamespace(
+            user_id="u_1",
+            public_model_id="claude-opus-4-7",
+            provider_model="gpt-5.5",
+            upstream_model="gpt-5.5",
+            enabled=1,
+            updated_by="admin",
+            updated_at=datetime(2026, 6, 7, 12, 0, 0),
+        )
+        pricing_override = SimpleNamespace(
+            user_id="u_1",
+            public_model_id="claude-opus-4-7",
+            cache_read_multiplier_override=1.0,
+            updated_by="admin",
+            updated_at=datetime(2026, 6, 7, 12, 0, 0),
+        )
+        fake_db = _FakeDB(
+            execute_results=[
+                _FakeAllResult([(user, None, None)]),
+                _FakeScalarsResult([]),
+                _FakeEntityResult(None),
+                _FakeScalarsResult([]),
+                _FakeScalarsResult([]),
+                _FakeScalarsResult([routing_override]),
+                _FakeScalarsResult([pricing_override]),
+                _FakeEntityResult(finance_summary),
+            ],
+            scalar_results=[0, 0],
+        )
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get("/admin/users/u_1")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["model_routing_overrides"][0]["public_model_id"], "claude-opus-4-7")
+        self.assertEqual(payload["model_routing_overrides"][0]["provider_model"], "gpt-5.5")
+        self.assertEqual(payload["model_routing_overrides"][0]["upstream_model"], "gpt-5.5")
+        self.assertEqual(payload["model_routing_overrides"][0]["enabled"], True)
+        self.assertEqual(payload["model_pricing_overrides"][0]["public_model_id"], "claude-opus-4-7")
+        self.assertEqual(payload["model_pricing_overrides"][0]["cache_read_multiplier_override"], 1.0)
+
+    async def test_admin_can_upsert_and_delete_user_model_routing_override(self) -> None:
+        catalog = {
+            "default_text_model": "alias-a",
+            "models": [
+                {
+                    "id": "alias-a",
+                    "owned_by": "coincoin",
+                    "provider_name": "OpenAI",
+                    "provider_model": "gpt-5.4",
+                    "capabilities": ["chat/completions", "responses"],
+                    "routing_mode": "direct",
+                    "delivery_lane": "upstream_direct",
+                    "upstream_model": "gpt-5.4",
+                    "upstream_url": "https://legacy.example/v1",
+                    "api_key": "legacy-key",
+                    "auth_style": "bearer",
+                    "billable_sku": "alias-a-text",
+                },
+                {
+                    "id": "alias-b",
+                    "owned_by": "coincoin",
+                    "provider_name": "OpenAI",
+                    "provider_model": "gpt-5.5",
+                    "capabilities": ["chat/completions", "responses"],
+                    "routing_mode": "direct",
+                    "delivery_lane": "upstream_direct",
+                    "upstream_model": "gpt-5.5",
+                    "upstream_url": "https://legacy.example/v1",
+                    "api_key": "legacy-key",
+                    "auth_style": "bearer",
+                    "billable_sku": "alias-b-text",
+                },
+            ],
+        }
+        originals = {
+            "model_catalog_json": admin_module._settings.model_catalog_json,
+        }
+        user = SimpleNamespace(id="u_1")
+
+        class _RoutingOverrideDB:
+            def __init__(self) -> None:
+                self.routing_row = None
+                self.added = []
+                self.deleted = []
+                self.commits = 0
+                self.execute_count = 0
+
+            async def execute(self, _query):
+                self.execute_count += 1
+                if self.execute_count == 1:
+                    return _FakeEntityResult(user)
+                if self.execute_count == 2:
+                    return _FakeEntityResult(self.routing_row)
+                if self.execute_count == 3:
+                    return _FakeEntityResult(self.routing_row)
+                raise AssertionError("unexpected execute call")
+
+            def add(self, obj):
+                self.added.append(obj)
+                self.routing_row = obj
+
+            async def delete(self, obj):
+                self.deleted.append(obj)
+                if obj is self.routing_row:
+                    self.routing_row = None
+
+            async def commit(self):
+                self.commits += 1
+
+        fake_db = _RoutingOverrideDB()
+
+        async def fake_get_db():
+            yield fake_db
+
+        try:
+            admin_module._settings.model_catalog_json = json.dumps(catalog)
+            model_registry._initialized = False
+            model_registry.init_from_settings()
+            app.dependency_overrides[admin_module.get_db] = fake_get_db
+            app.dependency_overrides[admin_module.admin_guard] = lambda: None
+
+            transport = httpx.ASGITransport(app=app)
+            with patch.object(admin_module, "_invalidate_user_key_cache", AsyncMock()) as invalidate_cache:
+                async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                    put_response = await client.put(
+                        "/admin/users/u_1/model-routing-overrides/alias-a",
+                        json={"target_alias": "alias-b", "enabled": True},
+                    )
+                    delete_response = await client.delete(
+                        "/admin/users/u_1/model-routing-overrides/alias-a",
+                    )
+
+            self.assertEqual(put_response.status_code, 200, put_response.text)
+            payload = put_response.json()
+            self.assertEqual(payload["public_model_id"], "alias-a")
+            self.assertEqual(payload["provider_model"], "gpt-5.5")
+            self.assertEqual(payload["upstream_model"], "gpt-5.5")
+            self.assertTrue(payload["enabled"])
+            self.assertIsInstance(payload["targets"], list)
+            self.assertEqual(fake_db.commits, 2)
+            self.assertEqual(len(fake_db.added), 1)
+            self.assertEqual(fake_db.added[0].updated_by, "admin")
+            self.assertEqual(len(fake_db.deleted), 1)
+            self.assertEqual(delete_response.status_code, 200, delete_response.text)
+            self.assertEqual(delete_response.json(), {"user_id": "u_1", "public_model_id": "alias-a", "deleted": True})
+            self.assertEqual(invalidate_cache.await_count, 2)
+        finally:
+            admin_module._settings.model_catalog_json = originals["model_catalog_json"]
+            model_registry._initialized = False
+
+    async def test_admin_can_upsert_and_delete_user_model_pricing_override(self) -> None:
+        catalog = {
+            "default_text_model": "priced-a",
+            "models": [
+                {
+                    "id": "priced-a",
+                    "owned_by": "coincoin",
+                    "provider_name": "OpenAI",
+                    "provider_model": "gpt-5.4",
+                    "capabilities": ["chat/completions", "responses"],
+                    "routing_mode": "direct",
+                    "delivery_lane": "upstream_direct",
+                    "upstream_model": "gpt-5.4",
+                    "upstream_url": "https://legacy.example/v1",
+                    "api_key": "legacy-key",
+                    "auth_style": "bearer",
+                    "billable_sku": "priced-a-text",
+                    "price_input_per_million": 250,
+                    "price_output_per_million": 1500,
+                }
+            ],
+        }
+        originals = {
+            "model_catalog_json": admin_module._settings.model_catalog_json,
+        }
+        user = SimpleNamespace(id="u_1")
+
+        class _PricingOverrideDB:
+            def __init__(self) -> None:
+                self.pricing_row = None
+                self.added = []
+                self.deleted = []
+                self.commits = 0
+                self.execute_count = 0
+
+            async def execute(self, _query):
+                self.execute_count += 1
+                if self.execute_count == 1:
+                    return _FakeEntityResult(user)
+                if self.execute_count == 2:
+                    return _FakeEntityResult(self.pricing_row)
+                if self.execute_count == 3:
+                    return _FakeEntityResult(self.pricing_row)
+                raise AssertionError("unexpected execute call")
+
+            def add(self, obj):
+                self.added.append(obj)
+                self.pricing_row = obj
+
+            async def delete(self, obj):
+                self.deleted.append(obj)
+                if obj is self.pricing_row:
+                    self.pricing_row = None
+
+            async def commit(self):
+                self.commits += 1
+
+        fake_db = _PricingOverrideDB()
+
+        async def fake_get_db():
+            yield fake_db
+
+        try:
+            admin_module._settings.model_catalog_json = json.dumps(catalog)
+            model_registry._initialized = False
+            model_registry.init_from_settings()
+            app.dependency_overrides[admin_module.get_db] = fake_get_db
+            app.dependency_overrides[admin_module.admin_guard] = lambda: None
+
+            transport = httpx.ASGITransport(app=app)
+            with patch.object(admin_module, "_invalidate_user_key_cache", AsyncMock()) as invalidate_cache:
+                async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                    put_response = await client.put(
+                        "/admin/users/u_1/model-pricing-overrides/priced-a",
+                        json={"cache_read_multiplier_override": 1.0},
+                    )
+                    delete_response = await client.delete(
+                        "/admin/users/u_1/model-pricing-overrides/priced-a",
+                    )
+
+            self.assertEqual(put_response.status_code, 200, put_response.text)
+            payload = put_response.json()
+            self.assertEqual(payload["public_model_id"], "priced-a")
+            self.assertEqual(payload["cache_read_multiplier_override"], 1.0)
+            self.assertEqual(fake_db.commits, 2)
+            self.assertEqual(len(fake_db.added), 1)
+            self.assertEqual(fake_db.added[0].updated_by, "admin")
+            self.assertEqual(len(fake_db.deleted), 1)
+            self.assertEqual(delete_response.status_code, 200, delete_response.text)
+            self.assertEqual(delete_response.json(), {"user_id": "u_1", "public_model_id": "priced-a", "deleted": True})
+            self.assertEqual(invalidate_cache.await_count, 2)
+        finally:
+            admin_module._settings.model_catalog_json = originals["model_catalog_json"]
+            model_registry._initialized = False
 
     async def test_admin_can_adjust_subscription(self) -> None:
         user = SimpleNamespace(id="u_1", balance=1200, status="active")

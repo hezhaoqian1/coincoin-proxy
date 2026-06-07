@@ -2292,7 +2292,7 @@
             <h1 class="page-title">兑换码</h1>
             <p class="page-desc">生成并管理预充值兑换码</p>
           </div>
-          <button class="btn btn-primary" onclick="openGenerateCodesModal()">+ 生成兑换码</button>
+          <button class="btn btn-primary" onclick="openModal('generateCodesModal')">+ 生成兑换码</button>
         </div>
         <div class="card">
           <div class="card-header">
@@ -2907,12 +2907,12 @@
       </div>
       <div class="modal-body">
         <div class="form-group">
-          <label class="form-label">指定兑换码（可选）</label>
-          <input id="genCustomCode" class="form-input" maxlength="32" placeholder="例如 libertytalk0607；留空则随机生成" oninput="updateGenerateCodeMode()" />
+          <label class="form-label">自定义兑换码（可选）</label>
+          <input id="genCustomCode" class="form-input" maxlength="32" placeholder="留空则随机生成；例如 libertytalk0607" />
         </div>
         <div class="form-row">
           <div class="form-group">
-            <label class="form-label" id="genCountLabel">随机码个数（1-100）</label>
+            <label class="form-label">数量（1-100）</label>
             <input type="number" id="genCount" class="form-input" value="10" min="1" max="100" />
           </div>
           <div class="form-group">
@@ -2934,7 +2934,6 @@
           <label class="form-label">备注</label>
           <input id="genNote" class="form-input" maxlength="256" placeholder="例如 LibertyTalk 0607 活动" />
         </div>
-        <p class="text-sm text-muted mb-4" id="genModeHint">不填指定兑换码时，系统会按“随机码个数”生成多个不同随机码。填了指定兑换码时，只会创建这一个码。</p>
         <p class="text-sm text-muted mb-4">总兑换次数填 0 表示全站不限；每用户次数填 1 表示同一用户只能兑换一次。</p>
       </div>
       <div class="modal-footer">
@@ -2955,57 +2954,6 @@
         <p class="text-sm text-muted" style="margin-bottom:12px" id="codesResultInfo"></p>
         <div class="code-display" id="codesResultList"></div>
         <button class="btn btn-secondary mt-4" onclick="copyToClipboard(document.getElementById('codesResultList').textContent)" style="width:100%">复制全部兑换码</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Edit Redemption Code Modal -->
-  <div id="editCodeModal" class="modal-overlay">
-    <div class="modal" style="max-width:540px">
-      <div class="modal-header">
-        <span class="modal-title">编辑兑换码</span>
-        <button class="modal-close" onclick="closeModal('editCodeModal')">&times;</button>
-      </div>
-      <div class="modal-body">
-        <input type="hidden" id="editCodeId" value="" />
-        <div class="form-group">
-          <label class="form-label">兑换码</label>
-          <input id="editCodeValue" class="form-input" readonly />
-        </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label class="form-label">面值（分）</label>
-            <input type="number" id="editCodeBalance" class="form-input" min="1" />
-          </div>
-          <div class="form-group">
-            <label class="form-label">状态</label>
-            <select id="editCodeStatus" class="form-select">
-              <option value="unused">未使用</option>
-              <option value="active">活动中</option>
-              <option value="used">已用完</option>
-              <option value="disabled">已禁用</option>
-            </select>
-          </div>
-        </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label class="form-label">总兑换次数</label>
-            <input type="number" id="editCodeMaxRedemptions" class="form-input" min="0" />
-          </div>
-          <div class="form-group">
-            <label class="form-label">每用户次数</label>
-            <input type="number" id="editCodePerUserLimit" class="form-input" min="0" />
-          </div>
-        </div>
-        <div class="form-group">
-          <label class="form-label">备注</label>
-          <input id="editCodeNote" class="form-input" maxlength="256" />
-        </div>
-        <p class="text-sm text-muted mb-4" id="editCodeUsageHint"></p>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-secondary" onclick="closeModal('editCodeModal')">取消</button>
-        <button class="btn btn-primary" onclick="saveRedemptionCode()">保存</button>
       </div>
     </div>
   </div>
@@ -3307,6 +3255,7 @@
 	    let claudeCompatSettingsCache = null;
 	    let financeLedgerSearchTimeout = null;
 	    let paymentOrderSearchTimeout = null;
+    let currentUserOverrideOptions = [];
     const ADMIN_TRAFFIC_PACK_VALID_DAYS = 180;
     const ADMIN_MONTHLY_PRODUCTS = [
       { id: 'monthly_light', name: '轻量月卡', balance_cents: 8000 },
@@ -3974,6 +3923,113 @@
       document.getElementById('newUsername').focus();
     }
 
+    function renderUserRoutingOverrideNewForm(items = []) {
+      const taken = new Set((items || []).map(item => item.public_model_id).filter(Boolean));
+      const available = currentUserOverrideOptions.filter(item => !taken.has(item.id));
+      if (!available.length) {
+        return '<div class="text-sm text-muted">当前公开模型都已配置转发例外。</div>';
+      }
+      const modelOptions = ['<option value="">选择公开模型</option>'].concat(
+        available.map(item => `<option value="${escapeHtml(item.id)}">${escapeHtml(renderUserOverrideModelLabel(item))}</option>`)
+      ).join('');
+      const firstModelId = available[0]?.id || '';
+      return `
+        <div style="border:1px dashed var(--border);border-radius:10px;padding:12px;margin-bottom:10px;background:var(--bg-primary)">
+          <div class="text-sm text-muted" style="margin-bottom:8px">新增单个公开模型的后台转发例外</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <select id="userRoutingNewModel" class="form-select" style="flex:1;min-width:220px" onchange="syncNewUserRoutingTargets()">${modelOptions}</select>
+            <select id="userRoutingNewTarget" class="form-select" style="flex:1;min-width:260px">${buildUserOverrideTargetOptions(firstModelId)}</select>
+            <button class="btn btn-sm btn-secondary" onclick="saveNewUserRoutingOverride()">新增</button>
+          </div>
+        </div>
+      `;
+    }
+
+    function buildUserRoutingOverrideRows(items = []) {
+      const rows = items.map(item => {
+        const publicModelId = escapeHtml(item.public_model_id || '');
+        const providerModel = escapeHtml(item.provider_model || '');
+        const upstreamModel = escapeHtml(item.upstream_model || '');
+        const enabled = item.enabled !== false;
+        const targets = Array.isArray(item.targets) ? item.targets : [];
+        const selectedTarget = targets.find(target =>
+          (target.provider_model || '') === (item.provider_model || '')
+          && ((target.upstream_model || target.provider_model || '') === (item.upstream_model || item.provider_model || ''))
+        );
+        const targetOptions = ['<option value="">请选择目标 alias</option>'].concat(
+          targets.map(target => `
+            <option value="${escapeHtml(target.id)}" ${selectedTarget?.id === target.id ? 'selected' : ''}>${escapeHtml(renderAliasTargetOption(target))}</option>
+          `)
+        ).join('');
+        return `
+          <div style="border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:10px;background:var(--bg-primary)">
+            <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start">
+              <div>
+                <div style="font-weight:700">${publicModelId || '-'}</div>
+                <div class="text-sm text-muted">provider: ${providerModel || '-'}</div>
+                <div class="text-sm text-muted">upstream: ${upstreamModel || '-'}</div>
+              </div>
+              <span class="badge ${enabled ? 'badge-success' : 'badge-warning'}">${enabled ? '启用' : '停用'}</span>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+              <select id="routingTarget_${publicModelId}" class="form-select" style="flex:1;min-width:260px">${targetOptions}</select>
+              <button class="btn btn-sm btn-secondary" onclick="saveUserRoutingOverride('${publicModelId}')">保存</button>
+              <button class="btn btn-sm btn-danger" onclick="deleteUserRoutingOverride('${publicModelId}')">删除</button>
+            </div>
+          </div>
+        `;
+      }).join('');
+      const emptyState = items.length ? '' : '<div class="text-sm text-muted" style="margin-bottom:10px">当前没有用户级模型转发例外</div>';
+      return renderUserRoutingOverrideNewForm(items) + emptyState + rows;
+    }
+
+    function renderUserPricingOverrideNewForm(items = []) {
+      const taken = new Set((items || []).map(item => item.public_model_id).filter(Boolean));
+      const available = currentUserOverrideOptions.filter(item => !taken.has(item.id));
+      if (!available.length) {
+        return '<div class="text-sm text-muted">当前公开模型都已配置缓存计费例外。</div>';
+      }
+      const modelOptions = ['<option value="">选择公开模型</option>'].concat(
+        available.map(item => `<option value="${escapeHtml(item.id)}">${escapeHtml(renderUserOverrideModelLabel(item))}</option>`)
+      ).join('');
+      return `
+        <div style="border:1px dashed var(--border);border-radius:10px;padding:12px;margin-bottom:10px;background:var(--bg-primary)">
+          <div class="text-sm text-muted" style="margin-bottom:8px">新增单个公开模型的缓存计费例外</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <select id="userPricingNewModel" class="form-select" style="flex:1;min-width:220px">${modelOptions}</select>
+            <input type="number" id="userPricingNewMultiplier" class="form-input" min="0" step="0.01" value="1" style="width:180px" />
+            <button class="btn btn-sm btn-secondary" onclick="saveNewUserPricingOverride()">新增</button>
+          </div>
+          <div class="text-sm text-muted" style="margin-top:8px">1.00 = 按原价计费</div>
+        </div>
+      `;
+    }
+
+    function buildUserPricingOverrideRows(items = []) {
+      const rows = items.map(item => {
+        const publicModelId = escapeHtml(item.public_model_id || '');
+        const multiplier = Number(item.cache_read_multiplier_override ?? 0);
+        return `
+          <div style="border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:10px;background:var(--bg-primary)">
+            <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start">
+              <div>
+                <div style="font-weight:700">${publicModelId || '-'}</div>
+                <div class="text-sm text-muted">缓存读取倍率: ${Number.isFinite(multiplier) ? multiplier.toFixed(2) : '-'}</div>
+              </div>
+              <div class="text-sm text-muted">1.00 = 按原价计费</div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+              <input type="number" id="pricingMultiplier_${publicModelId}" class="form-input" min="0" step="0.01" value="${Number.isFinite(multiplier) ? multiplier : 1}" style="width:180px" />
+              <button class="btn btn-sm btn-secondary" onclick="saveUserPricingOverride('${publicModelId}')">保存</button>
+              <button class="btn btn-sm btn-danger" onclick="deleteUserPricingOverride('${publicModelId}')">删除</button>
+            </div>
+          </div>
+        `;
+      }).join('');
+      const emptyState = items.length ? '' : '<div class="text-sm text-muted" style="margin-bottom:10px">当前没有缓存计费例外</div>';
+      return renderUserPricingOverrideNewForm(items) + emptyState + rows;
+    }
+
     async function openUserModal(userId) {
       currentUserId = userId;
       try {
@@ -3984,6 +4040,17 @@
         const billing = u.billing || {};
         const billingSummary = u.billing_summary || {};
         const station = u.station_attribution || null;
+        const routingOverrides = u.model_routing_overrides || [];
+        const pricingOverrides = u.model_pricing_overrides || [];
+        currentUserOverrideOptions = Array.isArray(u.user_model_override_options) && u.user_model_override_options.length
+          ? u.user_model_override_options
+          : modelAliasCache.map(item => ({
+              id: item.id,
+              provider_name: item.provider_name,
+              delivery_lane: item.delivery_lane,
+              capabilities: item.capabilities || [],
+              targets: item.targets || [],
+            }));
         const stationHtml = station
           ? `<div style="padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--bg-primary)">
               <div style="font-weight:700">${escapeHtml(station.station_name || station.station_id || '未知站长')}</div>
@@ -4061,7 +4128,18 @@
             </div>
             <div class="text-sm text-muted" style="margin-top:8px">最后支付: ${formatDateFull(f.last_payment_at)} · 仅预聚合读取</div>
           </div>
+          <div class="form-group">
+            <label class="form-label">模型转发例外</label>
+            <div class="text-sm text-muted" style="margin-bottom:8px">用户继续调用公开 alias，只有后台实际转发目标变化。</div>
+            ${buildUserRoutingOverrideRows(routingOverrides)}
+          </div>
+          <div class="form-group">
+            <label class="form-label">缓存计费例外</label>
+            <div class="text-sm text-muted" style="margin-bottom:8px">可对某个公开模型单独调整缓存读取倍率。</div>
+            ${buildUserPricingOverrideRows(pricingOverrides)}
+          </div>
           <div class="form-group"><label class="form-label">API 密钥 (${u.keys?.length||0})</label><div style="max-height:200px;overflow-y:auto">${keysHtml}</div>${policyHtml}</div>`;
+        syncNewUserRoutingTargets();
         syncGrantTrafficPackDefaults();
         openModal('userModal');
       } catch (e) { console.error(e); toast('加载失败', 'error'); }
@@ -4146,6 +4224,112 @@
         }
       } catch (e) {
         toast(e.message || '保存流量包失败', 'error');
+      }
+    }
+
+    async function saveUserRoutingOverride(publicModelId) {
+      if (!currentUserId) return toast('当前没有选中用户', 'error');
+      const targetAlias = (document.getElementById(`routingTarget_${publicModelId}`)?.value || '').trim();
+      if (!targetAlias) return toast('请选择兼容的目标 alias', 'error');
+      try {
+        const r = await fetch(`/admin/users/${currentUserId}/model-routing-overrides/${encodeURIComponent(publicModelId)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+          body: JSON.stringify({ target_alias: targetAlias, enabled: true }),
+        });
+        await parseAdminResponse(r, '保存模型转发例外失败');
+        toast('模型转发例外已更新', 'success');
+        await openUserModal(currentUserId);
+      } catch (e) {
+        toast(e.message || '保存模型转发例外失败', 'error');
+      }
+    }
+
+    async function saveNewUserRoutingOverride() {
+      if (!currentUserId) return toast('当前没有选中用户', 'error');
+      const publicModelId = (document.getElementById('userRoutingNewModel')?.value || '').trim();
+      const targetAlias = (document.getElementById('userRoutingNewTarget')?.value || '').trim();
+      if (!publicModelId) return toast('请选择公开模型', 'error');
+      if (!targetAlias) return toast('请选择兼容的目标 alias', 'error');
+      try {
+        const r = await fetch(`/admin/users/${currentUserId}/model-routing-overrides/${encodeURIComponent(publicModelId)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+          body: JSON.stringify({ target_alias: targetAlias, enabled: true }),
+        });
+        await parseAdminResponse(r, '新增模型转发例外失败');
+        toast('模型转发例外已新增', 'success');
+        await openUserModal(currentUserId);
+      } catch (e) {
+        toast(e.message || '新增模型转发例外失败', 'error');
+      }
+    }
+
+    async function deleteUserRoutingOverride(publicModelId) {
+      if (!currentUserId) return toast('当前没有选中用户', 'error');
+      try {
+        const r = await fetch(`/admin/users/${currentUserId}/model-routing-overrides/${encodeURIComponent(publicModelId)}`, {
+          method: 'DELETE',
+          headers: adminHeaders(),
+        });
+        await parseAdminResponse(r, '删除模型转发例外失败');
+        toast('模型转发例外已删除', 'success');
+        await openUserModal(currentUserId);
+      } catch (e) {
+        toast(e.message || '删除模型转发例外失败', 'error');
+      }
+    }
+
+    async function saveUserPricingOverride(publicModelId) {
+      if (!currentUserId) return toast('当前没有选中用户', 'error');
+      const multiplier = Number(document.getElementById(`pricingMultiplier_${publicModelId}`)?.value || '');
+      if (!Number.isFinite(multiplier) || multiplier < 0) return toast('请输入有效倍率', 'error');
+      try {
+        const r = await fetch(`/admin/users/${currentUserId}/model-pricing-overrides/${encodeURIComponent(publicModelId)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+          body: JSON.stringify({ cache_read_multiplier_override: multiplier }),
+        });
+        await parseAdminResponse(r, '保存缓存计费例外失败');
+        toast('缓存计费例外已更新', 'success');
+        await openUserModal(currentUserId);
+      } catch (e) {
+        toast(e.message || '保存缓存计费例外失败', 'error');
+      }
+    }
+
+    async function saveNewUserPricingOverride() {
+      if (!currentUserId) return toast('当前没有选中用户', 'error');
+      const publicModelId = (document.getElementById('userPricingNewModel')?.value || '').trim();
+      const multiplier = Number(document.getElementById('userPricingNewMultiplier')?.value || '');
+      if (!publicModelId) return toast('请选择公开模型', 'error');
+      if (!Number.isFinite(multiplier) || multiplier < 0) return toast('请输入有效倍率', 'error');
+      try {
+        const r = await fetch(`/admin/users/${currentUserId}/model-pricing-overrides/${encodeURIComponent(publicModelId)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+          body: JSON.stringify({ cache_read_multiplier_override: multiplier }),
+        });
+        await parseAdminResponse(r, '新增缓存计费例外失败');
+        toast('缓存计费例外已新增', 'success');
+        await openUserModal(currentUserId);
+      } catch (e) {
+        toast(e.message || '新增缓存计费例外失败', 'error');
+      }
+    }
+
+    async function deleteUserPricingOverride(publicModelId) {
+      if (!currentUserId) return toast('当前没有选中用户', 'error');
+      try {
+        const r = await fetch(`/admin/users/${currentUserId}/model-pricing-overrides/${encodeURIComponent(publicModelId)}`, {
+          method: 'DELETE',
+          headers: adminHeaders(),
+        });
+        await parseAdminResponse(r, '删除缓存计费例外失败');
+        toast('缓存计费例外已删除', 'success');
+        await openUserModal(currentUserId);
+      } catch (e) {
+        toast(e.message || '删除缓存计费例外失败', 'error');
       }
     }
 
@@ -4297,6 +4481,32 @@
         ? `，请求名 ${target.upstream_model}`
         : '';
       return `跟随 ${target.id} 的转发设置（当前到 ${provider}${requestName}）`;
+    }
+
+    function renderUserOverrideModelLabel(model) {
+      const provider = model.provider_name || '-';
+      const lane = renderAliasDeliveryLane(model.delivery_lane || '-');
+      return `${model.id} · ${provider} · ${lane}`;
+    }
+
+    function buildUserOverrideTargetOptions(modelId, selectedTargetId = '') {
+      const option = currentUserOverrideOptions.find(item => item.id === modelId);
+      const targets = Array.isArray(option?.targets) ? option.targets : [];
+      if (!targets.length) {
+        return '<option value="">当前没有兼容的目标 alias</option>';
+      }
+      return ['<option value="">请选择目标 alias</option>'].concat(
+        targets.map(target => `
+          <option value="${escapeHtml(target.id)}" ${target.id === selectedTargetId ? 'selected' : ''}>${escapeHtml(renderAliasTargetOption(target))}</option>
+        `)
+      ).join('');
+    }
+
+    function syncNewUserRoutingTargets(selectedTargetId = '') {
+      const modelId = document.getElementById('userRoutingNewModel')?.value || '';
+      const select = document.getElementById('userRoutingNewTarget');
+      if (!select) return;
+      select.innerHTML = buildUserOverrideTargetOptions(modelId, selectedTargetId);
     }
 
     function renderAliasTarget(alias) {
@@ -5914,8 +6124,6 @@
     }
 
     // ==================== Redemption Codes ====================
-    let redemptionCodesById = {};
-
     async function loadRedemptionCodes() {
       try {
         const sf = document.getElementById('codeStatusFilter').value;
@@ -5929,7 +6137,6 @@
           body.innerHTML = '<tr><td colspan="10"><div class="empty-state"><div class="empty-state-icon">🎟️</div><h3>暂无兑换码</h3><p>先生成一批兑换码吧</p></div></td></tr>';
           return;
         }
-        redemptionCodesById = Object.fromEntries(data.map(c => [c.id, c]));
         body.innerHTML = data.map(c => {
           const statusLabel = c.status === 'unused' ? '未使用' : c.status === 'active' ? '活动中' : c.status === 'used' ? '已用完' : '已禁用';
           const badgeCls = c.status === 'unused' || c.status === 'active' ? 'badge-success' : c.status === 'used' ? 'badge-info' : 'badge-error';
@@ -5938,10 +6145,6 @@
           const progressText = maxRedemptions > 0 ? `${redemptionCount}/${maxRedemptions}` : `${redemptionCount}/不限`;
           const perUserText = Number(c.per_user_limit || 0) > 0 ? `${c.per_user_limit} 次` : '不限';
           const canDisable = c.status === 'unused' || c.status === 'active';
-          const actionButtons = [
-            `<button class="btn btn-sm btn-secondary" onclick="openEditCodeModal('${c.id}')">编辑</button>`,
-            canDisable ? `<button class="btn btn-sm btn-danger" onclick="disableCode('${c.id}')">禁用</button>` : '',
-          ].filter(Boolean).join(' ');
           return `<tr>
             <td class="text-mono text-sm">${c.code}</td>
             <td>$${(c.balance_cents/100).toFixed(2)} <span class="text-muted text-sm">(${c.balance_cents}¢)</span></td>
@@ -5952,43 +6155,21 @@
             <td class="text-sm">${c.used_by || '-'}</td>
             <td class="text-sm text-muted">${formatDate(c.used_at)}</td>
             <td class="text-sm text-muted">${formatDate(c.created_at)}</td>
-            <td>${actionButtons || '<span class="text-sm text-muted">—</span>'}</td>
+            <td>${canDisable ? `<button class="btn btn-sm btn-danger" onclick="disableCode('${c.id}')">禁用</button>` : '<span class="text-sm text-muted">—</span>'}</td>
           </tr>`;
         }).join('');
       } catch (e) { console.error(e); toast('加载失败', 'error'); }
     }
 
-    function openGenerateCodesModal() {
-      updateGenerateCodeMode();
-      openModal('generateCodesModal');
-    }
-
-    function updateGenerateCodeMode() {
-      const customCode = document.getElementById('genCustomCode').value.trim();
-      const countInput = document.getElementById('genCount');
-      const countLabel = document.getElementById('genCountLabel');
-      const hint = document.getElementById('genModeHint');
-      if (customCode) {
-        countInput.value = '1';
-        countInput.disabled = true;
-        countLabel.textContent = '创建数量（指定码固定 1）';
-        hint.textContent = '已填写指定兑换码，本次只会创建这一个码。它能被兑换多少次由“总兑换次数”和“每用户次数”控制。';
-      } else {
-        countInput.disabled = false;
-        countLabel.textContent = '随机码个数（1-100）';
-        hint.textContent = '不填指定兑换码时，系统会按“随机码个数”生成多个不同随机码。填了指定兑换码时，只会创建这一个码。';
-      }
-    }
-
     async function generateCodes() {
-      updateGenerateCodeMode();
-      const code = document.getElementById('genCustomCode').value.trim();
-      const count = code ? 1 : (parseInt(document.getElementById('genCount').value) || 10);
+      const count = parseInt(document.getElementById('genCount').value) || 10;
       const balance_cents = parseInt(document.getElementById('genBalance').value) || 1000;
+      const code = document.getElementById('genCustomCode').value.trim();
       const max_redemptions = parseInt(document.getElementById('genMaxRedemptions').value);
       const per_user_limit = parseInt(document.getElementById('genPerUserLimit').value);
       const note = document.getElementById('genNote').value.trim();
       if (count < 1 || count > 100) return toast('数量必须在 1 到 100 之间', 'error');
+      if (code && count !== 1) return toast('自定义兑换码数量必须是 1', 'error');
       if (balance_cents < 1) return toast('面值必须大于 0', 'error');
       if (!Number.isFinite(max_redemptions) || max_redemptions < 0) return toast('总兑换次数不能小于 0', 'error');
       if (!Number.isFinite(per_user_limit) || per_user_limit < 0) return toast('每用户次数不能小于 0', 'error');
@@ -6011,60 +6192,10 @@
       } catch (e) { toast('生成失败', 'error'); }
     }
 
-    function openEditCodeModal(codeId) {
-      const c = redemptionCodesById[codeId];
-      if (!c) return toast('兑换码数据已过期，请刷新后重试', 'error');
-      document.getElementById('editCodeId').value = c.id;
-      document.getElementById('editCodeValue').value = c.code;
-      document.getElementById('editCodeBalance').value = Number(c.balance_cents || 0);
-      document.getElementById('editCodeStatus').value = c.status || 'unused';
-      document.getElementById('editCodeMaxRedemptions').value = Number(c.max_redemptions || 0);
-      document.getElementById('editCodePerUserLimit').value = Number(c.per_user_limit || 0);
-      document.getElementById('editCodeNote').value = c.note || '';
-      const maxText = Number(c.max_redemptions || 0) > 0 ? c.max_redemptions : '不限';
-      document.getElementById('editCodeUsageHint').textContent = `当前已兑换 ${Number(c.redemption_count || 0)} 次，总次数 ${maxText}。总兑换次数填 0 表示不限。`;
-      openModal('editCodeModal');
-    }
-
-    async function saveRedemptionCode() {
-      const codeId = document.getElementById('editCodeId').value;
-      const balance_cents = parseInt(document.getElementById('editCodeBalance').value);
-      const max_redemptions = parseInt(document.getElementById('editCodeMaxRedemptions').value);
-      const per_user_limit = parseInt(document.getElementById('editCodePerUserLimit').value);
-      const status = document.getElementById('editCodeStatus').value;
-      const note = document.getElementById('editCodeNote').value.trim();
-      const current = redemptionCodesById[codeId];
-      const redemptionCount = Number(current?.redemption_count || 0);
-      if (!codeId) return toast('缺少兑换码 ID', 'error');
-      if (!Number.isFinite(balance_cents) || balance_cents < 1) return toast('面值必须大于 0', 'error');
-      if (!Number.isFinite(max_redemptions) || max_redemptions < 0) return toast('总兑换次数不能小于 0', 'error');
-      if (max_redemptions > 0 && max_redemptions < redemptionCount) return toast('总兑换次数不能小于已兑换次数', 'error');
-      if (!Number.isFinite(per_user_limit) || per_user_limit < 0) return toast('每用户次数不能小于 0', 'error');
-      try {
-        const r = await fetch(`/admin/redemption-codes/${codeId}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json', ...adminHeaders() },
-          body: JSON.stringify({ balance_cents, max_redemptions, per_user_limit, status, note }),
-        });
-        const d = await r.json();
-        if (r.ok) {
-          toast('兑换码已更新', 'success');
-          closeModal('editCodeModal');
-          loadRedemptionCodes();
-        } else {
-          toast(d.detail || '保存失败', 'error');
-        }
-      } catch (e) { toast('保存失败', 'error'); }
-    }
-
     async function disableCode(codeId) {
       if (!confirm('确认禁用这个兑换码吗？此操作无法撤销。')) return;
       try {
-        const r = await fetch(`/admin/redemption-codes/${codeId}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json', ...adminHeaders() },
-          body: JSON.stringify({ status: 'disabled' }),
-        });
+        const r = await fetch(`/admin/redemption-codes/${codeId}`, { method: 'PATCH', headers: adminHeaders() });
         if (r.ok) { toast('兑换码已禁用', 'success'); loadRedemptionCodes(); }
         else toast('操作失败', 'error');
       } catch (e) { toast('操作失败', 'error'); }

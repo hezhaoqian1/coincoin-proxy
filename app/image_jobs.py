@@ -1,9 +1,11 @@
 import asyncio
+from copy import deepcopy
 import json
 import logging
 import secrets
 import shutil
 import time
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
@@ -19,7 +21,12 @@ from . import gemini_cpa
 from .models import ImageJob
 from .media_store import record_media_artifacts_best_effort
 from .router import registry as model_registry
-from .station_runtime import public_model_pricing_kwargs
+from .station_runtime import (
+    public_model_pricing_kwargs,
+    resolve_station_model_for_user,
+    station_usage_kwargs,
+)
+from .user_model_overrides import apply_user_overrides_to_resolution
 from .usage_buffer import usage_buffer
 from .proxy import (
     _build_upstream_headers,
@@ -68,17 +75,18 @@ def _job_response(job: ImageJob) -> Dict[str, Any]:
         "status": job.status,
         "endpoint": job.endpoint,
         "model": job.public_model,
-        "provider_model": job.provider_model,
         "image_count": int(job.image_count or 0),
         "attempt_count": int(job.attempt_count or 0),
-        "route_reason": job.route_reason,
         "created_at": job.created_at.isoformat() if job.created_at else None,
         "started_at": job.started_at.isoformat() if job.started_at else None,
         "completed_at": job.completed_at.isoformat() if job.completed_at else None,
     }
     if job.status == JOB_STATUS_COMPLETED and job.result_payload_json:
         try:
-            payload["result"] = json.loads(job.result_payload_json)
+            payload["result"] = _public_image_result_payload(
+                job.public_model,
+                json.loads(job.result_payload_json),
+            )
         except Exception:
             payload["result"] = {"raw": job.result_payload_json}
     if job.status == JOB_STATUS_FAILED:
@@ -87,6 +95,22 @@ def _job_response(job: ImageJob) -> Dict[str, Any]:
             "message": job.error_message or "Image job failed",
         }
     return payload
+
+
+def _public_image_result_payload(public_model: str, payload: Any) -> Any:
+    if not isinstance(payload, dict):
+        return payload
+    public_payload = deepcopy(payload)
+    if isinstance(public_payload.get("model"), str):
+        public_payload["model"] = public_model
+    data = public_payload.get("data")
+    if isinstance(data, dict) and isinstance(data.get("model"), str):
+        data["model"] = public_model
+    elif isinstance(data, list):
+        for item in data:
+            if isinstance(item, dict) and isinstance(item.get("model"), str):
+                item["model"] = public_model
+    return public_payload
 
 
 def _build_job_manifest(
@@ -111,6 +135,11 @@ def _build_job_manifest(
         "form_fields": [[key, value] for key, value in form_fields],
         "files": files,
     }
+
+
+def _manifest_snapshot_dict(manifest: Dict[str, Any], key: str) -> Dict[str, Any]:
+    value = manifest.get(key)
+    return value if isinstance(value, dict) else {}
 
 
 def _store_job_files(
@@ -224,15 +253,28 @@ async def _process_image_edit_job(job_id: str) -> None:
         manifest = json.loads(job.request_payload_json)
 
     requested_model = str(manifest.get("requested_model") or job.public_model or "").strip()
+    snapshot = _manifest_snapshot_dict(manifest, "coincoin_snapshot")
+    display_model = str(snapshot.get("display_model") or job.public_model or requested_model or "").strip()
+    resolved_public_model_id = str(
+        snapshot.get("resolved_public_model") or job.public_model or requested_model or ""
+    ).strip()
+    pricing_snapshot = _manifest_snapshot_dict(snapshot, "public_pricing")
+    station_snapshot = _manifest_snapshot_dict(snapshot, "station_usage")
     try:
-        resolved = model_registry.resolve_public_model(requested_model, "images/edits")
+        resolved = model_registry.resolve_public_model(
+            resolved_public_model_id,
+            "images/edits",
+        )
     except Exception as exc:
         await _mark_job_failed(job_id, code="model_resolution_failed", message=str(exc))
         return
 
     public_model = resolved.public_model
-    used_cfg = resolved.backend
-    used_route_reason = resolved.route_reason
+    used_cfg = replace(
+        resolved.backend,
+        model_id=str(job.provider_model or resolved.backend.model_id or "").strip(),
+    )
+    used_route_reason = str(job.route_reason or resolved.route_reason or "").strip()
     delivery_lane = (public_model.delivery_lane or "").strip().lower()
     if not _supports_async_gemini_job(public_model):
         await _mark_job_failed(
@@ -331,32 +373,42 @@ async def _process_image_edit_job(job_id: str) -> None:
 
     if delivery_lane != gemini_cpa.DELIVERY_LANE:
         _record_channel_success(used_cfg, duration_ms=duration_ms)
+    if "retail_price_per_image_cents" in snapshot:
+        price_per_image_cents = float(snapshot.get("retail_price_per_image_cents") or 0.0)
+    else:
+        price_per_image_cents = float(public_model.price_per_image_cents or 0.0)
+    pricing_kwargs = public_model_pricing_kwargs(public_model)
+    if pricing_snapshot:
+        pricing_kwargs = dict(pricing_snapshot)
+    if station_snapshot:
+        pricing_kwargs.update(station_snapshot)
+
     await usage_buffer.add(
         job.user_id,
         api_key_id=getattr(job, "api_key_id", "") or "",
         requests=1,
         endpoint="image-jobs/edits",
-        model=job.public_model,
-        customer_model_alias=job.public_model,
-        provider_model=public_model.provider_model or used_cfg.model_id,
+        model=display_model,
+        customer_model_alias=display_model,
+        provider_model=str(job.provider_model or used_cfg.model_id or public_model.provider_model or "").strip(),
         route_reason=used_route_reason,
         duration_ms=duration_ms,
         status_code=upstream.status_code,
         usage_unit_type="images",
         usage_unit_count=1,
-        billable_sku=public_model.billable_sku or job.public_model,
+        billable_sku=public_model.billable_sku or display_model,
         upstream_request_id=upstream_request_id,
         image_count=1,
-        price_per_image_cents=public_model.price_per_image_cents,
+        price_per_image_cents=price_per_image_cents,
         **_channel_usage_kwargs(used_cfg, channel if "channel" in locals() else None),
-        **public_model_pricing_kwargs(public_model),
+        **pricing_kwargs,
     )
     await _mark_job_completed(
         job_id,
         result_payload=payload if isinstance(payload, dict) else {"raw": payload},
         upstream_request_id=upstream_request_id,
         duration_ms=duration_ms,
-        cost_cents=round(float(public_model.price_per_image_cents or 0.0)),
+        cost_cents=round(price_per_image_cents),
     )
 
 
@@ -428,11 +480,27 @@ async def _create_image_edit_job(request: Request, db: AsyncSession) -> JSONResp
         )
 
     try:
-        resolved = model_registry.resolve_public_model(requested_model, "images/edits")
+        station_model = await resolve_station_model_for_user(db, user, requested_model, "images/edits")
+        resolved = station_model.resolved_model if station_model else model_registry.resolve_public_model(
+            requested_model,
+            "images/edits",
+        )
     except Exception as exc:
         return _model_resolution_error_response(exc)
 
+    (
+        resolved,
+        station_model,
+        _routing_override,
+        _user_cache_read_multiplier_override,
+        _effective_provider_model,
+    ) = apply_user_overrides_to_resolution(user, resolved, station_model)
+
     public_model = resolved.public_model
+    display_model = station_model.display_model if station_model else public_model.public_id
+    used_cfg = resolved.backend
+    used_route_reason = resolved.route_reason
+    price_per_image_cents = station_model.retail_price_per_image_cents if station_model else public_model.price_per_image_cents
     delivery_lane = (public_model.delivery_lane or "").strip().lower()
     if not _supports_async_gemini_job(public_model):
         return _openai_error_response(
@@ -476,10 +544,17 @@ async def _create_image_edit_job(request: Request, db: AsyncSession) -> JSONResp
     job_dir = _job_storage_dir(job_id)
     job_dir.mkdir(parents=True, exist_ok=True)
     manifest = _build_job_manifest(
-        requested_model=requested_model or public_model.public_id,
+        requested_model=requested_model or display_model,
         form_fields=form_fields,
         file_fields=file_fields,
     )
+    manifest["coincoin_snapshot"] = {
+        "display_model": display_model,
+        "resolved_public_model": public_model.public_id,
+        "retail_price_per_image_cents": float(price_per_image_cents or 0.0),
+        "public_pricing": public_model_pricing_kwargs(public_model),
+        "station_usage": station_usage_kwargs(station_model),
+    }
     for idx, (_, (_, content, _)) in enumerate(file_fields):
         stored_name = manifest["files"][idx]["stored_name"]
         (job_dir / stored_name).write_bytes(content)
@@ -490,9 +565,9 @@ async def _create_image_edit_job(request: Request, db: AsyncSession) -> JSONResp
         api_key_id=getattr(user, _KEY_ID_ATTR, "") or None,
         status=JOB_STATUS_QUEUED,
         endpoint="images/edits",
-        public_model=public_model.public_id,
-        provider_model=public_model.provider_model or resolved.backend.model_id,
-        route_reason=resolved.route_reason,
+        public_model=display_model,
+        provider_model=str(used_cfg.model_id or _effective_provider_model or public_model.provider_model or "").strip(),
+        route_reason=used_route_reason,
         image_count=image_count,
         request_payload_json=json.dumps(manifest, ensure_ascii=False),
         storage_dir=str(job_dir),

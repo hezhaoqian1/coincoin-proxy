@@ -36,6 +36,12 @@ from .station_runtime import (
     station_context_for_user,
     usage_pricing_kwargs,
 )
+from .user_model_overrides import (
+    USER_MODEL_PRICING_ATTR,
+    USER_MODEL_ROUTING_ATTR,
+    apply_user_overrides_to_resolution,
+    load_user_model_overrides_from_db,
+)
 from .router import (
     CLAUDE_COMPAT_PROVIDER_KIRO_GO,
     ModelCapabilityError,
@@ -48,6 +54,7 @@ from .usage_buffer import (
     extract_cache_creation_tokens,
     extract_cache_read_tokens,
     extract_total_input_tokens,
+    schedule_usage_add,
     usage_buffer,
 )
 
@@ -1655,6 +1662,16 @@ async def _resolve_user(request: Request, db: AsyncSession):
         key_id = str(cached.get(_KEY_ID_ATTR) or "")
         key_controls = cached.get("controls", {}) if isinstance(cached.get("controls", {}), dict) else {}
         station_context = cached.get("station_context", {}) if isinstance(cached.get("station_context", {}), dict) else {}
+        model_routing_overrides = (
+            cached.get("model_routing_overrides", {})
+            if isinstance(cached.get("model_routing_overrides", {}), dict)
+            else {}
+        )
+        model_pricing_overrides = (
+            cached.get("model_pricing_overrides", {})
+            if isinstance(cached.get("model_pricing_overrides", {}), dict)
+            else {}
+        )
         session_refreshed = False
     else:
         try:
@@ -1688,6 +1705,15 @@ async def _resolve_user(request: Request, db: AsyncSession):
         except Exception:
             logger.exception("station context lookup failed")
             station_context = {}
+        try:
+            model_routing_overrides, model_pricing_overrides, _override_version = await load_user_model_overrides_from_db(
+                db,
+                user.id,
+            )
+        except Exception:
+            logger.exception("user model override lookup failed")
+            model_routing_overrides = {}
+            model_pricing_overrides = {}
         await key_cache.set(
             key_hash,
             {
@@ -1696,6 +1722,8 @@ async def _resolve_user(request: Request, db: AsyncSession):
                 _KEY_KIND_ATTR: key_kind,
                 "controls": key_controls,
                 "station_context": station_context,
+                "model_routing_overrides": model_routing_overrides,
+                "model_pricing_overrides": model_pricing_overrides,
                 "session_refreshed": session_refreshed,
             },
         )
@@ -1703,6 +1731,8 @@ async def _resolve_user(request: Request, db: AsyncSession):
     setattr(user, _KEY_ID_ATTR, key_id)
     setattr(user, "_api_key_controls", key_controls)
     setattr(user, "_station_context", station_context)
+    setattr(user, USER_MODEL_ROUTING_ATTR, model_routing_overrides)
+    setattr(user, USER_MODEL_PRICING_ATTR, model_pricing_overrides)
     setattr(user, "_session_refreshed", session_refreshed)
     if user.status != "active":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="user blocked")
@@ -1820,7 +1850,7 @@ async def authorize_request(request: Request, db: AsyncSession):
         pending_cost = await usage_buffer.get_pending_cost(user.id)
         from .billing import get_available_balance_cents
         available = await get_available_balance_cents(db, user, pending_cost_cents=pending_cost)
-        if int(available.get("available_cents", 0)) <= 0:
+        if int(available.get("available_cents", 0) or 0) <= 0:
             raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail="insufficient balance")
 
     if user.request_limit_per_day is not None:
@@ -1843,7 +1873,6 @@ async def authorize_request(request: Request, db: AsyncSession):
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="internal error")
 
     await _mark_api_key_used(db, user)
-
     return user
 
 
@@ -1878,6 +1907,13 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         )
     except Exception as exc:
         return _model_resolution_error_response(exc)
+    (
+        resolved_model,
+        station_model,
+        _routing_override,
+        user_cache_read_multiplier_override,
+        _effective_provider_model,
+    ) = apply_user_overrides_to_resolution(user, resolved_model, station_model)
     public_model = resolved_model.public_model
     display_model = station_model.display_model if station_model else public_model.public_id
     used_cfg = resolved_model.backend
@@ -1906,6 +1942,15 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         for field in ("temperature", "top_p", "stop", "tool_choice"):
             if field in payload:
                 chat_payload[field] = payload[field]
+        prompt_cache_key = build_claude_code_prompt_cache_key(
+            user,
+            api_key_id,
+            display_model,
+            public_model,
+            effective_backend_model=used_cfg.model_id,
+        )
+        if prompt_cache_key:
+            chat_payload["prompt_cache_key"] = prompt_cache_key
 
         headers = _build_upstream_headers(used_cfg)
         upstream_url = f"{_normalize_openai_base_url(used_cfg.upstream_url)}/chat/completions"
@@ -2082,7 +2127,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                         if response_id and output_items:
                             _conv_cache.set(response_id, _normalize_responses_input_items(payload.get("input")), output_items)
                         dur = int((time.monotonic() - stream_t0) * 1000)
-                        asyncio.create_task(usage_buffer.add(
+                        schedule_usage_add(
                             user.id,
                             api_key_id=api_key_id,
                             input_tokens=stream_usage["input"],
@@ -2093,7 +2138,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                             endpoint="responses:stream",
                             model=display_model,
                             customer_model_alias=display_model,
-                            provider_model=public_model.provider_model or used_cfg.model_id,
+                            provider_model=used_cfg.model_id or _effective_provider_model,
                             route_reason=used_route_reason,
                             duration_ms=dur,
                             status_code=upstream.status_code,
@@ -2103,8 +2148,12 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                             billable_sku=public_model.billable_sku or display_model,
                             upstream_request_id=extract_upstream_request_id(upstream.headers),
                             **_channel_usage_kwargs(used_cfg),
-                            **usage_pricing_kwargs(public_model, station_model),
-                        ))
+                            **usage_pricing_kwargs(
+                                public_model,
+                                station_model,
+                                user_cache_read_multiplier_override=user_cache_read_multiplier_override,
+                            ),
+                        )
                     else:
                         _record_channel_failure(used_cfg, status_code=upstream.status_code)
 
@@ -2183,7 +2232,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             endpoint="responses",
             model=display_model,
             customer_model_alias=display_model,
-            provider_model=public_model.provider_model or used_cfg.model_id,
+            provider_model=used_cfg.model_id or _effective_provider_model,
             route_reason=used_route_reason,
             duration_ms=duration_ms,
             status_code=upstream.status_code,
@@ -2193,7 +2242,11 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             billable_sku=public_model.billable_sku or display_model,
             upstream_request_id=upstream_request_id,
             **_channel_usage_kwargs(used_cfg),
-            **usage_pricing_kwargs(public_model, station_model),
+            **usage_pricing_kwargs(
+                public_model,
+                station_model,
+                user_cache_read_multiplier_override=user_cache_read_multiplier_override,
+            ),
         )
         return JSONResponse(content=response_payload, status_code=upstream.status_code, headers=response_headers)
 
@@ -2201,7 +2254,13 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
     payload.pop("model_provider", None)
     _sanitize_encrypted_ids(payload)
     _ensure_content_text(payload)
-    prompt_cache_key = build_claude_code_prompt_cache_key(user, api_key_id, display_model, public_model)
+    prompt_cache_key = build_claude_code_prompt_cache_key(
+        user,
+        api_key_id,
+        display_model,
+        public_model,
+        effective_backend_model=used_cfg.model_id,
+    )
     if prompt_cache_key:
         payload["prompt_cache_key"] = prompt_cache_key
 
@@ -2300,6 +2359,17 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             cpa_channel = _select_gemini_cpa_channel(cfg)
             send_payload = dict(base_payload)
             send_payload["model"] = cpa_channel.provider_model if cpa_channel is not None else cfg.model_id
+            stream_prompt_cache_key = build_claude_code_prompt_cache_key(
+                user,
+                api_key_id,
+                display_model,
+                public_model,
+                effective_backend_model=str(send_payload.get("model") or ""),
+            )
+            if stream_prompt_cache_key:
+                send_payload["prompt_cache_key"] = stream_prompt_cache_key
+            else:
+                send_payload.pop("prompt_cache_key", None)
             if is_fallback:
                 send_payload.pop("previous_response_id", None)
             send_payload["store"] = True
@@ -2607,7 +2677,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                         logger.info("polyfill: cached stream resp %s (%d in, %d out)",
                                     _resp_id_cap, len(_expanded_input), len(_resp_out_cap or []))
                     dur = int((time.monotonic() - stream_t0) * 1000)
-                    asyncio.create_task(usage_buffer.add(
+                    schedule_usage_add(
                         user.id,
                         api_key_id=api_key_id,
                         input_tokens=_stream_usage["input"],
@@ -2618,7 +2688,11 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                         endpoint="responses:stream",
                         model=display_model,
                         customer_model_alias=display_model,
-                        provider_model=public_model.provider_model or used_cfg.model_id,
+                        provider_model=(
+                            cpa_channel.provider_model
+                            if cpa_channel is not None
+                            else (used_cfg.model_id or _effective_provider_model)
+                        ),
                         route_reason=used_route_reason,
                         duration_ms=dur,
                         status_code=upstream.status_code,
@@ -2628,8 +2702,12 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                         billable_sku=public_model.billable_sku or display_model,
                         upstream_request_id=upstream_request_id,
                         **_channel_usage_kwargs(used_cfg, cpa_channel),
-                        **usage_pricing_kwargs(public_model, station_model),
-                    ))
+                        **usage_pricing_kwargs(
+                            public_model,
+                            station_model,
+                            user_cache_read_multiplier_override=user_cache_read_multiplier_override,
+                        ),
+                    )
                 else:
                     _record_channel_failure(used_cfg, status_code=upstream.status_code)
 
@@ -2661,6 +2739,17 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         cpa_channel = _select_gemini_cpa_channel(cfg)
         send_payload = dict(base_payload)
         send_payload["model"] = cpa_channel.provider_model if cpa_channel is not None else cfg.model_id
+        json_prompt_cache_key = build_claude_code_prompt_cache_key(
+            user,
+            api_key_id,
+            display_model,
+            public_model,
+            effective_backend_model=str(send_payload.get("model") or ""),
+        )
+        if json_prompt_cache_key:
+            send_payload["prompt_cache_key"] = json_prompt_cache_key
+        else:
+            send_payload.pop("prompt_cache_key", None)
         if is_fallback:
             send_payload.pop("previous_response_id", None)
         send_payload["store"] = True
@@ -2944,7 +3033,11 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             endpoint="responses",
             model=display_model,
             customer_model_alias=display_model,
-            provider_model=public_model.provider_model or used_cfg.model_id,
+            provider_model=(
+                cpa_channel.provider_model
+                if cpa_channel is not None
+                else (used_cfg.model_id or _effective_provider_model)
+            ),
             route_reason=used_route_reason,
             duration_ms=duration_ms,
             status_code=upstream.status_code,
@@ -2954,7 +3047,11 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             billable_sku=public_model.billable_sku or display_model,
             upstream_request_id=upstream_request_id,
             **_channel_usage_kwargs(used_cfg, cpa_channel),
-            **usage_pricing_kwargs(public_model, station_model),
+            **usage_pricing_kwargs(
+                public_model,
+                station_model,
+                user_cache_read_multiplier_override=user_cache_read_multiplier_override,
+            ),
         )
     elif isinstance(data, (dict, str)):
         _record_current_failure(status_code=upstream.status_code if upstream.status_code >= 400 else None)
@@ -2997,6 +3094,13 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
         resolved_model = station_model.resolved_model if station_model else model_registry.resolve_public_model(requested_model, "images/generations")
     except Exception as exc:
         return _model_resolution_error_response(exc)
+    (
+        resolved_model,
+        station_model,
+        _routing_override,
+        user_cache_read_multiplier_override,
+        _effective_provider_model,
+    ) = apply_user_overrides_to_resolution(user, resolved_model, station_model)
 
     public_model = resolved_model.public_model
     display_model = station_model.display_model if station_model else public_model.public_id
@@ -3078,7 +3182,7 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
         upstream_payload = _build_vertex_image_generation_payload(payload)
         upstream_url = (
             f"{settings.vertex_gemini_api_base.rstrip('/')}/models/"
-            f"{public_model.provider_model or used_cfg.model_id}:generateContent"
+            f"{used_cfg.model_id or _effective_provider_model}:generateContent"
         )
         headers = {
             "x-goog-api-key": settings.vertex_api_key,
@@ -3114,52 +3218,45 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
     response_headers.pop("content-length", None)
     upstream_request_id = extract_upstream_request_id(upstream.headers)
     content_type = upstream.headers.get("content-type", "application/json")
+    data = None
+    data_ready = False
 
     if should_use_gateway_image_generation and "application/json" in content_type:
         if upstream.status_code < 400:
-            _record_channel_success(used_cfg, duration_ms=duration_ms)
-            image_count = _requested_image_count_from_json(payload)
-            await usage_buffer.add(
-                user.id,
-                api_key_id=getattr(user, _KEY_ID_ATTR, ""),
-                requests=1,
-                endpoint="images/generations",
-                model=display_model,
-                customer_model_alias=display_model,
-                provider_model=public_model.provider_model or used_cfg.model_id,
-                route_reason=used_route_reason,
-                duration_ms=duration_ms,
-                status_code=upstream.status_code,
-                usage_unit_type="images",
-                usage_unit_count=image_count,
-                billable_sku=public_model.billable_sku or display_model,
-                upstream_request_id=upstream_request_id,
-                image_count=image_count,
-                price_per_image_cents=price_per_image_cents,
-                **_channel_usage_kwargs(used_cfg),
-                **usage_pricing_kwargs(public_model, station_model),
-            )
-            return _stream_upstream_response(
-                upstream,
-                headers=response_headers,
-                media_type=content_type,
-            )
+            try:
+                upstream_body = await upstream.aread()
+            finally:
+                await upstream.aclose()
+            try:
+                data = json.loads(upstream_body.decode("utf-8"))
+            except Exception:
+                return JSONResponse(
+                    content={"error": {"message": "Upstream returned invalid JSON", "type": "server_error", "code": "upstream_invalid_json"}},
+                    status_code=502,
+                    headers=response_headers,
+                )
+            data_ready = True
         try:
-            upstream_body = await upstream.aread()
+            if not data_ready:
+                upstream_body = await upstream.aread()
+            else:
+                upstream_body = b""
         finally:
-            await upstream.aclose()
-        try:
-            data = json.loads(upstream_body.decode("utf-8"))
-        except Exception:
-            return JSONResponse(
-                content={"error": {"message": "Upstream returned invalid JSON", "type": "server_error", "code": "upstream_invalid_json"}},
-                status_code=502,
-                headers=response_headers,
-            )
+            if not data_ready:
+                await upstream.aclose()
+        if not data_ready:
+            try:
+                data = json.loads(upstream_body.decode("utf-8"))
+            except Exception:
+                return JSONResponse(
+                    content={"error": {"message": "Upstream returned invalid JSON", "type": "server_error", "code": "upstream_invalid_json"}},
+                    status_code=502,
+                    headers=response_headers,
+                )
         logger.error("image upstream error %s: %s", upstream.status_code, str(data)[:500])
         return JSONResponse(content=data, status_code=upstream.status_code, headers=response_headers)
 
-    if "application/json" in content_type:
+    if not data_ready and "application/json" in content_type:
         try:
             upstream_json = upstream.json()
         except Exception:
@@ -3189,7 +3286,8 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
         else:
             data = upstream_json
     else:
-        data = upstream.text
+        if not data_ready:
+            data = upstream.text
 
     image_count = 0
     if upstream.status_code < 400 and isinstance(data, dict):
@@ -3210,7 +3308,11 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
             endpoint="images/generations",
             model=display_model,
             customer_model_alias=display_model,
-            provider_model=public_model.provider_model or used_cfg.model_id,
+            provider_model=(
+                cpa_channel.provider_model
+                if cpa_channel is not None
+                else (used_cfg.model_id or _effective_provider_model)
+            ),
             route_reason=used_route_reason,
             duration_ms=duration_ms,
             status_code=upstream.status_code,
@@ -3221,7 +3323,11 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
             image_count=image_count,
             price_per_image_cents=price_per_image_cents,
             **_channel_usage_kwargs(used_cfg, cpa_channel),
-            **usage_pricing_kwargs(public_model, station_model),
+            **usage_pricing_kwargs(
+                public_model,
+                station_model,
+                user_cache_read_multiplier_override=user_cache_read_multiplier_override,
+            ),
         )
         await record_media_artifacts_best_effort(
             db,
@@ -3230,7 +3336,11 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
             media_type="image",
             endpoint="images/generations",
             model=display_model,
-            provider_model=public_model.provider_model or used_cfg.model_id,
+            provider_model=(
+                cpa_channel.provider_model
+                if cpa_channel is not None
+                else (used_cfg.model_id or _effective_provider_model)
+            ),
             payload=data,
             status="completed",
             source_type="request",
@@ -3265,6 +3375,13 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
         resolved_model = station_model.resolved_model if station_model else model_registry.resolve_public_model(requested_model, "images/edits")
     except Exception as exc:
         return _model_resolution_error_response(exc)
+    (
+        resolved_model,
+        station_model,
+        _routing_override,
+        user_cache_read_multiplier_override,
+        _effective_provider_model,
+    ) = apply_user_overrides_to_resolution(user, resolved_model, station_model)
 
     public_model = resolved_model.public_model
     display_model = station_model.display_model if station_model else public_model.public_id
@@ -3381,41 +3498,33 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
         response_headers.pop("content-length", None)
         upstream_request_id = extract_upstream_request_id(upstream.headers)
         content_type = upstream.headers.get("content-type", "application/json")
+        data = None
+        data_ready = False
 
         if "application/json" in content_type and upstream.status_code < 400:
-            _record_channel_success(used_cfg, duration_ms=duration_ms)
-            image_count = _requested_image_count_from_pairs(form_fields)
-            await usage_buffer.add(
-                user.id,
-                api_key_id=getattr(user, _KEY_ID_ATTR, ""),
-                requests=1,
-                endpoint="images/edits",
-                model=display_model,
-                customer_model_alias=display_model,
-                provider_model=public_model.provider_model or used_cfg.model_id,
-                route_reason=used_route_reason,
-                duration_ms=duration_ms,
-                status_code=upstream.status_code,
-                usage_unit_type="images",
-                usage_unit_count=image_count,
-                billable_sku=public_model.billable_sku or display_model,
-                upstream_request_id=upstream_request_id,
-                image_count=image_count,
-                price_per_image_cents=price_per_image_cents,
-                **_channel_usage_kwargs(used_cfg),
-                **usage_pricing_kwargs(public_model, station_model),
-            )
-            return _stream_upstream_response(
-                upstream,
-                headers=response_headers,
-                media_type=content_type,
-            )
+            try:
+                upstream_body = await upstream.aread()
+            finally:
+                await upstream.aclose()
+            try:
+                data = json.loads(upstream_body.decode("utf-8"))
+            except Exception:
+                return JSONResponse(
+                    content={"error": {"message": "Upstream returned invalid JSON", "type": "server_error", "code": "upstream_invalid_json"}},
+                    status_code=502,
+                    headers=response_headers,
+                )
+            data_ready = True
 
         try:
-            upstream_body = await upstream.aread()
+            if not data_ready:
+                upstream_body = await upstream.aread()
+            else:
+                upstream_body = b""
         finally:
-            await upstream.aclose()
-        if "application/json" in content_type:
+            if not data_ready:
+                await upstream.aclose()
+        if not data_ready and "application/json" in content_type:
             try:
                 data = json.loads(upstream_body.decode("utf-8"))
             except Exception:
@@ -3425,7 +3534,8 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
                     headers=response_headers,
                 )
         else:
-            data = upstream_body.decode("utf-8", errors="replace")
+            if not data_ready:
+                data = upstream_body.decode("utf-8", errors="replace")
     elif should_use_cpa_gemini_image_edit:
         client = await get_http_client()
         if any(key in {"mask", "mask[]"} for key, _ in file_fields):
@@ -3504,7 +3614,7 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
         payload = _build_vertex_image_edit_payload(form_fields, file_fields)
         upstream_url = (
             f"{settings.vertex_gemini_api_base.rstrip('/')}/models/"
-            f"{public_model.provider_model or used_cfg.model_id}:generateContent"
+            f"{used_cfg.model_id or _effective_provider_model}:generateContent"
         )
         headers = {
             "x-goog-api-key": settings.vertex_api_key,
@@ -3581,41 +3691,33 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
         response_headers.pop("content-length", None)
         content_type = upstream.headers.get("content-type", "application/json")
         upstream_request_id = extract_upstream_request_id(upstream.headers)
+        data = None
+        data_ready = False
 
         if "application/json" in content_type and upstream.status_code < 400:
-            _record_channel_success(used_cfg, duration_ms=duration_ms)
-            image_count = _requested_image_count_from_pairs(form_fields)
-            await usage_buffer.add(
-                user.id,
-                api_key_id=getattr(user, _KEY_ID_ATTR, ""),
-                requests=1,
-                endpoint="images/edits",
-                model=display_model,
-                customer_model_alias=display_model,
-                provider_model=public_model.provider_model or used_cfg.model_id,
-                route_reason=used_route_reason,
-                duration_ms=duration_ms,
-                status_code=upstream.status_code,
-                usage_unit_type="images",
-                usage_unit_count=image_count,
-                billable_sku=public_model.billable_sku or display_model,
-                upstream_request_id=upstream_request_id,
-                image_count=image_count,
-                price_per_image_cents=price_per_image_cents,
-                **_channel_usage_kwargs(used_cfg),
-                **usage_pricing_kwargs(public_model, station_model),
-            )
-            return _stream_upstream_response(
-                upstream,
-                headers=response_headers,
-                media_type=content_type,
-            )
+            try:
+                upstream_body = await upstream.aread()
+            finally:
+                await upstream.aclose()
+            try:
+                data = json.loads(upstream_body.decode("utf-8"))
+            except Exception:
+                return JSONResponse(
+                    content={"error": {"message": "Upstream returned invalid JSON", "type": "server_error", "code": "upstream_invalid_json"}},
+                    status_code=502,
+                    headers=response_headers,
+                )
+            data_ready = True
 
         try:
-            upstream_body = await upstream.aread()
+            if not data_ready:
+                upstream_body = await upstream.aread()
+            else:
+                upstream_body = b""
         finally:
-            await upstream.aclose()
-        if "application/json" in content_type:
+            if not data_ready:
+                await upstream.aclose()
+        if not data_ready and "application/json" in content_type:
             try:
                 data = json.loads(upstream_body.decode("utf-8"))
             except Exception:
@@ -3625,7 +3727,8 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
                     headers=response_headers,
                 )
         else:
-            data = upstream_body.decode("utf-8", errors="replace")
+            if not data_ready:
+                data = upstream_body.decode("utf-8", errors="replace")
 
     image_count = 0
     if upstream.status_code < 400 and isinstance(data, dict):
@@ -3643,7 +3746,11 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
             endpoint="images/edits",
             model=display_model,
             customer_model_alias=display_model,
-            provider_model=public_model.provider_model or used_cfg.model_id,
+            provider_model=(
+                cpa_channel.provider_model
+                if cpa_channel is not None
+                else (used_cfg.model_id or _effective_provider_model)
+            ),
             route_reason=used_route_reason,
             duration_ms=duration_ms,
             status_code=upstream.status_code,
@@ -3654,7 +3761,11 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
             image_count=image_count,
             price_per_image_cents=price_per_image_cents,
             **_channel_usage_kwargs(used_cfg, cpa_channel),
-            **usage_pricing_kwargs(public_model, station_model),
+            **usage_pricing_kwargs(
+                public_model,
+                station_model,
+                user_cache_read_multiplier_override=user_cache_read_multiplier_override,
+            ),
         )
         await record_media_artifacts_best_effort(
             db,
@@ -3663,7 +3774,11 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
             media_type="image",
             endpoint="images/edits",
             model=display_model,
-            provider_model=public_model.provider_model or used_cfg.model_id,
+            provider_model=(
+                cpa_channel.provider_model
+                if cpa_channel is not None
+                else (used_cfg.model_id or _effective_provider_model)
+            ),
             payload=data,
             status="completed",
             source_type="request",

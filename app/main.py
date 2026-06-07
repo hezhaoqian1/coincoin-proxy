@@ -422,6 +422,36 @@ async def _run_migrations(conn):
         )
         """,
         """
+        CREATE TABLE coincoin_user_model_routing_overrides (
+            user_id VARCHAR(32) NOT NULL,
+            public_model_id VARCHAR(128) NOT NULL,
+            provider_model VARCHAR(128) DEFAULT '',
+            upstream_model VARCHAR(128) DEFAULT '',
+            enabled BIGINT DEFAULT 1,
+            updated_by VARCHAR(64) DEFAULT '',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, public_model_id),
+            INDEX ix_user_model_routing_overrides_user_id (user_id),
+            INDEX ix_user_model_routing_overrides_public_model_id (public_model_id),
+            INDEX ix_user_model_routing_overrides_updated_at (updated_at)
+        )
+        """,
+        """
+        CREATE TABLE coincoin_user_model_pricing_overrides (
+            user_id VARCHAR(32) NOT NULL,
+            public_model_id VARCHAR(128) NOT NULL,
+            cache_read_multiplier_override DOUBLE NULL,
+            updated_by VARCHAR(64) DEFAULT '',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, public_model_id),
+            INDEX ix_user_model_pricing_overrides_user_id (user_id),
+            INDEX ix_user_model_pricing_overrides_public_model_id (public_model_id),
+            INDEX ix_user_model_pricing_overrides_updated_at (updated_at)
+        )
+        """,
+        """
         CREATE TABLE coincoin_video_jobs (
             id VARCHAR(32) PRIMARY KEY,
             user_id VARCHAR(32) NOT NULL,

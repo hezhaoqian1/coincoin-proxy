@@ -376,6 +376,74 @@ class VideoJobsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.json()["model"], "seedance-v2-720p")
         self.assertEqual(upstream_client.calls[0]["json"]["model"], "seedance-v2-720p")
 
+    async def test_create_video_generation_user_override_preserves_public_model_and_hides_backend_identity(self) -> None:
+        fake_user = SimpleNamespace(
+            id="u_video",
+            _api_key_id="k_video_user",
+            balance=1000,
+            _model_routing_overrides={
+                "seedance-v2-720p": {
+                    "public_model_id": "seedance-v2-720p",
+                    "provider_model": "seedance-v2-720p-video",
+                    "upstream_model": "seedance-v2-720p-video",
+                    "enabled": True,
+                }
+            },
+        )
+        upstream_client = _RecordingSeedanceClient(
+            [
+                _FakeSeedanceResponse(
+                    {
+                        "code": 0,
+                        "data": {
+                            "task_id": "task_seedance_override_1",
+                            "model": "seedance-v2-720p-video",
+                            "status": "pending",
+                        },
+                    },
+                    headers={"x-request-id": "req_seedance_override_1"},
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(video_jobs_module, "authorize_request", AsyncMock(return_value=fake_user)), patch.object(
+                video_jobs_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(video_jobs_module.usage_buffer, "get_pending_cost", AsyncMock(return_value=0)), patch.object(
+                video_jobs_module.usage_buffer,
+                "add",
+                AsyncMock(),
+            ):
+                response = await client.post(
+                    "/v1/videos/generations",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={
+                        "model": "seedance-v2-720p",
+                        "prompt": "Camera slowly pushes in",
+                        "params": {
+                            "ratio": "16:9",
+                            "images": ["https://example.com/ref.jpg"],
+                        },
+                    },
+                )
+
+        self.assertEqual(response.status_code, 202, response.text)
+        payload = response.json()
+        self.assertEqual(payload["model"], "seedance-v2-720p")
+        self.assertNotIn("provider_model", payload)
+        self.assertNotIn("route_reason", payload)
+        self.assertEqual(payload["result"]["data"]["model"], "seedance-v2-720p")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "seedance-v2-720p-video")
+
+        job = next(iter(self.store.jobs.values()))
+        self.assertEqual(job.public_model, "seedance-v2-720p")
+        self.assertEqual(job.provider_model, "seedance-v2-720p-video")
+        self.assertEqual(self.store.request_logs[0].customer_model_alias, "seedance-v2-720p")
+        self.assertEqual(self.store.request_logs[0].provider_model, "seedance-v2-720p-video")
+
     async def test_get_video_generation_queries_upstream_and_returns_output_url(self) -> None:
         job = VideoJob(
             id="job_video_get_1",
@@ -425,6 +493,8 @@ class VideoJobsTests(unittest.IsolatedAsyncioTestCase):
         payload = response.json()
         self.assertEqual(payload["status"], video_jobs_module.JOB_STATUS_COMPLETED)
         self.assertEqual(payload["output"]["url"], "https://example.com/generated.mp4")
+        self.assertNotIn("provider_model", payload)
+        self.assertNotIn("route_reason", payload)
         self.assertEqual(self.store.jobs[job.id].attempt_count, 1)
         self.assertEqual(self.store.jobs[job.id].upstream_request_id, "req_seedance_query_1")
         self.assertEqual(upstream_client.calls[0]["url"], "https://api.wgspai.cn/v1/task/query")

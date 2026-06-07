@@ -1462,6 +1462,106 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(add_usage.await_args.kwargs["api_key_id"], "k_claude_resp")
         self.assertEqual(add_usage.await_args.kwargs["cache_read_tokens"], 7)
 
+    async def test_responses_claude_code_user_override_changes_backend_and_prompt_cache_key(self) -> None:
+        self._add_claude_code_model()
+        baseline_user = SimpleNamespace(id="u_test", _api_key_id="k_claude_resp_override")
+        override_user = SimpleNamespace(
+            id="u_test",
+            _api_key_id="k_claude_resp_override",
+            _model_routing_overrides={
+                "claude-opus-4-7": {
+                    "public_model_id": "claude-opus-4-7",
+                    "provider_model": "gpt-5.4-mini",
+                    "upstream_model": "gpt-5.4-mini",
+                    "enabled": True,
+                }
+            },
+            _model_pricing_overrides={
+                "claude-opus-4-7": {
+                    "public_model_id": "claude-opus-4-7",
+                    "cache_read_multiplier_override": 1.0,
+                }
+            },
+        )
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "resp_claude_cache_default",
+                        "output": [
+                            {
+                                "type": "message",
+                                "content": [{"type": "output_text", "text": "OK"}],
+                            }
+                        ],
+                        "usage": {
+                            "input_tokens": 12,
+                            "input_tokens_details": {"cached_tokens": 7},
+                            "output_tokens": 2,
+                            "total_tokens": 14,
+                        },
+                    }
+                ),
+                _FakeUpstreamResponse(
+                    {
+                        "id": "resp_claude_cache_override",
+                        "output": [
+                            {
+                                "type": "message",
+                                "content": [{"type": "output_text", "text": "OK"}],
+                            }
+                        ],
+                        "usage": {
+                            "input_tokens": 12,
+                            "input_tokens_details": {"cached_tokens": 7},
+                            "output_tokens": 2,
+                            "total_tokens": 14,
+                        },
+                    }
+                ),
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(
+                proxy_module,
+                "authorize_request",
+                AsyncMock(side_effect=[baseline_user, override_user]),
+            ), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(proxy_module.usage_buffer, "add", AsyncMock()) as add_usage:
+                baseline_response = await client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"model": "claude-opus-4-7", "input": "Reply with only: OK"},
+                )
+                override_response = await client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"model": "claude-opus-4-7", "input": "Reply with only: OK"},
+                )
+
+        self.assertEqual(baseline_response.status_code, 200, baseline_response.text)
+        self.assertEqual(override_response.status_code, 200, override_response.text)
+        baseline_request = upstream_client.calls[0]["json"]
+        override_request = upstream_client.calls[1]["json"]
+        self.assertEqual(baseline_request["model"], "gpt-5.5")
+        self.assertEqual(override_request["model"], "gpt-5.4-mini")
+        self.assertNotEqual(
+            baseline_request.get("prompt_cache_key"),
+            override_request.get("prompt_cache_key"),
+        )
+        self.assertEqual(override_response.json()["model"], "claude-opus-4-7")
+        self.assertEqual(add_usage.await_count, 2)
+        override_usage_kwargs = add_usage.await_args_list[1].kwargs
+        self.assertEqual(override_usage_kwargs["customer_model_alias"], "claude-opus-4-7")
+        self.assertEqual(override_usage_kwargs["provider_model"], "gpt-5.4-mini")
+        self.assertEqual(override_usage_kwargs["cache_read_multiplier"], 1.0)
+        self.assertEqual(override_usage_kwargs["effective_cached_input_per_million"], 500.0)
+
     async def test_chat_claude_alias_can_route_to_kiro_go_chat_endpoint(self) -> None:
         self._add_claude_code_model()
         settings.claude_compat_provider = "kiro_go"
@@ -2036,6 +2136,76 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         add_usage.assert_awaited_once()
         self.assertEqual(add_usage.await_args.kwargs["api_key_id"], "k_claude_chat")
         self.assertEqual(add_usage.await_args.kwargs["cache_read_tokens"], 7)
+
+    async def test_chat_claude_code_user_override_preserves_alias_and_applies_cache_billing_override(self) -> None:
+        self._add_claude_code_model()
+        fake_user = SimpleNamespace(
+            id="u_test",
+            _api_key_id="k_claude_chat_override",
+            _model_routing_overrides={
+                "claude-opus-4-7": {
+                    "public_model_id": "claude-opus-4-7",
+                    "provider_model": "gpt-5.4-mini",
+                    "upstream_model": "gpt-5.4-mini",
+                    "enabled": True,
+                }
+            },
+            _model_pricing_overrides={
+                "claude-opus-4-7": {
+                    "public_model_id": "claude-opus-4-7",
+                    "cache_read_multiplier_override": 1.0,
+                }
+            },
+        )
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "resp_claude_chat_override",
+                        "output": [
+                            {
+                                "type": "message",
+                                "content": [{"type": "output_text", "text": "OK"}],
+                            }
+                        ],
+                        "usage": {
+                            "input_tokens": 12,
+                            "input_tokens_details": {"cached_tokens": 7},
+                            "output_tokens": 2,
+                            "total_tokens": 14,
+                        },
+                    }
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(openai_module, "authorize_request", AsyncMock(return_value=fake_user)), patch.object(
+                openai_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(openai_module.usage_buffer, "add", AsyncMock()) as add_usage:
+                response = await client.post(
+                    "/v1/chat/completions",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={
+                        "model": "claude-opus-4-7",
+                        "messages": [{"role": "user", "content": "Reply with only: OK"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["model"], "claude-opus-4-7")
+        request_json = upstream_client.calls[0]["json"]
+        self.assertEqual(request_json["model"], "gpt-5.4-mini")
+        add_usage.assert_awaited_once()
+        usage_kwargs = add_usage.await_args.kwargs
+        self.assertEqual(usage_kwargs["customer_model_alias"], "claude-opus-4-7")
+        self.assertEqual(usage_kwargs["provider_model"], "gpt-5.4-mini")
+        self.assertEqual(usage_kwargs["cache_read_multiplier"], 1.0)
+        self.assertEqual(usage_kwargs["effective_cached_input_per_million"], 500.0)
 
     async def test_responses_legacy_lane_drops_context_management(self) -> None:
         upstream_client = _RecordingClient(
@@ -2860,6 +3030,56 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             "Bearer cliproxy-key",
         )
 
+    async def test_openai_image_generation_user_override_preserves_public_alias_and_usage_identity(self) -> None:
+        fake_user = SimpleNamespace(
+            id="u_test",
+            _model_routing_overrides={
+                "gpt-image-2": {
+                    "public_model_id": "gpt-image-2",
+                    "provider_model": "gpt-image-1",
+                    "upstream_model": "gpt-image-1",
+                    "enabled": True,
+                }
+            },
+        )
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "created": 1774449999,
+                        "data": [{"b64_json": "from-openai-image"}],
+                    }
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(proxy_module.usage_buffer, "add", AsyncMock()) as add_usage, patch.object(
+                proxy_module,
+                "record_media_artifacts_best_effort",
+                AsyncMock(),
+            ) as record_media:
+                response = await client.post(
+                    "/v1/images/generations",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"model": "gpt-image-2", "prompt": "A blue coin mascot", "n": 1, "size": "1024x1024"},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-image-1")
+        add_usage.assert_awaited_once()
+        usage_kwargs = add_usage.await_args.kwargs
+        self.assertEqual(usage_kwargs["customer_model_alias"], "gpt-image-2")
+        self.assertEqual(usage_kwargs["provider_model"], "gpt-image-1")
+        record_media.assert_awaited_once()
+        self.assertEqual(record_media.await_args.kwargs["model"], "gpt-image-2")
+        self.assertEqual(record_media.await_args.kwargs["provider_model"], "gpt-image-1")
+
     async def test_openai_image_generation_normalizes_root_base_url_to_v1(self) -> None:
         catalog = json.loads(settings.model_catalog_json)
         for model in catalog["models"]:
@@ -3301,6 +3521,59 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         posted_body = upstream_client.calls[0]["content"].decode("utf-8", errors="replace")
         self.assertIn("gpt-image-2", posted_body)
 
+    async def test_image_edit_user_override_preserves_public_alias_and_usage_identity(self) -> None:
+        fake_user = SimpleNamespace(
+            id="u_test",
+            _model_routing_overrides={
+                "gpt-image-2": {
+                    "public_model_id": "gpt-image-2",
+                    "provider_model": "gpt-image-1",
+                    "upstream_model": "gpt-image-1",
+                    "enabled": True,
+                }
+            },
+        )
+        upstream_client = _RecordingStreamClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "created": 1774449999,
+                        "data": [{"b64_json": "edited-by-openai-image"}],
+                    }
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=fake_user)), patch.object(
+                proxy_module,
+                "get_image_stream_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(proxy_module.usage_buffer, "add", AsyncMock()) as add_usage, patch.object(
+                proxy_module,
+                "record_media_artifacts_best_effort",
+                AsyncMock(),
+            ) as record_media:
+                response = await client.post(
+                    "/v1/images/edits",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    data={"model": "gpt-image-2", "prompt": "Turn this into pixel art", "n": "1", "size": "1024x1024"},
+                    files={"image": ("input.png", b"fake_image_data", "image/png")},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        posted_body = upstream_client.calls[0]["content"].decode("utf-8", errors="replace")
+        self.assertIn("gpt-image-1", posted_body)
+        self.assertNotIn("gpt-image-2", posted_body)
+        add_usage.assert_awaited_once()
+        usage_kwargs = add_usage.await_args.kwargs
+        self.assertEqual(usage_kwargs["customer_model_alias"], "gpt-image-2")
+        self.assertEqual(usage_kwargs["provider_model"], "gpt-image-1")
+        record_media.assert_awaited_once()
+        self.assertEqual(record_media.await_args.kwargs["model"], "gpt-image-2")
+        self.assertEqual(record_media.await_args.kwargs["provider_model"], "gpt-image-1")
+
     async def test_image_edit_can_call_vertex_directly_when_vertex_key_is_configured(self) -> None:
         self._set_model_delivery_lane("gemini-image", "vertex_direct")
         settings.vertex_api_key = "vertex-direct-key"
@@ -3606,6 +3879,71 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(upstream_client.calls[0]["json"]["model"], "text-embedding-3-small")
         self.assertEqual(upstream_client.calls[0]["headers"]["api-key"], "fallback-key")
 
+    async def test_embeddings_user_override_preserves_public_alias_and_usage_identity(self) -> None:
+        fake_user = SimpleNamespace(
+            id="u_test",
+            _model_routing_overrides={
+                "text-embedding-3-small": {
+                    "public_model_id": "text-embedding-3-small",
+                    "provider_model": "text-embedding-3-large",
+                    "upstream_model": "text-embedding-3-large",
+                    "enabled": True,
+                }
+            },
+            _model_pricing_overrides={
+                "text-embedding-3-small": {
+                    "public_model_id": "text-embedding-3-small",
+                    "cache_read_multiplier_override": 1.0,
+                }
+            },
+        )
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "object": "list",
+                        "data": [
+                            {
+                                "object": "embedding",
+                                "index": 0,
+                                "embedding": [0.1, 0.2, 0.3],
+                            }
+                        ],
+                        "model": "text-embedding-3-large",
+                        "usage": {
+                            "prompt_tokens": 8,
+                            "total_tokens": 8,
+                            "prompt_tokens_details": {"cached_tokens": 3},
+                        },
+                    }
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(openai_module, "authorize_request", AsyncMock(return_value=fake_user)), patch.object(
+                openai_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(openai_module.usage_buffer, "add", AsyncMock()) as add_usage:
+                response = await client.post(
+                    "/v1/embeddings",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"model": "text-embedding-3-small", "input": "hello"},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["model"], "text-embedding-3-small")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "text-embedding-3-large")
+        add_usage.assert_awaited_once()
+        usage_kwargs = add_usage.await_args.kwargs
+        self.assertEqual(usage_kwargs["customer_model_alias"], "text-embedding-3-small")
+        self.assertEqual(usage_kwargs["provider_model"], "text-embedding-3-large")
+        self.assertEqual(usage_kwargs["cache_read_multiplier"], 1.0)
+        self.assertEqual(usage_kwargs["effective_cached_input_per_million"], 2.0)
+
     async def test_embeddings_endpoint_defaults_to_dedicated_embedding_model(self) -> None:
         upstream_client = _RecordingClient(
             [
@@ -3706,6 +4044,36 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["data"][18]["coincoin_capabilities"], ["images/generations", "images/edits"])
         self.assertEqual(payload["data"][18]["coincoin_default_for"], [])
         self.assertEqual(payload["data"][18]["coincoin_delivery_lane"], "cpa_gemini")
+
+    async def test_models_endpoint_hides_user_specific_backend_overrides(self) -> None:
+        fake_user = SimpleNamespace(
+            id="u_override",
+            _model_routing_overrides={
+                "gpt-image-2": {
+                    "public_model_id": "gpt-image-2",
+                    "provider_model": "gpt-image-1",
+                    "upstream_model": "gpt-image-1",
+                    "enabled": True,
+                }
+            },
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(openai_module, "authenticate_user", AsyncMock(return_value=fake_user)), patch(
+                "app.stations.list_station_public_models_for_user",
+                AsyncMock(return_value=None),
+            ):
+                response = await client.get("/v1/models", headers={"Authorization": "Bearer sk_cc_test"})
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        model_ids = [item["id"] for item in payload["data"]]
+        self.assertIn("gpt-image-2", model_ids)
+        self.assertNotIn("gpt-image-1", model_ids)
+        image_entry = next(item for item in payload["data"] if item["id"] == "gpt-image-2")
+        self.assertEqual(image_entry["coincoin_billable_sku"], "openai-image")
+        self.assertNotIn("coincoin_provider_model", image_entry)
 
     async def test_models_endpoint_returns_station_scoped_aliases_for_station_key(self) -> None:
         station_models = [

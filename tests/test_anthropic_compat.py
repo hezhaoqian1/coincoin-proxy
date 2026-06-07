@@ -324,6 +324,74 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(prompt_cache_key.startswith("cc-"))
         self.assertEqual(len(prompt_cache_key), 35)
 
+    async def test_claude_alias_user_override_preserves_public_alias_and_applies_cache_billing_override(self):
+        fake_user = SimpleNamespace(
+            id="u_test",
+            status="active",
+            _api_key_id="k_alias_override",
+            _model_routing_overrides={
+                "claude-opus-4-7": {
+                    "public_model_id": "claude-opus-4-7",
+                    "provider_model": "gpt-5.4-mini",
+                    "upstream_model": "gpt-5.4-mini",
+                    "enabled": True,
+                }
+            },
+            _model_pricing_overrides={
+                "claude-opus-4-7": {
+                    "public_model_id": "claude-opus-4-7",
+                    "cache_read_multiplier_override": 1.0,
+                }
+            },
+        )
+        client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "chatcmpl_alias_override",
+                        "choices": [{"message": {"role": "assistant", "content": "OK"}}],
+                        "usage": {
+                            "prompt_tokens": 12,
+                            "prompt_tokens_details": {"cached_tokens": 7},
+                            "completion_tokens": 4,
+                            "total_tokens": 16,
+                        },
+                    }
+                )
+            ]
+        )
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_http_client", AsyncMock(return_value=client)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()) as add_usage,
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={
+                        "authorization": "Bearer sk_test",
+                        "anthropic-version": "2023-06-01",
+                        "user-agent": "claude-cli/2.0.76 (external, cli)",
+                    },
+                    json={
+                        "model": "claude-opus-4-7",
+                        "max_tokens": 64,
+                        "messages": [{"role": "user", "content": "Reply with exactly OK"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertEqual(body["model"], "claude-opus-4-7")
+        self.assertEqual(client.calls[0]["json"]["model"], "gpt-5.4-mini")
+        add_usage.assert_awaited_once()
+        usage_kwargs = add_usage.await_args.kwargs
+        self.assertEqual(usage_kwargs["customer_model_alias"], "claude-opus-4-7")
+        self.assertEqual(usage_kwargs["provider_model"], "gpt-5.4-mini")
+        self.assertEqual(usage_kwargs["cache_read_multiplier"], 1.0)
+        self.assertEqual(usage_kwargs["effective_cached_input_per_million"], 500.0)
+
     async def test_messages_can_route_to_kiro_go_native_messages_path(self):
         fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_kiro_native")
         settings.claude_compat_provider = "kiro_go"

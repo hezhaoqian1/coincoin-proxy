@@ -199,7 +199,11 @@ def public_model_pricing_kwargs(public_model: Any) -> dict:
     }
 
 
-def usage_pricing_kwargs(public_model: Any, station_model: StationResolvedModel | None = None) -> dict:
+def usage_pricing_kwargs(
+    public_model: Any,
+    station_model: StationResolvedModel | None = None,
+    user_cache_read_multiplier_override: float | None = None,
+) -> dict:
     """Merge pricing audit fields for request logging.
 
     Station pricebook versions keep their existing RequestLog.price_version
@@ -207,6 +211,16 @@ def usage_pricing_kwargs(public_model: Any, station_model: StationResolvedModel 
     pricing version when both are present.
     """
     payload = public_model_pricing_kwargs(public_model)
+    if user_cache_read_multiplier_override is not None:
+        payload["cache_read_multiplier"] = float(user_cache_read_multiplier_override)
+        if station_model is not None:
+            input_price = float(station_model.retail_input_per_million or 0)
+        else:
+            input_price = float(getattr(public_model, "price_input_per_million", 0) or 0)
+        payload["effective_cached_input_per_million"] = round(
+            input_price * float(user_cache_read_multiplier_override),
+            4,
+        )
     payload.update(station_usage_kwargs(station_model))
     return payload
 

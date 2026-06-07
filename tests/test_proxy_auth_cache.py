@@ -215,6 +215,63 @@ class ProxyAuthCacheTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(session_key.expires_at, old_expires_at + timedelta(days=20))
         db.commit.assert_awaited_once()
 
+    async def test_authenticate_user_restores_user_model_override_snapshots_from_cache_hit(self) -> None:
+        request = self._request()
+        db = SimpleNamespace(
+            execute=AsyncMock(
+                return_value=_ScalarResult(
+                    SimpleNamespace(
+                        id="u_test",
+                        status="active",
+                        balance=100,
+                        token_limit=None,
+                        token_used=0,
+                        request_limit_per_minute=None,
+                        request_limit_per_day=None,
+                    )
+                )
+            )
+        )
+
+        with patch.object(proxy_module.model_registry, "ensure_initialized"), patch.object(
+            proxy_module.model_registry, "has_routable_models", return_value=True
+        ), patch.object(
+            proxy_module.key_cache,
+            "get",
+            AsyncMock(
+                return_value={
+                    "id": "u_test",
+                    proxy_module._KEY_ID_ATTR: "k_test",
+                    proxy_module._KEY_KIND_ATTR: "api",
+                    "controls": {},
+                    "station_context": {},
+                    "model_routing_overrides": {
+                        "claude-opus-4-7": {
+                            "provider_model": "gpt-5.5",
+                            "upstream_model": "gpt-5.5",
+                            "enabled": True,
+                        }
+                    },
+                    "model_pricing_overrides": {
+                        "claude-opus-4-7": {
+                            "cache_read_multiplier_override": 1.0,
+                        }
+                    },
+                }
+            ),
+        ):
+            user = await proxy_module.authenticate_user(request, db)
+
+        self.assertEqual(getattr(user, proxy_module._KEY_ID_ATTR), "k_test")
+        self.assertEqual(
+            getattr(user, "_model_routing_overrides")["claude-opus-4-7"]["upstream_model"],
+            "gpt-5.5",
+        )
+        self.assertEqual(
+            getattr(user, "_model_pricing_overrides")["claude-opus-4-7"]["cache_read_multiplier_override"],
+            1.0,
+        )
+
     async def test_authorize_request_rejects_monthly_key_quota(self) -> None:
         request = self._request()
         db = SimpleNamespace(

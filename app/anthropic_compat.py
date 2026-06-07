@@ -37,10 +37,12 @@ from .router import (
     registry as model_registry,
 )
 from .station_runtime import resolve_station_model_for_user, usage_pricing_kwargs
+from .user_model_overrides import apply_user_overrides_to_resolution
 from .usage_buffer import (
     extract_cache_creation_tokens,
     extract_cache_read_tokens,
     extract_total_input_tokens,
+    schedule_usage_add,
     usage_buffer,
 )
 
@@ -982,6 +984,13 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
         resolved_model = station_model.resolved_model if station_model else model_registry.resolve_public_model(requested_model, "chat/completions", messages, tools)
     except Exception as exc:
         return _model_resolution_to_anthropic_error(exc)
+    (
+        resolved_model,
+        station_model,
+        _routing_override,
+        user_cache_read_multiplier_override,
+        _effective_provider_model,
+    ) = apply_user_overrides_to_resolution(user, resolved_model, station_model)
 
     public_model = resolved_model.public_model
     display_model = station_model.display_model if station_model else public_model.public_id
@@ -1004,7 +1013,13 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
         openai_payload["max_tokens"] = max_tokens
 
     api_key_id = getattr(user, _KEY_ID_ATTR, "")
-    prompt_cache_key = build_claude_code_prompt_cache_key(user, api_key_id, display_model, public_model)
+    prompt_cache_key = build_claude_code_prompt_cache_key(
+        user,
+        api_key_id,
+        display_model,
+        public_model,
+        effective_backend_model=used_cfg.model_id,
+    )
     if prompt_cache_key:
         openai_payload["prompt_cache_key"] = prompt_cache_key
 
@@ -1192,7 +1207,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
 
             duration_ms = _elapsed_ms_since(request_t0)
             _record_channel_success(used_cfg, duration_ms=duration_ms)
-            asyncio.create_task(usage_buffer.add(
+            schedule_usage_add(
                 user.id,
                 api_key_id=api_key_id,
                 input_tokens=extract_total_input_tokens(stream_state.usage),
@@ -1203,7 +1218,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                 endpoint="messages",
                 model=display_model,
                 customer_model_alias=display_model,
-                provider_model=public_model.provider_model or used_cfg.model_id,
+                provider_model=used_cfg.model_id or _effective_provider_model,
                 route_reason=used_route_reason,
                 duration_ms=duration_ms,
                 status_code=upstream.status_code if upstream is not None else 200,
@@ -1213,8 +1228,12 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                 billable_sku=public_model.billable_sku or display_model,
                 upstream_request_id=upstream_request_id,
                 **_channel_usage_kwargs(used_cfg),
-                **usage_pricing_kwargs(public_model, station_model),
-            ))
+                **usage_pricing_kwargs(
+                    public_model,
+                    station_model,
+                    user_cache_read_multiplier_override=user_cache_read_multiplier_override,
+                ),
+            )
 
         return StreamingResponse(
             iter_bytes(),
@@ -1256,7 +1275,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                 duration_ms = _elapsed_ms_since(request_t0)
                 if stream_state.usage:
                     _record_channel_success(used_cfg, duration_ms=duration_ms)
-                    asyncio.create_task(usage_buffer.add(
+                    schedule_usage_add(
                         user.id,
                         api_key_id=api_key_id,
                         input_tokens=extract_total_input_tokens(stream_state.usage),
@@ -1267,7 +1286,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                         endpoint="messages",
                         model=display_model,
                         customer_model_alias=display_model,
-                        provider_model=public_model.provider_model or used_cfg.model_id,
+                        provider_model=used_cfg.model_id or _effective_provider_model,
                         route_reason=used_route_reason,
                         duration_ms=duration_ms,
                         status_code=upstream.status_code,
@@ -1277,8 +1296,12 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                         billable_sku=public_model.billable_sku or display_model,
                         upstream_request_id=upstream_request_id,
                         **_channel_usage_kwargs(used_cfg),
-                        **usage_pricing_kwargs(public_model, station_model),
-                    ))
+                        **usage_pricing_kwargs(
+                            public_model,
+                            station_model,
+                            user_cache_read_multiplier_override=user_cache_read_multiplier_override,
+                        ),
+                    )
                 elif upstream.status_code >= 400:
                     _record_channel_failure(used_cfg, status_code=upstream.status_code)
                 await upstream.aclose()
@@ -1359,7 +1382,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
         endpoint="messages",
         model=display_model,
         customer_model_alias=display_model,
-        provider_model=public_model.provider_model or used_cfg.model_id,
+        provider_model=used_cfg.model_id or _effective_provider_model,
         route_reason=used_route_reason,
         duration_ms=duration_ms,
         status_code=upstream.status_code,
@@ -1369,7 +1392,11 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
         billable_sku=public_model.billable_sku or display_model,
         upstream_request_id=upstream_request_id,
         **_channel_usage_kwargs(used_cfg),
-        **usage_pricing_kwargs(public_model, station_model),
+        **usage_pricing_kwargs(
+            public_model,
+            station_model,
+            user_cache_read_multiplier_override=user_cache_read_multiplier_override,
+        ),
     )
 
     return JSONResponse(content=response_body, status_code=upstream.status_code, headers=response_headers)
