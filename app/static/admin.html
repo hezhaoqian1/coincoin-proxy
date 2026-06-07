@@ -4612,8 +4612,8 @@
     async function loadModelPricing() {
       try {
         const r = await fetch('/admin/model-pricing', { headers: adminHeaders() });
-        if (!r.ok) return toast('加载模型定价失败', 'error');
         const d = await r.json();
+        if (!r.ok) return toast(d.detail || d.error || '加载模型定价失败', 'error');
         modelPricingCache = d.models || [];
         const body = document.getElementById('modelPricingBody');
         document.getElementById('modelPricingSummary').textContent = `${modelPricingCache.length} 个公开模型，${d.override_count || 0} 个使用自定义倍率`;

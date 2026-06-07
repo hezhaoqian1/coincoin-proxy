@@ -152,6 +152,7 @@ async def _run_migrations(conn):
         ("coincoin_request_logs", "cache_read_multiplier", "DOUBLE DEFAULT 0"),
         ("coincoin_request_logs", "image_multiplier", "DOUBLE DEFAULT 1"),
         ("coincoin_request_logs", "video_multiplier", "DOUBLE DEFAULT 1"),
+        ("coincoin_model_pricing_overrides", "video_multiplier", "DOUBLE DEFAULT 1"),
         ("coincoin_request_logs", "base_price_input_per_million", "BIGINT DEFAULT 0"),
         ("coincoin_request_logs", "base_price_output_per_million", "BIGINT DEFAULT 0"),
         ("coincoin_request_logs", "base_price_per_image_cents", "DOUBLE DEFAULT 0"),

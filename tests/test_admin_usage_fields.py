@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 
 from app.main import app
+import app.main as main_module
 import app.admin as admin_module
 import app.epay as epay_module
 import app.payment as payment_module
@@ -2989,6 +2990,52 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             app.dependency_overrides.pop(admin_module.get_db, None)
             model_registry.clear_runtime_pricing_overrides()
             model_registry._initialized = False
+
+    async def test_model_pricing_migration_adds_video_multiplier_to_existing_table(self) -> None:
+        class _MigrationConn:
+            def __init__(self) -> None:
+                self.statements = []
+
+            async def execute(self, statement):
+                self.statements.append(str(statement))
+
+        conn = _MigrationConn()
+        await main_module._run_migrations(conn)
+
+        self.assertIn(
+            "ALTER TABLE coincoin_model_pricing_overrides ADD COLUMN video_multiplier DOUBLE DEFAULT 1",
+            conn.statements,
+        )
+
+    def test_pricing_payload_tolerates_legacy_model_without_video_fields(self) -> None:
+        legacy_model = SimpleNamespace(
+            public_id="legacy-priced",
+            owned_by="coincoin",
+            provider_name="OpenAI",
+            provider_model="gpt-5.4",
+            delivery_lane="upstream_direct",
+            capabilities=("responses",),
+            billable_sku="legacy-priced-text",
+            base_price_input_per_million=100,
+            base_price_output_per_million=200,
+            price_input_per_million=100,
+            price_output_per_million=200,
+            effective_cached_input_per_million=10,
+            pricing_mode="explicit_price",
+            model_multiplier=1.0,
+            output_multiplier=1.0,
+            cache_read_multiplier=0.1,
+            image_multiplier=1.0,
+            price_version=0,
+        )
+
+        with patch.object(admin_module.model_registry, "get_public_model", return_value=legacy_model):
+            payload = admin_module._pricing_payload("legacy-priced")
+
+        self.assertEqual(payload["id"], "legacy-priced")
+        self.assertEqual(payload["base_price_per_video_cents"], 0.0)
+        self.assertEqual(payload["price_per_video_cents"], 0.0)
+        self.assertEqual(payload["video_multiplier"], 1.0)
 
     async def test_admin_model_alias_update_rejects_arbitrary_upstream_model(self) -> None:
         catalog = {
