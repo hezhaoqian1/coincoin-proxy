@@ -66,7 +66,7 @@ from .schemas import (
     AdminProviderChannelMonitorCreate, AdminProviderChannelMonitorUpdate,
     AdminProviderChannelUpdate, AdminUserModelPricingOverrideUpsert,
     AdminUserModelRoutingOverrideUpsert, AnnouncementCreate, AnnouncementUpdate,
-    RedemptionGenerateRequest, RedemptionGenerateResponse,
+    RedemptionCodeUpdateRequest, RedemptionGenerateRequest, RedemptionGenerateResponse,
 )
 from .channel_monitoring import (
     monitor_availability_rows,
@@ -4808,14 +4808,39 @@ async def list_redemption_codes(
 
 
 @router.patch("/redemption-codes/{code_id}", dependencies=[Depends(admin_guard)])
-async def disable_redemption_code(code_id: str, db: AsyncSession = Depends(get_db)):
+async def update_redemption_code(
+    code_id: str,
+    payload: RedemptionCodeUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+):
     result = await db.execute(select(RedemptionCode).where(RedemptionCode.id == code_id))
     code = result.scalar_one_or_none()
     if not code:
         raise HTTPException(status_code=404, detail="code not found")
-    code.status = "disabled"
+    current_count = int(getattr(code, "redemption_count", 0) or 0)
+    if payload.max_redemptions is not None and payload.max_redemptions > 0 and payload.max_redemptions < current_count:
+        raise HTTPException(status_code=400, detail="max_redemptions cannot be lower than redemption_count")
+    if payload.balance_cents is not None:
+        code.balance_cents = payload.balance_cents
+    if payload.max_redemptions is not None:
+        code.max_redemptions = payload.max_redemptions
+    if payload.per_user_limit is not None:
+        code.per_user_limit = payload.per_user_limit
+    if payload.note is not None:
+        code.note = payload.note.strip()
+    if payload.status is not None:
+        code.status = payload.status
     await db.commit()
-    return {"id": code.id, "status": code.status}
+    return {
+        "id": code.id,
+        "code": code.code,
+        "balance_cents": code.balance_cents,
+        "status": code.status,
+        "max_redemptions": int(getattr(code, "max_redemptions", 1) or 0),
+        "per_user_limit": int(getattr(code, "per_user_limit", 1) or 0),
+        "redemption_count": current_count,
+        "note": getattr(code, "note", "") or "",
+    }
 
 
 # ============== Announcement Management ==============
