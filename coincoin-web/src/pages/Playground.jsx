@@ -24,6 +24,8 @@ const HISTORY_DATA_URL_LIMIT = 360_000
 const ACTIVE_TAB_KEY = 'coincoin_workbench_active_tab_v1'
 const WORKBENCH_TABS = ['chat', 'image', 'video']
 const IMAGE_SIZES = ['1024x1024', '1536x1024', '1024x1536', 'auto']
+const IMAGE_COUNT_MIN = 1
+const IMAGE_COUNT_MAX = 4
 const IMAGE_QUALITIES = [
     { value: 'auto', label: '自动' },
     { value: 'low', label: '草稿' },
@@ -264,6 +266,12 @@ function normalizeTokenCount(...values) {
 
 function formatTokenCount(value) {
     return typeof value === 'number' && Number.isFinite(value) ? value.toLocaleString() : '-'
+}
+
+function clampImageCount(value) {
+    const parsed = Number(value)
+    if (!Number.isFinite(parsed)) return IMAGE_COUNT_MIN
+    return Math.max(IMAGE_COUNT_MIN, Math.min(IMAGE_COUNT_MAX, Math.trunc(parsed)))
 }
 
 function canUseAsRemoteReference(url) {
@@ -682,7 +690,7 @@ function ImageWorkspace({
         form.append('model', modelId)
         form.append('prompt', prompt.trim())
         if (size !== 'auto') form.append('size', size)
-        form.append('n', String(Math.max(1, Math.min(4, Number(count) || 1))))
+        form.append('n', String(clampImageCount(count)))
         if (quality !== 'auto') form.append('quality', quality)
         references.forEach((item, index) => {
             form.append(references.length > 1 ? 'image[]' : 'image', item.file, item.file.name || `reference-${index}.png`)
@@ -701,7 +709,7 @@ function ImageWorkspace({
         const body = references.length === 0 ? {
             model: modelId,
             prompt: trimmedPrompt,
-            n: Math.max(1, Math.min(4, Number(count) || 1)),
+            n: clampImageCount(count),
         } : null
         if (body && size !== 'auto') body.size = size
         if (body && quality !== 'auto') body.quality = quality
@@ -766,7 +774,7 @@ function ImageWorkspace({
                 </div>
                 <label className="wb-field">
                     <span>张数</span>
-                    <input type="number" min="1" max="4" value={count} onChange={(event) => setCount(event.target.value)} />
+                    <input type="number" min={IMAGE_COUNT_MIN} max={IMAGE_COUNT_MAX} value={count} onChange={(event) => setCount(clampImageCount(event.target.value))} />
                 </label>
                 <div className="wb-upload">
                     <div className="wb-upload-head">

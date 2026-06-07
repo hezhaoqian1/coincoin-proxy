@@ -40,7 +40,17 @@ function extractErrorMessage(data, fallbackMessage) {
         if (first && typeof first === 'object' && first.msg) return first.msg
     }
     if (detail && typeof detail === 'object' && detail.msg) return detail.msg
-    return data?.error?.message || fallbackMessage
+    const error = data?.error
+    if (typeof error === 'string' && error) return error
+    if (error && typeof error === 'object') {
+        if (typeof error.message === 'string' && error.message) return error.message
+        if (typeof error.detail === 'string' && error.detail) return error.detail
+        if (typeof error.msg === 'string' && error.msg) return error.msg
+        if (typeof error.code === 'string' && error.code) return error.code
+    }
+    if (typeof data?.message === 'string' && data.message) return data.message
+    if (typeof data?.msg === 'string' && data.msg) return data.msg
+    return fallbackMessage
 }
 
 function isSessionExpiredMessage(message) {
@@ -56,13 +66,15 @@ function handleAuthFailure(status, message) {
 
 async function parseJsonResponse(res, fallbackMessage) {
     let data = {}
+    let text = ''
     try {
-        data = await res.json()
+        text = await res.text()
+        data = text ? JSON.parse(text) : {}
     } catch {
         data = {}
     }
     if (!res.ok) {
-        const message = extractErrorMessage(data, fallbackMessage)
+        const message = extractErrorMessage(data, text || fallbackMessage)
         handleAuthFailure(res.status, message)
         throw new Error(message)
     }
