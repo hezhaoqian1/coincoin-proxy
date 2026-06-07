@@ -8,6 +8,9 @@ import './GuideDetail.css'
 const SITE_ROOT = typeof window !== 'undefined' ? window.location.origin : ''
 const OPENAI_BASE_URL = SITE_ROOT ? `${SITE_ROOT}/v1` : '/v1'
 const CODEX_MODEL_ID = 'gpt-5.4'
+const CLAUDE_DEFAULT_ALIAS = 'sonnet'
+const CLAUDE_DEFAULT_MODEL_ID = 'claude-sonnet-4-6'
+const CLAUDE_OPUS_OPTIONAL_MODEL_ID = 'claude-opus-4-8'
 
 function CopyButton({ text, idleLabel = '复制', doneLabel = '已复制' }) {
     const [copied, setCopied] = useState(false)
@@ -105,12 +108,11 @@ export default function GuideDetail() {
     const { models, textModels, imageModels, defaultTextModel, defaultImageModel } = usePublicModels()
 
     const key = effectiveApiKey || ''
-    const codingModel = textModels.find((model) => model.id === 'opus')
-        || textModels.find((model) => model.id === 'claude-opus-4-8')
-        || textModels.find((model) => model.id === 'claude-opus-4-7')
+    const codingModel = textModels.find((model) => model.id === CODEX_MODEL_ID)
+        || textModels.find((model) => model.id === 'gpt-5.5')
         || defaultTextModel
         || models[0]
-    const defaultClaudeModel = 'claude-sonnet-4-6'
+    const codingModelId = codingModel?.id || CODEX_MODEL_ID
     const snippetKey = key || 'YOUR_DEVELOPER_API_KEY'
     const maskedKey = effectiveApiKey
         ? `${effectiveApiKey.slice(0, 8)}\u2022\u2022\u2022\u2022${effectiveApiKey.slice(-4)}`
@@ -121,7 +123,7 @@ export default function GuideDetail() {
   -H "Authorization: Bearer ${snippetKey}" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "${codingModel?.id || 'opus'}",
+    "model": "${codingModelId}",
     "messages": [{"role": "user", "content": "Reply with only: OK"}],
     "stream": false
   }'`
@@ -134,7 +136,7 @@ client = OpenAI(
 )
 
 response = client.chat.completions.create(
-    model="${codingModel?.id || 'opus'}",
+    model="${codingModelId}",
     messages=[{"role": "user", "content": "Reply with only: OK"}],
 )
 
@@ -148,7 +150,7 @@ const client = new OpenAI({
 });
 
 const response = await client.chat.completions.create({
-  model: "${codingModel?.id || 'opus'}",
+  model: "${codingModelId}",
   messages: [{ role: "user", content: "Reply with only: OK" }],
 });
 
@@ -171,7 +173,7 @@ func main() {
   )
 
   resp, err := client.Chat.Completions.New(context.Background(), openai.ChatCompletionNewParams{
-    Model: "${codingModel?.id || 'opus'}",
+    Model: "${codingModelId}",
     Messages: []openai.ChatCompletionMessageParamUnion{
       openai.UserMessage("Reply with only: OK"),
     },
@@ -186,7 +188,7 @@ func main() {
         const apiPhpCommand = `<?php
 
 $payload = [
-    "model" => "${codingModel?.id || 'opus'}",
+    "model" => "${codingModelId}",
     "messages" => [
         ["role" => "user", "content" => "Reply with only: OK"],
     ],
@@ -243,15 +245,15 @@ if [ -f ~/.codex/config.toml ]; then
   cp ~/.codex/config.toml ~/.codex/config.toml.bak.$(date +%Y%m%d%H%M%S)
 fi
 cat > ~/.codex/config.toml <<'EOF'
-model_provider = "coincoin"
+model_provider = "clawfather"
 model = "${CODEX_MODEL_ID}"
 disable_response_storage = true
 model_reasoning_effort = "high"
 web_search = "live"
 personality = "pragmatic"
 
-[model_providers.coincoin]
-name = "CoinCoin"
+[model_providers.clawfather]
+name = "ClawFather"
 base_url = "${OPENAI_BASE_URL}"
 experimental_bearer_token = "${snippetKey}"
 wire_api = "responses"
@@ -265,15 +267,15 @@ if (Test-Path "$HOME\\.codex\\config.toml") {
   Copy-Item "$HOME\\.codex\\config.toml" "$HOME\\.codex\\config.toml.bak.$stamp"
 }
 @"
-model_provider = "coincoin"
+model_provider = "clawfather"
 model = "${CODEX_MODEL_ID}"
 disable_response_storage = true
 model_reasoning_effort = "high"
 web_search = "live"
 personality = "pragmatic"
 
-[model_providers.coincoin]
-name = "CoinCoin"
+[model_providers.clawfather]
+name = "ClawFather"
 base_url = "${OPENAI_BASE_URL}"
 experimental_bearer_token = "${snippetKey}"
 wire_api = "responses"
@@ -281,52 +283,123 @@ wire_api = "responses"
 
 codex`
 
-        const claudeCommand = `COINCOIN_CLAUDE_ENV="$HOME/.coincoin-claude-code.env"
-if [ -f "$COINCOIN_CLAUDE_ENV" ]; then
-  cp "$COINCOIN_CLAUDE_ENV" "$COINCOIN_CLAUDE_ENV.bak.$(date +%Y%m%d%H%M%S)"
+        const claudeUnixCommand = `CLAUDE_DIR="\${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+SETTINGS_FILE="$CLAUDE_DIR/settings.json"
+
+mkdir -p "$CLAUDE_DIR"
+if [ -f "$SETTINGS_FILE" ]; then
+  cp "$SETTINGS_FILE" "$SETTINGS_FILE.bak.$(date +%Y%m%d%H%M%S)"
 fi
-cat > "$COINCOIN_CLAUDE_ENV" <<'EOF'
-export ANTHROPIC_BASE_URL="${SITE_ROOT}"
-export ANTHROPIC_AUTH_TOKEN="${snippetKey}"
-export ANTHROPIC_MODEL="${defaultClaudeModel}"
-export ANTHROPIC_DEFAULT_SONNET_MODEL="${defaultClaudeModel}"
-export ANTHROPIC_DEFAULT_OPUS_MODEL="claude-opus-4-8"
-export ANTHROPIC_DEFAULT_HAIKU_MODEL="claude-haiku-4-5"
+
+SETTINGS_FILE="$SETTINGS_FILE" python3 <<'EOF'
+import json
+import os
+from pathlib import Path
+
+path = Path(os.environ["SETTINGS_FILE"])
+data = {}
+
+if path.exists():
+    raw = path.read_text(encoding="utf-8")
+    if raw.strip():
+        data = json.loads(raw)
+
+if not isinstance(data, dict):
+    raise SystemExit("Existing settings.json must contain a JSON object.")
+
+env = data.get("env")
+if not isinstance(env, dict):
+    env = {}
+
+data["$schema"] = "https://json.schemastore.org/claude-code-settings.json"
+data["model"] = "${CLAUDE_DEFAULT_ALIAS}"
+env.update({
+    "ANTHROPIC_BASE_URL": "${SITE_ROOT}",
+    "ANTHROPIC_AUTH_TOKEN": "${snippetKey}",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "${CLAUDE_OPUS_OPTIONAL_MODEL_ID}",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "${CLAUDE_DEFAULT_MODEL_ID}",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-4-5",
+    "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "1",
+})
+data["env"] = env
+
+path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\\n", encoding="utf-8")
 EOF
 
-. "$COINCOIN_CLAUDE_ENV"
-claude --model "${defaultClaudeModel}"`
+claude`
+
+        const claudeWindowsCommand = `$ClaudeDir = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $HOME ".claude" }
+$SettingsFile = Join-Path $ClaudeDir "settings.json"
+
+New-Item -ItemType Directory -Force $ClaudeDir | Out-Null
+if (Test-Path $SettingsFile) {
+  $stamp = Get-Date -Format "yyyyMMddHHmmss"
+  Copy-Item $SettingsFile "$SettingsFile.bak.$stamp"
+}
+
+$Data = @{}
+if (Test-Path $SettingsFile) {
+  $Raw = Get-Content $SettingsFile -Raw
+  if ($Raw.Trim()) {
+    $Data = $Raw | ConvertFrom-Json -AsHashtable
+  }
+}
+
+if (-not ($Data -is [System.Collections.IDictionary])) {
+  throw "Existing settings.json must contain a JSON object."
+}
+
+$EnvMap = @{}
+if ($Data.Contains("env") -and $Data["env"] -is [System.Collections.IDictionary]) {
+  foreach ($Key in $Data["env"].Keys) {
+    $EnvMap[$Key] = $Data["env"][$Key]
+  }
+}
+
+$Data['$schema'] = "https://json.schemastore.org/claude-code-settings.json"
+$Data["model"] = "${CLAUDE_DEFAULT_ALIAS}"
+$EnvMap["ANTHROPIC_BASE_URL"] = "${SITE_ROOT}"
+$EnvMap["ANTHROPIC_AUTH_TOKEN"] = "${snippetKey}"
+$EnvMap["ANTHROPIC_DEFAULT_OPUS_MODEL"] = "${CLAUDE_OPUS_OPTIONAL_MODEL_ID}"
+$EnvMap["ANTHROPIC_DEFAULT_SONNET_MODEL"] = "${CLAUDE_DEFAULT_MODEL_ID}"
+$EnvMap["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = "claude-haiku-4-5"
+$EnvMap["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"] = "1"
+$Data["env"] = $EnvMap
+
+$Data | ConvertTo-Json -Depth 20 | Set-Content $SettingsFile -Encoding UTF8
+
+claude`
 
         const opencodeCommand = `mkdir -p ~/.config/opencode && cat > ~/.config/opencode/opencode.json <<'EOF'
 {
   "$schema": "https://opencode.ai/config.json",
   "provider": {
-    "coincoin": {
+    "clawfather": {
       "npm": "@ai-sdk/openai-compatible",
-      "name": "CoinCoin",
+      "name": "ClawFather",
       "options": {
         "baseURL": "${OPENAI_BASE_URL}",
         "apiKey": "${snippetKey}"
       },
       "models": {
-        "${codingModel?.id || 'gpt-5.3-codex'}": {}
+        "${codingModelId}": {}
       }
     }
   },
-  "model": "coincoin/${codingModel?.id || 'gpt-5.3-codex'}"
+  "model": "clawfather/${codingModelId}"
 }
 EOF
 
 opencode`
 
         const continueCommand = `mkdir -p ~/.continue && cat > ~/.continue/config.yaml <<'EOF'
-name: CoinCoin
+name: ClawFather
 version: 0.0.1
 schema: v1
 models:
-  - name: CoinCoin Codex
+  - name: ClawFather Codex
     provider: openai
-    model: ${codingModel?.id || 'gpt-5.3-codex'}
+    model: ${codingModelId}
     apiKey: ${snippetKey}
     apiBase: ${OPENAI_BASE_URL}
     roles:
@@ -334,24 +407,24 @@ models:
       - edit
 EOF`
 
-        const aiderCommand = `export OPENAI_API_KEY="${snippetKey}"
+const aiderCommand = `export OPENAI_API_KEY="${snippetKey}"
 export OPENAI_API_BASE="${OPENAI_BASE_URL}"
 
-aider --model openai/${codingModel?.id || 'gpt-5.3-codex'}`
+aider --model openai/${codingModelId}`
 
         const openclawCommand = `{
   "models": {
     "providers": {
-      "coincoin": {
+      "clawfather": {
         "baseUrl": "${OPENAI_BASE_URL}",
         "apiKey": "${snippetKey}",
         "api": "openai-completions",
-        "models": [{"id": "${codingModel?.id || 'gpt-5.3-codex'}", "contextWindow": 131072}]
+        "models": [{"id": "${codingModelId}", "contextWindow": 131072}]
       }
     },
     "defaults": {
-      "provider": "coincoin",
-      "model": "${codingModel?.id || 'gpt-5.3-codex'}"
+      "provider": "clawfather",
+      "model": "${codingModelId}"
     }
   }
 }`
@@ -424,7 +497,7 @@ aider --model openai/${codingModel?.id || 'gpt-5.3-codex'}`
                 commandGroup: [
                     {
                         title: 'macOS / Linux 一键配置',
-                        summary: '写入 CoinCoin provider；已有 `~/.codex/config.toml` 时先复制一份带时间戳的备份。',
+                        summary: '写入 ClawFather provider；已有 `~/.codex/config.toml` 时先复制一份带时间戳的备份。',
                         code: codexCommand,
                     },
                     {
@@ -436,14 +509,23 @@ aider --model openai/${codingModel?.id || 'gpt-5.3-codex'}`
             },
             'claude-code': {
                 title: 'Claude Code 配置',
-                description: 'Claude Code 走 Anthropic 兼容入口，地址填根域名，不要手动加 `/v1`。',
-                commandTitle: '直接用环境变量启动 Claude Code',
-                commandSummary: '写入独立环境文件并自动备份旧文件；如果之前登录过官方 Claude，先在 Claude Code 里执行一次 `/logout`。',
-                command: claudeCommand,
+                description: 'Claude Code 走 Anthropic 兼容入口，地址填根域名，不要手动加 `/v1`。默认推荐 `sonnet`，`claude-opus-4-8` 作为显式高配选项保留。',
+                commandGroup: [
+                    {
+                        title: 'macOS / Linux 一键配置',
+                        summary: '按 Claude Code 官方 `~/.claude/settings.json` 机制写入用户级配置；旧文件先备份，再保留其他设置并合并 ClawFather 所需的网关和模型字段。',
+                        code: claudeUnixCommand,
+                    },
+                    {
+                        title: 'Windows PowerShell 一键配置',
+                        summary: '按官方 `%USERPROFILE%\\.claude\\settings.json` 路径写入；旧文件先备份，再保留其他设置并合并 ClawFather 所需的网关和模型字段。',
+                        code: claudeWindowsCommand,
+                    },
+                ],
             },
             opencode: {
                 title: 'OpenCode 配置',
-                description: 'OpenCode 走 OpenAI-compatible provider，model 用 `coincoin/<公开 alias>`。',
+                description: 'OpenCode 走 OpenAI-compatible provider，model 用 `clawfather/<公开 alias>`。',
                 commandTitle: '写入 OpenCode provider',
                 commandSummary: '写入 `~/.config/opencode/opencode.json` 后直接启动 OpenCode。',
                 command: opencodeCommand,
@@ -496,7 +578,7 @@ aider --model openai/${codingModel?.id || 'gpt-5.3-codex'}`
                 integrations: otherGuides,
             },
         }
-    }, [codingModel?.id, defaultImageModel?.id, imageModels, key])
+    }, [codingModelId, defaultImageModel?.id, imageModels, key])
 
     const guide = guideId ? guides[guideId] : null
     if (!guide) {
