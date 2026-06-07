@@ -371,13 +371,14 @@ function downloadMedia(url, filename) {
 
 function KeyNotice({ authMode, hasDeveloperKey, hasLocalDeveloperKey }) {
     if (hasLocalDeveloperKey) return null
+    const hasRemoteDeveloperKey = authMode === 'session_with_api' || hasDeveloperKey
     return (
         <div className="wb-alert">
-            <strong>需要开发者 Key</strong>
+            <strong>{hasRemoteDeveloperKey ? '当前浏览器没有 Key' : '需要开发者 Key'}</strong>
             <span>
-                {authMode === 'session_only'
-                    ? (hasDeveloperKey ? '当前浏览器没有保存明文，请重新生成。' : '请先生成开发者 Key。')
-                    : '请使用开发者 Key 登录或回控制台生成。'}
+                {hasRemoteDeveloperKey
+                    ? '账号已有 Key，但明文不会跨浏览器恢复。'
+                    : '请先在控制台生成。'}
             </span>
         </div>
     )
