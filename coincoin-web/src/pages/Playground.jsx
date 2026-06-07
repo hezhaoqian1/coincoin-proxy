@@ -677,6 +677,7 @@ function ImageWorkspace({
             name: file.name,
             previewUrl: URL.createObjectURL(file),
         })))
+        if (files.length) setCount(IMAGE_COUNT_MIN)
         event.target.value = ''
     }
 
@@ -736,6 +737,7 @@ function ImageWorkspace({
                 name: file.name,
                 previewUrl: URL.createObjectURL(file),
             }])
+            setCount(IMAGE_COUNT_MIN)
         } catch {
             emitImageRunState({ error: '无法读取该图片，请下载后上传。' })
         }
