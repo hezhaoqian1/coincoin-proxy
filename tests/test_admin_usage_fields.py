@@ -164,6 +164,50 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload[0]["tokens_total"], 12345)
         self.assertEqual(payload[0]["cost_usd"], 0.88)
 
+    async def test_admin_with_token_serves_admin_ui_for_acceptance(self) -> None:
+        original_token = admin_module._settings.admin_token
+        admin_module._settings.admin_token = "admin-secret"
+        try:
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                response = await client.get("/admin?token=admin-secret")
+
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertIn("模型转发例外", response.text)
+            self.assertIn("缓存计费例外", response.text)
+            self.assertIn("model-routing-overrides", response.text)
+            self.assertIn("model-pricing-overrides", response.text)
+        finally:
+            admin_module._settings.admin_token = original_token
+
+    async def test_admin_without_token_keeps_spa_fallback(self) -> None:
+        original_token = admin_module._settings.admin_token
+        admin_module._settings.admin_token = "admin-secret"
+        try:
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                response = await client.get("/admin")
+
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertNotIn("模型转发例外", response.text)
+            self.assertNotIn("model-routing-overrides", response.text)
+        finally:
+            admin_module._settings.admin_token = original_token
+
+    async def test_admin_with_empty_configured_token_keeps_spa_fallback(self) -> None:
+        original_token = admin_module._settings.admin_token
+        admin_module._settings.admin_token = ""
+        try:
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                response = await client.get("/admin?token=")
+
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertNotIn("模型转发例外", response.text)
+            self.assertNotIn("model-routing-overrides", response.text)
+        finally:
+            admin_module._settings.admin_token = original_token
+
     def test_admin_ui_initial_load_only_loads_active_page(self) -> None:
         admin_html = (Path(admin_module.__file__).parent / "static" / "admin.html").read_text()
 

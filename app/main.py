@@ -53,6 +53,7 @@ logging.basicConfig(
 )
 
 WEB_DIR = Path(__file__).parent.parent / "static" / "web"
+ADMIN_UI_PATH = Path(__file__).parent / "static" / "admin.html"
 ADMIN_UPLOAD_DIR = Path(settings.admin_upload_dir)
 
 
@@ -1025,6 +1026,8 @@ if WEB_DIR.is_dir():
 
     @app.get("/{full_path:path}")
     async def spa_fallback(request: Request, full_path: str):
+        if full_path == "admin" and settings.admin_token and request.query_params.get("token", "") == settings.admin_token:
+            return FileResponse(ADMIN_UI_PATH)
         file_path = WEB_DIR / full_path
         if full_path and file_path.is_file():
             return FileResponse(file_path)
