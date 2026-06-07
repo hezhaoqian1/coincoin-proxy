@@ -152,6 +152,8 @@ export function useAuth() {
     const hasLocalDeveloperKey = !!generatedApiKey || (!!apiKey && !isConsoleSession)
     const hasDeveloperKey = hasLocalDeveloperKey || (isConsoleSession && developerKeyState.hasActiveKey)
     const effectiveApiKey = generatedApiKey || (!isConsoleSession && apiKey ? apiKey : '')
+    const workbenchApiKey = effectiveApiKey || (isConsoleSession && hasDeveloperKey ? apiKey : '')
+    const canUseWorkbench = !!workbenchApiKey && hasDeveloperKey
     const authMode = !apiKey
         ? 'anonymous'
         : isConsoleSession
@@ -162,6 +164,7 @@ export function useAuth() {
         activeDeveloperKeyCount: developerKeyState.activeKeyCount,
         apiKey,
         authMode,
+        canUseWorkbench,
         effectiveApiKey,
         generatedApiKey,
         hasDeveloperKey,
@@ -173,6 +176,7 @@ export function useAuth() {
         login,
         loginWithPassword,
         logout,
+        workbenchApiKey,
         username,
     }
 }

@@ -61,6 +61,7 @@ from .usage_buffer import (
 
 _KEY_KIND_ATTR = "_key_kind"
 _KEY_ID_ATTR = "_api_key_id"
+WORKBENCH_HEADER = "x-coincoin-workbench"
 CHANNEL_FALLBACK_MAX_ATTEMPTS = 16
 CHANNEL_FALLBACK_RETRY_ERRORS = frozenset({
     "upstream_unreachable",
@@ -1828,18 +1829,48 @@ async def _enforce_api_key_controls(request: Request, db: AsyncSession, user: Us
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="internal error")
 
 
+async def _delegate_workbench_session_to_api_key(request: Request, db: AsyncSession, user: User) -> User:
+    if str(request.headers.get(WORKBENCH_HEADER) or "").strip().lower() not in {"1", "true", "yes"}:
+        return user
+
+    key_row = (
+        await db.execute(
+            select(ApiKey)
+            .where(
+                ApiKey.user_id == user.id,
+                ApiKey.kind == "api",
+                ApiKey.status == "active",
+            )
+            .order_by(ApiKey.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    if not key_row:
+        return user
+
+    setattr(user, _KEY_KIND_ATTR, "api")
+    setattr(user, _KEY_ID_ATTR, key_row.id)
+    setattr(
+        user,
+        "_api_key_controls",
+        {
+            "monthly_quota_cents": getattr(key_row, "monthly_quota_cents", None),
+            "total_quota_cents": getattr(key_row, "total_quota_cents", None),
+            "ip_allowlist": getattr(key_row, "ip_allowlist", None),
+            "expires_at": getattr(key_row, "expires_at", None),
+        },
+    )
+    return user
+
+
 async def authenticate_user(request: Request, db: AsyncSession):
     """Light auth: identity + active check only. No balance/quota enforcement.
     Use for payment, redeem, balance queries — endpoints where zero balance is fine."""
     return await _resolve_user(request, db)
 
 
-async def authorize_request(request: Request, db: AsyncSession):
-    """Full auth: identity + active + rate limit + balance/quota checks.
-    Use for API proxy endpoints that consume resources.
-    Only kind='api' keys are allowed here; session keys get 403."""
-    user = await _resolve_user(request, db)
-
+async def _authorize_api_user_after_resolution(request: Request, db: AsyncSession, user: User) -> User:
     if getattr(user, _KEY_KIND_ATTR, "api") != "api":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -1857,7 +1888,7 @@ async def authorize_request(request: Request, db: AsyncSession):
     pending_tokens = await usage_buffer.get_pending_tokens(user.id)
     if user.token_limit is not None and (user.token_used + pending_tokens) >= user.token_limit:
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="token limit exceeded")
-    
+
     # 余额检查（balance 计费模式）
     available_balance_cents = 0
     if settings.billing_mode == "balance":
@@ -1891,6 +1922,27 @@ async def authorize_request(request: Request, db: AsyncSession):
     await reserve_quota_for_request(request, user, available_balance_cents=available_balance_cents)
 
     return user
+
+
+async def authorize_request(request: Request, db: AsyncSession):
+    """Full auth: identity + active + rate limit + balance/quota checks.
+    Use for API proxy endpoints that consume resources.
+    Only kind='api' keys are allowed here; session keys get 403."""
+    user = await _resolve_user(request, db)
+    return await _authorize_api_user_after_resolution(request, db, user)
+
+
+async def authorize_workbench_request(request: Request, db: AsyncSession):
+    """Full auth for first-party workbench calls.
+
+    Normal API keys work as usual. A dashboard session can consume resources only
+    when the first-party workbench marker is present and the account already has
+    an active developer API key; usage is attributed to that API key.
+    """
+    user = await _resolve_user(request, db)
+    if getattr(user, _KEY_KIND_ATTR, "api") != "api":
+        user = await _delegate_workbench_session_to_api_key(request, db, user)
+    return await _authorize_api_user_after_resolution(request, db, user)
 
 
 @router.post("/responses")
@@ -3095,7 +3147,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
 
 @router.post("/images/generations")
 async def proxy_images_generations(request: Request, db: AsyncSession = Depends(get_db)):
-    user = await authorize_request(request, db)
+    user = await authorize_workbench_request(request, db)
 
     try:
         payload = await request.json()
@@ -3380,7 +3432,7 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
 
 @router.post("/images/edits")
 async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db)):
-    user = await authorize_request(request, db)
+    user = await authorize_workbench_request(request, db)
 
     try:
         requested_model, form_fields, file_fields = await _parse_image_edit_form(request)

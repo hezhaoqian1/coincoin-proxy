@@ -22,7 +22,7 @@ from .proxy import (
     _chat_completion_chunk_line,
     _normalize_openai_base_url, _responses_tools_to_chat_tools,
     _translate_chat_response_to_responses,
-    authenticate_user, authorize_request, extract_upstream_request_id,
+    authenticate_user, authorize_request, authorize_workbench_request, extract_upstream_request_id,
     filter_headers, get_http_client, get_stream_client, proxy_images_edits, proxy_images_generations,
     proxy_responses, responses_health, _KEY_ID_ATTR,
     _channel_fallback_config, _channel_usage_kwargs, _record_channel_failure, _record_channel_success,
@@ -780,7 +780,7 @@ async def images_edits(request: Request, db: AsyncSession = Depends(get_db)):
 @router.post("/chat/completions")
 async def chat_completions(request: Request, db: AsyncSession = Depends(get_db)):
     try:
-        user = await authorize_request(request, db)
+        user = await authorize_workbench_request(request, db)
     except HTTPException as e:
         # 转换为 OpenAI 标准错误格式
         if e.status_code == 401:

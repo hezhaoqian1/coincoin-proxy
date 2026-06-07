@@ -348,13 +348,15 @@ export async function getMediaArtifacts(limit = 50, offset = 0, filters = {}) {
 function workbenchJsonHeaders(apiKey) {
     return {
         'Authorization': `Bearer ${apiKey || getApiKey()}`,
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'X-CoinCoin-Workbench': '1',
     }
 }
 
 function workbenchMultipartHeaders(apiKey) {
     return {
-        'Authorization': `Bearer ${apiKey || getApiKey()}`
+        'Authorization': `Bearer ${apiKey || getApiKey()}`,
+        'X-CoinCoin-Workbench': '1',
     }
 }
 

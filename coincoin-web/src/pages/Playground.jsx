@@ -369,16 +369,12 @@ function downloadMedia(url, filename) {
     anchor.remove()
 }
 
-function KeyNotice({ authMode, hasDeveloperKey, hasLocalDeveloperKey }) {
-    if (hasLocalDeveloperKey) return null
+function KeyNotice({ hasDeveloperKey }) {
+    if (hasDeveloperKey) return null
     return (
         <div className="wb-alert">
             <strong>需要开发者 Key</strong>
-            <span>
-                {authMode === 'session_only'
-                    ? (hasDeveloperKey ? '当前浏览器没有保存明文，请重新生成。' : '请先生成开发者 Key。')
-                    : '请使用开发者 Key 登录或回控制台生成。'}
-            </span>
+            <span>请先在控制台生成。</span>
         </div>
     )
 }
@@ -439,15 +435,14 @@ function ApiMediaRecords({ records, loading, activeTab, setVideoReference }) {
 }
 
 function ChatWorkspace({
-    authMode,
-    effectiveApiKey,
+    canUseWorkbench,
     hasDeveloperKey,
-    hasLocalDeveloperKey,
     loadingModels,
     models,
     selectedModel,
     setSelectedModel,
     selectedModelInfo,
+    workbenchApiKey,
 }) {
     const [systemPrompt, setSystemPrompt] = useState('')
     const [userPrompt, setUserPrompt] = useState('')
@@ -460,7 +455,7 @@ function ChatWorkspace({
 
     const handleSend = async () => {
         if (!userPrompt.trim() || loading) return
-        if (!effectiveApiKey) {
+        if (!canUseWorkbench) {
             setResponse('Error: 当前没有可用的开发者 API Key。')
             setStats(null)
             return
@@ -481,8 +476,9 @@ function ChatWorkspace({
             const res = await fetch('/v1/chat/completions', {
                 method: 'POST',
                 headers: {
-                    Authorization: `Bearer ${effectiveApiKey}`,
-                    'Content-Type': 'application/json'
+                    Authorization: `Bearer ${workbenchApiKey}`,
+                    'Content-Type': 'application/json',
+                    'X-CoinCoin-Workbench': '1',
                 },
                 body: JSON.stringify({
                     model: selectedModel,
@@ -558,7 +554,7 @@ function ChatWorkspace({
     return (
         <div className="wb-layout">
             <aside className="wb-rail">
-                <KeyNotice authMode={authMode} hasDeveloperKey={hasDeveloperKey} hasLocalDeveloperKey={hasLocalDeveloperKey} />
+                <KeyNotice hasDeveloperKey={hasDeveloperKey} />
                 <ModelSelect
                     label="模型"
                     models={models}
@@ -626,7 +622,7 @@ function ChatWorkspace({
                         {loading ? (
                             <button className="btn btn-secondary" onClick={() => abortRef.current?.abort()}>停止</button>
                         ) : (
-                            <button className="btn btn-primary" onClick={handleSend} disabled={!userPrompt.trim() || !effectiveApiKey || !selectedModel}>发送</button>
+                            <button className="btn btn-primary" onClick={handleSend} disabled={!userPrompt.trim() || !canUseWorkbench || !selectedModel}>发送</button>
                         )}
                     </div>
                 </div>
@@ -636,10 +632,8 @@ function ChatWorkspace({
 }
 
 function ImageWorkspace({
-    authMode,
-    effectiveApiKey,
+    canUseWorkbench,
     hasDeveloperKey,
-    hasLocalDeveloperKey,
     loadingModels,
     models,
     selectedModel,
@@ -647,6 +641,7 @@ function ImageWorkspace({
     selectedModelInfo,
     history,
     setVideoReference,
+    workbenchApiKey,
 }) {
     const [customModel, setCustomModel] = useState('')
     const [prompt, setPrompt] = useState('')
@@ -697,7 +692,7 @@ function ImageWorkspace({
 
     const handleGenerate = async () => {
         if (!prompt.trim() || !modelId || loading) return
-        if (!effectiveApiKey) {
+        if (!canUseWorkbench) {
             emitImageRunState({ error: '当前没有可用的开发者 API Key。' })
             return
         }
@@ -712,7 +707,7 @@ function ImageWorkspace({
         if (body && quality !== 'auto') body.quality = quality
 
         startImageRun({
-            apiKey: effectiveApiKey,
+            apiKey: workbenchApiKey,
             modelId,
             prompt: trimmedPrompt,
             mode: references.length === 0 ? 'generation' : (references.length <= 2 ? 'edit' : 'edit-job'),
@@ -743,7 +738,7 @@ function ImageWorkspace({
     return (
         <div className="wb-layout">
             <aside className="wb-rail">
-                <KeyNotice authMode={authMode} hasDeveloperKey={hasDeveloperKey} hasLocalDeveloperKey={hasLocalDeveloperKey} />
+                <KeyNotice hasDeveloperKey={hasDeveloperKey} />
                 <ModelSelect label="推荐模型" models={models} value={selectedModel} onChange={setSelectedModel} disabled={loadingModels || loading} />
                 <label className="wb-field">
                     <span>自定义模型</span>
@@ -827,7 +822,7 @@ function ImageWorkspace({
                         {loading ? (
                             <button className="btn btn-secondary" onClick={cancelImageRun}>停止</button>
                         ) : (
-                            <button className="btn btn-primary" onClick={handleGenerate} disabled={!prompt.trim() || !modelId || !effectiveApiKey}>开始生成</button>
+                            <button className="btn btn-primary" onClick={handleGenerate} disabled={!prompt.trim() || !modelId || !canUseWorkbench}>开始生成</button>
                         )}
                     </div>
                 </div>
@@ -837,10 +832,8 @@ function ImageWorkspace({
 }
 
 function VideoWorkspace({
-    authMode,
-    effectiveApiKey,
+    canUseWorkbench,
     hasDeveloperKey,
-    hasLocalDeveloperKey,
     loadingModels,
     models,
     selectedModel,
@@ -851,6 +844,7 @@ function VideoWorkspace({
     videoReference,
     setVideoReference,
     reloadApiRecords,
+    workbenchApiKey,
 }) {
     const [customModel, setCustomModel] = useState('')
     const [prompt, setPrompt] = useState('')
@@ -868,14 +862,14 @@ function VideoWorkspace({
             setTask(current)
             if (TERMINAL_STATUSES.has(current.status)) return current
             await sleep(5000, signal)
-            current = await getVideoGeneration(effectiveApiKey, current.id || current.task_id || current.job_id, { signal })
+            current = await getVideoGeneration(workbenchApiKey, current.id || current.task_id || current.job_id, { signal })
         }
         return current
     }
 
     const handleGenerate = async () => {
         if (!prompt.trim() || !modelId || loading) return
-        if (!effectiveApiKey) {
+        if (!canUseWorkbench) {
             setError('当前没有可用的开发者 API Key。')
             return
         }
@@ -892,7 +886,7 @@ function VideoWorkspace({
         setTask({ status: 'queued', model: modelId })
 
         try {
-            const created = await createVideoGeneration(effectiveApiKey, {
+            const created = await createVideoGeneration(workbenchApiKey, {
                 model: modelId,
                 prompt: prompt.trim(),
                 params: {
@@ -933,7 +927,7 @@ function VideoWorkspace({
     return (
         <div className="wb-layout">
             <aside className="wb-rail">
-                <KeyNotice authMode={authMode} hasDeveloperKey={hasDeveloperKey} hasLocalDeveloperKey={hasLocalDeveloperKey} />
+                <KeyNotice hasDeveloperKey={hasDeveloperKey} />
                 <ModelSelect label="推荐模型" models={models} value={selectedModel} onChange={setSelectedModel} disabled={loadingModels || loading} />
                 <label className="wb-field">
                     <span>自定义模型</span>
@@ -1003,7 +997,7 @@ function VideoWorkspace({
                         {loading ? (
                             <button className="btn btn-secondary" onClick={() => abortRef.current?.abort()}>停止轮询</button>
                         ) : (
-                            <button className="btn btn-primary" onClick={handleGenerate} disabled={!prompt.trim() || !modelId || !effectiveApiKey || !canUseAsRemoteReference(videoReference)}>
+                            <button className="btn btn-primary" onClick={handleGenerate} disabled={!prompt.trim() || !modelId || !canUseWorkbench || !canUseAsRemoteReference(videoReference)}>
                                 生成视频
                             </button>
                         )}
@@ -1054,7 +1048,7 @@ function MediaHistory({ history, activeTab, setVideoReference }) {
 }
 
 export default function Playground() {
-    const { authMode, effectiveApiKey, hasDeveloperKey, hasLocalDeveloperKey } = useAuth()
+    const { canUseWorkbench, hasDeveloperKey, workbenchApiKey } = useAuth()
     const {
         textModels,
         imageModels,
@@ -1190,25 +1184,22 @@ export default function Playground() {
 
                 {activeTab === 'chat' ? (
                     <ChatWorkspace
-                        authMode={authMode}
-                        effectiveApiKey={effectiveApiKey}
+                        canUseWorkbench={canUseWorkbench}
                         hasDeveloperKey={hasDeveloperKey}
-                        hasLocalDeveloperKey={hasLocalDeveloperKey}
                         loadingModels={loadingModels}
                         models={textModels}
                         selectedModel={selectedTextModel}
                         setSelectedModel={setSelectedTextModel}
                         selectedModelInfo={selectedTextModelInfo}
+                        workbenchApiKey={workbenchApiKey}
                     />
                 ) : null}
 
                 {activeTab === 'image' ? (
                     <>
                         <ImageWorkspace
-                            authMode={authMode}
-                            effectiveApiKey={effectiveApiKey}
+                            canUseWorkbench={canUseWorkbench}
                             hasDeveloperKey={hasDeveloperKey}
-                            hasLocalDeveloperKey={hasLocalDeveloperKey}
                             loadingModels={loadingModels}
                             models={imageModels}
                             selectedModel={selectedImageModel}
@@ -1219,6 +1210,7 @@ export default function Playground() {
                                 setVideoReference(url)
                                 setActiveTab('video')
                             }}
+                            workbenchApiKey={workbenchApiKey}
                         />
                         <div className="wb-bottom-panels">
                             <MediaHistory history={history} activeTab="image" setVideoReference={(url) => {
@@ -1236,10 +1228,8 @@ export default function Playground() {
                 {activeTab === 'video' ? (
                     <>
                         <VideoWorkspace
-                            authMode={authMode}
-                            effectiveApiKey={effectiveApiKey}
+                            canUseWorkbench={canUseWorkbench}
                             hasDeveloperKey={hasDeveloperKey}
-                            hasLocalDeveloperKey={hasLocalDeveloperKey}
                             loadingModels={loadingModels}
                             models={videoModels}
                             selectedModel={selectedVideoModel}
@@ -1250,6 +1240,7 @@ export default function Playground() {
                             videoReference={videoReference}
                             setVideoReference={setVideoReference}
                             reloadApiRecords={reloadApiRecords}
+                            workbenchApiKey={workbenchApiKey}
                         />
                         <div className="wb-bottom-panels">
                             <MediaHistory history={history} activeTab="video" setVideoReference={setVideoReference} />

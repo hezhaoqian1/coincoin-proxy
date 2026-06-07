@@ -38,7 +38,7 @@ from .proxy import (
     _record_channel_failure,
     _record_channel_success,
     authenticate_user,
-    authorize_request,
+    authorize_workbench_request,
     extract_upstream_request_id,
     get_http_client,
 )
@@ -677,7 +677,7 @@ async def _refund_failed_job_once(job: VideoJob, db: AsyncSession) -> None:
 
 
 async def _create_video_generation(request: Request, db: AsyncSession) -> JSONResponse:
-    user = await authorize_request(request, db)
+    user = await authorize_workbench_request(request, db)
     try:
         payload = await request.json()
     except Exception:
