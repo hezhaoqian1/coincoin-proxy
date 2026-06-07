@@ -100,6 +100,25 @@ class Settings(BaseSettings):
     # Usage flush (seconds)
     usage_flush_interval: int = 5
 
+    # Optional usage/quota infrastructure. Disabled by default so the legacy
+    # in-process buffer and limiter remain the production owner until shadow
+    # reconciliation proves the new path.
+    redis_url: str = ""
+    redis_key_prefix: str = "coincoin"
+    usage_event_shadow_enabled: bool = False
+    usage_event_stream: str = "coincoin:usage:events"
+    usage_event_publish_timeout_seconds: float = 0.25
+    redis_rate_limiter_enabled: bool = False
+    redis_rate_limiter_fallback_to_local: bool = True
+    quota_reservation_enabled: bool = False
+    quota_service_url: str = ""
+    quota_service_timeout_seconds: float = 0.25
+    quota_service_fail_open: bool = True
+    quota_reservation_ttl_seconds: int = 120
+    quota_user_concurrency_limit: int = 0
+    quota_api_key_concurrency_limit: int = 0
+    quota_station_concurrency_limit: int = 0
+
     # Performance
     http_pool_max: int = 100
     http_pool_keepalive: int = 20

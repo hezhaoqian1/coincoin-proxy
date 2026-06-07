@@ -29,6 +29,7 @@ from . import gemini_cpa
 from .models import ApiKey, RequestLog, UsageDaily, User
 from .media_store import record_media_artifacts_best_effort
 from .prompt_cache import build_claude_code_prompt_cache_key
+from .quota_lifecycle import reserve_quota_for_request
 from .rate_limiter import rate_limiter
 from .security import extract_api_key, hash_key
 from .station_runtime import (
@@ -1858,11 +1859,13 @@ async def authorize_request(request: Request, db: AsyncSession):
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="token limit exceeded")
     
     # 余额检查（balance 计费模式）
+    available_balance_cents = 0
     if settings.billing_mode == "balance":
         pending_cost = await usage_buffer.get_pending_cost(user.id)
         from .billing import get_available_balance_cents
         available = await get_available_balance_cents(db, user, pending_cost_cents=pending_cost)
-        if int(available.get("available_cents", 0) or 0) <= 0:
+        available_balance_cents = int(available.get("available_cents", 0) or 0)
+        if available_balance_cents <= 0:
             raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail="insufficient balance")
 
     if user.request_limit_per_day is not None:
@@ -1885,6 +1888,8 @@ async def authorize_request(request: Request, db: AsyncSession):
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="internal error")
 
     await _mark_api_key_used(db, user)
+    await reserve_quota_for_request(request, user, available_balance_cents=available_balance_cents)
+
     return user
 
 

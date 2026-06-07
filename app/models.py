@@ -110,6 +110,7 @@ class RequestLog(Base):
     usage_unit_count: Mapped[int] = mapped_column(BigInteger, default=0)
     billable_sku: Mapped[str] = mapped_column(String(128), default="")
     upstream_request_id: Mapped[str] = mapped_column(String(128), default="")
+    reservation_id: Mapped[str] = mapped_column(String(64), default="", index=True)
     channel_id: Mapped[str] = mapped_column(String(32), default="", index=True)
     channel_type: Mapped[str] = mapped_column(String(32), default="", index=True)
     provider_platform: Mapped[str] = mapped_column(String(64), default="", index=True)

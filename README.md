@@ -85,6 +85,11 @@ End users only talk to CoinCoin's public API and public model names. Internal ga
 | Image workflows | Serve `/v1/images/generations`, synchronous image edits, and async multi-image editing jobs. |
 | Admin operations | Manage users, keys, usage, recharge records, model routes, channel health, and monitoring probes. |
 
+Optional durable usage/quota infrastructure is available through Redis Streams
+and the Go `usage-quota-service`. It is disabled by default; the Python gateway
+remains the canonical billing path until shadow reconciliation proves parity.
+See [`docs/usage-quota-infra.md`](./docs/usage-quota-infra.md).
+
 ## Core Features
 
 - **Chat Completions compatibility**: `/v1/chat/completions` with streaming, tools, function calling, and OpenAI-shaped responses.

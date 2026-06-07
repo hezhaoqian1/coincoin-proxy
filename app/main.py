@@ -41,6 +41,8 @@ from .model_pricing_overrides import get_model_pricing_override_db_state, refres
 from .provider_channels import get_provider_channel_db_state, refresh_provider_channel_router_from_db
 from .system_settings import get_runtime_system_settings_db_state, refresh_runtime_system_settings_from_db
 from .usage_buffer import flush_loop, flush_once
+from .redis_client import close_redis_client
+from .quota_lifecycle import QuotaReservationASGIMiddleware
 from .reconcile import reconcile_loop
 from .router import registry as model_registry
 from .stations import admin_router as admin_stations_router, router as stations_router
@@ -101,6 +103,7 @@ async def _run_migrations(conn):
         ("coincoin_request_logs", "usage_unit_count", "BIGINT DEFAULT 0"),
         ("coincoin_request_logs", "billable_sku", "VARCHAR(128) DEFAULT ''"),
         ("coincoin_request_logs", "upstream_request_id", "VARCHAR(128) DEFAULT ''"),
+        ("coincoin_request_logs", "reservation_id", "VARCHAR(64) DEFAULT ''"),
         ("coincoin_request_logs", "channel_id", "VARCHAR(32) DEFAULT ''"),
         ("coincoin_request_logs", "channel_type", "VARCHAR(32) DEFAULT ''"),
         ("coincoin_request_logs", "provider_platform", "VARCHAR(64) DEFAULT ''"),
@@ -965,6 +968,7 @@ async def lifespan(app: FastAPI):
             image_job_task.cancel()
         await flush_once()
         await close_http_client()
+        await close_redis_client()
         logging.info("CoinCoin Proxy stopped")
 
 
@@ -978,6 +982,7 @@ app = FastAPI(
     openapi_url=None,
 )
 
+app.add_middleware(QuotaReservationASGIMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

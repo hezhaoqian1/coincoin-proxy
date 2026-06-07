@@ -12,8 +12,14 @@ from .db import SessionLocal
 from .finance_summary import increment_finance_summary
 from .billing import debit_usage_cents
 from .models import RequestLog, UsageDaily, User
+from .quota_lifecycle import (
+    commit_current_quota_reservation,
+    current_quota_reservation_id,
+    register_current_quota_usage_task,
+)
 from .referral import process_first_usage_referral_reward
 from .security import generate_id
+from .usage_events import schedule_usage_event_shadow
 
 
 logger = logging.getLogger("coincoin.usage")
@@ -246,6 +252,7 @@ class UsageBuffer:
         base_price_per_image_cents: float = 0.0,
         base_price_per_video_cents: float = 0.0,
         effective_cached_input_per_million: float = 0.0,
+        reservation_id: str = "",
     ) -> None:
         """添加使用量（高性能，不阻塞请求）
         
@@ -322,6 +329,7 @@ class UsageBuffer:
             wholesale_cost_cents = 0.0
 
         retail_charge_cents = float(retail_charge_cents_override) if retail_charge_cents_override is not None else cost_cents
+        resolved_reservation_id = (reservation_id or current_quota_reservation_id() or "")[:64]
 
         resolved_usage_unit_type = (usage_unit_type or "tokens").strip() or "tokens"
         resolved_usage_unit_count = int(
@@ -359,7 +367,7 @@ class UsageBuffer:
                 self._cost_by_api_key[(api_key_id or "")[:32]] += cost_cents
             
             # 请求日志（append 到 list，纳秒级）
-            self._request_logs.append({
+            request_log = {
                 "user_id": user_id,
                 "api_key_id": (api_key_id or "")[:32],
                 "endpoint": endpoint,
@@ -377,6 +385,7 @@ class UsageBuffer:
                 "usage_unit_count": resolved_usage_unit_count,
                 "billable_sku": (billable_sku or model)[:128],
                 "upstream_request_id": (upstream_request_id or "")[:128],
+                "reservation_id": resolved_reservation_id,
                 "channel_id": (channel_id or "")[:32],
                 "channel_type": (channel_type or "")[:32],
                 "provider_platform": (provider_platform or "")[:64],
@@ -406,7 +415,12 @@ class UsageBuffer:
                 "status_code": int(status_code),
                 "route_reason": (route_reason or "")[:64],
                 "created_at": datetime.utcnow(),
-            })
+            }
+            self._request_logs.append(request_log)
+
+        if resolved_reservation_id:
+            await commit_current_quota_reservation(round(cost_cents))
+        schedule_usage_event_shadow(request_log)
 
     async def get_pending_tokens(self, user_id: str) -> int:
         """获取待刷新的总 tokens（兼容旧接口）
@@ -496,7 +510,13 @@ usage_buffer = UsageBuffer()
 
 
 def schedule_usage_add(*args, **kwargs) -> asyncio.Task:
-    return asyncio.create_task(usage_buffer.add(*args, **kwargs))
+    if not kwargs.get("reservation_id"):
+        reservation_id = current_quota_reservation_id()
+        if reservation_id:
+            kwargs["reservation_id"] = reservation_id
+    task = asyncio.create_task(usage_buffer.add(*args, **kwargs))
+    register_current_quota_usage_task(task)
+    return task
 
 
 async def flush_once() -> None:
@@ -595,6 +615,7 @@ async def flush_once() -> None:
                         usage_unit_count=log.get("usage_unit_count", 0),
                         billable_sku=log.get("billable_sku", ""),
                         upstream_request_id=log.get("upstream_request_id", ""),
+                        reservation_id=log.get("reservation_id", ""),
                         channel_id=log.get("channel_id", ""),
                         channel_type=log.get("channel_type", ""),
                         provider_platform=log.get("provider_platform", ""),
