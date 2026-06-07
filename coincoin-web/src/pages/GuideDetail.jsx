@@ -59,7 +59,6 @@ function GuideCommand({ title, summary, code }) {
                     <h2>{title}</h2>
                     <p>{summary}</p>
                 </div>
-                <CopyButton text={code} idleLabel="复制命令" className="guide-copy-button-secondary" />
             </div>
             <pre className="guide-code-block">{code}</pre>
         </section>
@@ -98,6 +97,44 @@ function GuideCommandGroup({ items }) {
                 />
             ))}
         </div>
+    )
+}
+
+function GuideCommandTabs({ items }) {
+    const [activeIndex, setActiveIndex] = useState(0)
+    const activeItem = items[activeIndex] || items[0]
+
+    if (!activeItem) return null
+
+    return (
+        <section className="guide-command-tabs glass-card">
+            <div className="guide-command-tabs-header">
+                <div>
+                    <span className="guide-kicker">Platform</span>
+                    <h2>选择你的系统</h2>
+                    <p>一次只展示一套命令，避免上下滚动找对应平台。</p>
+                </div>
+                <div className="guide-command-tab-list" role="tablist" aria-label="操作系统选择">
+                    {items.map((item, index) => (
+                        <button
+                            key={item.title}
+                            type="button"
+                            role="tab"
+                            aria-selected={activeIndex === index}
+                            className={`guide-command-tab ${activeIndex === index ? 'is-active' : ''}`}
+                            onClick={() => setActiveIndex(index)}
+                        >
+                            {item.platform || item.title}
+                        </button>
+                    ))}
+                </div>
+            </div>
+            <GuideCommand
+                title={activeItem.title}
+                summary={activeItem.summary}
+                code={activeItem.code}
+            />
+        </section>
     )
 }
 
@@ -519,15 +556,18 @@ aider --model openai/${codingModelId}`
                 commandGroup: [
                     {
                         title: 'macOS / Linux 一键配置',
+                        platform: 'macOS / Linux',
                         summary: '写入 ClawFather provider；已有 `~/.codex/config.toml` 时先复制一份带时间戳的备份。',
                         code: codexCommand,
                     },
                     {
                         title: 'Windows PowerShell 一键配置',
+                        platform: 'Windows',
                         summary: '写入 `$HOME\\.codex\\config.toml`；旧文件存在时先复制一份带时间戳的备份。',
                         code: codexWindowsCommand,
                     },
                 ],
+                commandGroupMode: 'tabs',
             },
             'claude-code': {
                 title: 'Claude Code 配置',
@@ -535,15 +575,18 @@ aider --model openai/${codingModelId}`
                 commandGroup: [
                     {
                         title: 'macOS / Linux 一键配置',
+                        platform: 'macOS / Linux',
                         summary: '按 Claude Code 官方 `~/.claude/settings.json` 机制写入用户级配置；旧文件先备份，再保留其他设置并合并 ClawFather 所需的网关和模型字段。',
                         code: claudeUnixCommand,
                     },
                     {
                         title: 'Windows PowerShell 一键配置',
+                        platform: 'Windows',
                         summary: '按官方 `%USERPROFILE%\\.claude\\settings.json` 路径写入；旧文件先备份，再保留其他设置并合并 ClawFather 所需的网关和模型字段。',
                         code: claudeWindowsCommand,
                     },
                 ],
+                commandGroupMode: 'tabs',
             },
             opencode: {
                 title: 'OpenCode 配置',
@@ -633,6 +676,8 @@ aider --model openai/${codingModelId}`
                     <GuideCodeGrid items={guide.examples} />
                 ) : guide.integrations ? (
                     <OtherGuideGrid items={guide.integrations} />
+                ) : guide.commandGroupMode === 'tabs' ? (
+                    <GuideCommandTabs items={guide.commandGroup} />
                 ) : guide.commandGroup ? (
                     <GuideCommandGroup items={guide.commandGroup} />
                 ) : (
