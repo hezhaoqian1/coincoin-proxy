@@ -265,9 +265,28 @@ class RedemptionCode(Base):
     code: Mapped[str] = mapped_column(String(32), unique=True, index=True)
     balance_cents: Mapped[int] = mapped_column(BigInteger, default=0)
     status: Mapped[str] = mapped_column(String(16), default="unused")
+    max_redemptions: Mapped[int] = mapped_column(BigInteger, default=1)
+    per_user_limit: Mapped[int] = mapped_column(BigInteger, default=1)
+    redemption_count: Mapped[int] = mapped_column(BigInteger, default=0)
     used_by: Mapped[Optional[str]] = mapped_column(String(32), ForeignKey("coincoin_users.id"), nullable=True)
     used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    note: Mapped[str] = mapped_column(String(256), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class RedemptionCodeUse(Base):
+    """兑换码使用流水，用于活动码的逐用户次数限制和审计"""
+    __tablename__ = "coincoin_redemption_code_uses"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    code_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_redemption_codes.id"), index=True)
+    code: Mapped[str] = mapped_column(String(32), index=True)
+    user_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_users.id"), index=True)
+    balance_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+Index("ix_redemption_code_uses_code_user", RedemptionCodeUse.code_id, RedemptionCodeUse.user_id)
 
 
 class Announcement(Base):

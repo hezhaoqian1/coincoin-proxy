@@ -162,6 +162,10 @@ async def _run_migrations(conn):
         ("coincoin_announcements", "cta_label", "VARCHAR(64) DEFAULT ''"),
         ("coincoin_announcements", "cta_value", "VARCHAR(512) DEFAULT ''"),
         ("coincoin_announcements", "image_url", "VARCHAR(512) DEFAULT ''"),
+        ("coincoin_redemption_codes", "max_redemptions", "BIGINT DEFAULT 1"),
+        ("coincoin_redemption_codes", "per_user_limit", "BIGINT DEFAULT 1"),
+        ("coincoin_redemption_codes", "redemption_count", "BIGINT DEFAULT 0"),
+        ("coincoin_redemption_codes", "note", "VARCHAR(256) DEFAULT ''"),
     ]
     logger = logging.getLogger("coincoin.migrations")
     for table, col, ddl in migrations:
@@ -245,6 +249,21 @@ async def _run_migrations(conn):
             INDEX ix_billing_ledger_source_id (source_id),
             INDEX ix_billing_ledger_product_id (product_id),
             INDEX ix_billing_ledger_created_at (created_at)
+        )
+        """,
+        """
+        CREATE TABLE coincoin_redemption_code_uses (
+            id VARCHAR(32) PRIMARY KEY,
+            code_id VARCHAR(32) NOT NULL,
+            code VARCHAR(32) NOT NULL,
+            user_id VARCHAR(32) NOT NULL,
+            balance_cents BIGINT DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            INDEX ix_redemption_code_uses_code_id (code_id),
+            INDEX ix_redemption_code_uses_code (code),
+            INDEX ix_redemption_code_uses_user_id (user_id),
+            INDEX ix_redemption_code_uses_created_at (created_at),
+            INDEX ix_redemption_code_uses_code_user (code_id, user_id)
         )
         """,
         """
@@ -749,6 +768,43 @@ async def _run_migrations(conn):
                 logger.warning("email verification cleanup skipped due to existing dependent rows: %s", sql)
             else:
                 logger.warning("email verification migration failed for [%s]: %s", sql, exc)
+
+    try:
+        await conn.execute(text("""
+            INSERT INTO coincoin_redemption_code_uses
+                (id, code_id, code, user_id, balance_cents, created_at)
+            SELECT
+                CONCAT('rcu_', SUBSTRING(MD5(CONCAT(id, ':', used_by)), 1, 24)),
+                id,
+                code,
+                used_by,
+                balance_cents,
+                used_at
+            FROM coincoin_redemption_codes
+            WHERE used_by IS NOT NULL
+              AND used_at IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM coincoin_redemption_code_uses u
+                  WHERE u.code_id = coincoin_redemption_codes.id
+                    AND u.user_id = coincoin_redemption_codes.used_by
+              )
+        """))
+        logger.info("redemption use backfill OK")
+    except Exception as exc:
+        logger.warning("redemption use backfill failed: %s", exc)
+
+    try:
+        await conn.execute(text("""
+            INSERT INTO coincoin_redemption_codes
+                (id, code, balance_cents, status, max_redemptions, per_user_limit, redemption_count, note)
+            VALUES
+                ('rc_libertytalk0607', 'libertytalk0607', 10000, 'active', 0, 1, 0, 'LibertyTalk 0607 campaign')
+            ON DUPLICATE KEY UPDATE code = code
+        """))
+        logger.info("redemption campaign seed OK: libertytalk0607")
+    except Exception as exc:
+        logger.warning("redemption campaign seed failed: %s", exc)
 
 
 async def model_alias_override_refresh_loop(interval_seconds: int):

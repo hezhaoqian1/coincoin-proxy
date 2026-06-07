@@ -463,11 +463,12 @@ async def redeem_code(request: Request, db: AsyncSession = Depends(get_db)):
             return openai_error("Invalid API key", "authentication_error", code="invalid_api_key", status_code=401)
         raise
 
-    from .models import RedemptionCode, User
+    from .models import RedemptionCode, RedemptionCodeUse, User
     from .rate_limiter import rate_limiter
     from sqlalchemy import select
     from sqlalchemy.exc import IntegrityError
     from datetime import datetime as dt
+    from .security import generate_id
 
     if not await rate_limiter.allow(f"redeem:{cached_user.id}", 6):
         raise HTTPException(status_code=429, detail="too many redeem attempts")
@@ -485,16 +486,51 @@ async def redeem_code(request: Request, db: AsyncSession = Depends(get_db)):
     code = result.scalar_one_or_none()
     if not code:
         raise HTTPException(status_code=404, detail="invalid redemption code")
-    if code.status != "unused":
+    if code.status in {"used", "disabled"}:
         raise HTTPException(status_code=400, detail="code already used or disabled")
+    if code.status not in {"unused", "active"}:
+        raise HTTPException(status_code=400, detail="code is not redeemable")
+
+    max_redemptions = int(getattr(code, "max_redemptions", 1) or 0)
+    per_user_limit = int(getattr(code, "per_user_limit", 1) or 0)
+    redemption_count = int(getattr(code, "redemption_count", 0) or 0)
+    if max_redemptions > 0 and redemption_count >= max_redemptions:
+        code.status = "used"
+        raise HTTPException(status_code=400, detail="code redemption limit reached")
+
+    if per_user_limit > 0:
+        used_result = await db.execute(
+            select(func.count())
+            .select_from(RedemptionCodeUse)
+            .where(
+                RedemptionCodeUse.code_id == code.id,
+                RedemptionCodeUse.user_id == cached_user.id,
+            )
+        )
+        user_redemption_count = int(used_result.scalar() or 0)
+        if user_redemption_count >= per_user_limit:
+            raise HTTPException(status_code=400, detail="code already redeemed by this user")
 
     user = (
         await db.execute(select(User).where(User.id == cached_user.id).with_for_update())
     ).scalar_one()
     user.balance += code.balance_cents
-    code.status = "used"
+    code.redemption_count = redemption_count + 1
+    if max_redemptions > 0 and code.redemption_count >= max_redemptions:
+        code.status = "used"
+    else:
+        code.status = "active"
     code.used_by = user.id
-    code.used_at = dt.utcnow()
+    redeemed_at = dt.utcnow()
+    code.used_at = redeemed_at
+    db.add(RedemptionCodeUse(
+        id=generate_id("rcu_"),
+        code_id=code.id,
+        code=code.code,
+        user_id=user.id,
+        balance_cents=code.balance_cents,
+        created_at=redeemed_at,
+    ))
     await ensure_finance_summary_initialized(db, user.id, commit=False)
     await increment_finance_summary(db, user.id, bonus_cents=code.balance_cents)
 

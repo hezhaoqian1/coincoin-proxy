@@ -37,6 +37,7 @@ from .models import (
     PaymentOrder,
     RechargeLog,
     RedemptionCode,
+    RedemptionCodeUse,
     ReferralReward,
     RequestLog,
     Station,
@@ -4171,14 +4172,11 @@ async def finance_ledger(
             })
 
     if normalized_type in {"", "redemption", "bonus", "credit"}:
-        query = select(RedemptionCode, User).join(User, RedemptionCode.used_by == User.id).where(
-            RedemptionCode.status == "used",
-            RedemptionCode.used_at.is_not(None),
-        )
+        query = select(RedemptionCodeUse, User).join(User, RedemptionCodeUse.user_id == User.id)
         if start_at:
-            query = query.where(RedemptionCode.used_at >= start_at)
+            query = query.where(RedemptionCodeUse.created_at >= start_at)
         if end_at:
-            query = query.where(RedemptionCode.used_at <= end_at)
+            query = query.where(RedemptionCodeUse.created_at <= end_at)
         if search_text:
             pat = f"%{search_text}%"
             query = query.where(
@@ -4186,22 +4184,22 @@ async def finance_ledger(
                 | User.email.ilike(pat)
                 | User.external_id.ilike(pat)
                 | User.id.ilike(pat)
-                | RedemptionCode.code.ilike(pat)
+                | RedemptionCodeUse.code.ilike(pat)
             )
         rows = (
-            await db.execute(query.order_by(RedemptionCode.used_at.desc()).limit(limit))
+            await db.execute(query.order_by(RedemptionCodeUse.created_at.desc()).limit(limit))
         ).all()
-        for code, user in rows:
+        for use, user in rows:
             events.append({
-                "event_id": f"redemption:{code.id}",
+                "event_id": f"redemption:{use.id}",
                 "event_type": "redemption_credit",
                 "event_group": "redemption",
-                "created_at": code.used_at,
-                "amount_cents": int(code.balance_cents or 0),
+                "created_at": use.created_at,
+                "amount_cents": int(use.balance_cents or 0),
                 "cash_rmb_cents": 0,
                 "balance_after_cents": None,
                 "source_type": "redemption_code",
-                "source_id": code.code,
+                "source_id": use.code,
                 "product_id": "",
                 "product": _product_admin_payload(""),
                 "note": "兑换码入账",
@@ -4505,25 +4503,45 @@ def _generate_code() -> str:
     return f"CC-{parts[0]}-{parts[1]}-{parts[2]}-{parts[3]}"
 
 
+def _normalize_redemption_code(value: str) -> str:
+    return value.strip()
+
+
 @router.post("/redemption-codes/generate", dependencies=[Depends(admin_guard)],
              response_model=RedemptionGenerateResponse)
 async def generate_redemption_codes(
     payload: RedemptionGenerateRequest, db: AsyncSession = Depends(get_db)
 ):
+    if payload.code and payload.count != 1:
+        raise HTTPException(status_code=400, detail="custom code can only be generated once")
     codes = []
     for _ in range(payload.count):
-        code_str = _generate_code()
+        code_str = _normalize_redemption_code(payload.code) if payload.code else _generate_code()
+        existing = (
+            await db.execute(select(RedemptionCode).where(RedemptionCode.code == code_str))
+        ).scalar_one_or_none()
+        if existing:
+            raise HTTPException(status_code=409, detail="redemption code already exists")
         code = RedemptionCode(
             id=generate_id("rc_"),
             code=code_str,
             balance_cents=payload.balance_cents,
             status="unused",
+            max_redemptions=payload.max_redemptions,
+            per_user_limit=payload.per_user_limit,
+            redemption_count=0,
+            note=(payload.note or "").strip(),
         )
         db.add(code)
         codes.append(code_str)
     await db.commit()
     return RedemptionGenerateResponse(
-        codes=codes, balance_cents=payload.balance_cents, count=payload.count
+        codes=codes,
+        balance_cents=payload.balance_cents,
+        count=payload.count,
+        max_redemptions=payload.max_redemptions,
+        per_user_limit=payload.per_user_limit,
+        note=(payload.note or "").strip(),
     )
 
 
@@ -4542,8 +4560,12 @@ async def list_redemption_codes(
             "code": c.code,
             "balance_cents": c.balance_cents,
             "status": c.status,
+            "max_redemptions": int(getattr(c, "max_redemptions", 1) or 0),
+            "per_user_limit": int(getattr(c, "per_user_limit", 1) or 0),
+            "redemption_count": int(getattr(c, "redemption_count", 0) or 0),
             "used_by": c.used_by,
             "used_at": c.used_at,
+            "note": getattr(c, "note", "") or "",
             "created_at": c.created_at,
         }
         for c in codes
