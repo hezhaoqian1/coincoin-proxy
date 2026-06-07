@@ -2958,6 +2958,57 @@
     </div>
   </div>
 
+  <!-- Edit Redemption Code Modal -->
+  <div id="editCodeModal" class="modal-overlay">
+    <div class="modal" style="max-width:540px">
+      <div class="modal-header">
+        <span class="modal-title">编辑兑换码</span>
+        <button class="modal-close" onclick="closeModal('editCodeModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="editCodeId" value="" />
+        <div class="form-group">
+          <label class="form-label">兑换码</label>
+          <input id="editCodeValue" class="form-input" readonly />
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">面值（分）</label>
+            <input type="number" id="editCodeBalance" class="form-input" min="1" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">状态</label>
+            <select id="editCodeStatus" class="form-select">
+              <option value="unused">未使用</option>
+              <option value="active">活动中</option>
+              <option value="used">已用完</option>
+              <option value="disabled">已禁用</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">总兑换次数</label>
+            <input type="number" id="editCodeMaxRedemptions" class="form-input" min="0" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">每用户次数</label>
+            <input type="number" id="editCodePerUserLimit" class="form-input" min="0" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">备注</label>
+          <input id="editCodeNote" class="form-input" maxlength="256" />
+        </div>
+        <p class="text-sm text-muted mb-4" id="editCodeUsageHint"></p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('editCodeModal')">取消</button>
+        <button class="btn btn-primary" onclick="saveRedemptionCode()">保存</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Announcement Modal -->
   <div id="announcementModal" class="modal-overlay">
     <div class="modal" style="max-width:540px">
@@ -5862,6 +5913,8 @@
     }
 
     // ==================== Redemption Codes ====================
+    let redemptionCodesById = {};
+
     async function loadRedemptionCodes() {
       try {
         const sf = document.getElementById('codeStatusFilter').value;
@@ -5875,6 +5928,7 @@
           body.innerHTML = '<tr><td colspan="10"><div class="empty-state"><div class="empty-state-icon">🎟️</div><h3>暂无兑换码</h3><p>先生成一批兑换码吧</p></div></td></tr>';
           return;
         }
+        redemptionCodesById = Object.fromEntries(data.map(c => [c.id, c]));
         body.innerHTML = data.map(c => {
           const statusLabel = c.status === 'unused' ? '未使用' : c.status === 'active' ? '活动中' : c.status === 'used' ? '已用完' : '已禁用';
           const badgeCls = c.status === 'unused' || c.status === 'active' ? 'badge-success' : c.status === 'used' ? 'badge-info' : 'badge-error';
@@ -5883,6 +5937,10 @@
           const progressText = maxRedemptions > 0 ? `${redemptionCount}/${maxRedemptions}` : `${redemptionCount}/不限`;
           const perUserText = Number(c.per_user_limit || 0) > 0 ? `${c.per_user_limit} 次` : '不限';
           const canDisable = c.status === 'unused' || c.status === 'active';
+          const actionButtons = [
+            `<button class="btn btn-sm btn-secondary" onclick="openEditCodeModal('${c.id}')">编辑</button>`,
+            canDisable ? `<button class="btn btn-sm btn-danger" onclick="disableCode('${c.id}')">禁用</button>` : '',
+          ].filter(Boolean).join(' ');
           return `<tr>
             <td class="text-mono text-sm">${c.code}</td>
             <td>$${(c.balance_cents/100).toFixed(2)} <span class="text-muted text-sm">(${c.balance_cents}¢)</span></td>
@@ -5893,7 +5951,7 @@
             <td class="text-sm">${c.used_by || '-'}</td>
             <td class="text-sm text-muted">${formatDate(c.used_at)}</td>
             <td class="text-sm text-muted">${formatDate(c.created_at)}</td>
-            <td>${canDisable ? `<button class="btn btn-sm btn-danger" onclick="disableCode('${c.id}')">禁用</button>` : '<span class="text-sm text-muted">—</span>'}</td>
+            <td>${actionButtons || '<span class="text-sm text-muted">—</span>'}</td>
           </tr>`;
         }).join('');
       } catch (e) { console.error(e); toast('加载失败', 'error'); }
@@ -5930,10 +5988,60 @@
       } catch (e) { toast('生成失败', 'error'); }
     }
 
+    function openEditCodeModal(codeId) {
+      const c = redemptionCodesById[codeId];
+      if (!c) return toast('兑换码数据已过期，请刷新后重试', 'error');
+      document.getElementById('editCodeId').value = c.id;
+      document.getElementById('editCodeValue').value = c.code;
+      document.getElementById('editCodeBalance').value = Number(c.balance_cents || 0);
+      document.getElementById('editCodeStatus').value = c.status || 'unused';
+      document.getElementById('editCodeMaxRedemptions').value = Number(c.max_redemptions || 0);
+      document.getElementById('editCodePerUserLimit').value = Number(c.per_user_limit || 0);
+      document.getElementById('editCodeNote').value = c.note || '';
+      const maxText = Number(c.max_redemptions || 0) > 0 ? c.max_redemptions : '不限';
+      document.getElementById('editCodeUsageHint').textContent = `当前已兑换 ${Number(c.redemption_count || 0)} 次，总次数 ${maxText}。总兑换次数填 0 表示不限。`;
+      openModal('editCodeModal');
+    }
+
+    async function saveRedemptionCode() {
+      const codeId = document.getElementById('editCodeId').value;
+      const balance_cents = parseInt(document.getElementById('editCodeBalance').value);
+      const max_redemptions = parseInt(document.getElementById('editCodeMaxRedemptions').value);
+      const per_user_limit = parseInt(document.getElementById('editCodePerUserLimit').value);
+      const status = document.getElementById('editCodeStatus').value;
+      const note = document.getElementById('editCodeNote').value.trim();
+      const current = redemptionCodesById[codeId];
+      const redemptionCount = Number(current?.redemption_count || 0);
+      if (!codeId) return toast('缺少兑换码 ID', 'error');
+      if (!Number.isFinite(balance_cents) || balance_cents < 1) return toast('面值必须大于 0', 'error');
+      if (!Number.isFinite(max_redemptions) || max_redemptions < 0) return toast('总兑换次数不能小于 0', 'error');
+      if (max_redemptions > 0 && max_redemptions < redemptionCount) return toast('总兑换次数不能小于已兑换次数', 'error');
+      if (!Number.isFinite(per_user_limit) || per_user_limit < 0) return toast('每用户次数不能小于 0', 'error');
+      try {
+        const r = await fetch(`/admin/redemption-codes/${codeId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+          body: JSON.stringify({ balance_cents, max_redemptions, per_user_limit, status, note }),
+        });
+        const d = await r.json();
+        if (r.ok) {
+          toast('兑换码已更新', 'success');
+          closeModal('editCodeModal');
+          loadRedemptionCodes();
+        } else {
+          toast(d.detail || '保存失败', 'error');
+        }
+      } catch (e) { toast('保存失败', 'error'); }
+    }
+
     async function disableCode(codeId) {
       if (!confirm('确认禁用这个兑换码吗？此操作无法撤销。')) return;
       try {
-        const r = await fetch(`/admin/redemption-codes/${codeId}`, { method: 'PATCH', headers: adminHeaders() });
+        const r = await fetch(`/admin/redemption-codes/${codeId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+          body: JSON.stringify({ status: 'disabled' }),
+        });
         if (r.ok) { toast('兑换码已禁用', 'success'); loadRedemptionCodes(); }
         else toast('操作失败', 'error');
       } catch (e) { toast('操作失败', 'error'); }

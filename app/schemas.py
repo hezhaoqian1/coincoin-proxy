@@ -386,6 +386,13 @@ class RedemptionGenerateResponse(BaseModel):
     per_user_limit: int = 1
     note: str = ""
 
+class RedemptionCodeUpdateRequest(BaseModel):
+    balance_cents: Optional[int] = Field(default=None, ge=1, description="面额（分）")
+    max_redemptions: Optional[int] = Field(default=None, ge=0, description="总兑换次数，0 表示不限")
+    per_user_limit: Optional[int] = Field(default=None, ge=0, description="每用户可兑换次数，0 表示不限")
+    note: Optional[str] = Field(default=None, max_length=256, description="运营备注")
+    status: Optional[Literal["unused", "active", "used", "disabled"]] = Field(default=None, description="兑换码状态")
+
 
 # ===== Announcements =====
 

@@ -7,7 +7,7 @@ from fastapi import HTTPException
 import app.openai_compat as openai_module
 import app.admin as admin_module
 import app.rate_limiter as rate_limiter_module
-from app.schemas import RedemptionGenerateRequest
+from app.schemas import RedemptionCodeUpdateRequest, RedemptionGenerateRequest
 
 
 class _FakeEntityResult:
@@ -185,6 +185,61 @@ class AdminRedemptionCodeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(code.per_user_limit, 1)
         self.assertEqual(code.redemption_count, 0)
         self.assertEqual(code.note, "LibertyTalk 0607 campaign")
+
+    async def test_admin_can_edit_campaign_code_settings(self):
+        code = SimpleNamespace(
+            id="rc_campaign",
+            code="libertytalk0607",
+            balance_cents=10000,
+            status="active",
+            max_redemptions=0,
+            per_user_limit=1,
+            redemption_count=2,
+            note="old note",
+        )
+        db = _FakeDB([_FakeEntityResult(code)])
+        payload = RedemptionCodeUpdateRequest(
+            balance_cents=5000,
+            max_redemptions=100,
+            per_user_limit=2,
+            note="edited campaign",
+            status="active",
+        )
+
+        result = await admin_module.update_redemption_code("rc_campaign", payload, db)
+
+        self.assertEqual(result["balance_cents"], 5000)
+        self.assertEqual(result["max_redemptions"], 100)
+        self.assertEqual(result["per_user_limit"], 2)
+        self.assertEqual(result["redemption_count"], 2)
+        self.assertEqual(result["note"], "edited campaign")
+        self.assertEqual(code.balance_cents, 5000)
+        self.assertEqual(code.max_redemptions, 100)
+        self.assertEqual(code.per_user_limit, 2)
+        self.assertEqual(code.note, "edited campaign")
+        self.assertEqual(db.commits, 1)
+
+    async def test_admin_cannot_set_total_limit_below_existing_redemptions(self):
+        code = SimpleNamespace(
+            id="rc_campaign",
+            code="libertytalk0607",
+            balance_cents=10000,
+            status="active",
+            max_redemptions=0,
+            per_user_limit=1,
+            redemption_count=5,
+            note="",
+        )
+        db = _FakeDB([_FakeEntityResult(code)])
+        payload = RedemptionCodeUpdateRequest(max_redemptions=3)
+
+        with self.assertRaises(HTTPException) as ctx:
+            await admin_module.update_redemption_code("rc_campaign", payload, db)
+
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertIn("max_redemptions", ctx.exception.detail)
+        self.assertEqual(code.max_redemptions, 0)
+        self.assertEqual(db.commits, 0)
 
 
 if __name__ == "__main__":
