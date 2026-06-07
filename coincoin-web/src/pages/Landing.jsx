@@ -16,13 +16,13 @@ const HERO_LANES = [
     {
         client: 'Codex / SDK',
         endpoint: '/v1',
-        model: 'opus · gpt-5.5',
+        model: 'gpt-5.4',
         tone: 'indigo',
     },
     {
         client: 'Claude Code',
         endpoint: 'root',
-        model: 'claude-opus-4-8',
+        model: 'sonnet · claude-opus-4-8',
         tone: 'cyan',
     },
     {

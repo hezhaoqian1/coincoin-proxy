@@ -8,6 +8,9 @@ import './Docs.css'
 
 const SITE = typeof window !== 'undefined' ? window.location.origin : ''
 const CODEX_MODEL_ID = 'gpt-5.4'
+const CLAUDE_DEFAULT_ALIAS = 'sonnet'
+const CLAUDE_DEFAULT_MODEL_ID = 'claude-sonnet-4-6'
+const CLAUDE_OPUS_OPTIONAL_MODEL_ID = 'claude-opus-4-8'
 const TABS = [
     {
         label: '快速开始',
@@ -158,7 +161,11 @@ export default function Docs() {
     const requestedTab = searchParams.get('tab')
     const [activeTab, setActiveTab] = useState(TAB_INDEX_BY_KEY[requestedTab] ?? 0)
     const { models, textModels, imageModels, videoModels, defaultTextModel, defaultImageModel, defaultVideoModel } = usePublicModels()
-    const primaryTextModel = defaultTextModel || textModels[0] || models[0]
+    const recommendedTextModel = textModels.find((model) => model.id === CODEX_MODEL_ID)
+        || textModels.find((model) => model.id === 'gpt-5.5')
+        || defaultTextModel
+        || textModels[0]
+        || models[0]
     const primaryImageModel = defaultImageModel || imageModels[0] || null
     const primaryVideoModel = defaultVideoModel || videoModels[0] || null
     const activeSection = TABS[activeTab]
@@ -208,10 +215,10 @@ export default function Docs() {
                     </nav>
 
                     <div className="docs-content glass-card">
-                        {activeTab === 0 && <QuickStart primaryTextModel={primaryTextModel} primaryImageModel={primaryImageModel} />}
+                        {activeTab === 0 && <QuickStart primaryTextModel={recommendedTextModel} primaryImageModel={primaryImageModel} />}
                         {activeTab === 1 && <ModelsAndPricing textModels={textModels} imageModels={imageModels} videoModels={videoModels} defaultTextModel={defaultTextModel} defaultImageModel={defaultImageModel} />}
-                        {activeTab === 2 && <ApiReference primaryTextModel={primaryTextModel} primaryImageModel={primaryImageModel} primaryVideoModel={primaryVideoModel} />}
-                        {activeTab === 3 && <CodeExamples primaryTextModel={primaryTextModel} primaryImageModel={primaryImageModel} primaryVideoModel={primaryVideoModel} />}
+                        {activeTab === 2 && <ApiReference primaryTextModel={recommendedTextModel} primaryImageModel={primaryImageModel} primaryVideoModel={primaryVideoModel} />}
+                        {activeTab === 3 && <CodeExamples primaryTextModel={recommendedTextModel} primaryImageModel={primaryImageModel} primaryVideoModel={primaryVideoModel} />}
                     </div>
                 </div>
             </div>
@@ -260,10 +267,10 @@ export default function Docs() {
                         </nav>
 
                         <div className="docs-content glass-card">
-                            {activeTab === 0 && <QuickStart primaryTextModel={primaryTextModel} primaryImageModel={primaryImageModel} />}
+                            {activeTab === 0 && <QuickStart primaryTextModel={recommendedTextModel} primaryImageModel={primaryImageModel} />}
                             {activeTab === 1 && <ModelsAndPricing textModels={textModels} imageModels={imageModels} videoModels={videoModels} defaultTextModel={defaultTextModel} defaultImageModel={defaultImageModel} />}
-                            {activeTab === 2 && <ApiReference primaryTextModel={primaryTextModel} primaryImageModel={primaryImageModel} primaryVideoModel={primaryVideoModel} />}
-                            {activeTab === 3 && <CodeExamples primaryTextModel={primaryTextModel} primaryImageModel={primaryImageModel} primaryVideoModel={primaryVideoModel} />}
+                            {activeTab === 2 && <ApiReference primaryTextModel={recommendedTextModel} primaryImageModel={primaryImageModel} primaryVideoModel={primaryVideoModel} />}
+                            {activeTab === 3 && <CodeExamples primaryTextModel={recommendedTextModel} primaryImageModel={primaryImageModel} primaryVideoModel={primaryVideoModel} />}
                         </div>
                     </div>
                 </div>
@@ -292,19 +299,19 @@ function AudienceGuide() {
             title: 'OpenCode',
             tag: '已实测',
             desc: '本地 coding agent 工作流，已验证基础可用。',
-            bullets: ['先看 OpenCode quickstart', '默认用 opus', '需要更快时再试 sonnet']
+            bullets: ['先看 OpenCode quickstart', '默认先用 clawfather/gpt-5.4', '需要 Claude 风格模型时再试 sonnet']
         },
         {
             title: 'Continue / Aider',
             tag: '常见客户端',
             desc: '只要支持 OpenAI-compatible 配置，基本都能按这套接。',
-            bullets: ['填 Base URL + API Key + model', '默认用 opus 或 sonnet', '接不上时先排查 key 类型']
+            bullets: ['填 Base URL + API Key + model', '默认先用 gpt-5.4', '接不上时先排查 key 类型']
         },
         {
             title: 'Claude Code',
             tag: '推荐',
             desc: 'Claude Code 走 Anthropic 兼容入口。',
-            bullets: ['用 ANTHROPIC_BASE_URL 根域名', '用 ANTHROPIC_AUTH_TOKEN', '模型名可填 opus / sonnet / haiku']
+            bullets: ['官方推荐用 ~/.claude/settings.json', 'ANTHROPIC_BASE_URL 填根域名', '默认先用 sonnet，重任务再试 claude-opus-4-8']
         },
         {
             title: 'OpenClaw',
@@ -342,7 +349,7 @@ function AudienceGuide() {
 }
 
 function QuickStart({ primaryTextModel, primaryImageModel }) {
-    const textModelId = primaryTextModel?.id || 'opus'
+    const textModelId = primaryTextModel?.id || CODEX_MODEL_ID
     const imageModelId = primaryImageModel?.id || 'gpt-image-2'
     const quickstartSteps = [
         {
@@ -421,22 +428,35 @@ function QuickStart({ primaryTextModel, primaryImageModel }) {
 
             <h3>Codex</h3>
             <pre className="code-block">{`model = "${CODEX_MODEL_ID}"
-model_provider = "coincoin"
+model_provider = "clawfather"
 disable_response_storage = true
 model_reasoning_effort = "high"
 web_search = "live"
 personality = "pragmatic"
 
-[model_providers.coincoin]
-name = "CoinCoin"
+[model_providers.clawfather]
+name = "ClawFather"
 base_url = "${SITE}/v1"
 experimental_bearer_token = "sk_cc_xxxxx"
 wire_api = "responses"`}</pre>
 
             <h3>Claude Code</h3>
-            <pre className="code-block">{`export ANTHROPIC_BASE_URL="${SITE}"
-export ANTHROPIC_AUTH_TOKEN="sk_cc_xxxxx"
-claude --model claude-opus-4-8`}</pre>
+            <pre className="code-block">{`mkdir -p ~/.claude && cat > ~/.claude/settings.json <<'EOF'
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "model": "${CLAUDE_DEFAULT_ALIAS}",
+  "env": {
+    "ANTHROPIC_BASE_URL": "${SITE}",
+    "ANTHROPIC_AUTH_TOKEN": "sk_cc_xxxxx",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "${CLAUDE_OPUS_OPTIONAL_MODEL_ID}",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "${CLAUDE_DEFAULT_MODEL_ID}",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-4-5",
+    "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "1"
+  }
+}
+EOF
+
+claude`}</pre>
 
             <h3>第三方客户端配置</h3>
             <div className="config-table">
@@ -464,19 +484,19 @@ claude --model claude-opus-4-8`}</pre>
                         <td>Claude Code</td>
                         <td><span className="badge badge-success">一等支持</span></td>
                         <td><code>ANTHROPIC_BASE_URL=root</code></td>
-                        <td>官方 Claude CLI 直接走 Anthropic 兼容面，模型可选 <code>claude-opus-4-8</code>、<code>claude-sonnet-4-6</code>、<code>opus</code>、<code>sonnet</code>。</td>
+                        <td>官方 Claude CLI 直接走 Anthropic 兼容面，默认推荐 <code>sonnet</code>；需要更强模型时再显式切到 <code>claude-opus-4-8</code> 或 <code>opus</code>。</td>
                     </tr>
                     <tr>
                         <td>Codex CLI</td>
                         <td><span className="badge badge-success">一等支持</span></td>
                         <td><code>/v1 + responses</code></td>
-                        <td>推荐的命令行接法，直接通过 <code>model</code> 选择模型。</td>
+                        <td>推荐的命令行接法，默认建议直接固定到 <code>gpt-5.4</code>。</td>
                     </tr>
                     <tr>
                         <td>OpenCode</td>
                         <td><span className="badge badge-success">已实测支持</span></td>
                         <td><code>/v1 + 自定义 provider</code></td>
-                        <td>已实测通过 <code>opencode run</code>、模型发现和基础文件读取。默认推荐 <code>clawfather/opus</code>。</td>
+                        <td>已实测通过 <code>opencode run</code>、模型发现和基础文件读取。默认推荐 <code>clawfather/gpt-5.4</code>。</td>
                     </tr>
                     <tr>
                         <td>OpenClaw</td>
@@ -501,7 +521,7 @@ claude --model claude-opus-4-8`}</pre>
 
             <h3>切换模型时你要改什么？</h3>
             <ul className="doc-list">
-                <li>只需要把请求或客户端配置中的 <code>model</code> 改成目标模型，例如 <code>opus</code>、<code>sonnet</code>、<code>haiku</code>、<code>gemini-image</code>。</li>
+                <li>只需要把请求或客户端配置中的 <code>model</code> 改成目标模型，例如 <code>gpt-5.4</code>、<code>sonnet</code>、<code>claude-opus-4-8</code>、<code>gemini-image</code>。</li>
                 <li>Base URL 和 API Key 不需要改，仍然走同一个 ClawFather 入口。</li>
                 <li>文本请求推荐走 <code>/v1/chat/completions</code> 或 <code>/v1/responses</code>，图片请求走 <code>/v1/images/generations</code> 或 <code>/v1/images/edits</code>，并使用 <code>{imageModelId}</code> 这类图片模型。</li>
                 <li>图片请求统一走 ClawFather 公开入口，不需要终端用户配置额外服务。</li>
@@ -516,10 +536,14 @@ function ModelsAndPricing({ textModels, imageModels, videoModels, defaultTextMod
     const [copied, setCopied] = useState('')
     const openaiBaseUrl = `${SITE}/v1`
     const snippetKey = effectiveApiKey || 'sk_cc_xxxxx'
+    const firstRequestModelId = textModels.find((model) => model.id === CODEX_MODEL_ID)?.id
+        || defaultTextModel?.id
+        || textModels[0]?.id
+        || CODEX_MODEL_ID
     const firstCurl = `curl ${openaiBaseUrl}/chat/completions \\
   -H "Authorization: Bearer ${snippetKey}" \\
   -H "Content-Type: application/json" \\
-  -d '{"model":"${defaultTextModel?.id || textModels[0]?.id || 'opus'}","messages":[{"role":"user","content":"Reply with only: OK"}]}'`
+  -d '{"model":"${firstRequestModelId}","messages":[{"role":"user","content":"Reply with only: OK"}]}'`
 
     const modelRows = useMemo(() => {
         const rows = [
@@ -679,7 +703,7 @@ function ModelsAndPricing({ textModels, imageModels, videoModels, defaultTextMod
 }
 
 function ApiReference({ primaryTextModel, primaryImageModel, primaryVideoModel }) {
-    const textModelId = primaryTextModel?.id || 'opus'
+    const textModelId = primaryTextModel?.id || CODEX_MODEL_ID
     const imageModelId = primaryImageModel?.id || 'gpt-image-2'
     const videoModelId = primaryVideoModel?.id || 'seedance-v2-720p'
 
@@ -895,7 +919,7 @@ function ApiReference({ primaryTextModel, primaryImageModel, primaryVideoModel }
 }
 
 function CodeExamples({ primaryTextModel, primaryImageModel, primaryVideoModel }) {
-    const textModelId = primaryTextModel?.id || 'opus'
+    const textModelId = primaryTextModel?.id || CODEX_MODEL_ID
     const imageModelId = primaryImageModel?.id || 'gpt-image-2'
     const videoModelId = primaryVideoModel?.id || 'seedance-v2-720p'
 
@@ -998,17 +1022,27 @@ env_key = "CLAWFATHER_OPENAI_API_KEY"
 wire_api = "responses"`}</pre>
 
             <h3>Claude Code</h3>
-            <pre className="code-block">{`export ANTHROPIC_BASE_URL="${SITE}"
-export ANTHROPIC_AUTH_TOKEN="sk_cc_xxxxx"
-export ANTHROPIC_MODEL="claude-opus-4-8"
-export ANTHROPIC_DEFAULT_OPUS_MODEL="claude-opus-4-8"
-export ANTHROPIC_DEFAULT_SONNET_MODEL="claude-sonnet-4-6"
-export ANTHROPIC_DEFAULT_HAIKU_MODEL="claude-haiku-4-5"
+            <pre className="code-block">{`mkdir -p ~/.claude && cat > ~/.claude/settings.json <<'EOF'
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "model": "${CLAUDE_DEFAULT_ALIAS}",
+  "env": {
+    "ANTHROPIC_BASE_URL": "${SITE}",
+    "ANTHROPIC_AUTH_TOKEN": "sk_cc_xxxxx",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "${CLAUDE_OPUS_OPTIONAL_MODEL_ID}",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "${CLAUDE_DEFAULT_MODEL_ID}",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-4-5",
+    "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "1"
+  }
+}
+EOF
 
-claude --model claude-opus-4-8`}</pre>
+claude`}</pre>
             <ul className="doc-list">
+                <li>官方用户级配置文件路径是 <code>~/.claude/settings.json</code>；Windows 对应 <code>%USERPROFILE%\.claude\settings.json</code>。</li>
                 <li>这里的 <code>ANTHROPIC_BASE_URL</code> 必须填站点根地址，不能带 <code>/v1</code>。</li>
-                <li>常用文本模型可直接填写 <code>opus</code>、<code>sonnet</code> 或 <code>haiku</code>；需要兼容 Claude Code 默认模型名时，也可以填写 <code>claude-opus-4-8</code>、<code>claude-sonnet-4-6</code>、<code>claude-haiku-4-5</code>。</li>
+                <li><code>model</code> 默认建议填 <code>sonnet</code>；要固定到具体版本时，再配 <code>ANTHROPIC_DEFAULT_*_MODEL</code>，例如 <code>claude-opus-4-8</code> 或 <code>claude-sonnet-4-6</code>。</li>
+                <li>如果想让 <code>/model</code> 自动列出我们网关返回的 Claude 模型，记得打开 <code>CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1</code>。</li>
                 <li>如果之前用过 <code>/login</code> 托管登录，先执行一次 <code>/logout</code>，避免本地登录态和环境变量打架。</li>
             </ul>
 
@@ -1034,7 +1068,7 @@ claude --model claude-opus-4-8`}</pre>
             <div className="config-table">
                 <div className="config-row">
                     <span className="config-label">Base URL</span>
-                    <code>${SITE}/v1</code>
+                    <code>{SITE}/v1</code>
                 </div>
                 <div className="config-row">
                     <span className="config-label">API Key</span>
@@ -1042,7 +1076,7 @@ claude --model claude-opus-4-8`}</pre>
                 </div>
                 <div className="config-row">
                     <span className="config-label">Model</span>
-                    <code>${textModelId}</code>
+                    <code>{textModelId}</code>
                 </div>
             </div>
             <ul className="doc-list">
