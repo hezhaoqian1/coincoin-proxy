@@ -3184,6 +3184,7 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
     should_use_direct_vertex = is_google_image_generation and delivery_lane == "vertex_direct"
     client = None
     cpa_channel = None
+    current_failure_recorded = False
 
     if (
         is_google_image_generation
@@ -3270,18 +3271,80 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
         duration_ms = int((time.monotonic() - t0) * 1000)
     else:
         client = await get_http_client()
-        payload["model"] = used_cfg.model_id
-        payload.pop("model_provider", None)
-        upstream_url = _build_openai_image_upstream_url(used_cfg.upstream_url, "images/generations")
-        headers = _build_upstream_headers(used_cfg)
-        t0 = time.monotonic()
-        upstream = await client.post(
-            upstream_url,
-            json=payload,
-            headers=headers,
-            timeout=IMAGE_UPSTREAM_TIMEOUT,
-        )
-        duration_ms = int((time.monotonic() - t0) * 1000)
+        while True:
+            current_failure_recorded = False
+            upstream_payload = dict(payload)
+            upstream_payload["model"] = used_cfg.model_id
+            upstream_payload.pop("model_provider", None)
+            upstream_url = _build_openai_image_upstream_url(used_cfg.upstream_url, "images/generations")
+            headers = _build_upstream_headers(used_cfg)
+            t0 = time.monotonic()
+            try:
+                upstream = await client.post(
+                    upstream_url,
+                    json=upstream_payload,
+                    headers=headers,
+                    timeout=IMAGE_UPSTREAM_TIMEOUT,
+                )
+            except httpx.TransportError as exc:
+                _record_channel_failure(used_cfg, error_code="upstream_unreachable")
+                current_failure_recorded = True
+                fallback_cfg = _next_channel_fallback_config(
+                    public_model,
+                    used_cfg,
+                    "images/generations",
+                    reason="upstream_unreachable",
+                )
+                if fallback_cfg is not None:
+                    used_cfg = fallback_cfg
+                    used_route_reason = _channel_fallback_route_reason("upstream_unreachable")
+                    continue
+                duration_ms = int((time.monotonic() - t0) * 1000)
+                await usage_buffer.add(
+                    user.id,
+                    api_key_id=getattr(user, _KEY_ID_ATTR, ""),
+                    requests=1,
+                    endpoint="images/generations",
+                    model=display_model,
+                    customer_model_alias=display_model,
+                    provider_model=used_cfg.model_id or _effective_provider_model,
+                    route_reason=used_route_reason,
+                    duration_ms=duration_ms,
+                    status_code=502,
+                    usage_unit_type="images",
+                    usage_unit_count=0,
+                    billable_sku=public_model.billable_sku or display_model,
+                    image_count=0,
+                    price_per_image_cents=price_per_image_cents,
+                    cost_cents_override=0,
+                    **_channel_usage_kwargs(used_cfg),
+                    **usage_pricing_kwargs(
+                        public_model,
+                        station_model,
+                        user_cache_read_multiplier_override=user_cache_read_multiplier_override,
+                    ),
+                )
+                return _openai_error_response(
+                    f"OpenAI image generation request failed: {exc}",
+                    code="upstream_unreachable",
+                    status_code=502,
+                    error_type="server_error",
+                )
+            duration_ms = int((time.monotonic() - t0) * 1000)
+            if upstream.status_code >= 400 and _should_try_channel_fallback(used_cfg, status_code=upstream.status_code):
+                _record_channel_failure(used_cfg, status_code=upstream.status_code)
+                current_failure_recorded = True
+                fallback_cfg = _next_channel_fallback_config(
+                    public_model,
+                    used_cfg,
+                    "images/generations",
+                    reason=str(upstream.status_code),
+                )
+                if fallback_cfg is not None:
+                    used_cfg = fallback_cfg
+                    used_route_reason = _channel_fallback_route_reason(str(upstream.status_code))
+                    continue
+            break
 
     response_headers = filter_headers(dict(upstream.headers))
     response_headers.pop("content-length", None)
@@ -3421,8 +3484,38 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
             commit=True,
         )
     elif isinstance(data, (dict, str)):
-        _record_channel_failure(used_cfg, status_code=upstream.status_code)
+        if not current_failure_recorded:
+            _record_channel_failure(used_cfg, status_code=upstream.status_code)
         logger.error("image upstream error %s: %s", upstream.status_code, str(data)[:500])
+        await usage_buffer.add(
+            user.id,
+            api_key_id=getattr(user, _KEY_ID_ATTR, ""),
+            requests=1,
+            endpoint="images/generations",
+            model=display_model,
+            customer_model_alias=display_model,
+            provider_model=(
+                cpa_channel.provider_model
+                if cpa_channel is not None
+                else (used_cfg.model_id or _effective_provider_model)
+            ),
+            route_reason=used_route_reason,
+            duration_ms=duration_ms,
+            status_code=upstream.status_code,
+            usage_unit_type="images",
+            usage_unit_count=0,
+            billable_sku=public_model.billable_sku or display_model,
+            upstream_request_id=upstream_request_id,
+            image_count=0,
+            price_per_image_cents=price_per_image_cents,
+            cost_cents_override=0,
+            **_channel_usage_kwargs(used_cfg, cpa_channel),
+            **usage_pricing_kwargs(
+                public_model,
+                station_model,
+                user_cache_read_multiplier_override=user_cache_read_multiplier_override,
+            ),
+        )
 
     if isinstance(data, dict):
         return JSONResponse(content=data, status_code=upstream.status_code, headers=response_headers)

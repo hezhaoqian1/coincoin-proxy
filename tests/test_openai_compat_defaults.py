@@ -3030,6 +3030,180 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             "Bearer cliproxy-key",
         )
 
+    async def test_openai_image_generation_falls_back_to_backup_channel_on_502(self) -> None:
+        channel_router.set_snapshot(
+            [
+                ProviderChannelSnapshot(
+                    channel_id="ch_image_primary",
+                    name="Image Primary",
+                    base_url="https://primary-image.example/v1",
+                    api_key="primary-key",
+                    auth_style="bearer",
+                    channel_type="openai_compatible",
+                    provider_platform="xtokenmirror",
+                    provider_account_fingerprint="fp_primary",
+                ),
+                ProviderChannelSnapshot(
+                    channel_id="ch_image_backup",
+                    name="Image Backup",
+                    base_url="https://backup-image.example/v1",
+                    api_key="backup-key",
+                    auth_style="bearer",
+                    channel_type="openai_compatible",
+                    provider_platform="polaris",
+                    provider_account_fingerprint="fp_backup",
+                ),
+            ],
+            [
+                ModelChannelRouteSnapshot(
+                    route_id="rt_image_primary",
+                    public_model_id="gpt-image-2",
+                    endpoint="images/generations",
+                    channel_id="ch_image_primary",
+                    upstream_model="gpt-image-2-primary",
+                    priority_override=0,
+                ),
+                ModelChannelRouteSnapshot(
+                    route_id="rt_image_backup",
+                    public_model_id="gpt-image-2",
+                    endpoint="images/generations",
+                    channel_id="ch_image_backup",
+                    upstream_model="gpt-image-2-backup",
+                    priority_override=10,
+                ),
+            ],
+            version=2,
+        )
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {"error": {"code": "server_error", "message": "primary failed", "type": "server_error"}},
+                    status_code=502,
+                    headers={"x-request-id": "req_primary_failed"},
+                ),
+                _FakeUpstreamResponse(
+                    {"created": 1774449999, "data": [{"url": "https://cdn.example/fallback-image.png"}]},
+                    headers={"x-request-id": "req_backup_success"},
+                ),
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_workbench_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(proxy_module.usage_buffer, "add", AsyncMock()) as add_usage, patch.object(
+                proxy_module,
+                "record_media_artifacts_best_effort",
+                AsyncMock(),
+            ) as record_media:
+                response = await client.post(
+                    "/v1/images/generations",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"model": "gpt-image-2", "prompt": "A blue coin mascot", "n": 1, "size": "1024x1024"},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["data"][0]["url"], "https://cdn.example/fallback-image.png")
+        self.assertEqual(len(upstream_client.calls), 2)
+        self.assertEqual(upstream_client.calls[0]["url"], "https://primary-image.example/v1/images/generations")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-image-2-primary")
+        self.assertEqual(upstream_client.calls[1]["url"], "https://backup-image.example/v1/images/generations")
+        self.assertEqual(upstream_client.calls[1]["headers"]["authorization"], "Bearer backup-key")
+        self.assertEqual(upstream_client.calls[1]["json"]["model"], "gpt-image-2-backup")
+        add_usage.assert_awaited_once()
+        usage_kwargs = add_usage.await_args.kwargs
+        self.assertEqual(usage_kwargs["route_reason"], "channel_fallback:502")
+        self.assertEqual(usage_kwargs["channel_id"], "ch_image_backup")
+        self.assertEqual(usage_kwargs["fallback_from_channel_id"], "ch_image_primary")
+        self.assertEqual(usage_kwargs["route_attempt"], 1)
+        self.assertEqual(usage_kwargs["upstream_request_id"], "req_backup_success")
+        record_media.assert_awaited_once()
+        self.assertEqual(record_media.await_args.kwargs["route_reason"], "channel_fallback:502")
+        self.assertEqual(record_media.await_args.kwargs["provider_model"], "gpt-image-2-backup")
+
+    async def test_openai_image_generation_records_zero_cost_failure_when_all_channels_fail(self) -> None:
+        channel_router.set_snapshot(
+            [
+                ProviderChannelSnapshot(
+                    channel_id="ch_image_primary",
+                    base_url="https://primary-image.example/v1",
+                    api_key="primary-key",
+                    auth_style="bearer",
+                    channel_type="openai_compatible",
+                ),
+                ProviderChannelSnapshot(
+                    channel_id="ch_image_backup",
+                    base_url="https://backup-image.example/v1",
+                    api_key="backup-key",
+                    auth_style="bearer",
+                    channel_type="openai_compatible",
+                ),
+            ],
+            [
+                ModelChannelRouteSnapshot(
+                    route_id="rt_image_primary",
+                    public_model_id="gpt-image-2",
+                    endpoint="images/generations",
+                    channel_id="ch_image_primary",
+                    upstream_model="gpt-image-2-primary",
+                    priority_override=0,
+                ),
+                ModelChannelRouteSnapshot(
+                    route_id="rt_image_backup",
+                    public_model_id="gpt-image-2",
+                    endpoint="images/generations",
+                    channel_id="ch_image_backup",
+                    upstream_model="gpt-image-2-backup",
+                    priority_override=10,
+                ),
+            ],
+            version=2,
+        )
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {"error": {"code": "server_error", "message": "primary failed", "type": "server_error"}},
+                    status_code=502,
+                    headers={"x-request-id": "req_primary_failed"},
+                ),
+                _FakeUpstreamResponse(
+                    {"error": {"code": "server_error", "message": "backup failed", "type": "server_error"}},
+                    status_code=502,
+                    headers={"x-request-id": "req_backup_failed"},
+                ),
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_workbench_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(proxy_module.usage_buffer, "add", AsyncMock()) as add_usage:
+                response = await client.post(
+                    "/v1/images/generations",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"model": "gpt-image-2", "prompt": "A blue coin mascot", "n": 1, "size": "1024x1024"},
+                )
+
+        self.assertEqual(response.status_code, 502, response.text)
+        self.assertEqual(response.json()["error"]["message"], "backup failed")
+        self.assertEqual(len(upstream_client.calls), 2)
+        add_usage.assert_awaited_once()
+        usage_kwargs = add_usage.await_args.kwargs
+        self.assertEqual(usage_kwargs["status_code"], 502)
+        self.assertEqual(usage_kwargs["cost_cents_override"], 0)
+        self.assertEqual(usage_kwargs["usage_unit_count"], 0)
+        self.assertEqual(usage_kwargs["image_count"], 0)
+        self.assertEqual(usage_kwargs["route_reason"], "channel_fallback:502")
+        self.assertEqual(usage_kwargs["channel_id"], "ch_image_backup")
+        self.assertEqual(usage_kwargs["fallback_from_channel_id"], "ch_image_primary")
+        self.assertEqual(usage_kwargs["upstream_request_id"], "req_backup_failed")
+
     async def test_openai_image_generation_user_override_preserves_public_alias_and_usage_identity(self) -> None:
         fake_user = SimpleNamespace(
             id="u_test",
