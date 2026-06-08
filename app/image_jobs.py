@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 import httpx
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -210,6 +210,25 @@ def _image_job_artifact_endpoint(job: ImageJob) -> str:
 
 def _bounded_route_reason(value: str) -> str:
     return str(value or "").strip()[:ROUTE_REASON_MAX_LEN]
+
+
+async def _run_image_job_handler(handler, request: Request, db: AsyncSession) -> JSONResponse:
+    try:
+        return await handler(request, db)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("image job request failed before response")
+        try:
+            await db.rollback()
+        except Exception:
+            logger.exception("failed to rollback image job request")
+        return _openai_error_response(
+            "Unable to create image job.",
+            code="image_job_request_failed",
+            error_type="server_error",
+            status_code=500,
+        )
 
 
 async def _mark_job_failed(
@@ -941,22 +960,22 @@ async def _get_image_job(job_id: str, request: Request, db: AsyncSession) -> JSO
 
 @router.post("/image-jobs/edits")
 async def create_image_edit_job(request: Request, db: AsyncSession = Depends(get_db)):
-    return await _create_image_edit_job(request, db)
+    return await _run_image_job_handler(_create_image_edit_job, request, db)
 
 
 @openai_router.post("/image-jobs/edits")
 async def create_image_edit_job_openai(request: Request, db: AsyncSession = Depends(get_db)):
-    return await _create_image_edit_job(request, db)
+    return await _run_image_job_handler(_create_image_edit_job, request, db)
 
 
 @router.post("/image-jobs/generations")
 async def create_image_generation_job(request: Request, db: AsyncSession = Depends(get_db)):
-    return await _create_image_generation_job(request, db)
+    return await _run_image_job_handler(_create_image_generation_job, request, db)
 
 
 @openai_router.post("/image-jobs/generations")
 async def create_image_generation_job_openai(request: Request, db: AsyncSession = Depends(get_db)):
-    return await _create_image_generation_job(request, db)
+    return await _run_image_job_handler(_create_image_generation_job, request, db)
 
 
 @router.get("/image-jobs/{job_id}")

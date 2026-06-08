@@ -459,6 +459,34 @@ class ImageJobsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["error"]["type"], "server_error")
         self.assertEqual(self.store.rollbacks, 1)
 
+    async def test_create_image_generation_job_early_failure_returns_structured_error(self) -> None:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(
+                image_jobs_module,
+                "authorize_workbench_request",
+                AsyncMock(side_effect=RuntimeError("simulated early image job failure")),
+            ):
+                response = await client.post(
+                    "/v1/image-jobs/generations",
+                    headers={
+                        "Authorization": "Bearer sk_cc_test",
+                        "X-CoinCoin-Workbench": "1",
+                    },
+                    json={
+                        "model": "gpt-image-2",
+                        "prompt": "A tiny black dot on a white background",
+                        "n": 3,
+                        "size": "1024x1024",
+                    },
+                )
+
+        self.assertEqual(response.status_code, 500, response.text)
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "image_job_request_failed")
+        self.assertEqual(payload["error"]["type"], "server_error")
+        self.assertEqual(self.store.rollbacks, 1)
+
     async def test_get_image_job_returns_existing_job(self) -> None:
         job = ImageJob(
             id="job_get_1",
