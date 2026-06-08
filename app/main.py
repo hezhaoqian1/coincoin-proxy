@@ -121,6 +121,16 @@ async def _run_migrations(conn):
         ("coincoin_user_finance_summary", "total_paid_orders", "BIGINT DEFAULT 0"),
         ("coincoin_user_finance_summary", "last_payment_at", "DATETIME NULL"),
         ("coincoin_image_jobs", "api_key_id", "VARCHAR(32) NULL"),
+        ("coincoin_image_jobs", "endpoint", "VARCHAR(32) DEFAULT 'images/edits'"),
+        ("coincoin_image_jobs", "public_model", "VARCHAR(128) DEFAULT ''"),
+        ("coincoin_image_jobs", "provider_model", "VARCHAR(128) DEFAULT ''"),
+        ("coincoin_image_jobs", "route_reason", "VARCHAR(64) DEFAULT ''"),
+        ("coincoin_image_jobs", "image_count", "BIGINT DEFAULT 0"),
+        ("coincoin_image_jobs", "upstream_request_id", "VARCHAR(128) DEFAULT ''"),
+        ("coincoin_image_jobs", "duration_ms", "BIGINT DEFAULT 0"),
+        ("coincoin_image_jobs", "storage_dir", "VARCHAR(512) DEFAULT ''"),
+        ("coincoin_image_jobs", "started_at", "DATETIME NULL"),
+        ("coincoin_image_jobs", "completed_at", "DATETIME NULL"),
         ("coincoin_video_jobs", "api_key_id", "VARCHAR(32) NULL"),
         ("coincoin_video_jobs", "subscription_debit_cents", "BIGINT DEFAULT 0"),
         ("coincoin_video_jobs", "subscription_id", "VARCHAR(32) DEFAULT ''"),
@@ -189,6 +199,7 @@ async def _run_migrations(conn):
         ("coincoin_request_logs", "ix_request_logs_created_model", "CREATE INDEX ix_request_logs_created_model ON coincoin_request_logs (created_at, model)"),
         ("coincoin_payment_orders", "ix_payment_orders_confirmed_at", "CREATE INDEX ix_payment_orders_confirmed_at ON coincoin_payment_orders (confirmed_at)"),
         ("coincoin_api_keys", "ix_api_keys_created_at", "CREATE INDEX ix_api_keys_created_at ON coincoin_api_keys (created_at)"),
+        ("coincoin_image_jobs", "ix_image_jobs_status_created", "CREATE INDEX ix_image_jobs_status_created ON coincoin_image_jobs (status, created_at)"),
     ]
     for table, index_name, ddl in index_migrations:
         try:

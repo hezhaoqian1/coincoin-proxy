@@ -27,6 +27,10 @@ const WORKBENCH_TABS = ['chat', 'image', 'video']
 const IMAGE_SIZES = ['1024x1024', '1536x1024', '1024x1536', 'auto']
 const IMAGE_COUNT_MIN = 1
 const IMAGE_COUNT_MAX = 4
+const IMAGE_COUNT_OPTIONS = Array.from(
+    { length: IMAGE_COUNT_MAX - IMAGE_COUNT_MIN + 1 },
+    (_, index) => IMAGE_COUNT_MIN + index,
+)
 const IMAGE_QUALITIES = [
     { value: 'auto', label: '自动' },
     { value: 'low', label: '草稿' },
@@ -783,7 +787,9 @@ function ImageWorkspace({
                 </div>
                 <label className="wb-field">
                     <span>张数</span>
-                    <input type="number" min={IMAGE_COUNT_MIN} max={IMAGE_COUNT_MAX} value={count} onChange={(event) => setCount(clampImageCount(event.target.value))} />
+                    <select value={String(clampImageCount(count))} onChange={(event) => setCount(clampImageCount(event.target.value))}>
+                        {IMAGE_COUNT_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
+                    </select>
                 </label>
                 <div className="wb-upload">
                     <div className="wb-upload-head">

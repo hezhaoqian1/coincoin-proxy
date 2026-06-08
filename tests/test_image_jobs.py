@@ -10,6 +10,7 @@ import httpx
 
 from app.config import settings
 from app.main import app
+import app.main as main_module
 from app.models import ImageJob, MediaArtifact
 from app.router import registry
 import app.image_jobs as image_jobs_module
@@ -121,6 +122,39 @@ class _FakeUpstreamResponse:
     async def aclose(self) -> None:
         return None
 
+
+class ImageJobMigrationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_startup_migrations_cover_existing_image_job_schema(self) -> None:
+        class _FakeMigrationConn:
+            def __init__(self) -> None:
+                self.statements: list[str] = []
+
+            async def execute(self, statement) -> None:
+                self.statements.append(str(statement))
+
+        conn = _FakeMigrationConn()
+
+        await main_module._run_migrations(conn)
+
+        sql = "\n".join(conn.statements)
+        for column in [
+            "api_key_id",
+            "endpoint",
+            "public_model",
+            "provider_model",
+            "route_reason",
+            "image_count",
+            "upstream_request_id",
+            "duration_ms",
+            "storage_dir",
+            "started_at",
+            "completed_at",
+        ]:
+            self.assertIn(f"ALTER TABLE coincoin_image_jobs ADD COLUMN {column} ", sql)
+        self.assertIn(
+            "CREATE INDEX ix_image_jobs_status_created ON coincoin_image_jobs (status, created_at)",
+            sql,
+        )
 
 class _RecordingClient:
     def __init__(self, responses):
@@ -362,7 +396,7 @@ class ImageJobsTests(unittest.IsolatedAsyncioTestCase):
                     json={
                         "model": "gpt-image-2",
                         "prompt": "A tiny black dot on a white background",
-                        "n": 1,
+                        "n": 3,
                         "size": "1024x1024",
                     },
                 )
@@ -371,13 +405,14 @@ class ImageJobsTests(unittest.IsolatedAsyncioTestCase):
         payload = response.json()
         self.assertEqual(payload["status"], image_jobs_module.JOB_STATUS_QUEUED)
         self.assertEqual(payload["endpoint"], "images/generations")
-        self.assertEqual(payload["image_count"], 1)
+        self.assertEqual(payload["image_count"], 3)
         self.assertEqual(payload["model"], "gpt-image-2")
         job = next(iter(self.store.jobs.values()))
         self.assertEqual(job.api_key_id, "k_image_user")
         self.assertEqual(job.endpoint, "images/generations")
         self.assertEqual(job.provider_model, "gpt-image-2")
         manifest = json.loads(job.request_payload_json)
+        self.assertEqual(manifest["payload"]["n"], 3)
         self.assertEqual(manifest["payload"]["prompt"], "A tiny black dot on a white background")
         self.assertEqual(manifest["coincoin_snapshot"]["retail_price_per_image_cents"], 5.3)
 
