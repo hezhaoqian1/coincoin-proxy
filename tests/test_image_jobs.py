@@ -592,7 +592,7 @@ class ImageJobsTests(unittest.IsolatedAsyncioTestCase):
                                     "images": [
                                         {
                                             "image_url": {
-                                                "url": "data:image/png;base64,edited-result"
+                                                "url": "data:image/png;base64,ZWRpdGVkLXJlc3VsdA=="
                                             }
                                         }
                                     ]
@@ -615,7 +615,7 @@ class ImageJobsTests(unittest.IsolatedAsyncioTestCase):
         updated = self.store.jobs[job.id]
         self.assertEqual(updated.status, image_jobs_module.JOB_STATUS_COMPLETED)
         result_payload = json.loads(updated.result_payload_json)
-        self.assertEqual(result_payload["data"][0]["b64_json"], "edited-result")
+        self.assertEqual(result_payload["data"][0]["b64_json"], "ZWRpdGVkLXJlc3VsdA==")
         self.assertEqual(updated.upstream_request_id, "req_image_job_1")
         self.assertEqual(len(upstream_client.calls), 1)
         self.assertEqual(upstream_client.calls[0]["url"], "https://gemini-cpa.example/v1/chat/completions")
@@ -628,7 +628,16 @@ class ImageJobsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(add_usage.await_args.kwargs["api_key_id"], "k_image_job")
         self.assertEqual(add_usage.await_args.kwargs["endpoint"], "image-jobs/edits")
         self.assertEqual(add_usage.await_args.kwargs["usage_unit_count"], 1)
-        self.assertEqual(self.store.media_artifacts, [])
+        self.assertEqual(len(self.store.media_artifacts), 1)
+        artifact = self.store.media_artifacts[0]
+        self.assertEqual(artifact.media_type, "image")
+        self.assertEqual(artifact.endpoint, "image-jobs/edits")
+        self.assertTrue(artifact.url.startswith("/v1/media-artifacts/"))
+        self.assertTrue(artifact.url.endswith("/content"))
+        self.assertEqual(artifact.user_id, self.fake_user.id)
+        self.assertEqual(artifact.api_key_id, "k_image_job")
+        self.assertEqual(artifact.source_type, "image_job")
+        self.assertEqual(artifact.source_id, job.id)
 
     async def test_process_image_generation_job_completes_and_records_usage_and_artifact(self) -> None:
         job = ImageJob(

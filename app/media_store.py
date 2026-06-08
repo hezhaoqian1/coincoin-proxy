@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import asyncio
+import base64
+import binascii
 import json
 import logging
 from datetime import datetime
+from pathlib import Path
+import re
 from typing import Any, Iterable
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .config import settings
 from .models import MediaArtifact
 from .security import generate_id
 
@@ -14,6 +20,14 @@ from .security import generate_id
 logger = logging.getLogger("coincoin.media_store")
 
 _HTTP_PREFIXES = ("http://", "https://")
+_DATA_IMAGE_RE = re.compile(r"^data:(image/[a-z0-9.+-]+);base64,(.+)$", re.IGNORECASE | re.DOTALL)
+_IMAGE_MIME_EXTENSIONS = {
+    "image/jpeg": "jpg",
+    "image/jpg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+    "image/gif": "gif",
+}
 
 
 def _http_url(value: Any) -> str:
@@ -25,8 +39,20 @@ def _http_url(value: Any) -> str:
     return cleaned if cleaned.startswith(_HTTP_PREFIXES) else ""
 
 
-def _extract_image_urls(payload: dict[str, Any]) -> list[str]:
-    urls: list[str] = []
+def _media_artifact_storage_root() -> Path:
+    root = Path(settings.media_artifact_storage_dir).expanduser()
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def media_artifact_storage_path(storage_name: str) -> Path | None:
+    name = Path(str(storage_name or "")).name
+    if not name or name != str(storage_name or ""):
+        return None
+    return _media_artifact_storage_root() / name
+
+
+def _image_candidates(payload: dict[str, Any]) -> list[Any]:
     candidates: list[Any] = []
 
     def add_items(value: Any) -> None:
@@ -45,14 +71,40 @@ def _extract_image_urls(payload: dict[str, Any]) -> list[str]:
             add_items(result_output.get("data"))
     if isinstance(output, dict):
         add_items(output.get("data"))
+    return candidates
 
-    for item in candidates:
+
+def _extract_image_urls(payload: dict[str, Any]) -> list[str]:
+    urls: list[str] = []
+    for item in _image_candidates(payload):
         if not isinstance(item, dict):
             continue
         url = _http_url(item.get("url")) or _http_url(item.get("image_url")) or _http_url(item.get("download_url"))
         if url:
             urls.append(url)
     return urls
+
+
+def _extract_inline_images(payload: dict[str, Any] | None) -> list[dict[str, str]]:
+    if not isinstance(payload, dict):
+        return []
+    images: list[dict[str, str]] = []
+    for item in _image_candidates(payload):
+        if not isinstance(item, dict):
+            continue
+        mime_type = str(item.get("mime_type") or item.get("content_type") or "image/png").strip() or "image/png"
+        value = item.get("b64_json") or item.get("base64") or item.get("image_base64")
+        source = "b64_json"
+        raw_url = item.get("url")
+        if not value and isinstance(raw_url, str):
+            match = _DATA_IMAGE_RE.match(raw_url.strip())
+            if match:
+                mime_type = match.group(1).lower()
+                value = match.group(2)
+                source = "data_url"
+        if isinstance(value, str) and value.strip():
+            images.append({"b64": value.strip(), "mime_type": mime_type.lower(), "source": source})
+    return images
 
 
 def _extract_video_url(payload: dict[str, Any]) -> str:
@@ -108,7 +160,8 @@ async def record_media_artifacts(
 ) -> int:
     media_urls = list(urls or extract_media_urls(media_type, payload))
     media_urls = [url.strip() for url in media_urls if isinstance(url, str) and url.strip().startswith(_HTTP_PREFIXES)]
-    if not media_urls:
+    inline_images = _extract_inline_images(payload) if media_type == "image" else []
+    if not media_urls and not inline_images:
         return 0
 
     created = 0
@@ -131,6 +184,51 @@ async def record_media_artifacts(
                 route_reason=route_reason,
                 cost_cents=int(cost_cents or 0),
                 metadata_json=json.dumps({"index": index}, separators=(",", ":")),
+                completed_at=completed_at or datetime.utcnow(),
+            )
+        )
+        created += 1
+    for index, image in enumerate(inline_images[:16], start=created):
+        artifact_id = generate_id("ma_")
+        mime_type = image["mime_type"] if image["mime_type"] in _IMAGE_MIME_EXTENSIONS else "image/png"
+        extension = _IMAGE_MIME_EXTENSIONS.get(mime_type, "png")
+        storage_name = f"{artifact_id}.{extension}"
+        storage_path = media_artifact_storage_path(storage_name)
+        if storage_path is None:
+            continue
+        try:
+            normalized_b64 = re.sub(r"\s+", "", image["b64"])
+            content = base64.b64decode(normalized_b64, validate=True)
+        except (binascii.Error, ValueError):
+            logger.warning("skip invalid inline image artifact payload source_id=%s index=%s", source_id, index)
+            continue
+        await asyncio.to_thread(storage_path.write_bytes, content)
+        db.add(
+            MediaArtifact(
+                id=artifact_id,
+                user_id=user_id,
+                api_key_id=api_key_id or None,
+                media_type=media_type,
+                endpoint=endpoint,
+                model=model,
+                provider_model=provider_model,
+                status=status,
+                url=f"/v1/media-artifacts/{artifact_id}/content",
+                thumbnail_url="",
+                source_type=source_type,
+                source_id=source_id,
+                upstream_request_id=upstream_request_id,
+                route_reason=route_reason,
+                cost_cents=int(cost_cents or 0),
+                metadata_json=json.dumps(
+                    {
+                        "index": index,
+                        "source": image.get("source") or "b64_json",
+                        "storage_name": storage_name,
+                        "content_type": mime_type,
+                    },
+                    separators=(",", ":"),
+                ),
                 completed_at=completed_at or datetime.utcnow(),
             )
         )

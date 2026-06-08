@@ -366,6 +366,18 @@ export async function getMediaArtifacts(limit = 50, offset = 0, filters = {}) {
     return parseJsonResponse(res, 'Failed to fetch media')
 }
 
+export async function fetchMediaArtifactObjectUrl(url) {
+    const res = await fetch(`${PROXY_BASE}${url}`, {
+        headers: {
+            'Authorization': `Bearer ${getApiKey()}`,
+        },
+    })
+    if (!res.ok) {
+        throw new Error('Failed to fetch media')
+    }
+    return URL.createObjectURL(await res.blob())
+}
+
 // ===== Workbench media APIs =====
 
 function workbenchJsonHeaders(apiKey) {

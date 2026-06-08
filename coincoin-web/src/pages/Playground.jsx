@@ -8,6 +8,7 @@ import {
     createVideoGeneration,
     describePublicModel,
     formatModelPrice,
+    fetchMediaArtifactObjectUrl,
     getImageJob,
     getMediaArtifacts,
     getVideoGeneration,
@@ -388,6 +389,10 @@ function downloadMedia(url, filename) {
     anchor.remove()
 }
 
+function isMediaArtifactContentUrl(url) {
+    return typeof url === 'string' && url.startsWith('/v1/media-artifacts/') && url.endsWith('/content')
+}
+
 function KeyNotice({ hasDeveloperKey }) {
     if (hasDeveloperKey) return null
     return (
@@ -414,7 +419,42 @@ function ModelSelect({ label, models, value, onChange, disabled, fallbackLabel =
 }
 
 function ApiMediaRecords({ records, loading, activeTab, setVideoReference }) {
-    const filtered = records.filter((record) => record.media_type === activeTab || record.type === activeTab)
+    const filtered = useMemo(
+        () => records.filter((record) => record.media_type === activeTab || record.type === activeTab),
+        [records, activeTab],
+    )
+    const [objectUrls, setObjectUrls] = useState({})
+
+    useEffect(() => {
+        let active = true
+        const createdUrls = []
+        const targets = filtered.filter((record) => record.id && isMediaArtifactContentUrl(record.url))
+        if (targets.length === 0) {
+            setObjectUrls({})
+            return undefined
+        }
+        Promise.all(targets.map(async (record) => {
+            try {
+                const objectUrl = await fetchMediaArtifactObjectUrl(record.url)
+                if (!active) {
+                    URL.revokeObjectURL(objectUrl)
+                    return [record.id, '']
+                }
+                createdUrls.push(objectUrl)
+                return [record.id, objectUrl]
+            } catch {
+                return [record.id, '']
+            }
+        })).then((entries) => {
+            if (!active) return
+            setObjectUrls(Object.fromEntries(entries.filter(([, url]) => url)))
+        })
+        return () => {
+            active = false
+            createdUrls.forEach((url) => URL.revokeObjectURL(url))
+        }
+    }, [filtered])
+
     return (
         <div className="wb-api-records">
             <div className="wb-history-head">
@@ -425,28 +465,32 @@ function ApiMediaRecords({ records, loading, activeTab, setVideoReference }) {
                 <div className="wb-empty-line">暂无媒体记录</div>
             ) : (
                 <div className="wb-api-grid">
-                    {filtered.slice(0, 12).map((record) => (
-                        <div key={record.id || `${record.created_at}_${record.url}`} className="wb-api-card">
-                            <div className="wb-api-thumb">
-                                {(record.media_type || record.type) === 'video' ? (
-                                    <video src={record.url} muted playsInline preload="metadata" />
-                                ) : (
-                                    <img src={record.thumbnail_url || record.url} alt={record.model || 'image'} loading="lazy" />
-                                )}
+                    {filtered.slice(0, 12).map((record) => {
+                        const mediaUrl = objectUrls[record.id] || record.url
+                        const thumbUrl = objectUrls[record.id] || record.thumbnail_url || record.url
+                        return (
+                            <div key={record.id || `${record.created_at}_${record.url}`} className="wb-api-card">
+                                <div className="wb-api-thumb">
+                                    {(record.media_type || record.type) === 'video' ? (
+                                        <video src={mediaUrl} muted playsInline preload="metadata" />
+                                    ) : (
+                                        <img src={thumbUrl} alt={record.model || 'image'} loading="lazy" />
+                                    )}
+                                </div>
+                                <div>
+                                    <strong>{record.model || '-'}</strong>
+                                    <span>{record.created_at ? formatLocalTime(record.created_at) : record.endpoint}</span>
+                                </div>
+                                <div className="wb-history-actions">
+                                    {mediaUrl ? <button type="button" onClick={() => downloadMedia(mediaUrl, (record.media_type || record.type) === 'video' ? 'coincoin-api-video.mp4' : 'coincoin-api-image.png')}>下载</button> : null}
+                                    {(record.media_type || record.type) === 'image' && canUseAsRemoteReference(record.url) ? (
+                                        <button type="button" onClick={() => setVideoReference(record.url)}>视频参考</button>
+                                    ) : null}
+                                    {record.cost_cents ? <span>{formatCost(record.cost_cents)}</span> : null}
+                                </div>
                             </div>
-                            <div>
-                                <strong>{record.model || '-'}</strong>
-                                <span>{record.created_at ? formatLocalTime(record.created_at) : record.endpoint}</span>
-                            </div>
-                            <div className="wb-history-actions">
-                                {record.url ? <button type="button" onClick={() => downloadMedia(record.url, (record.media_type || record.type) === 'video' ? 'coincoin-api-video.mp4' : 'coincoin-api-image.png')}>下载</button> : null}
-                                {(record.media_type || record.type) === 'image' && canUseAsRemoteReference(record.url) ? (
-                                    <button type="button" onClick={() => setVideoReference(record.url)}>视频参考</button>
-                                ) : null}
-                                {record.cost_cents ? <span>{formatCost(record.cost_cents)}</span> : null}
-                            </div>
-                        </div>
-                    ))}
+                        )
+                    })}
                 </div>
             )}
         </div>

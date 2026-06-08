@@ -81,6 +81,7 @@ class Settings(BaseSettings):
     image_jobs_enabled: bool = True
     image_job_poll_interval: int = 5
     image_job_storage_dir: str = "/tmp/coincoin-image-jobs"
+    media_artifact_storage_dir: str = "/tmp/coincoin-media-artifacts"
     image_job_sync_input_limit: int = 2
     image_job_async_max_inputs: int = 8
     image_job_max_total_bytes: int = 50 * 1024 * 1024

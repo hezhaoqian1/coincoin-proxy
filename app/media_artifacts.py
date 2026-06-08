@@ -1,10 +1,14 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+import json
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import FileResponse
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .db import get_db
+from .media_store import media_artifact_storage_path
 from .models import MediaArtifact
 from .proxy import authenticate_user
 
@@ -67,3 +71,31 @@ async def list_media_artifacts(
         "offset": offset,
         "data": [_serialize_artifact(item) for item in items],
     }
+
+
+@router.get("/{artifact_id}/content")
+async def get_media_artifact_content(
+    artifact_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    user = await authenticate_user(request, db)
+    item = (
+        await db.execute(
+            select(MediaArtifact).where(MediaArtifact.id == artifact_id, MediaArtifact.user_id == user.id)
+        )
+    ).scalar_one_or_none()
+    if not item:
+        raise HTTPException(status_code=404, detail="media artifact not found")
+
+    try:
+        metadata = json.loads(item.metadata_json or "{}")
+    except Exception:
+        metadata = {}
+    storage_name = str(metadata.get("storage_name") or "").strip()
+    path = media_artifact_storage_path(storage_name)
+    if path is None or not path.is_file():
+        raise HTTPException(status_code=404, detail="media artifact content not found")
+
+    content_type = str(metadata.get("content_type") or "application/octet-stream").strip()
+    return FileResponse(path, media_type=content_type, headers={"cache-control": "private, max-age=86400"})
