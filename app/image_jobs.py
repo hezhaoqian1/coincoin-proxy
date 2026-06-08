@@ -329,6 +329,65 @@ def _parse_upstream_json_response(response, body: bytes | None = None) -> Tuple[
         return None, code, _upstream_json_error_message(response, code=code, body_text=body_text)
 
 
+def _single_image_generation_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    single_payload = dict(payload)
+    single_payload["n"] = 1
+    return single_payload
+
+
+def _merge_image_generation_payloads(payloads: List[Dict[str, Any]]) -> Dict[str, Any]:
+    merged: Dict[str, Any] = dict(payloads[0]) if payloads else {"created": int(time.time()), "data": []}
+    data_items: List[Any] = []
+    for payload in payloads:
+        items = payload.get("data") if isinstance(payload, dict) else None
+        if isinstance(items, list):
+            data_items.extend(items)
+    merged["data"] = data_items
+    return merged
+
+
+async def _post_openai_compatible_image_generation(
+    *,
+    client,
+    upstream_url: str,
+    payload: Dict[str, Any],
+    headers: Dict[str, str],
+) -> Tuple[Any, Any, str, str]:
+    requested_count = _requested_image_count_from_json(payload)
+    if requested_count <= 1:
+        upstream = await client.post(
+            upstream_url,
+            json=payload,
+            headers=headers,
+            timeout=IMAGE_UPSTREAM_TIMEOUT,
+        )
+        upstream_payload_json, failure_code, failure_message = _parse_upstream_json_response(upstream)
+        return upstream, upstream_payload_json, failure_code, failure_message
+
+    merged_payloads: List[Dict[str, Any]] = []
+    last_upstream = None
+    single_payload = _single_image_generation_payload(payload)
+    for _ in range(requested_count):
+        upstream = await client.post(
+            upstream_url,
+            json=single_payload,
+            headers=headers,
+            timeout=IMAGE_UPSTREAM_TIMEOUT,
+        )
+        last_upstream = upstream
+        upstream_payload_json, failure_code, failure_message = _parse_upstream_json_response(upstream)
+        if failure_code or upstream.status_code >= 400:
+            return upstream, upstream_payload_json, failure_code, failure_message
+        if not isinstance(upstream_payload_json, dict):
+            return upstream, upstream_payload_json, "upstream_invalid_json", "Upstream returned invalid JSON."
+        data_items = upstream_payload_json.get("data")
+        if not isinstance(data_items, list) or not data_items:
+            return upstream, upstream_payload_json, "empty_image_result", "Image job completed without output images."
+        merged_payloads.append(upstream_payload_json)
+
+    return last_upstream, _merge_image_generation_payloads(merged_payloads), "", ""
+
+
 def _image_job_channel_metadata(cfg) -> Dict[str, str]:
     return {
         "channel_id": str(getattr(cfg, "channel_id", "") or ""),
@@ -577,13 +636,12 @@ async def _process_image_generation_job(job_id: str) -> None:
                 upstream_payload.pop("model_provider", None)
                 upstream_url = _build_openai_image_upstream_url(attempt_cfg.upstream_url, "images/generations")
                 client = await get_http_client()
-                upstream = await client.post(
-                    upstream_url,
-                    json=upstream_payload,
+                upstream, upstream_payload_json, failure_code, failure_message = await _post_openai_compatible_image_generation(
+                    client=client,
+                    upstream_url=upstream_url,
+                    payload=upstream_payload,
                     headers=_build_upstream_headers(attempt_cfg),
-                    timeout=IMAGE_UPSTREAM_TIMEOUT,
                 )
-                upstream_payload_json, failure_code, failure_message = _parse_upstream_json_response(upstream)
         except gemini_cpa.GeminiCpaChannelUnavailable as exc:
             await _mark_job_failed(job_id, code="gemini_cpa_channel_cooling_down", message=str(exc))
             return

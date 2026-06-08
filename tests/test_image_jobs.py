@@ -707,6 +707,77 @@ class ImageJobsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(artifact.url, "https://cdn.example/image.png")
         self.assertEqual(artifact.cost_cents, 5)
 
+    async def test_process_image_generation_job_splits_multi_image_openai_compatible_requests(self) -> None:
+        job = ImageJob(
+            id="job_generation_worker_multi",
+            user_id=self.fake_user.id,
+            api_key_id="k_image_job",
+            status=image_jobs_module.JOB_STATUS_RUNNING,
+            endpoint="images/generations",
+            public_model="gpt-image-2",
+            provider_model="gpt-image-2",
+            route_reason="catalog:gpt-image-2:direct",
+            image_count=3,
+            request_payload_json=json.dumps(
+                {
+                    "requested_model": "gpt-image-2",
+                    "payload": {
+                        "model": "gpt-image-2",
+                        "prompt": "A tiny black dot on a white background",
+                        "n": 3,
+                        "size": "1024x1024",
+                    },
+                    "coincoin_snapshot": {
+                        "display_model": "gpt-image-2",
+                        "resolved_public_model": "gpt-image-2",
+                        "retail_price_per_image_cents": 5.3,
+                    },
+                }
+            ),
+            storage_dir="",
+            created_at=datetime.utcnow(),
+            started_at=datetime.utcnow(),
+        )
+        self.store.jobs[job.id] = job
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse({"created": 1774449999, "data": [{"url": "https://cdn.example/image-1.png"}]}),
+                _FakeUpstreamResponse({"created": 1774450000, "data": [{"url": "https://cdn.example/image-2.png"}]}),
+                _FakeUpstreamResponse(
+                    {"created": 1774450001, "data": [{"b64_json": "aW1hZ2UtMw=="}]},
+                    headers={"x-request-id": "req_image_generation_multi_3"},
+                ),
+            ]
+        )
+
+        with patch.object(image_jobs_module, "SessionLocal", _FakeSessionFactory(self.store)), patch.object(
+            image_jobs_module,
+            "get_http_client",
+            AsyncMock(return_value=upstream_client),
+        ), patch.object(image_jobs_module.usage_buffer, "add", AsyncMock()) as add_usage:
+            await image_jobs_module._process_image_generation_job(job.id)
+
+        updated = self.store.jobs[job.id]
+        self.assertEqual(updated.status, image_jobs_module.JOB_STATUS_COMPLETED)
+        self.assertEqual(updated.upstream_request_id, "req_image_generation_multi_3")
+        self.assertEqual(len(upstream_client.calls), 3)
+        for call in upstream_client.calls:
+            self.assertEqual(call["url"], "https://cliproxy.example/v1/images/generations")
+            self.assertEqual(call["json"]["model"], "gpt-image-2")
+            self.assertEqual(call["json"]["n"], 1)
+        result_payload = json.loads(updated.result_payload_json)
+        self.assertEqual(len(result_payload["data"]), 3)
+        self.assertEqual(result_payload["data"][0]["url"], "https://cdn.example/image-1.png")
+        self.assertEqual(result_payload["data"][1]["url"], "https://cdn.example/image-2.png")
+        self.assertEqual(result_payload["data"][2]["b64_json"], "aW1hZ2UtMw==")
+        add_usage.assert_awaited_once()
+        self.assertEqual(add_usage.await_args.kwargs["usage_unit_count"], 3)
+        self.assertEqual(add_usage.await_args.kwargs["image_count"], 3)
+        self.assertEqual(len(self.store.media_artifacts), 3)
+        self.assertEqual(self.store.media_artifacts[0].url, "https://cdn.example/image-1.png")
+        self.assertEqual(self.store.media_artifacts[1].url, "https://cdn.example/image-2.png")
+        self.assertTrue(self.store.media_artifacts[2].url.startswith("/v1/media-artifacts/"))
+
     async def test_process_image_generation_job_uses_stored_channel_snapshot(self) -> None:
         channel_router.set_snapshot(
             [
