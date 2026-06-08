@@ -3003,7 +3003,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
 
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+            with patch.object(proxy_module, "authorize_workbench_request", AsyncMock(return_value=self.fake_user)), patch.object(
                 proxy_module,
                 "get_http_client",
                 AsyncMock(return_value=upstream_client),
@@ -3055,7 +3055,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
 
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=fake_user)), patch.object(
+            with patch.object(proxy_module, "authorize_workbench_request", AsyncMock(return_value=fake_user)), patch.object(
                 proxy_module,
                 "get_http_client",
                 AsyncMock(return_value=upstream_client),
@@ -3103,7 +3103,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
 
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+            with patch.object(proxy_module, "authorize_workbench_request", AsyncMock(return_value=self.fake_user)), patch.object(
                 proxy_module,
                 "get_http_client",
                 AsyncMock(return_value=upstream_client),

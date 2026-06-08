@@ -4,6 +4,7 @@ import {
     createImageEdit,
     createImageEditJob,
     createImageGeneration,
+    createImageGenerationJob,
     createVideoGeneration,
     describePublicModel,
     formatModelPrice,
@@ -328,6 +329,12 @@ async function startImageRun({ apiKey, modelId, prompt, mode, body, formData }) 
         let payload
         if (mode === 'generation') {
             payload = await createImageGeneration(apiKey, body, { signal: controller.signal })
+        } else if (mode === 'generation-job') {
+            const job = await createImageGenerationJob(apiKey, body, { signal: controller.signal })
+            payload = await pollImageRunJob(apiKey, job, controller.signal)
+            if (payload.status === 'failed') {
+                throw new Error(payload.error?.message || '图片任务失败')
+            }
         } else if (mode === 'edit') {
             payload = await createImageEdit(apiKey, formData, { signal: controller.signal })
         } else {
@@ -719,7 +726,7 @@ function ImageWorkspace({
             apiKey: workbenchApiKey,
             modelId,
             prompt: trimmedPrompt,
-            mode: references.length === 0 ? 'generation' : (references.length <= 2 ? 'edit' : 'edit-job'),
+            mode: references.length === 0 ? 'generation-job' : (references.length <= 2 ? 'edit' : 'edit-job'),
             body,
             formData: references.length ? buildImageForm() : null,
         })

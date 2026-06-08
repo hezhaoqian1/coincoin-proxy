@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
+import httpx
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import select, update
@@ -29,19 +30,28 @@ from .station_runtime import (
 from .user_model_overrides import apply_user_overrides_to_resolution
 from .usage_buffer import usage_buffer
 from .proxy import (
+    IMAGE_UPSTREAM_TIMEOUT,
+    _build_openai_image_upstream_url,
     _build_upstream_headers,
+    _build_vertex_image_generation_payload,
     _encode_multipart_form_data,
     _model_resolution_error_response,
     _openai_error_response,
     _parse_image_edit_form,
+    _post_with_retries,
+    _requested_image_count_from_json,
     _requested_image_count_from_pairs,
     _send_stream_request,
+    _translate_vertex_image_response,
+    _unsupported_google_image_lane_error,
+    _vertex_image_candidate_count_error,
     _channel_usage_kwargs,
     _record_channel_failure,
     _record_channel_success,
     authenticate_user,
     authorize_workbench_request,
     extract_upstream_request_id,
+    get_http_client,
     get_image_stream_client,
     _KEY_ID_ATTR,
 )
@@ -188,6 +198,15 @@ def _supports_async_gemini_job(public_model) -> bool:
     return public_model.provider_name.strip().lower() == "google" and delivery_lane in {"gateway", gemini_cpa.DELIVERY_LANE}
 
 
+def _image_job_artifact_endpoint(job: ImageJob) -> str:
+    endpoint = str(job.endpoint or "").strip()
+    if endpoint == "images/generations":
+        return "image-jobs/generations"
+    if endpoint == "images/edits":
+        return "image-jobs/edits"
+    return endpoint or "image-jobs"
+
+
 async def _mark_job_failed(
     job_id: str,
     *,
@@ -230,7 +249,7 @@ async def _mark_job_completed(
             user_id=job.user_id,
             api_key_id=getattr(job, "api_key_id", "") or None,
             media_type="image",
-            endpoint="image-jobs/edits",
+            endpoint=_image_job_artifact_endpoint(job),
             model=job.public_model,
             provider_model=job.provider_model,
             payload=result_payload,
@@ -243,6 +262,218 @@ async def _mark_job_completed(
             completed_at=completed_at,
         )
         await session.commit()
+
+
+async def _process_image_generation_job(job_id: str) -> None:
+    async with SessionLocal() as session:
+        job = await session.get(ImageJob, job_id)
+        if not job:
+            return
+        manifest = json.loads(job.request_payload_json)
+
+    payload = manifest.get("payload")
+    if not isinstance(payload, dict):
+        await _mark_job_failed(job_id, code="invalid_job_payload", message="Image generation job payload is invalid.")
+        return
+
+    requested_model = str(manifest.get("requested_model") or job.public_model or payload.get("model") or "").strip()
+    snapshot = _manifest_snapshot_dict(manifest, "coincoin_snapshot")
+    display_model = str(snapshot.get("display_model") or job.public_model or requested_model or "").strip()
+    resolved_public_model_id = str(
+        snapshot.get("resolved_public_model") or job.public_model or requested_model or ""
+    ).strip()
+    pricing_snapshot = _manifest_snapshot_dict(snapshot, "public_pricing")
+    station_snapshot = _manifest_snapshot_dict(snapshot, "station_usage")
+
+    try:
+        resolved = model_registry.resolve_public_model(resolved_public_model_id, "images/generations")
+    except Exception as exc:
+        await _mark_job_failed(job_id, code="model_resolution_failed", message=str(exc))
+        return
+
+    public_model = resolved.public_model
+    used_cfg = replace(
+        resolved.backend,
+        model_id=str(job.provider_model or resolved.backend.model_id or "").strip(),
+    )
+    used_route_reason = str(job.route_reason or resolved.route_reason or "").strip()
+    is_google_image_generation = public_model.provider_name.strip().lower() == "google"
+    delivery_lane = (public_model.delivery_lane or "").strip().lower()
+    should_use_gateway_image_generation = is_google_image_generation and delivery_lane == "gateway"
+    should_use_cpa_gemini_image_generation = is_google_image_generation and delivery_lane == gemini_cpa.DELIVERY_LANE
+    should_use_direct_vertex = is_google_image_generation and delivery_lane == "vertex_direct"
+
+    if (
+        is_google_image_generation
+        and not should_use_gateway_image_generation
+        and not should_use_cpa_gemini_image_generation
+        and not should_use_direct_vertex
+    ):
+        await _mark_job_failed(
+            job_id,
+            code="unsupported_image_delivery_lane",
+            message=f"Unsupported Gemini image delivery lane: {(delivery_lane or 'unknown')}.",
+        )
+        return
+
+    if should_use_direct_vertex and not settings.vertex_api_key:
+        await _mark_job_failed(
+            job_id,
+            code="vertex_image_generation_not_configured",
+            message="Gemini image generation requires COINCOIN_VERTEX_API_KEY on the CoinCoin control plane.",
+        )
+        return
+
+    cpa_channel = None
+    started = time.monotonic()
+    try:
+        if should_use_gateway_image_generation:
+            upstream_payload = dict(payload)
+            upstream_payload["model"] = used_cfg.model_id
+            upstream_payload.pop("model_provider", None)
+            upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/images/generations"
+            headers = _build_upstream_headers(used_cfg)
+            stream_client = await get_image_stream_client()
+            upstream = await _send_stream_request(
+                stream_client,
+                "POST",
+                upstream_url,
+                json=upstream_payload,
+                headers=headers,
+            )
+            try:
+                upstream_body = await upstream.aread()
+            finally:
+                await upstream.aclose()
+            upstream_payload_json = json.loads(upstream_body.decode("utf-8"))
+        elif should_use_cpa_gemini_image_generation:
+            cpa_channel = gemini_cpa.select_channel(public_model, used_cfg)
+            upstream_payload = gemini_cpa.build_image_generation_payload(payload, cpa_channel.provider_model)
+            client = await get_http_client()
+            upstream = await _post_with_retries(
+                client,
+                gemini_cpa.chat_completions_url(cpa_channel),
+                json_body=upstream_payload,
+                headers=gemini_cpa.build_headers(cpa_channel),
+            )
+            upstream_payload_json = upstream.json()
+        elif should_use_direct_vertex:
+            upstream_payload = _build_vertex_image_generation_payload(payload)
+            upstream_url = (
+                f"{settings.vertex_gemini_api_base.rstrip('/')}/models/"
+                f"{used_cfg.model_id or public_model.provider_model}:generateContent"
+            )
+            client = await get_http_client()
+            upstream = await _post_with_retries(
+                client,
+                upstream_url,
+                json_body=upstream_payload,
+                headers={"x-goog-api-key": settings.vertex_api_key, "content-type": "application/json"},
+            )
+            upstream_payload_json = upstream.json()
+        else:
+            upstream_payload = dict(payload)
+            upstream_payload["model"] = used_cfg.model_id
+            upstream_payload.pop("model_provider", None)
+            upstream_url = _build_openai_image_upstream_url(used_cfg.upstream_url, "images/generations")
+            client = await get_http_client()
+            upstream = await client.post(
+                upstream_url,
+                json=upstream_payload,
+                headers=_build_upstream_headers(used_cfg),
+                timeout=IMAGE_UPSTREAM_TIMEOUT,
+            )
+            upstream_payload_json = upstream.json()
+    except json.JSONDecodeError:
+        _record_channel_failure(used_cfg, error_code="upstream_invalid_json")
+        await _mark_job_failed(job_id, code="upstream_invalid_json", message="Upstream returned invalid JSON.")
+        return
+    except gemini_cpa.GeminiCpaChannelUnavailable as exc:
+        await _mark_job_failed(job_id, code="gemini_cpa_channel_cooling_down", message=str(exc))
+        return
+    except httpx.TransportError as exc:
+        if cpa_channel is not None:
+            gemini_cpa.record_failure(cpa_channel)
+        _record_channel_failure(used_cfg, error_code="upstream_transport_error")
+        await _mark_job_failed(job_id, code="upstream_transport_error", message=str(exc))
+        return
+    except Exception as exc:
+        if cpa_channel is not None:
+            gemini_cpa.record_failure(cpa_channel)
+        _record_channel_failure(used_cfg, error_code="upstream_image_generation_error")
+        await _mark_job_failed(job_id, code="upstream_image_generation_error", message=str(exc))
+        return
+
+    duration_ms = int((time.monotonic() - started) * 1000)
+    upstream_request_id = extract_upstream_request_id(upstream.headers)
+
+    if upstream.status_code >= 400:
+        if cpa_channel is not None and gemini_cpa.should_record_failure(upstream.status_code):
+            gemini_cpa.record_failure(cpa_channel)
+        _record_channel_failure(used_cfg, status_code=upstream.status_code)
+        err = upstream_payload_json.get("error") if isinstance(upstream_payload_json, dict) else None
+        message = str(err.get("message") or err) if isinstance(err, dict) else str(upstream_payload_json)
+        await _mark_job_failed(job_id, code="upstream_error", message=message, duration_ms=duration_ms)
+        return
+
+    result_payload = upstream_payload_json if isinstance(upstream_payload_json, dict) else {}
+    if should_use_cpa_gemini_image_generation:
+        result_payload = gemini_cpa.translate_image_response(result_payload)
+        if cpa_channel is not None:
+            gemini_cpa.record_success(cpa_channel)
+    elif should_use_direct_vertex:
+        result_payload = _translate_vertex_image_response(result_payload)
+
+    data_items = result_payload.get("data") if isinstance(result_payload, dict) else None
+    if not isinstance(data_items, list) or not data_items:
+        _record_channel_failure(used_cfg, error_code="empty_image_result")
+        await _mark_job_failed(
+            job_id,
+            code="empty_image_result",
+            message="Image job completed without output images.",
+            duration_ms=duration_ms,
+        )
+        return
+
+    image_count = len(data_items)
+    _record_channel_success(used_cfg, duration_ms=duration_ms)
+    if "retail_price_per_image_cents" in snapshot:
+        price_per_image_cents = float(snapshot.get("retail_price_per_image_cents") or 0.0)
+    else:
+        price_per_image_cents = float(public_model.price_per_image_cents or 0.0)
+    pricing_kwargs = public_model_pricing_kwargs(public_model)
+    if pricing_snapshot:
+        pricing_kwargs = dict(pricing_snapshot)
+    if station_snapshot:
+        pricing_kwargs.update(station_snapshot)
+
+    await usage_buffer.add(
+        job.user_id,
+        api_key_id=getattr(job, "api_key_id", "") or "",
+        requests=1,
+        endpoint="image-jobs/generations",
+        model=display_model,
+        customer_model_alias=display_model,
+        provider_model=str(job.provider_model or used_cfg.model_id or public_model.provider_model or "").strip(),
+        route_reason=used_route_reason,
+        duration_ms=duration_ms,
+        status_code=upstream.status_code,
+        usage_unit_type="images",
+        usage_unit_count=image_count,
+        billable_sku=public_model.billable_sku or display_model,
+        upstream_request_id=upstream_request_id,
+        image_count=image_count,
+        price_per_image_cents=price_per_image_cents,
+        **_channel_usage_kwargs(used_cfg, cpa_channel),
+        **pricing_kwargs,
+    )
+    await _mark_job_completed(
+        job_id,
+        result_payload=result_payload,
+        upstream_request_id=upstream_request_id,
+        duration_ms=duration_ms,
+        cost_cents=round(price_per_image_cents * image_count),
+    )
 
 
 async def _process_image_edit_job(job_id: str) -> None:
@@ -441,7 +672,13 @@ async def process_pending_image_jobs(limit: int = 1) -> None:
                 continue
 
         try:
-            await _process_image_edit_job(job_id)
+            async with SessionLocal() as session:
+                job = await session.get(ImageJob, job_id)
+                endpoint = str(job.endpoint or "") if job else ""
+            if endpoint == "images/generations":
+                await _process_image_generation_job(job_id)
+            else:
+                await _process_image_edit_job(job_id)
         finally:
             async with SessionLocal() as session:
                 job = await session.get(ImageJob, job_id)
@@ -578,6 +815,91 @@ async def _create_image_edit_job(request: Request, db: AsyncSession) -> JSONResp
     return JSONResponse(status_code=202, content=_job_response(job))
 
 
+async def _create_image_generation_job(request: Request, db: AsyncSession) -> JSONResponse:
+    if not settings.image_jobs_enabled:
+        return _openai_error_response(
+            "Async image jobs are disabled on this deployment.",
+            code="image_jobs_disabled",
+            error_type="server_error",
+            status_code=503,
+        )
+
+    user = await authorize_workbench_request(request, db)
+    try:
+        payload = await request.json()
+    except Exception:
+        return _openai_error_response("Invalid JSON payload.", code="invalid_json_payload", status_code=400)
+    if not isinstance(payload, dict):
+        return _openai_error_response("Payload must be a JSON object.", code="invalid_json_payload", status_code=400)
+
+    requested_model = str(payload.get("model") or "").strip()
+    try:
+        station_model = await resolve_station_model_for_user(db, user, requested_model, "images/generations")
+        resolved = station_model.resolved_model if station_model else model_registry.resolve_public_model(
+            requested_model,
+            "images/generations",
+        )
+    except Exception as exc:
+        return _model_resolution_error_response(exc)
+
+    (
+        resolved,
+        station_model,
+        _routing_override,
+        _user_cache_read_multiplier_override,
+        _effective_provider_model,
+    ) = apply_user_overrides_to_resolution(user, resolved, station_model)
+
+    public_model = resolved.public_model
+    display_model = station_model.display_model if station_model else public_model.public_id
+    used_cfg = resolved.backend
+    used_route_reason = resolved.route_reason
+    price_per_image_cents = station_model.retail_price_per_image_cents if station_model else public_model.price_per_image_cents
+    is_google_image_generation = public_model.provider_name.strip().lower() == "google"
+    delivery_lane = (public_model.delivery_lane or "").strip().lower()
+    if is_google_image_generation and delivery_lane not in {"gateway", gemini_cpa.DELIVERY_LANE, "vertex_direct"}:
+        return _unsupported_google_image_lane_error(delivery_lane)
+    if is_google_image_generation and _requested_image_count_from_json(payload) > 1:
+        return _vertex_image_candidate_count_error()
+    if delivery_lane == "vertex_direct" and not settings.vertex_api_key:
+        return _openai_error_response(
+            "Gemini image generation requires COINCOIN_VERTEX_API_KEY on the CoinCoin control plane.",
+            error_type="server_error",
+            code="vertex_image_generation_not_configured",
+            status_code=503,
+        )
+
+    image_count = _requested_image_count_from_json(payload)
+    manifest = {
+        "requested_model": requested_model or display_model,
+        "payload": payload,
+        "coincoin_snapshot": {
+            "display_model": display_model,
+            "resolved_public_model": public_model.public_id,
+            "retail_price_per_image_cents": float(price_per_image_cents or 0.0),
+            "public_pricing": public_model_pricing_kwargs(public_model),
+            "station_usage": station_usage_kwargs(station_model),
+        },
+    }
+    job = ImageJob(
+        id=secrets.token_hex(16),
+        user_id=user.id,
+        api_key_id=getattr(user, _KEY_ID_ATTR, "") or None,
+        status=JOB_STATUS_QUEUED,
+        endpoint="images/generations",
+        public_model=display_model,
+        provider_model=str(used_cfg.model_id or _effective_provider_model or public_model.provider_model or "").strip(),
+        route_reason=used_route_reason,
+        image_count=image_count,
+        request_payload_json=json.dumps(manifest, ensure_ascii=False),
+        storage_dir="",
+    )
+    db.add(job)
+    await db.commit()
+    await db.refresh(job)
+    return JSONResponse(status_code=202, content=_job_response(job))
+
+
 async def _get_image_job(job_id: str, request: Request, db: AsyncSession) -> JSONResponse:
     user = await authenticate_user(request, db)
     result = await db.execute(select(ImageJob).where(ImageJob.id == job_id, ImageJob.user_id == user.id))
@@ -599,6 +921,16 @@ async def create_image_edit_job(request: Request, db: AsyncSession = Depends(get
 @openai_router.post("/image-jobs/edits")
 async def create_image_edit_job_openai(request: Request, db: AsyncSession = Depends(get_db)):
     return await _create_image_edit_job(request, db)
+
+
+@router.post("/image-jobs/generations")
+async def create_image_generation_job(request: Request, db: AsyncSession = Depends(get_db)):
+    return await _create_image_generation_job(request, db)
+
+
+@openai_router.post("/image-jobs/generations")
+async def create_image_generation_job_openai(request: Request, db: AsyncSession = Depends(get_db)):
+    return await _create_image_generation_job(request, db)
 
 
 @router.get("/image-jobs/{job_id}")

@@ -112,11 +112,29 @@ class _FakeUpstreamResponse:
         self.status_code = status_code
         self.headers = {"content-type": "application/json", **(headers or {})}
 
+    def json(self):
+        return self._payload
+
     async def aread(self) -> bytes:
         return json.dumps(self._payload, ensure_ascii=False).encode("utf-8")
 
     async def aclose(self) -> None:
         return None
+
+
+class _RecordingClient:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    async def post(self, url, **kwargs):
+        self.calls.append({"url": url, **kwargs})
+        if not self.responses:
+            raise AssertionError("unexpected upstream call")
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
 
 
 class _RecordingStreamClient:
@@ -162,6 +180,21 @@ class ImageJobsTests(unittest.IsolatedAsyncioTestCase):
                         "delivery_lane": "legacy",
                     },
                     {
+                        "id": "gpt-image-2",
+                        "owned_by": "openai",
+                        "provider_name": "OpenAI",
+                        "provider_model": "gpt-image-2",
+                        "capabilities": ["images/generations", "images/edits"],
+                        "routing_mode": "direct",
+                        "delivery_lane": "upstream_direct",
+                        "upstream_model": "gpt-image-2",
+                        "upstream_url": "https://cliproxy.example/v1",
+                        "api_key": "cliproxy-key",
+                        "auth_style": "bearer",
+                        "price_per_image_cents": 5.3,
+                        "billable_sku": "openai-image",
+                    },
+                    {
                         "id": "gemini-image",
                         "owned_by": "google",
                         "provider_name": "Google",
@@ -205,7 +238,7 @@ class ImageJobsTests(unittest.IsolatedAsyncioTestCase):
     async def test_create_image_edit_job_endpoint_queues_job(self) -> None:
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-            with patch.object(image_jobs_module, "authorize_request", AsyncMock(return_value=self.fake_user)):
+            with patch.object(image_jobs_module, "authorize_workbench_request", AsyncMock(return_value=self.fake_user)):
                 response = await client.post(
                     "/v1/image-jobs/edits",
                     headers={"Authorization": "Bearer sk_cc_test"},
@@ -244,7 +277,7 @@ class ImageJobsTests(unittest.IsolatedAsyncioTestCase):
 
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-            with patch.object(image_jobs_module, "authorize_request", AsyncMock(return_value=self.fake_user)):
+            with patch.object(image_jobs_module, "authorize_workbench_request", AsyncMock(return_value=self.fake_user)):
                 response = await client.post(
                     "/v1/image-jobs/edits",
                     headers={"Authorization": "Bearer sk_cc_test"},
@@ -286,7 +319,7 @@ class ImageJobsTests(unittest.IsolatedAsyncioTestCase):
 
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-            with patch.object(image_jobs_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+            with patch.object(image_jobs_module, "authorize_workbench_request", AsyncMock(return_value=self.fake_user)), patch.object(
                 image_jobs_module,
                 "resolve_station_model_for_user",
                 AsyncMock(return_value=station_model),
@@ -315,6 +348,38 @@ class ImageJobsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(snapshot["retail_price_per_image_cents"], 42.0)
         self.assertEqual(snapshot["station_usage"]["station_alias"], "stone-image-fast")
         self.assertEqual(snapshot["station_usage"]["wholesale_price_per_image_cents"], 11.0)
+
+    async def test_create_image_generation_job_endpoint_queues_job(self) -> None:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(image_jobs_module, "authorize_workbench_request", AsyncMock(return_value=self.fake_user)):
+                response = await client.post(
+                    "/v1/image-jobs/generations",
+                    headers={
+                        "Authorization": "Bearer sk_cc_test",
+                        "X-CoinCoin-Workbench": "1",
+                    },
+                    json={
+                        "model": "gpt-image-2",
+                        "prompt": "A tiny black dot on a white background",
+                        "n": 1,
+                        "size": "1024x1024",
+                    },
+                )
+
+        self.assertEqual(response.status_code, 202, response.text)
+        payload = response.json()
+        self.assertEqual(payload["status"], image_jobs_module.JOB_STATUS_QUEUED)
+        self.assertEqual(payload["endpoint"], "images/generations")
+        self.assertEqual(payload["image_count"], 1)
+        self.assertEqual(payload["model"], "gpt-image-2")
+        job = next(iter(self.store.jobs.values()))
+        self.assertEqual(job.api_key_id, "k_image_user")
+        self.assertEqual(job.endpoint, "images/generations")
+        self.assertEqual(job.provider_model, "gpt-image-2")
+        manifest = json.loads(job.request_payload_json)
+        self.assertEqual(manifest["payload"]["prompt"], "A tiny black dot on a white background")
+        self.assertEqual(manifest["coincoin_snapshot"]["retail_price_per_image_cents"], 5.3)
 
     async def test_get_image_job_returns_existing_job(self) -> None:
         job = ImageJob(
@@ -445,6 +510,74 @@ class ImageJobsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(add_usage.await_args.kwargs["endpoint"], "image-jobs/edits")
         self.assertEqual(add_usage.await_args.kwargs["usage_unit_count"], 1)
         self.assertEqual(self.store.media_artifacts, [])
+
+    async def test_process_image_generation_job_completes_and_records_usage_and_artifact(self) -> None:
+        job = ImageJob(
+            id="job_generation_worker_1",
+            user_id=self.fake_user.id,
+            api_key_id="k_image_job",
+            status=image_jobs_module.JOB_STATUS_RUNNING,
+            endpoint="images/generations",
+            public_model="gpt-image-2",
+            provider_model="gpt-image-2",
+            route_reason="catalog:gpt-image-2:direct",
+            image_count=1,
+            request_payload_json=json.dumps(
+                {
+                    "requested_model": "gpt-image-2",
+                    "payload": {
+                        "model": "gpt-image-2",
+                        "prompt": "A tiny black dot on a white background",
+                        "n": 1,
+                        "size": "1024x1024",
+                    },
+                    "coincoin_snapshot": {
+                        "display_model": "gpt-image-2",
+                        "resolved_public_model": "gpt-image-2",
+                        "retail_price_per_image_cents": 5.3,
+                    },
+                }
+            ),
+            storage_dir="",
+            created_at=datetime.utcnow(),
+            started_at=datetime.utcnow(),
+        )
+        self.store.jobs[job.id] = job
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "created": 1774449999,
+                        "data": [{"url": "https://cdn.example/image.png"}],
+                    },
+                    headers={"x-request-id": "req_image_generation_job_1"},
+                )
+            ]
+        )
+
+        with patch.object(image_jobs_module, "SessionLocal", _FakeSessionFactory(self.store)), patch.object(
+            image_jobs_module,
+            "get_http_client",
+            AsyncMock(return_value=upstream_client),
+        ), patch.object(image_jobs_module.usage_buffer, "add", AsyncMock()) as add_usage:
+            await image_jobs_module._process_image_generation_job(job.id)
+
+        updated = self.store.jobs[job.id]
+        self.assertEqual(updated.status, image_jobs_module.JOB_STATUS_COMPLETED)
+        self.assertEqual(updated.upstream_request_id, "req_image_generation_job_1")
+        self.assertEqual(len(upstream_client.calls), 1)
+        self.assertEqual(upstream_client.calls[0]["url"], "https://cliproxy.example/v1/images/generations")
+        self.assertEqual(upstream_client.calls[0]["headers"]["authorization"], "Bearer cliproxy-key")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-image-2")
+        add_usage.assert_awaited_once()
+        self.assertEqual(add_usage.await_args.kwargs["endpoint"], "image-jobs/generations")
+        self.assertEqual(add_usage.await_args.kwargs["usage_unit_count"], 1)
+        self.assertEqual(add_usage.await_args.kwargs["price_per_image_cents"], 5.3)
+        self.assertEqual(len(self.store.media_artifacts), 1)
+        artifact = self.store.media_artifacts[0]
+        self.assertEqual(artifact.endpoint, "image-jobs/generations")
+        self.assertEqual(artifact.url, "https://cdn.example/image.png")
+        self.assertEqual(artifact.cost_cents, 5)
 
     async def test_process_image_edit_job_uses_stored_backend_snapshot(self) -> None:
         job_id = "job_worker_override"

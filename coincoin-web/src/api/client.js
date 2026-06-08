@@ -64,6 +64,17 @@ function handleAuthFailure(status, message) {
     }
 }
 
+function extractHtmlErrorMessage(text, status) {
+    const raw = String(text || '').trim()
+    if (!raw || !/^<!doctype html|^<html[\s>]/i.test(raw)) return ''
+    const title = raw.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]
+        ?.replace(/\s+/g, ' ')
+        ?.trim()
+    if (status === 524 || title?.includes('524')) return '服务网关超时，请稍后查看历史记录'
+    if (status >= 500) return '服务暂时不可用'
+    return title || '请求失败'
+}
+
 async function parseJsonResponse(res, fallbackMessage) {
     let data = {}
     let text = ''
@@ -74,7 +85,7 @@ async function parseJsonResponse(res, fallbackMessage) {
         data = {}
     }
     if (!res.ok) {
-        const message = extractErrorMessage(data, text || fallbackMessage)
+        const message = extractHtmlErrorMessage(text, res.status) || extractErrorMessage(data, text || fallbackMessage)
         handleAuthFailure(res.status, message)
         throw new Error(message)
     }
@@ -380,6 +391,16 @@ export async function createImageGeneration(apiKey, payload, options = {}) {
         signal: options.signal,
     })
     return parseJsonResponse(res, 'Failed to generate image')
+}
+
+export async function createImageGenerationJob(apiKey, payload, options = {}) {
+    const res = await fetch(`${PROXY_BASE}/v1/image-jobs/generations`, {
+        method: 'POST',
+        headers: workbenchJsonHeaders(apiKey),
+        body: JSON.stringify(payload || {}),
+        signal: options.signal,
+    })
+    return parseJsonResponse(res, 'Failed to create image job')
 }
 
 export async function createImageEdit(apiKey, formData, options = {}) {
