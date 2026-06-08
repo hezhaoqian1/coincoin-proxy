@@ -92,7 +92,7 @@ async def _run_migrations(conn):
         ("coincoin_request_logs", "cache_read_tokens", "BIGINT DEFAULT 0"),
         ("coincoin_request_logs", "cache_creation_tokens", "BIGINT DEFAULT 0"),
         ("coincoin_request_logs", "api_key_id", "VARCHAR(32) NULL"),
-        ("coincoin_request_logs", "route_reason", "VARCHAR(64) DEFAULT ''"),
+        ("coincoin_request_logs", "route_reason", "VARCHAR(128) DEFAULT ''"),
         ("coincoin_usage_daily", "images_total", "BIGINT DEFAULT 0"),
         ("coincoin_usage_daily", "videos_total", "BIGINT DEFAULT 0"),
         ("coincoin_request_logs", "image_count", "BIGINT DEFAULT 0"),
@@ -124,13 +124,14 @@ async def _run_migrations(conn):
         ("coincoin_image_jobs", "endpoint", "VARCHAR(32) DEFAULT 'images/edits'"),
         ("coincoin_image_jobs", "public_model", "VARCHAR(128) DEFAULT ''"),
         ("coincoin_image_jobs", "provider_model", "VARCHAR(128) DEFAULT ''"),
-        ("coincoin_image_jobs", "route_reason", "VARCHAR(64) DEFAULT ''"),
+        ("coincoin_image_jobs", "route_reason", "VARCHAR(128) DEFAULT ''"),
         ("coincoin_image_jobs", "image_count", "BIGINT DEFAULT 0"),
         ("coincoin_image_jobs", "upstream_request_id", "VARCHAR(128) DEFAULT ''"),
         ("coincoin_image_jobs", "duration_ms", "BIGINT DEFAULT 0"),
         ("coincoin_image_jobs", "storage_dir", "VARCHAR(512) DEFAULT ''"),
         ("coincoin_image_jobs", "started_at", "DATETIME NULL"),
         ("coincoin_image_jobs", "completed_at", "DATETIME NULL"),
+        ("coincoin_image_jobs", "updated_at", "DATETIME DEFAULT CURRENT_TIMESTAMP"),
         ("coincoin_video_jobs", "api_key_id", "VARCHAR(32) NULL"),
         ("coincoin_video_jobs", "subscription_debit_cents", "BIGINT DEFAULT 0"),
         ("coincoin_video_jobs", "subscription_id", "VARCHAR(32) DEFAULT ''"),
@@ -193,6 +194,23 @@ async def _run_migrations(conn):
                 logger.debug("column %s.%s already exists, skipping", table, col)
             else:
                 logger.warning("migration failed for %s.%s: %s", table, col, exc)
+
+    ddl_migrations = [
+        "ALTER TABLE coincoin_request_logs MODIFY COLUMN route_reason VARCHAR(128) DEFAULT ''",
+        "ALTER TABLE coincoin_media_artifacts MODIFY COLUMN route_reason VARCHAR(128) DEFAULT ''",
+        "ALTER TABLE coincoin_image_jobs MODIFY COLUMN route_reason VARCHAR(128) DEFAULT ''",
+        "ALTER TABLE coincoin_video_jobs MODIFY COLUMN route_reason VARCHAR(128) DEFAULT ''",
+    ]
+    for sql in ddl_migrations:
+        try:
+            await conn.execute(text(sql))
+            logger.info("ddl migration OK: %s", sql)
+        except Exception as exc:
+            exc_msg = str(exc).lower()
+            if "doesn't exist" in exc_msg or "unknown column" in exc_msg:
+                logger.debug("ddl migration skipped: %s", sql)
+            else:
+                logger.warning("ddl migration failed for [%s]: %s", sql, exc)
 
     index_migrations = [
         ("coincoin_request_logs", "ix_request_logs_created_at", "CREATE INDEX ix_request_logs_created_at ON coincoin_request_logs (created_at)"),
@@ -476,7 +494,7 @@ async def _run_migrations(conn):
             endpoint VARCHAR(32) DEFAULT 'videos/generations',
             public_model VARCHAR(128) DEFAULT '',
             provider_model VARCHAR(128) DEFAULT '',
-            route_reason VARCHAR(64) DEFAULT '',
+            route_reason VARCHAR(128) DEFAULT '',
             upstream_task_id VARCHAR(128) DEFAULT '',
             request_payload_json TEXT NOT NULL,
             result_payload_json LONGTEXT NULL,
@@ -525,7 +543,7 @@ async def _run_migrations(conn):
             source_type VARCHAR(32) DEFAULT '',
             source_id VARCHAR(128) DEFAULT '',
             upstream_request_id VARCHAR(128) DEFAULT '',
-            route_reason VARCHAR(64) DEFAULT '',
+            route_reason VARCHAR(128) DEFAULT '',
             cost_cents BIGINT DEFAULT 0,
             metadata_json TEXT NULL,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,

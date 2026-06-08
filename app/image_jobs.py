@@ -66,6 +66,7 @@ JOB_STATUS_QUEUED = "queued"
 JOB_STATUS_RUNNING = "running"
 JOB_STATUS_COMPLETED = "completed"
 JOB_STATUS_FAILED = "failed"
+ROUTE_REASON_MAX_LEN = 128
 
 
 def _job_storage_root() -> Path:
@@ -207,6 +208,10 @@ def _image_job_artifact_endpoint(job: ImageJob) -> str:
     return endpoint or "image-jobs"
 
 
+def _bounded_route_reason(value: str) -> str:
+    return str(value or "").strip()[:ROUTE_REASON_MAX_LEN]
+
+
 async def _mark_job_failed(
     job_id: str,
     *,
@@ -296,7 +301,7 @@ async def _process_image_generation_job(job_id: str) -> None:
         resolved.backend,
         model_id=str(job.provider_model or resolved.backend.model_id or "").strip(),
     )
-    used_route_reason = str(job.route_reason or resolved.route_reason or "").strip()
+    used_route_reason = _bounded_route_reason(job.route_reason or resolved.route_reason)
     is_google_image_generation = public_model.provider_name.strip().lower() == "google"
     delivery_lane = (public_model.delivery_lane or "").strip().lower()
     should_use_gateway_image_generation = is_google_image_generation and delivery_lane == "gateway"
@@ -505,7 +510,7 @@ async def _process_image_edit_job(job_id: str) -> None:
         resolved.backend,
         model_id=str(job.provider_model or resolved.backend.model_id or "").strip(),
     )
-    used_route_reason = str(job.route_reason or resolved.route_reason or "").strip()
+    used_route_reason = _bounded_route_reason(job.route_reason or resolved.route_reason)
     delivery_lane = (public_model.delivery_lane or "").strip().lower()
     if not _supports_async_gemini_job(public_model):
         await _mark_job_failed(
@@ -736,7 +741,7 @@ async def _create_image_edit_job(request: Request, db: AsyncSession) -> JSONResp
     public_model = resolved.public_model
     display_model = station_model.display_model if station_model else public_model.public_id
     used_cfg = resolved.backend
-    used_route_reason = resolved.route_reason
+    used_route_reason = _bounded_route_reason(resolved.route_reason)
     price_per_image_cents = station_model.retail_price_per_image_cents if station_model else public_model.price_per_image_cents
     delivery_lane = (public_model.delivery_lane or "").strip().lower()
     if not _supports_async_gemini_job(public_model):
@@ -810,8 +815,19 @@ async def _create_image_edit_job(request: Request, db: AsyncSession) -> JSONResp
         storage_dir=str(job_dir),
     )
     db.add(job)
-    await db.commit()
-    await db.refresh(job)
+    try:
+        await db.commit()
+        await db.refresh(job)
+    except Exception:
+        logger.exception("failed to create image edit job")
+        await db.rollback()
+        _cleanup_job_storage(str(job_dir))
+        return _openai_error_response(
+            "Unable to create image edit job.",
+            code="image_job_create_failed",
+            error_type="server_error",
+            status_code=500,
+        )
     return JSONResponse(status_code=202, content=_job_response(job))
 
 
@@ -853,7 +869,7 @@ async def _create_image_generation_job(request: Request, db: AsyncSession) -> JS
     public_model = resolved.public_model
     display_model = station_model.display_model if station_model else public_model.public_id
     used_cfg = resolved.backend
-    used_route_reason = resolved.route_reason
+    used_route_reason = _bounded_route_reason(resolved.route_reason)
     price_per_image_cents = station_model.retail_price_per_image_cents if station_model else public_model.price_per_image_cents
     is_google_image_generation = public_model.provider_name.strip().lower() == "google"
     delivery_lane = (public_model.delivery_lane or "").strip().lower()
@@ -895,8 +911,18 @@ async def _create_image_generation_job(request: Request, db: AsyncSession) -> JS
         storage_dir="",
     )
     db.add(job)
-    await db.commit()
-    await db.refresh(job)
+    try:
+        await db.commit()
+        await db.refresh(job)
+    except Exception:
+        logger.exception("failed to create image generation job")
+        await db.rollback()
+        return _openai_error_response(
+            "Unable to create image generation job.",
+            code="image_job_create_failed",
+            error_type="server_error",
+            status_code=500,
+        )
     return JSONResponse(status_code=202, content=_job_response(job))
 
 

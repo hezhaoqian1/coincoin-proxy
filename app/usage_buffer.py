@@ -413,7 +413,7 @@ class UsageBuffer:
                 "cost_cents": round(cost_cents),
                 "duration_ms": int(duration_ms),
                 "status_code": int(status_code),
-                "route_reason": (route_reason or "")[:64],
+                "route_reason": (route_reason or "")[:128],
                 "created_at": datetime.utcnow(),
             }
             self._request_logs.append(request_log)

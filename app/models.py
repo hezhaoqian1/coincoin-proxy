@@ -138,7 +138,7 @@ class RequestLog(Base):
     cost_cents: Mapped[int] = mapped_column(BigInteger, default=0)  # 费用（分）
     duration_ms: Mapped[int] = mapped_column(BigInteger, default=0)  # 响应耗时（毫秒）
     status_code: Mapped[int] = mapped_column(BigInteger, default=200)  # 上游响应状态码
-    route_reason: Mapped[str] = mapped_column(String(64), default="")  # router decision / fallback reason
+    route_reason: Mapped[str] = mapped_column(String(128), default="")  # router decision / fallback reason
 
 
 Index("ix_request_logs_user_created", RequestLog.user_id, RequestLog.created_at.desc())
@@ -162,7 +162,7 @@ class MediaArtifact(Base):
     source_type: Mapped[str] = mapped_column(String(32), default="")
     source_id: Mapped[str] = mapped_column(String(128), default="", index=True)
     upstream_request_id: Mapped[str] = mapped_column(String(128), default="")
-    route_reason: Mapped[str] = mapped_column(String(64), default="")
+    route_reason: Mapped[str] = mapped_column(String(128), default="")
     cost_cents: Mapped[int] = mapped_column(BigInteger, default=0)
     metadata_json: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
@@ -792,7 +792,7 @@ class ImageJob(Base):
     endpoint: Mapped[str] = mapped_column(String(32), default="images/edits")
     public_model: Mapped[str] = mapped_column(String(128), default="")
     provider_model: Mapped[str] = mapped_column(String(128), default="")
-    route_reason: Mapped[str] = mapped_column(String(64), default="")
+    route_reason: Mapped[str] = mapped_column(String(128), default="")
     image_count: Mapped[int] = mapped_column(BigInteger, default=0)
     request_payload_json: Mapped[str] = mapped_column(Text)
     result_payload_json: Mapped[Optional[str]] = mapped_column(LONGTEXT, nullable=True)
@@ -823,7 +823,7 @@ class VideoJob(Base):
     endpoint: Mapped[str] = mapped_column(String(32), default="videos/generations")
     public_model: Mapped[str] = mapped_column(String(128), default="")
     provider_model: Mapped[str] = mapped_column(String(128), default="")
-    route_reason: Mapped[str] = mapped_column(String(64), default="")
+    route_reason: Mapped[str] = mapped_column(String(128), default="")
     upstream_task_id: Mapped[str] = mapped_column(String(128), default="", index=True)
     request_payload_json: Mapped[str] = mapped_column(Text)
     result_payload_json: Mapped[Optional[str]] = mapped_column(LONGTEXT, nullable=True)
