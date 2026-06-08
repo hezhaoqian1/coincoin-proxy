@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .channel_router import channel_router
+from .channel_router import channel_router, should_record_failure as should_record_channel_failure
 from .config import settings
 from .db import SessionLocal, get_db
 from . import gemini_cpa
@@ -68,6 +68,13 @@ JOB_STATUS_RUNNING = "running"
 JOB_STATUS_COMPLETED = "completed"
 JOB_STATUS_FAILED = "failed"
 ROUTE_REASON_MAX_LEN = 128
+IMAGE_JOB_CHANNEL_FALLBACK_MAX_ATTEMPTS = 16
+IMAGE_JOB_CHANNEL_FALLBACK_RETRY_ERRORS = frozenset({
+    "upstream_transport_error",
+    "upstream_invalid_json",
+    "upstream_unexpected_content_type",
+    "empty_image_result",
+})
 
 
 def _job_storage_root() -> Path:
@@ -213,6 +220,124 @@ def _bounded_route_reason(value: str) -> str:
     return str(value or "").strip()[:ROUTE_REASON_MAX_LEN]
 
 
+def _channel_attempted_ids(cfg) -> Tuple[str, ...]:
+    values: List[str] = []
+    for raw in (
+        getattr(cfg, "fallback_from_channel_id", "") or "",
+        getattr(cfg, "channel_id", "") or "",
+    ):
+        values.extend(item.strip() for item in str(raw or "").split(",") if item.strip())
+    return tuple(dict.fromkeys(values))
+
+
+def _image_job_channel_fallback_route_reason(reason: str) -> str:
+    return _bounded_route_reason(f"channel_fallback:{str(reason or 'retry')[:40]}")
+
+
+def _should_try_image_job_channel_fallback(
+    cfg,
+    *,
+    status_code: int | None = None,
+    error_code: str = "",
+) -> bool:
+    channel_id = str(getattr(cfg, "channel_id", "") or "").strip()
+    if not channel_id or channel_id.startswith("system:"):
+        return False
+    if status_code in {401, 403}:
+        return True
+    if status_code is not None and should_record_channel_failure(int(status_code or 0)):
+        return True
+    if error_code and error_code in IMAGE_JOB_CHANNEL_FALLBACK_RETRY_ERRORS:
+        return True
+    return False
+
+
+def _next_image_job_channel_fallback_config(
+    public_model,
+    previous_cfg,
+    endpoint: str,
+    *,
+    reason: str,
+    status_code: int | None = None,
+):
+    if not _should_try_image_job_channel_fallback(previous_cfg, status_code=status_code, error_code=reason):
+        return None
+    attempted = _channel_attempted_ids(previous_cfg)
+    if len(attempted) >= IMAGE_JOB_CHANNEL_FALLBACK_MAX_ATTEMPTS:
+        return None
+    fallback_cfg = model_registry.resolve_channel_fallback(
+        public_model,
+        previous_cfg,
+        endpoint,
+        exclude_channel_ids=attempted,
+    )
+    if fallback_cfg is None:
+        return None
+    logger.warning(
+        "image job provider channel fallback endpoint=%s from=%s to=%s reason=%s attempt=%s",
+        endpoint,
+        getattr(previous_cfg, "channel_id", ""),
+        fallback_cfg.channel_id,
+        reason,
+        fallback_cfg.route_attempt,
+    )
+    return fallback_cfg
+
+
+def _body_preview(text: str, limit: int = 300) -> str:
+    preview = " ".join(str(text or "").split())
+    return preview[:limit]
+
+
+def _upstream_json_error_message(response, *, code: str, body_text: str = "") -> str:
+    status_code = int(getattr(response, "status_code", 0) or 0)
+    content_type = str((getattr(response, "headers", {}) or {}).get("content-type") or "unknown")
+    preview = _body_preview(body_text)
+    if code == "upstream_unexpected_content_type":
+        message = f"Upstream returned non-JSON response (status={status_code}, content-type={content_type})."
+    else:
+        message = f"Upstream returned invalid JSON (status={status_code}, content-type={content_type})."
+    if preview:
+        message = f"{message} Body preview: {preview}"
+    return message
+
+
+def _parse_upstream_json_response(response, body: bytes | None = None) -> Tuple[Any, str, str]:
+    headers = getattr(response, "headers", {}) or {}
+    content_type = str(headers.get("content-type") or "")
+    body_text = ""
+    if body is not None:
+        try:
+            body_text = body.decode("utf-8", errors="replace")
+        except Exception:
+            body_text = ""
+    elif content_type and "application/json" not in content_type.lower():
+        body_text = str(getattr(response, "text", "") or "")
+
+    if content_type and "application/json" not in content_type.lower():
+        code = "upstream_unexpected_content_type"
+        return None, code, _upstream_json_error_message(response, code=code, body_text=body_text)
+
+    try:
+        if body is not None:
+            return json.loads(body_text), "", ""
+        return response.json(), "", ""
+    except Exception:
+        if not body_text:
+            body_text = str(getattr(response, "text", "") or "")
+        code = "upstream_invalid_json"
+        return None, code, _upstream_json_error_message(response, code=code, body_text=body_text)
+
+
+def _image_job_channel_metadata(cfg) -> Dict[str, str]:
+    return {
+        "channel_id": str(getattr(cfg, "channel_id", "") or ""),
+        "channel_type": str(getattr(cfg, "channel_type", "") or ""),
+        "provider_platform": str(getattr(cfg, "provider_platform", "") or ""),
+        "provider_account_fingerprint": str(getattr(cfg, "provider_account_fingerprint", "") or ""),
+    }
+
+
 def _backend_for_image_job(job: ImageJob, endpoint: str, public_model_id: str):
     resolved = model_registry.resolve_public_model(public_model_id or job.public_model, endpoint)
     public_model = resolved.public_model
@@ -293,6 +418,9 @@ async def _mark_job_completed(
     upstream_request_id: str,
     duration_ms: int,
     cost_cents: int = 0,
+    provider_model: str = "",
+    route_reason: str = "",
+    channel_metadata: Dict[str, str] | None = None,
 ) -> None:
     async with SessionLocal() as session:
         job = await session.get(ImageJob, job_id)
@@ -300,6 +428,13 @@ async def _mark_job_completed(
             return
         completed_at = datetime.utcnow()
         job.status = JOB_STATUS_COMPLETED
+        if provider_model:
+            job.provider_model = provider_model
+        if route_reason:
+            job.route_reason = route_reason
+        for key, value in (channel_metadata or {}).items():
+            if hasattr(job, key):
+                setattr(job, key, value)
         job.result_payload_json = json.dumps(result_payload, ensure_ascii=False)
         job.upstream_request_id = upstream_request_id
         job.duration_ms = duration_ms
@@ -381,117 +516,171 @@ async def _process_image_generation_job(job_id: str) -> None:
         )
         return
 
-    cpa_channel = None
     started = time.monotonic()
-    try:
-        if should_use_gateway_image_generation:
-            upstream_payload = dict(payload)
-            upstream_payload["model"] = used_cfg.model_id
-            upstream_payload.pop("model_provider", None)
-            upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/images/generations"
-            headers = _build_upstream_headers(used_cfg)
-            stream_client = await get_image_stream_client()
-            upstream = await _send_stream_request(
-                stream_client,
-                "POST",
-                upstream_url,
-                json=upstream_payload,
-                headers=headers,
+    upstream = None
+    upstream_payload_json: Any = None
+    cpa_channel = None
+    failure_code = ""
+    failure_message = ""
+    while True:
+        attempt_cfg = used_cfg
+        attempt_route_reason = used_route_reason
+        attempt_cpa_channel = None
+        try:
+            if should_use_gateway_image_generation:
+                upstream_payload = dict(payload)
+                upstream_payload["model"] = attempt_cfg.model_id
+                upstream_payload.pop("model_provider", None)
+                upstream_url = f"{attempt_cfg.upstream_url.rstrip('/')}/images/generations"
+                headers = _build_upstream_headers(attempt_cfg)
+                stream_client = await get_image_stream_client()
+                upstream = await _send_stream_request(
+                    stream_client,
+                    "POST",
+                    upstream_url,
+                    json=upstream_payload,
+                    headers=headers,
+                )
+                try:
+                    upstream_body = await upstream.aread()
+                finally:
+                    await upstream.aclose()
+                upstream_payload_json, failure_code, failure_message = _parse_upstream_json_response(upstream, upstream_body)
+            elif should_use_cpa_gemini_image_generation:
+                attempt_cpa_channel = gemini_cpa.select_channel(public_model, attempt_cfg)
+                upstream_payload = gemini_cpa.build_image_generation_payload(payload, attempt_cpa_channel.provider_model)
+                client = await get_http_client()
+                upstream = await _post_with_retries(
+                    client,
+                    gemini_cpa.chat_completions_url(attempt_cpa_channel),
+                    json_body=upstream_payload,
+                    headers=gemini_cpa.build_headers(attempt_cpa_channel),
+                )
+                upstream_payload_json, failure_code, failure_message = _parse_upstream_json_response(upstream)
+            elif should_use_direct_vertex:
+                upstream_payload = _build_vertex_image_generation_payload(payload)
+                upstream_url = (
+                    f"{settings.vertex_gemini_api_base.rstrip('/')}/models/"
+                    f"{attempt_cfg.model_id or public_model.provider_model}:generateContent"
+                )
+                client = await get_http_client()
+                upstream = await _post_with_retries(
+                    client,
+                    upstream_url,
+                    json_body=upstream_payload,
+                    headers={"x-goog-api-key": settings.vertex_api_key, "content-type": "application/json"},
+                )
+                upstream_payload_json, failure_code, failure_message = _parse_upstream_json_response(upstream)
+            else:
+                upstream_payload = dict(payload)
+                upstream_payload["model"] = attempt_cfg.model_id
+                upstream_payload.pop("model_provider", None)
+                upstream_url = _build_openai_image_upstream_url(attempt_cfg.upstream_url, "images/generations")
+                client = await get_http_client()
+                upstream = await client.post(
+                    upstream_url,
+                    json=upstream_payload,
+                    headers=_build_upstream_headers(attempt_cfg),
+                    timeout=IMAGE_UPSTREAM_TIMEOUT,
+                )
+                upstream_payload_json, failure_code, failure_message = _parse_upstream_json_response(upstream)
+        except gemini_cpa.GeminiCpaChannelUnavailable as exc:
+            await _mark_job_failed(job_id, code="gemini_cpa_channel_cooling_down", message=str(exc))
+            return
+        except httpx.TransportError as exc:
+            if attempt_cpa_channel is not None:
+                gemini_cpa.record_failure(attempt_cpa_channel)
+            _record_channel_failure(attempt_cfg, error_code="upstream_transport_error")
+            fallback_cfg = _next_image_job_channel_fallback_config(
+                public_model,
+                attempt_cfg,
+                "images/generations",
+                reason="upstream_transport_error",
             )
-            try:
-                upstream_body = await upstream.aread()
-            finally:
-                await upstream.aclose()
-            upstream_payload_json = json.loads(upstream_body.decode("utf-8"))
-        elif should_use_cpa_gemini_image_generation:
-            cpa_channel = gemini_cpa.select_channel(public_model, used_cfg)
-            upstream_payload = gemini_cpa.build_image_generation_payload(payload, cpa_channel.provider_model)
-            client = await get_http_client()
-            upstream = await _post_with_retries(
-                client,
-                gemini_cpa.chat_completions_url(cpa_channel),
-                json_body=upstream_payload,
-                headers=gemini_cpa.build_headers(cpa_channel),
+            if fallback_cfg is not None:
+                used_cfg = fallback_cfg
+                used_route_reason = _image_job_channel_fallback_route_reason("upstream_transport_error")
+                continue
+            await _mark_job_failed(job_id, code="upstream_transport_error", message=str(exc))
+            return
+        except Exception as exc:
+            if attempt_cpa_channel is not None:
+                gemini_cpa.record_failure(attempt_cpa_channel)
+            _record_channel_failure(attempt_cfg, error_code="upstream_image_generation_error")
+            await _mark_job_failed(job_id, code="upstream_image_generation_error", message=str(exc))
+            return
+
+        duration_ms = int((time.monotonic() - started) * 1000)
+        if failure_code:
+            _record_channel_failure(attempt_cfg, error_code=failure_code)
+            fallback_cfg = _next_image_job_channel_fallback_config(
+                public_model,
+                attempt_cfg,
+                "images/generations",
+                reason=failure_code,
             )
-            upstream_payload_json = upstream.json()
+            if fallback_cfg is not None:
+                used_cfg = fallback_cfg
+                used_route_reason = _image_job_channel_fallback_route_reason(failure_code)
+                continue
+            await _mark_job_failed(job_id, code=failure_code, message=failure_message, duration_ms=duration_ms)
+            return
+
+        if upstream.status_code >= 400:
+            if attempt_cpa_channel is not None and gemini_cpa.should_record_failure(upstream.status_code):
+                gemini_cpa.record_failure(attempt_cpa_channel)
+            _record_channel_failure(attempt_cfg, status_code=upstream.status_code)
+            fallback_cfg = _next_image_job_channel_fallback_config(
+                public_model,
+                attempt_cfg,
+                "images/generations",
+                reason=str(upstream.status_code),
+                status_code=upstream.status_code,
+            )
+            if fallback_cfg is not None:
+                used_cfg = fallback_cfg
+                used_route_reason = _image_job_channel_fallback_route_reason(str(upstream.status_code))
+                continue
+            err = upstream_payload_json.get("error") if isinstance(upstream_payload_json, dict) else None
+            message = str(err.get("message") or err) if isinstance(err, dict) else str(upstream_payload_json)
+            await _mark_job_failed(job_id, code="upstream_error", message=message, duration_ms=duration_ms)
+            return
+
+        result_payload = upstream_payload_json if isinstance(upstream_payload_json, dict) else {}
+        if should_use_cpa_gemini_image_generation:
+            result_payload = gemini_cpa.translate_image_response(result_payload)
+            if attempt_cpa_channel is not None:
+                gemini_cpa.record_success(attempt_cpa_channel)
         elif should_use_direct_vertex:
-            upstream_payload = _build_vertex_image_generation_payload(payload)
-            upstream_url = (
-                f"{settings.vertex_gemini_api_base.rstrip('/')}/models/"
-                f"{used_cfg.model_id or public_model.provider_model}:generateContent"
-            )
-            client = await get_http_client()
-            upstream = await _post_with_retries(
-                client,
-                upstream_url,
-                json_body=upstream_payload,
-                headers={"x-goog-api-key": settings.vertex_api_key, "content-type": "application/json"},
-            )
-            upstream_payload_json = upstream.json()
-        else:
-            upstream_payload = dict(payload)
-            upstream_payload["model"] = used_cfg.model_id
-            upstream_payload.pop("model_provider", None)
-            upstream_url = _build_openai_image_upstream_url(used_cfg.upstream_url, "images/generations")
-            client = await get_http_client()
-            upstream = await client.post(
-                upstream_url,
-                json=upstream_payload,
-                headers=_build_upstream_headers(used_cfg),
-                timeout=IMAGE_UPSTREAM_TIMEOUT,
-            )
-            upstream_payload_json = upstream.json()
-    except json.JSONDecodeError:
-        _record_channel_failure(used_cfg, error_code="upstream_invalid_json")
-        await _mark_job_failed(job_id, code="upstream_invalid_json", message="Upstream returned invalid JSON.")
-        return
-    except gemini_cpa.GeminiCpaChannelUnavailable as exc:
-        await _mark_job_failed(job_id, code="gemini_cpa_channel_cooling_down", message=str(exc))
-        return
-    except httpx.TransportError as exc:
-        if cpa_channel is not None:
-            gemini_cpa.record_failure(cpa_channel)
-        _record_channel_failure(used_cfg, error_code="upstream_transport_error")
-        await _mark_job_failed(job_id, code="upstream_transport_error", message=str(exc))
-        return
-    except Exception as exc:
-        if cpa_channel is not None:
-            gemini_cpa.record_failure(cpa_channel)
-        _record_channel_failure(used_cfg, error_code="upstream_image_generation_error")
-        await _mark_job_failed(job_id, code="upstream_image_generation_error", message=str(exc))
-        return
+            result_payload = _translate_vertex_image_response(result_payload)
 
-    duration_ms = int((time.monotonic() - started) * 1000)
+        data_items = result_payload.get("data") if isinstance(result_payload, dict) else None
+        if not isinstance(data_items, list) or not data_items:
+            _record_channel_failure(attempt_cfg, error_code="empty_image_result")
+            fallback_cfg = _next_image_job_channel_fallback_config(
+                public_model,
+                attempt_cfg,
+                "images/generations",
+                reason="empty_image_result",
+            )
+            if fallback_cfg is not None:
+                used_cfg = fallback_cfg
+                used_route_reason = _image_job_channel_fallback_route_reason("empty_image_result")
+                continue
+            await _mark_job_failed(
+                job_id,
+                code="empty_image_result",
+                message="Image job completed without output images.",
+                duration_ms=duration_ms,
+            )
+            return
+
+        used_cfg = attempt_cfg
+        used_route_reason = attempt_route_reason
+        cpa_channel = attempt_cpa_channel
+        break
+
     upstream_request_id = extract_upstream_request_id(upstream.headers)
-
-    if upstream.status_code >= 400:
-        if cpa_channel is not None and gemini_cpa.should_record_failure(upstream.status_code):
-            gemini_cpa.record_failure(cpa_channel)
-        _record_channel_failure(used_cfg, status_code=upstream.status_code)
-        err = upstream_payload_json.get("error") if isinstance(upstream_payload_json, dict) else None
-        message = str(err.get("message") or err) if isinstance(err, dict) else str(upstream_payload_json)
-        await _mark_job_failed(job_id, code="upstream_error", message=message, duration_ms=duration_ms)
-        return
-
-    result_payload = upstream_payload_json if isinstance(upstream_payload_json, dict) else {}
-    if should_use_cpa_gemini_image_generation:
-        result_payload = gemini_cpa.translate_image_response(result_payload)
-        if cpa_channel is not None:
-            gemini_cpa.record_success(cpa_channel)
-    elif should_use_direct_vertex:
-        result_payload = _translate_vertex_image_response(result_payload)
-
-    data_items = result_payload.get("data") if isinstance(result_payload, dict) else None
-    if not isinstance(data_items, list) or not data_items:
-        _record_channel_failure(used_cfg, error_code="empty_image_result")
-        await _mark_job_failed(
-            job_id,
-            code="empty_image_result",
-            message="Image job completed without output images.",
-            duration_ms=duration_ms,
-        )
-        return
-
     image_count = len(data_items)
     _record_channel_success(used_cfg, duration_ms=duration_ms)
     if "retail_price_per_image_cents" in snapshot:
@@ -511,7 +700,7 @@ async def _process_image_generation_job(job_id: str) -> None:
         endpoint="image-jobs/generations",
         model=display_model,
         customer_model_alias=display_model,
-        provider_model=str(job.provider_model or used_cfg.model_id or public_model.provider_model or "").strip(),
+        provider_model=str(used_cfg.model_id or job.provider_model or public_model.provider_model or "").strip(),
         route_reason=used_route_reason,
         duration_ms=duration_ms,
         status_code=upstream.status_code,
@@ -530,6 +719,9 @@ async def _process_image_generation_job(job_id: str) -> None:
         upstream_request_id=upstream_request_id,
         duration_ms=duration_ms,
         cost_cents=round(price_per_image_cents * image_count),
+        provider_model=str(used_cfg.model_id or job.provider_model or public_model.provider_model or "").strip(),
+        route_reason=used_route_reason,
+        channel_metadata=_image_job_channel_metadata(used_cfg),
     )
 
 

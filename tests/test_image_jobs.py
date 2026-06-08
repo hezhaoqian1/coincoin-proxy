@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 
-from app.channel_router import ProviderChannelSnapshot, channel_router
+from app.channel_router import ModelChannelRouteSnapshot, ProviderChannelSnapshot, channel_router
 from app.config import settings
 from app.main import app
 import app.main as main_module
@@ -116,16 +116,19 @@ class _FakeSessionFactory:
 
 
 class _FakeUpstreamResponse:
-    def __init__(self, payload, status_code: int = 200, headers: dict | None = None) -> None:
+    def __init__(self, payload, status_code: int = 200, headers: dict | None = None, text: str | None = None) -> None:
         self._payload = payload
         self.status_code = status_code
         self.headers = {"content-type": "application/json", **(headers or {})}
+        self.text = text if text is not None else json.dumps(payload, ensure_ascii=False)
 
     def json(self):
+        if "application/json" not in str(self.headers.get("content-type") or ""):
+            raise json.JSONDecodeError("not json", self.text, 0)
         return self._payload
 
     async def aread(self) -> bytes:
-        return json.dumps(self._payload, ensure_ascii=False).encode("utf-8")
+        return self.text.encode("utf-8")
 
     async def aclose(self) -> None:
         return None
@@ -769,6 +772,186 @@ class ImageJobsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-image-2-channel")
         self.assertEqual(add_usage.await_args.kwargs["channel_id"], "ch_image_primary")
         self.assertEqual(add_usage.await_args.kwargs["provider_platform"], "xtokenmirror")
+
+    async def test_process_image_generation_job_records_non_json_upstream_error(self) -> None:
+        job = ImageJob(
+            id="job_generation_html_502",
+            user_id=self.fake_user.id,
+            api_key_id="k_image_job",
+            status=image_jobs_module.JOB_STATUS_RUNNING,
+            endpoint="images/generations",
+            public_model="gpt-image-2",
+            provider_model="gpt-image-2",
+            route_reason="catalog:gpt-image-2:direct",
+            image_count=1,
+            request_payload_json=json.dumps(
+                {
+                    "requested_model": "gpt-image-2",
+                    "payload": {
+                        "model": "gpt-image-2",
+                        "prompt": "A tiny black dot on a white background",
+                        "n": 1,
+                        "size": "1024x1024",
+                    },
+                    "coincoin_snapshot": {
+                        "display_model": "gpt-image-2",
+                        "resolved_public_model": "gpt-image-2",
+                        "retail_price_per_image_cents": 5.3,
+                    },
+                }
+            ),
+            storage_dir="",
+            created_at=datetime.utcnow(),
+            started_at=datetime.utcnow(),
+        )
+        self.store.jobs[job.id] = job
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {},
+                    status_code=502,
+                    headers={"content-type": "text/html"},
+                    text="<html><title>502 Bad Gateway</title><body>cloudflare</body></html>",
+                )
+            ]
+        )
+
+        with patch.object(image_jobs_module, "SessionLocal", _FakeSessionFactory(self.store)), patch.object(
+            image_jobs_module,
+            "get_http_client",
+            AsyncMock(return_value=upstream_client),
+        ), patch.object(image_jobs_module.usage_buffer, "add", AsyncMock()) as add_usage:
+            await image_jobs_module._process_image_generation_job(job.id)
+
+        updated = self.store.jobs[job.id]
+        self.assertEqual(updated.status, image_jobs_module.JOB_STATUS_FAILED)
+        self.assertEqual(updated.error_code, "upstream_unexpected_content_type")
+        self.assertIn("status=502", updated.error_message)
+        self.assertIn("text/html", updated.error_message)
+        self.assertIn("cloudflare", updated.error_message)
+        add_usage.assert_not_awaited()
+        self.assertEqual(self.store.media_artifacts, [])
+
+    async def test_process_image_generation_job_fallbacks_to_backup_channel(self) -> None:
+        channel_router.set_snapshot(
+            [
+                ProviderChannelSnapshot(
+                    channel_id="ch_image_primary",
+                    name="Image Primary",
+                    base_url="https://primary-image.example/v1",
+                    api_key="primary-key",
+                    auth_style="bearer",
+                    channel_type="openai_compatible",
+                    provider_platform="xtokenmirror",
+                    provider_account_fingerprint="fp_primary",
+                ),
+                ProviderChannelSnapshot(
+                    channel_id="ch_image_backup",
+                    name="Image Backup",
+                    base_url="https://backup-image.example/v1",
+                    api_key="backup-key",
+                    auth_style="bearer",
+                    channel_type="openai_compatible",
+                    provider_platform="polaris",
+                    provider_account_fingerprint="fp_backup",
+                ),
+            ],
+            [
+                ModelChannelRouteSnapshot(
+                    route_id="rt_primary",
+                    public_model_id="gpt-image-2",
+                    endpoint="images/generations",
+                    channel_id="ch_image_primary",
+                    upstream_model="gpt-image-2-primary",
+                    priority_override=0,
+                ),
+                ModelChannelRouteSnapshot(
+                    route_id="rt_backup",
+                    public_model_id="gpt-image-2",
+                    endpoint="images/generations",
+                    channel_id="ch_image_backup",
+                    upstream_model="gpt-image-2-backup",
+                    priority_override=1,
+                ),
+            ],
+            version=2,
+        )
+        job = ImageJob(
+            id="job_generation_channel_fallback",
+            user_id=self.fake_user.id,
+            api_key_id="k_image_job",
+            status=image_jobs_module.JOB_STATUS_RUNNING,
+            endpoint="images/generations",
+            public_model="gpt-image-2",
+            provider_model="gpt-image-2-primary",
+            route_reason="catalog:gpt-image-2:direct:channel:ch_image_primary",
+            channel_id="ch_image_primary",
+            channel_type="openai_compatible",
+            provider_platform="xtokenmirror",
+            provider_account_fingerprint="fp_primary",
+            image_count=1,
+            request_payload_json=json.dumps(
+                {
+                    "requested_model": "gpt-image-2",
+                    "payload": {
+                        "model": "gpt-image-2",
+                        "prompt": "A tiny black dot on a white background",
+                        "n": 1,
+                        "size": "1024x1024",
+                    },
+                    "coincoin_snapshot": {
+                        "display_model": "gpt-image-2",
+                        "resolved_public_model": "gpt-image-2",
+                        "retail_price_per_image_cents": 5.3,
+                    },
+                }
+            ),
+            storage_dir="",
+            created_at=datetime.utcnow(),
+            started_at=datetime.utcnow(),
+        )
+        self.store.jobs[job.id] = job
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {"error": {"message": "primary unavailable"}},
+                    status_code=502,
+                    headers={"x-request-id": "req_primary_failed"},
+                ),
+                _FakeUpstreamResponse(
+                    {"created": 1774449999, "data": [{"url": "https://cdn.example/fallback-image.png"}]},
+                    headers={"x-request-id": "req_backup_success"},
+                ),
+            ]
+        )
+
+        with patch.object(image_jobs_module, "SessionLocal", _FakeSessionFactory(self.store)), patch.object(
+            image_jobs_module,
+            "get_http_client",
+            AsyncMock(return_value=upstream_client),
+        ), patch.object(image_jobs_module.usage_buffer, "add", AsyncMock()) as add_usage:
+            await image_jobs_module._process_image_generation_job(job.id)
+
+        updated = self.store.jobs[job.id]
+        self.assertEqual(updated.status, image_jobs_module.JOB_STATUS_COMPLETED)
+        self.assertEqual(updated.upstream_request_id, "req_backup_success")
+        self.assertEqual(updated.channel_id, "ch_image_backup")
+        self.assertEqual(updated.provider_platform, "polaris")
+        self.assertEqual(updated.provider_model, "gpt-image-2-backup")
+        self.assertEqual(updated.route_reason, "channel_fallback:502")
+        self.assertEqual(len(upstream_client.calls), 2)
+        self.assertEqual(upstream_client.calls[0]["url"], "https://primary-image.example/v1/images/generations")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-image-2-primary")
+        self.assertEqual(upstream_client.calls[1]["url"], "https://backup-image.example/v1/images/generations")
+        self.assertEqual(upstream_client.calls[1]["headers"]["authorization"], "Bearer backup-key")
+        self.assertEqual(upstream_client.calls[1]["json"]["model"], "gpt-image-2-backup")
+        add_usage.assert_awaited_once()
+        self.assertEqual(add_usage.await_args.kwargs["route_reason"], "channel_fallback:502")
+        self.assertEqual(add_usage.await_args.kwargs["channel_id"], "ch_image_backup")
+        self.assertEqual(add_usage.await_args.kwargs["fallback_from_channel_id"], "ch_image_primary")
+        self.assertEqual(add_usage.await_args.kwargs["provider_model"], "gpt-image-2-backup")
+        self.assertEqual(len(self.store.media_artifacts), 1)
+        self.assertEqual(self.store.media_artifacts[0].url, "https://cdn.example/fallback-image.png")
 
     async def test_process_image_edit_job_uses_stored_backend_snapshot(self) -> None:
         job_id = "job_worker_override"
