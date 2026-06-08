@@ -16,12 +16,13 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .channel_router import channel_router
 from .config import settings
 from .db import SessionLocal, get_db
 from . import gemini_cpa
 from .models import ImageJob
 from .media_store import record_media_artifacts_best_effort
-from .router import registry as model_registry
+from .router import ModelConfig, registry as model_registry
 from .station_runtime import (
     public_model_pricing_kwargs,
     resolve_station_model_for_user,
@@ -212,6 +213,41 @@ def _bounded_route_reason(value: str) -> str:
     return str(value or "").strip()[:ROUTE_REASON_MAX_LEN]
 
 
+def _backend_for_image_job(job: ImageJob, endpoint: str, public_model_id: str):
+    resolved = model_registry.resolve_public_model(public_model_id or job.public_model, endpoint)
+    public_model = resolved.public_model
+    channel_id = str(getattr(job, "channel_id", "") or "").strip()
+    if channel_id and not channel_id.startswith("system:"):
+        for channel in channel_router.list_channels():
+            if channel.channel_id != channel_id:
+                continue
+            if not (channel.base_url and channel.api_key):
+                break
+            backend = ModelConfig(
+                model_id=job.provider_model or resolved.backend.model_id,
+                upstream_url=channel.base_url,
+                api_key=channel.api_key,
+                price_input_per_million=resolved.backend.price_input_per_million,
+                price_output_per_million=resolved.backend.price_output_per_million,
+                strip_unsupported=resolved.backend.strip_unsupported or public_model.strip_unsupported,
+                auth_style=channel.auth_style or resolved.backend.auth_style,
+                channel_id=channel.channel_id,
+                channel_type=channel.channel_type,
+                provider_platform=channel.provider_platform,
+                provider_account_fingerprint=channel.provider_account_fingerprint,
+                transform_profile=resolved.backend.transform_profile,
+                cost_tier=channel.cost_tier,
+            )
+            return replace(resolved, backend=backend)
+    return replace(
+        resolved,
+        backend=replace(
+            resolved.backend,
+            model_id=str(job.provider_model or resolved.backend.model_id or "").strip(),
+        ),
+    )
+
+
 async def _run_image_job_handler(handler, request: Request, db: AsyncSession) -> JSONResponse:
     try:
         return await handler(request, db)
@@ -310,16 +346,13 @@ async def _process_image_generation_job(job_id: str) -> None:
     station_snapshot = _manifest_snapshot_dict(snapshot, "station_usage")
 
     try:
-        resolved = model_registry.resolve_public_model(resolved_public_model_id, "images/generations")
+        resolved = _backend_for_image_job(job, "images/generations", resolved_public_model_id)
     except Exception as exc:
         await _mark_job_failed(job_id, code="model_resolution_failed", message=str(exc))
         return
 
     public_model = resolved.public_model
-    used_cfg = replace(
-        resolved.backend,
-        model_id=str(job.provider_model or resolved.backend.model_id or "").strip(),
-    )
+    used_cfg = resolved.backend
     used_route_reason = _bounded_route_reason(job.route_reason or resolved.route_reason)
     is_google_image_generation = public_model.provider_name.strip().lower() == "google"
     delivery_lane = (public_model.delivery_lane or "").strip().lower()
@@ -516,19 +549,13 @@ async def _process_image_edit_job(job_id: str) -> None:
     pricing_snapshot = _manifest_snapshot_dict(snapshot, "public_pricing")
     station_snapshot = _manifest_snapshot_dict(snapshot, "station_usage")
     try:
-        resolved = model_registry.resolve_public_model(
-            resolved_public_model_id,
-            "images/edits",
-        )
+        resolved = _backend_for_image_job(job, "images/edits", resolved_public_model_id)
     except Exception as exc:
         await _mark_job_failed(job_id, code="model_resolution_failed", message=str(exc))
         return
 
     public_model = resolved.public_model
-    used_cfg = replace(
-        resolved.backend,
-        model_id=str(job.provider_model or resolved.backend.model_id or "").strip(),
-    )
+    used_cfg = resolved.backend
     used_route_reason = _bounded_route_reason(job.route_reason or resolved.route_reason)
     delivery_lane = (public_model.delivery_lane or "").strip().lower()
     if not _supports_async_gemini_job(public_model):
@@ -829,6 +856,10 @@ async def _create_image_edit_job(request: Request, db: AsyncSession) -> JSONResp
         public_model=display_model,
         provider_model=str(used_cfg.model_id or _effective_provider_model or public_model.provider_model or "").strip(),
         route_reason=used_route_reason,
+        channel_id=used_cfg.channel_id,
+        channel_type=used_cfg.channel_type,
+        provider_platform=used_cfg.provider_platform,
+        provider_account_fingerprint=used_cfg.provider_account_fingerprint,
         image_count=image_count,
         request_payload_json=json.dumps(manifest, ensure_ascii=False),
         storage_dir=str(job_dir),
@@ -925,6 +956,10 @@ async def _create_image_generation_job(request: Request, db: AsyncSession) -> JS
         public_model=display_model,
         provider_model=str(used_cfg.model_id or _effective_provider_model or public_model.provider_model or "").strip(),
         route_reason=used_route_reason,
+        channel_id=used_cfg.channel_id,
+        channel_type=used_cfg.channel_type,
+        provider_platform=used_cfg.provider_platform,
+        provider_account_fingerprint=used_cfg.provider_account_fingerprint,
         image_count=image_count,
         request_payload_json=json.dumps(manifest, ensure_ascii=False),
         storage_dir="",

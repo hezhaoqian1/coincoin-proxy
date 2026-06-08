@@ -127,6 +127,10 @@ async def _run_migrations(conn):
         ("coincoin_image_jobs", "route_reason", "VARCHAR(128) DEFAULT ''"),
         ("coincoin_image_jobs", "image_count", "BIGINT DEFAULT 0"),
         ("coincoin_image_jobs", "upstream_request_id", "VARCHAR(128) DEFAULT ''"),
+        ("coincoin_image_jobs", "channel_id", "VARCHAR(32) DEFAULT ''"),
+        ("coincoin_image_jobs", "channel_type", "VARCHAR(32) DEFAULT ''"),
+        ("coincoin_image_jobs", "provider_platform", "VARCHAR(64) DEFAULT ''"),
+        ("coincoin_image_jobs", "provider_account_fingerprint", "VARCHAR(128) DEFAULT ''"),
         ("coincoin_image_jobs", "duration_ms", "BIGINT DEFAULT 0"),
         ("coincoin_image_jobs", "storage_dir", "VARCHAR(512) DEFAULT ''"),
         ("coincoin_image_jobs", "started_at", "DATETIME NULL"),
@@ -218,6 +222,7 @@ async def _run_migrations(conn):
         ("coincoin_payment_orders", "ix_payment_orders_confirmed_at", "CREATE INDEX ix_payment_orders_confirmed_at ON coincoin_payment_orders (confirmed_at)"),
         ("coincoin_api_keys", "ix_api_keys_created_at", "CREATE INDEX ix_api_keys_created_at ON coincoin_api_keys (created_at)"),
         ("coincoin_image_jobs", "ix_image_jobs_status_created", "CREATE INDEX ix_image_jobs_status_created ON coincoin_image_jobs (status, created_at)"),
+        ("coincoin_image_jobs", "ix_image_jobs_channel_id", "CREATE INDEX ix_image_jobs_channel_id ON coincoin_image_jobs (channel_id)"),
     ]
     for table, index_name, ddl in index_migrations:
         try:

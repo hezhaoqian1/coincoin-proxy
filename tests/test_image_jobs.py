@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 
+from app.channel_router import ProviderChannelSnapshot, channel_router
 from app.config import settings
 from app.main import app
 import app.main as main_module
@@ -152,6 +153,10 @@ class ImageJobMigrationTests(unittest.IsolatedAsyncioTestCase):
             "route_reason",
             "image_count",
             "upstream_request_id",
+            "channel_id",
+            "channel_type",
+            "provider_platform",
+            "provider_account_fingerprint",
             "duration_ms",
             "storage_dir",
             "started_at",
@@ -161,6 +166,10 @@ class ImageJobMigrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(f"ALTER TABLE coincoin_image_jobs ADD COLUMN {column} ", sql)
         self.assertIn(
             "CREATE INDEX ix_image_jobs_status_created ON coincoin_image_jobs (status, created_at)",
+            sql,
+        )
+        self.assertIn(
+            "CREATE INDEX ix_image_jobs_channel_id ON coincoin_image_jobs (channel_id)",
             sql,
         )
         self.assertIn(
@@ -283,6 +292,7 @@ class ImageJobsTests(unittest.IsolatedAsyncioTestCase):
         for key, value in self._originals.items():
             setattr(settings, key, value)
         registry._initialized = False
+        channel_router.clear_snapshot()
         app.dependency_overrides.pop(image_jobs_module.get_db, None)
         self._tmpdir.cleanup()
 
@@ -684,6 +694,81 @@ class ImageJobsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(artifact.endpoint, "image-jobs/generations")
         self.assertEqual(artifact.url, "https://cdn.example/image.png")
         self.assertEqual(artifact.cost_cents, 5)
+
+    async def test_process_image_generation_job_uses_stored_channel_snapshot(self) -> None:
+        channel_router.set_snapshot(
+            [
+                ProviderChannelSnapshot(
+                    channel_id="ch_image_primary",
+                    name="Image Primary",
+                    base_url="https://image-channel.example/v1",
+                    api_key="image-channel-key",
+                    auth_style="bearer",
+                    channel_type="openai_compatible",
+                    provider_platform="xtokenmirror",
+                    provider_account_fingerprint="fp_image_1",
+                )
+            ],
+            [],
+            version=1,
+        )
+        job = ImageJob(
+            id="job_generation_channel_1",
+            user_id=self.fake_user.id,
+            api_key_id="k_image_job",
+            status=image_jobs_module.JOB_STATUS_RUNNING,
+            endpoint="images/generations",
+            public_model="gpt-image-2",
+            provider_model="gpt-image-2-channel",
+            route_reason="catalog:gpt-image-2:direct:channel:ch_image_primary",
+            channel_id="ch_image_primary",
+            channel_type="openai_compatible",
+            provider_platform="xtokenmirror",
+            provider_account_fingerprint="fp_image_1",
+            image_count=1,
+            request_payload_json=json.dumps(
+                {
+                    "requested_model": "gpt-image-2",
+                    "payload": {
+                        "model": "gpt-image-2",
+                        "prompt": "A tiny black dot on a white background",
+                        "n": 1,
+                        "size": "1024x1024",
+                    },
+                    "coincoin_snapshot": {
+                        "display_model": "gpt-image-2",
+                        "resolved_public_model": "gpt-image-2",
+                        "retail_price_per_image_cents": 5.3,
+                    },
+                }
+            ),
+            storage_dir="",
+            created_at=datetime.utcnow(),
+            started_at=datetime.utcnow(),
+        )
+        self.store.jobs[job.id] = job
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {"created": 1774449999, "data": [{"url": "https://cdn.example/channel-image.png"}]},
+                    headers={"x-request-id": "req_image_generation_channel_1"},
+                )
+            ]
+        )
+
+        with patch.object(image_jobs_module, "SessionLocal", _FakeSessionFactory(self.store)), patch.object(
+            image_jobs_module,
+            "get_http_client",
+            AsyncMock(return_value=upstream_client),
+        ), patch.object(image_jobs_module.usage_buffer, "add", AsyncMock()) as add_usage:
+            await image_jobs_module._process_image_generation_job(job.id)
+
+        self.assertEqual(self.store.jobs[job.id].status, image_jobs_module.JOB_STATUS_COMPLETED)
+        self.assertEqual(upstream_client.calls[0]["url"], "https://image-channel.example/v1/images/generations")
+        self.assertEqual(upstream_client.calls[0]["headers"]["authorization"], "Bearer image-channel-key")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-image-2-channel")
+        self.assertEqual(add_usage.await_args.kwargs["channel_id"], "ch_image_primary")
+        self.assertEqual(add_usage.await_args.kwargs["provider_platform"], "xtokenmirror")
 
     async def test_process_image_edit_job_uses_stored_backend_snapshot(self) -> None:
         job_id = "job_worker_override"
