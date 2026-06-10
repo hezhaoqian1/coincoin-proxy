@@ -233,8 +233,8 @@
       "delivery_lane": "route_only",
       "upstream_model": "claude-fable-5",
       "auth_style": "x-api-key",
-      "price_input_per_million": "${COINCOIN_CLAUDE_FABLE_INPUT_PRICE:-1000}",
-      "price_output_per_million": "${COINCOIN_CLAUDE_FABLE_OUTPUT_PRICE:-5000}",
+      "price_input_per_million": "${COINCOIN_CLAUDE_FABLE_INPUT_PRICE:-3000}",
+      "price_output_per_million": "${COINCOIN_CLAUDE_FABLE_OUTPUT_PRICE:-15000}",
       "billable_sku": "claude-fable-5-text",
       "metadata": {
         "display_name": "Claude Fable 5",
