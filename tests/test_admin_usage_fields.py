@@ -18,6 +18,7 @@ import app.webhook as webhook_module
 import app.openai_compat as openai_module
 from app.payment_common import quote_payment_cents
 from app.router import registry as model_registry
+from app.schemas import AdminProviderChannelCreate, AdminProviderChannelUpdate
 
 
 class _FakeAllResult:
@@ -230,6 +231,31 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("toggleCollapsibleCard('provider-channels')", admin_html)
         self.assertIn("toggleCollapsibleCard('model-channel-routes')", admin_html)
         self.assertIn("cc_admin_card_collapsed:", admin_html)
+        self.assertIn('value="anthropic_compatible"', admin_html)
+        self.assertIn('value="x-api-key"', admin_html)
+        self.assertIn("anthropic_messages", admin_html)
+        self.assertIn("handleProviderChannelTypeChange", admin_html)
+        self.assertIn("handleModelChannelRouteChannelChange", admin_html)
+
+    def test_provider_channel_schema_accepts_anthropic_x_api_key(self) -> None:
+        created = AdminProviderChannelCreate(
+            name="Claude relay",
+            provider_platform="new_api",
+            channel_type="anthropic_compatible",
+            base_url="https://claude-relay.example",
+            api_key="sk-test",
+            auth_style="x-api-key",
+            capabilities=["chat/completions"],
+        )
+        updated = AdminProviderChannelUpdate(
+            channel_type="anthropic_compatible",
+            auth_style="anthropic_x_api_key",
+            capabilities=["chat/completions"],
+        )
+
+        self.assertEqual(created.channel_type, "anthropic_compatible")
+        self.assertEqual(created.auth_style, "x-api-key")
+        self.assertEqual(updated.auth_style, "anthropic_x_api_key")
 
     def test_admin_ui_wires_analytics_page_loader(self) -> None:
         admin_html = (Path(admin_module.__file__).parent / "static" / "admin.html").read_text()
@@ -751,6 +777,79 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls[0][0], "https://azure.example/openai/v1/models")
         self.assertEqual(calls[0][1]["api-key"], "sk-azure-secret")
         self.assertNotIn("sk-azure-secret", json.dumps(payload))
+
+    async def test_anthropic_provider_channel_falls_back_to_messages_probe(self) -> None:
+        channel = SimpleNamespace(
+            id="ch_anthropic",
+            name="Claude relay",
+            base_url="https://claude-relay.example",
+            encrypted_api_key=admin_module.encrypt_api_key("sk-anthropic-secret"),
+            auth_style="x-api-key",
+            channel_type="anthropic_compatible",
+        )
+
+        class _GetDB:
+            async def get(self, model, key):
+                if model is admin_module.ProviderChannel and key == channel.id:
+                    return channel
+                return None
+
+        class _Response:
+            def __init__(self, status_code, payload):
+                self.status_code = status_code
+                self._payload = payload
+
+            def json(self):
+                return self._payload
+
+        calls = []
+
+        class _Client:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return None
+
+            async def get(self, url, headers):
+                calls.append(("GET", url, dict(headers), None))
+                return _Response(404, {"error": {"message": "models not supported"}})
+
+            async def post(self, url, headers, json):
+                calls.append(("POST", url, dict(headers), dict(json)))
+                return _Response(
+                    200,
+                    {
+                        "id": "msg_probe",
+                        "type": "message",
+                        "role": "assistant",
+                        "model": json.get("model"),
+                        "content": [{"type": "text", "text": "pong"}],
+                        "stop_reason": "end_turn",
+                        "usage": {"input_tokens": 2, "output_tokens": 1},
+                    },
+                )
+
+        with patch.object(admin_module.httpx, "AsyncClient", _Client):
+            payload = await admin_module.list_provider_channel_upstream_models(channel.id, db=_GetDB())
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["discovery_mode"], "messages_probe")
+        self.assertEqual(payload["models_url"], "https://claude-relay.example/v1/messages")
+        self.assertEqual(payload["models"][0]["id"], "claude-fable-5")
+        self.assertEqual(payload["models"][0]["suggested_public_model_id"], "claude-fable-5")
+        self.assertEqual(calls[0][0], "GET")
+        self.assertEqual(calls[0][1], "https://claude-relay.example/v1/models")
+        self.assertEqual(calls[0][2]["x-api-key"], "sk-anthropic-secret")
+        self.assertEqual(calls[0][2]["anthropic-version"], "2023-06-01")
+        self.assertEqual(calls[1][0], "POST")
+        self.assertEqual(calls[1][1], "https://claude-relay.example/v1/messages")
+        self.assertEqual(calls[1][2]["x-api-key"], "sk-anthropic-secret")
+        self.assertEqual(calls[1][3]["model"], "claude-fable-5")
+        self.assertNotIn("sk-anthropic-secret", json.dumps(payload))
 
     async def test_request_logs_expose_provider_alias_and_usage_units(self) -> None:
         log = SimpleNamespace(

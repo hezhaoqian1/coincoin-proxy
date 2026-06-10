@@ -11,6 +11,7 @@ CHEAP_TEXT_PRICE = (75, 450)
 CLAUDE_OPUS_PRICE = (500, 2500)
 CLAUDE_SONNET_PRICE = (300, 1500)
 CLAUDE_HAIKU_PRICE = (100, 500)
+CLAUDE_FABLE_PRICE = (1000, 5000)
 FIXED_INPUT_PRICE_PLACEHOLDER = "${COINCOIN_PRICE_INPUT_PER_MILLION:-500}"
 FIXED_OUTPUT_PRICE_PLACEHOLDER = "${COINCOIN_PRICE_OUTPUT_PER_MILLION:-3000}"
 CHEAP_INPUT_PRICE_PLACEHOLDER = "${COINCOIN_CHEAP_PRICE_INPUT:-${COINCOIN_GPT_54_MINI_INPUT_PRICE:-75}}"
@@ -21,6 +22,8 @@ CLAUDE_SONNET_INPUT_PRICE_PLACEHOLDER = "${COINCOIN_CLAUDE_SONNET_INPUT_PRICE:-3
 CLAUDE_SONNET_OUTPUT_PRICE_PLACEHOLDER = "${COINCOIN_CLAUDE_SONNET_OUTPUT_PRICE:-1500}"
 CLAUDE_HAIKU_INPUT_PRICE_PLACEHOLDER = "${COINCOIN_CLAUDE_HAIKU_INPUT_PRICE:-100}"
 CLAUDE_HAIKU_OUTPUT_PRICE_PLACEHOLDER = "${COINCOIN_CLAUDE_HAIKU_OUTPUT_PRICE:-500}"
+CLAUDE_FABLE_INPUT_PRICE_PLACEHOLDER = "${COINCOIN_CLAUDE_FABLE_INPUT_PRICE:-1000}"
+CLAUDE_FABLE_OUTPUT_PRICE_PLACEHOLDER = "${COINCOIN_CLAUDE_FABLE_OUTPUT_PRICE:-5000}"
 CLAUDE_OPUS_ALIASES = {
     "claude-opus-4-8",
     "claude-opus-4.8",
@@ -63,6 +66,7 @@ OFFICIAL_DEFAULT_TEXT_PRICES = {
     "codex-auto-review": FIXED_TEXT_PRICE,
     "gpt-5.4-mini": CHEAP_TEXT_PRICE,
     "gpt-5.5": FIXED_TEXT_PRICE,
+    "claude-fable-5": CLAUDE_FABLE_PRICE,
     "claude-opus-4-8": CLAUDE_OPUS_PRICE,
     "claude-opus-4.8": CLAUDE_OPUS_PRICE,
     "claude-opus-4-7": CLAUDE_OPUS_PRICE,
@@ -125,8 +129,10 @@ def _placeholder_default(value):
 class GatewayCatalogSyncTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        repo_root = Path(__file__).resolve().parents[2]
-        catalog_path = repo_root / "coincoin-proxy" / "config" / "model_catalog.json"
+        repo_root = Path(__file__).resolve().parents[1]
+        catalog_path = repo_root / "config" / "model_catalog.json"
+        if not catalog_path.exists():
+            catalog_path = repo_root.parent / "coincoin-proxy" / "config" / "model_catalog.json"
 
         cls.catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
         cls.direct_models = [
@@ -162,7 +168,7 @@ class GatewayCatalogSyncTests(unittest.TestCase):
         invalid_models = sorted(
             model["id"]
             for model in self.direct_models
-            if model.get("delivery_lane") not in {"gateway", "cpa_gemini", "upstream_direct", "kiro_go"}
+            if model.get("delivery_lane") not in {"gateway", "cpa_gemini", "upstream_direct", "kiro_go", "route_only"}
         )
         self.assertEqual(invalid_models, [])
 
@@ -203,6 +209,17 @@ class GatewayCatalogSyncTests(unittest.TestCase):
             for item in (self.catalog.get("models") or [])
             if isinstance(item, dict) and item.get("id")
         }
+
+        fable = public_models["claude-fable-5"]
+        self.assertEqual(fable.get("provider_model"), "claude-fable-5")
+        self.assertEqual(fable.get("upstream_model"), "claude-fable-5")
+        self.assertEqual(fable.get("routing_mode"), "route_only")
+        self.assertEqual(fable.get("delivery_lane"), "route_only")
+        self.assertNotIn("upstream_url", fable)
+        self.assertNotIn("api_key", fable)
+        self.assertEqual(fable.get("auth_style"), "x-api-key")
+        self.assertEqual(fable.get("price_input_per_million"), CLAUDE_FABLE_INPUT_PRICE_PLACEHOLDER)
+        self.assertEqual(fable.get("price_output_per_million"), CLAUDE_FABLE_OUTPUT_PRICE_PLACEHOLDER)
 
         for alias in CLAUDE_OPUS_ALIASES:
             with self.subTest(alias=alias):

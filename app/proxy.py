@@ -1143,8 +1143,11 @@ def extract_upstream_request_id(headers) -> str:
 def _build_upstream_headers(cfg) -> Dict[str, str]:
     """Build upstream request headers with auth style from ModelConfig."""
     headers = {"content-type": "application/json"}
-    if getattr(cfg, "auth_style", "azure") == "bearer":
+    auth_style = str(getattr(cfg, "auth_style", "azure") or "azure").strip().lower()
+    if auth_style == "bearer":
         headers["authorization"] = f"Bearer {cfg.api_key}"
+    elif auth_style in {"x-api-key", "anthropic_x_api_key", "anthropic"}:
+        headers["x-api-key"] = cfg.api_key
     else:
         headers["api-key"] = cfg.api_key
     return headers

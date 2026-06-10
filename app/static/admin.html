@@ -2706,8 +2706,8 @@
           <div class="form-group"><label class="form-label">平台</label><input id="providerChannelPlatform" class="form-input" placeholder="cpa / new_api / sub2api" /></div>
         </div>
         <div class="form-row">
-          <div class="form-group"><label class="form-label">类型</label><select id="providerChannelType" class="form-select"><option value="openai_compatible">OpenAI compatible</option><option value="account_pool">Account pool</option><option value="official_provider">Official provider</option></select></div>
-          <div class="form-group"><label class="form-label">认证</label><select id="providerChannelAuthStyle" class="form-select"><option value="bearer">Bearer</option><option value="azure">api-key</option></select></div>
+          <div class="form-group"><label class="form-label">类型</label><select id="providerChannelType" class="form-select" onchange="handleProviderChannelTypeChange()"><option value="openai_compatible">OpenAI compatible</option><option value="anthropic_compatible">Anthropic compatible</option><option value="account_pool">Account pool</option><option value="official_provider">Official provider</option></select></div>
+          <div class="form-group"><label class="form-label">认证</label><select id="providerChannelAuthStyle" class="form-select"><option value="bearer">Bearer</option><option value="azure">api-key</option><option value="api-key">api-key (generic)</option><option value="x-api-key">x-api-key</option></select></div>
         </div>
         <div class="form-group"><label class="form-label">Base URL</label><input id="providerChannelBaseUrl" class="form-input" placeholder="https://example.com/v1" /></div>
         <div class="form-group"><label class="form-label">API Key</label><input id="providerChannelApiKey" type="password" class="form-input" placeholder="编辑已有渠道时留空则不更换" /></div>
@@ -2843,7 +2843,7 @@
           <div class="form-group"><label class="form-label">公开模型</label><input id="modelChannelRoutePublicModel" class="form-input" placeholder="gpt-5.3-codex" /></div>
           <div class="form-group"><label class="form-label">Endpoint</label><select id="modelChannelRouteEndpoint" class="form-select"><option value="">全部</option><option value="responses">responses</option><option value="chat/completions">chat/completions</option><option value="images/generations">images/generations</option><option value="images/edits">images/edits</option><option value="videos/generations">videos/generations</option><option value="embeddings">embeddings</option></select></div>
         </div>
-        <div class="form-group"><label class="form-label">渠道</label><select id="modelChannelRouteChannel" class="form-select"></select></div>
+        <div class="form-group"><label class="form-label">渠道</label><select id="modelChannelRouteChannel" class="form-select" onchange="handleModelChannelRouteChannelChange()"></select></div>
         <div class="form-row">
           <div class="form-group"><label class="form-label">上游模型</label><input id="modelChannelRouteUpstreamModel" class="form-input" placeholder="留空则沿用 catalog 模型" /></div>
           <div class="form-group"><label class="form-label">Transform</label><input id="modelChannelRouteTransform" class="form-input" value="openai_compatible" /></div>
@@ -5470,6 +5470,7 @@
       document.getElementById('providerChannelCapabilities').value = (channel.capabilities || []).join(',');
       document.getElementById('providerChannelCostTier').value = channel.cost_tier || '';
       document.getElementById('providerChannelNotes').value = channel.notes || '';
+      if (!channelId) handleProviderChannelTypeChange();
       openModal('providerChannelModal');
     }
 
@@ -5594,6 +5595,14 @@
       );
     }
 
+    function isAnthropicProviderChannel(channel) {
+      return (channel && channel.channel_type) === 'anthropic_compatible';
+    }
+
+    function transformProfileForChannel(channel) {
+      return isAnthropicProviderChannel(channel) ? 'anthropic_messages' : 'openai_compatible';
+    }
+
     function renderProviderChannelModels(payload = {}) {
       if ((!payload || !Object.keys(payload).length) && providerChannelModelsLastPayload) payload = providerChannelModelsLastPayload;
       if (payload && payload.ok) providerChannelModelsLastPayload = payload;
@@ -5612,7 +5621,7 @@
       summary.textContent = `${Number(payload.model_count || 0)} 个模型 · HTTP ${Number(payload.status_code || 0)} · ${Number(payload.latency_ms || 0)}ms · ${payload.models_url || '-'}${recommended}`;
       body.innerHTML = providerChannelModelsCache.length ? providerChannelModelsCache.map((model, index) => {
         const suggested = model.suggested_public_model_id || '';
-        const endpoint = '';
+        const endpoint = isAnthropicProviderChannel(channel) ? 'chat/completions' : '';
         const exists = suggested && routeExistsForDiscoveredModel(suggested, endpoint, model.id);
         return `
           <tr>
@@ -5662,6 +5671,7 @@
       const model = providerChannelModelsCache[index] || {};
       const publicModelId = (document.getElementById(`providerChannelModelPublic-${index}`)?.value || '').trim();
       const endpoint = document.getElementById(`providerChannelModelEndpoint-${index}`)?.value || '';
+      const channel = providerChannelCache.find(item => item.id === currentProviderChannelModelsChannelId) || {};
       if (!model.id || !publicModelId) return toast('请选择公开模型', 'error');
       if (routeExistsForDiscoveredModel(publicModelId, endpoint, model.id) && !confirm('这条 route 看起来已存在，仍然创建一条新的？')) return;
       const payload = {
@@ -5671,7 +5681,7 @@
         upstream_model: model.id,
         priority_override: null,
         weight_override: null,
-        transform_profile: 'openai_compatible',
+        transform_profile: transformProfileForChannel(channel),
         status: 'active',
         notes: `created from upstream model discovery: ${model.id}`,
       };
@@ -5697,11 +5707,12 @@
       const model = providerChannelModelsCache[index] || {};
       const endpoint = document.getElementById(`providerChannelModelEndpoint-${index}`)?.value || 'responses';
       const channel = providerChannelCache.find(item => item.id === currentProviderChannelModelsChannelId) || {};
+      const defaultEndpoint = isAnthropicProviderChannel(channel) ? 'chat/completions' : 'responses';
       if (!model.id || !currentProviderChannelModelsChannelId) return toast('请选择渠道模型', 'error');
       openProviderChannelMonitorModal('', {
         channel_id: currentProviderChannelModelsChannelId,
         name: `${channel.name || 'channel'} · ${model.id}`,
-        endpoint: endpoint || 'responses',
+        endpoint: endpoint || defaultEndpoint,
         primary_model: model.id,
         extra_models: [],
         status: 'active',
@@ -5710,11 +5721,33 @@
       });
     }
 
+    function handleProviderChannelTypeChange() {
+      const type = document.getElementById('providerChannelType')?.value || '';
+      if (type !== 'anthropic_compatible') return;
+      const auth = document.getElementById('providerChannelAuthStyle');
+      const capabilities = document.getElementById('providerChannelCapabilities');
+      if (auth && (!auth.value || auth.value === 'bearer')) auth.value = 'x-api-key';
+      if (capabilities && !capabilities.value.trim()) capabilities.value = 'chat/completions';
+    }
+
     function fillRouteChannelOptions(selectedId = '') {
       const select = document.getElementById('modelChannelRouteChannel');
       select.innerHTML = providerChannelCache.map(channel => `
         <option value="${escapeHtml(channel.id)}" ${channel.id === selectedId ? 'selected' : ''}>${escapeHtml(renderProviderChannelOption(channel))}</option>
       `).join('');
+    }
+
+    function handleModelChannelRouteChannelChange() {
+      const channelId = document.getElementById('modelChannelRouteChannel')?.value || '';
+      const channel = providerChannelCache.find(item => item.id === channelId) || {};
+      const transform = document.getElementById('modelChannelRouteTransform');
+      const endpoint = document.getElementById('modelChannelRouteEndpoint');
+      if (!isAnthropicProviderChannel(channel)) {
+        if (transform && transform.value === 'anthropic_messages') transform.value = 'openai_compatible';
+        return;
+      }
+      if (transform && (!transform.value || transform.value === 'openai_compatible')) transform.value = 'anthropic_messages';
+      if (endpoint && !endpoint.value) endpoint.value = 'chat/completions';
     }
 
     function openModelChannelRouteModal(routeId = '') {
@@ -5726,6 +5759,7 @@
       fillRouteChannelOptions(route.channel_id || '');
       document.getElementById('modelChannelRouteUpstreamModel').value = route.upstream_model || '';
       document.getElementById('modelChannelRouteTransform').value = route.transform_profile || 'openai_compatible';
+      if (!routeId) handleModelChannelRouteChannelChange();
       document.getElementById('modelChannelRoutePriority').value = route.priority_override ?? '';
       document.getElementById('modelChannelRouteWeight').value = route.weight_override ?? '';
       document.getElementById('modelChannelRouteStatus').value = route.status || 'active';

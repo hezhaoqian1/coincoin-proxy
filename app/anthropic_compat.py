@@ -14,6 +14,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .config import settings
 from .db import get_db
 from .prompt_cache import build_claude_code_prompt_cache_key
+from .anthropic_adapter import (
+    build_anthropic_messages_url,
+    is_anthropic_compatible_config,
+)
 from .proxy import (
     _build_upstream_headers,
     _KEY_ID_ATTR,
@@ -298,6 +302,7 @@ def _copy_anthropic_messages_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         "stream",
         "temperature",
         "top_p",
+        "top_k",
         "tools",
         "tool_choice",
         "thinking",
@@ -1024,18 +1029,19 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
         openai_payload["prompt_cache_key"] = prompt_cache_key
 
     is_kiro_go = public_model.delivery_lane == CLAUDE_COMPAT_PROVIDER_KIRO_GO
-    if settings.model_cloak and display_model and not tools and not is_kiro_go:
+    is_native_anthropic_upstream = is_kiro_go or is_anthropic_compatible_config(used_cfg)
+    if settings.model_cloak and display_model and not tools and not is_native_anthropic_upstream:
         cloak = build_model_cloak(display_model, public_model)
         if messages and messages[0].get("role") == "system":
             messages[0]["content"] = str(messages[0].get("content") or "") + cloak
         else:
             openai_payload["messages"] = [{"role": "system", "content": cloak.strip()}] + messages
 
-    if is_kiro_go:
-        upstream_url = f"{used_cfg.upstream_url.rstrip('/')}/v1/messages"
+    if is_native_anthropic_upstream:
+        upstream_url = build_anthropic_messages_url(used_cfg.upstream_url)
         headers = _build_anthropic_upstream_headers(used_cfg, request)
         upstream_payload = _copy_anthropic_messages_payload(payload)
-        upstream_payload["model"] = _kiro_go_upstream_model(used_cfg.model_id)
+        upstream_payload["model"] = _kiro_go_upstream_model(used_cfg.model_id) if is_kiro_go else used_cfg.model_id
         upstream_payload["stream"] = bool(payload.get("stream"))
     else:
         upstream_url = f"{_normalize_openai_base_url(used_cfg.upstream_url)}/chat/completions"
@@ -1043,7 +1049,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
         upstream_payload = openai_payload
 
     request_t0 = time.monotonic()
-    if is_kiro_go and upstream_payload.get("stream"):
+    if is_native_anthropic_upstream and upstream_payload.get("stream"):
         response_headers = {
             "cache-control": "no-cache",
             "x-accel-buffering": "no",
@@ -1344,10 +1350,10 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
             return anthropic_error(message or "Upstream request failed", error_type=error_type or "api_error", status_code=upstream.status_code)
         return anthropic_error("Upstream request failed", error_type="api_error", status_code=upstream.status_code)
 
-    if is_kiro_go and _looks_like_anthropic_message_response(data):
+    if is_native_anthropic_upstream and _looks_like_anthropic_message_response(data):
         response_body = _mask_anthropic_message_model(data, display_model)
         usage = response_body.get("usage") if isinstance(response_body.get("usage"), dict) else {}
-    elif is_kiro_go:
+    elif is_native_anthropic_upstream:
         content_blocks = _extract_anthropic_content_from_openai_chat_response(data)
         usage = _extract_usage_from_openai_chat_response(data)
         stop_reason = _extract_anthropic_stop_reason_from_openai_chat_response(data)

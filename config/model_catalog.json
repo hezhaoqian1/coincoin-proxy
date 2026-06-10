@@ -223,6 +223,30 @@
       "billable_sku": "legacy-gpt-5.5-text"
     },
     {
+      "id": "claude-fable-5",
+      "owned_by": "anthropic",
+      "provider_name": "Anthropic",
+      "provider_model": "claude-fable-5",
+      "created": 1780963200,
+      "capabilities": ["chat/completions"],
+      "routing_mode": "route_only",
+      "delivery_lane": "route_only",
+      "upstream_model": "claude-fable-5",
+      "auth_style": "x-api-key",
+      "price_input_per_million": "${COINCOIN_CLAUDE_FABLE_INPUT_PRICE:-1000}",
+      "price_output_per_million": "${COINCOIN_CLAUDE_FABLE_OUTPUT_PRICE:-5000}",
+      "billable_sku": "claude-fable-5-text",
+      "metadata": {
+        "display_name": "Claude Fable 5",
+        "version": "Claude Fable 5",
+        "description": "Anthropic native Claude Messages model routed through Anthropic-compatible provider channels.",
+        "provider_protocol": "anthropic_messages",
+        "context_length": 1000000,
+        "max_completion_tokens": 128000,
+        "supported_parameters": ["tools", "vision"]
+      }
+    },
+    {
       "id": "claude-opus-4-8",
       "owned_by": "coincoin",
       "provider_name": "",

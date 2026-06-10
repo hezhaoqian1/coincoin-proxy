@@ -14,6 +14,14 @@ from sqlalchemy import select, func
 from .config import settings
 from .db import get_db
 from . import gemini_cpa
+from .anthropic_adapter import (
+    DEFAULT_ANTHROPIC_VERSION,
+    anthropic_message_to_openai_chat_response,
+    anthropic_stop_reason_to_openai,
+    build_anthropic_messages_url,
+    is_anthropic_compatible_config,
+    openai_chat_to_anthropic_messages_payload,
+)
 from .prompt_cache import build_claude_code_prompt_cache_key
 from .proxy import (
     _build_upstream_headers, _ensure_content_text, _sanitize_encrypted_ids,
@@ -111,6 +119,366 @@ def _chat_completion_usage_chunk_line(*, stream_id: str, display_model: str, usa
         "usage": usage,
     }
     return f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+
+
+def _anthropic_upstream_headers(cfg) -> Dict[str, str]:
+    headers = _build_upstream_headers(cfg)
+    headers["anthropic-version"] = DEFAULT_ANTHROPIC_VERSION
+    return headers
+
+
+def _openai_error_from_anthropic_error(data: Any, *, status_code: int) -> JSONResponse:
+    message = "Upstream request failed"
+    error_type = "upstream_error"
+    code = str(status_code)
+    if isinstance(data, dict):
+        error_info = data.get("error")
+        if isinstance(error_info, dict):
+            message = str(error_info.get("message") or message)
+            error_type = str(error_info.get("type") or error_type)
+            code = str(error_info.get("code") or code)
+        elif error_info is not None:
+            message = str(error_info)
+        elif data.get("message"):
+            message = str(data.get("message"))
+    elif data:
+        message = str(data)
+    return openai_error(message[:500], error_type, code=code, status_code=status_code if status_code >= 400 else 502)
+
+
+async def _proxy_anthropic_compatible_chat_completions(
+    *,
+    payload: Dict[str, Any],
+    user,
+    public_model,
+    display_model: str,
+    used_cfg,
+    used_route_reason: str,
+    api_key_id: str,
+    price_input_per_million: int,
+    price_output_per_million: int,
+    station_model,
+    user_cache_read_multiplier_override,
+    effective_provider_model: str,
+):
+    upstream_payload = openai_chat_to_anthropic_messages_payload(payload, model=used_cfg.model_id)
+    upstream_url = build_anthropic_messages_url(used_cfg.upstream_url)
+    headers = _anthropic_upstream_headers(used_cfg)
+    request_t0 = time.monotonic()
+
+    if upstream_payload.get("stream"):
+        return await _proxy_anthropic_compatible_chat_completions_stream(
+            upstream_payload=upstream_payload,
+            upstream_url=upstream_url,
+            headers=headers,
+            payload=payload,
+            user=user,
+            public_model=public_model,
+            display_model=display_model,
+            used_cfg=used_cfg,
+            used_route_reason=used_route_reason,
+            api_key_id=api_key_id,
+            price_input_per_million=price_input_per_million,
+            price_output_per_million=price_output_per_million,
+            station_model=station_model,
+            user_cache_read_multiplier_override=user_cache_read_multiplier_override,
+            effective_provider_model=effective_provider_model,
+            request_t0=request_t0,
+        )
+
+    client = await get_http_client()
+    try:
+        upstream = await client.post(upstream_url, json=upstream_payload, headers=headers)
+    except (httpx.TimeoutException, httpx.RequestError):
+        _record_channel_failure(used_cfg, error_code="upstream_unreachable")
+        return openai_error("Upstream request failed", "server_error", code="upstream_unreachable", status_code=502)
+
+    duration_ms = int((time.monotonic() - request_t0) * 1000)
+    response_headers = filter_headers(dict(upstream.headers))
+    response_headers.pop("content-length", None)
+    upstream_request_id = extract_upstream_request_id(upstream.headers)
+    content_type = upstream.headers.get("content-type", "application/json")
+    if "application/json" not in content_type:
+        _record_channel_failure(used_cfg, error_code="upstream_unexpected_content_type")
+        return openai_error("Upstream returned unexpected content type", "server_error", code="upstream_unexpected_content_type", status_code=502)
+    try:
+        data = upstream.json()
+    except Exception:
+        _record_channel_failure(used_cfg, error_code="upstream_invalid_json")
+        return openai_error("Upstream returned invalid JSON", "server_error", code="upstream_invalid_json", status_code=502)
+
+    if upstream.status_code >= 400 or (isinstance(data, dict) and data.get("type") == "error"):
+        _record_channel_failure(used_cfg, status_code=upstream.status_code)
+        return _openai_error_from_anthropic_error(data, status_code=upstream.status_code)
+
+    if isinstance(data, dict) and data.get("type") == "message":
+        response_body = anthropic_message_to_openai_chat_response(data, display_model=display_model)
+        usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+    elif isinstance(data, dict) and isinstance(data.get("choices"), list):
+        response_body = dict(data)
+        response_body["model"] = display_model
+        usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+    else:
+        _record_channel_failure(used_cfg, error_code="upstream_invalid_anthropic_response")
+        return openai_error("Upstream returned invalid Anthropic response", "server_error", code="upstream_invalid_anthropic_response", status_code=502)
+
+    _record_channel_success(used_cfg, duration_ms=duration_ms)
+    await usage_buffer.add(
+        user.id,
+        api_key_id=api_key_id,
+        input_tokens=extract_total_input_tokens(usage),
+        output_tokens=int(usage.get("output_tokens") or usage.get("completion_tokens") or 0),
+        cache_read_tokens=extract_cache_read_tokens(usage),
+        cache_creation_tokens=extract_cache_creation_tokens(usage),
+        requests=1,
+        endpoint="chat/completions",
+        model=display_model,
+        customer_model_alias=display_model,
+        provider_model=used_cfg.model_id or effective_provider_model,
+        route_reason=used_route_reason,
+        duration_ms=duration_ms,
+        status_code=upstream.status_code,
+        price_input_per_million=price_input_per_million,
+        price_output_per_million=price_output_per_million,
+        usage_unit_type="tokens",
+        billable_sku=public_model.billable_sku or display_model,
+        upstream_request_id=upstream_request_id,
+        **_channel_usage_kwargs(used_cfg),
+        **usage_pricing_kwargs(
+            public_model,
+            station_model,
+            user_cache_read_multiplier_override=user_cache_read_multiplier_override,
+        ),
+    )
+    return JSONResponse(content=response_body, status_code=upstream.status_code, headers=response_headers)
+
+
+async def _proxy_anthropic_compatible_chat_completions_stream(
+    *,
+    upstream_payload: Dict[str, Any],
+    upstream_url: str,
+    headers: Dict[str, str],
+    payload: Dict[str, Any],
+    user,
+    public_model,
+    display_model: str,
+    used_cfg,
+    used_route_reason: str,
+    api_key_id: str,
+    price_input_per_million: int,
+    price_output_per_million: int,
+    station_model,
+    user_cache_read_multiplier_override,
+    effective_provider_model: str,
+    request_t0: float,
+):
+    stream_client = await get_stream_client()
+    try:
+        req = stream_client.build_request("POST", upstream_url, json=upstream_payload, headers=headers)
+        upstream = await stream_client.send(req, stream=True)
+    except (httpx.TimeoutException, httpx.RequestError):
+        _record_channel_failure(used_cfg, error_code="upstream_unreachable")
+        return openai_error("Upstream request failed", "server_error", code="upstream_unreachable", status_code=502)
+
+    upstream_request_id = extract_upstream_request_id(upstream.headers)
+    response_headers = filter_headers(dict(upstream.headers))
+    response_headers.pop("content-length", None)
+    response_headers.setdefault("cache-control", "no-cache")
+    response_headers.setdefault("x-accel-buffering", "no")
+    response_headers["content-type"] = "text/event-stream; charset=utf-8"
+    stream_include_usage = _chat_stream_include_usage(payload)
+
+    async def iter_events():
+        stream_id = f"chatcmpl-{secrets.token_hex(12)}"
+        role_sent = False
+        finish_sent = False
+        usage: Dict[str, Any] = {}
+        block_to_tool_index: Dict[int, int] = {}
+        next_tool_index = 0
+        saw_tool_call = False
+        try:
+            async for raw_line in upstream.aiter_lines():
+                if not raw_line or raw_line.startswith("event:"):
+                    continue
+                if not raw_line.startswith("data:"):
+                    continue
+                data_str = raw_line[5:].strip()
+                if not data_str or data_str == "[DONE]":
+                    continue
+                try:
+                    event = json.loads(data_str)
+                except Exception:
+                    continue
+                if not isinstance(event, dict):
+                    continue
+                event_type = str(event.get("type") or "")
+
+                if event_type == "message_start":
+                    message = event.get("message") if isinstance(event.get("message"), dict) else {}
+                    stream_id = str(message.get("id") or stream_id)
+                    if isinstance(message.get("usage"), dict):
+                        usage.update(message["usage"])
+                    continue
+
+                if event_type == "content_block_start":
+                    index = int(event.get("index") or 0)
+                    block = event.get("content_block") if isinstance(event.get("content_block"), dict) else {}
+                    if block.get("type") == "tool_use":
+                        saw_tool_call = True
+                        tool_index = next_tool_index
+                        next_tool_index += 1
+                        block_to_tool_index[index] = tool_index
+                        delta: Dict[str, Any] = {
+                            "tool_calls": [
+                                {
+                                    "index": tool_index,
+                                    "id": str(block.get("id") or f"toolu_{tool_index}"),
+                                    "type": "function",
+                                    "function": {
+                                        "name": str(block.get("name") or ""),
+                                        "arguments": "",
+                                    },
+                                }
+                            ]
+                        }
+                        if not role_sent:
+                            delta["role"] = "assistant"
+                            role_sent = True
+                        yield _chat_completion_chunk_line(
+                            stream_id=stream_id,
+                            display_model=display_model,
+                            delta=delta,
+                            finish_reason=None,
+                        )
+                    continue
+
+                if event_type == "content_block_delta":
+                    index = int(event.get("index") or 0)
+                    delta_payload = event.get("delta") if isinstance(event.get("delta"), dict) else {}
+                    delta_type = str(delta_payload.get("type") or "")
+                    if delta_type == "text_delta":
+                        text = str(delta_payload.get("text") or "")
+                        if text:
+                            delta = {"content": text}
+                            if not role_sent:
+                                delta["role"] = "assistant"
+                                role_sent = True
+                            yield _chat_completion_chunk_line(
+                                stream_id=stream_id,
+                                display_model=display_model,
+                                delta=delta,
+                                finish_reason=None,
+                            )
+                    elif delta_type == "input_json_delta":
+                        partial_json = str(delta_payload.get("partial_json") or "")
+                        if partial_json:
+                            tool_index = block_to_tool_index.get(index, index)
+                            yield _chat_completion_chunk_line(
+                                stream_id=stream_id,
+                                display_model=display_model,
+                                delta={
+                                    "tool_calls": [
+                                        {
+                                            "index": tool_index,
+                                            "function": {"arguments": partial_json},
+                                        }
+                                    ]
+                                },
+                                finish_reason=None,
+                            )
+                    continue
+
+                if event_type == "message_delta":
+                    event_usage = event.get("usage")
+                    if isinstance(event_usage, dict):
+                        usage.update(event_usage)
+                    delta_info = event.get("delta") if isinstance(event.get("delta"), dict) else {}
+                    stop_reason = delta_info.get("stop_reason")
+                    if stop_reason is not None and not finish_sent:
+                        yield _chat_completion_chunk_line(
+                            stream_id=stream_id,
+                            display_model=display_model,
+                            delta={},
+                            finish_reason=anthropic_stop_reason_to_openai(stop_reason, saw_tool_call),
+                        )
+                        finish_sent = True
+                    continue
+
+                if event_type == "message_stop":
+                    if not finish_sent:
+                        yield _chat_completion_chunk_line(
+                            stream_id=stream_id,
+                            display_model=display_model,
+                            delta={},
+                            finish_reason="tool_calls" if saw_tool_call else "stop",
+                        )
+                        finish_sent = True
+                    if stream_include_usage and usage:
+                        yield _chat_completion_usage_chunk_line(
+                            stream_id=stream_id,
+                            display_model=display_model,
+                            usage=_chat_usage_payload_from_counts(
+                                extract_total_input_tokens(usage),
+                                int(usage.get("output_tokens") or usage.get("completion_tokens") or 0),
+                                extract_cache_read_tokens(usage),
+                            ),
+                        )
+                    continue
+
+                if event_type == "error" or isinstance(event.get("error"), dict):
+                    yield f"data: {json.dumps({'error': event.get('error') or event}, ensure_ascii=False)}\n\n"
+                    finish_sent = True
+                    break
+
+            if not finish_sent:
+                yield _chat_completion_chunk_line(
+                    stream_id=stream_id,
+                    display_model=display_model,
+                    delta={},
+                    finish_reason="tool_calls" if saw_tool_call else "stop",
+                )
+            yield "data: [DONE]\n\n"
+        finally:
+            await upstream.aclose()
+            duration_ms = int((time.monotonic() - request_t0) * 1000)
+            if upstream.status_code < 400 and usage:
+                _record_channel_success(used_cfg, duration_ms=duration_ms)
+                schedule_usage_add(
+                    user.id,
+                    api_key_id=api_key_id,
+                    input_tokens=extract_total_input_tokens(usage),
+                    output_tokens=int(usage.get("output_tokens") or usage.get("completion_tokens") or 0),
+                    cache_read_tokens=extract_cache_read_tokens(usage),
+                    cache_creation_tokens=extract_cache_creation_tokens(usage),
+                    requests=1,
+                    endpoint="chat/completions:stream",
+                    model=display_model,
+                    customer_model_alias=display_model,
+                    provider_model=used_cfg.model_id or effective_provider_model,
+                    route_reason=used_route_reason,
+                    duration_ms=duration_ms,
+                    status_code=upstream.status_code,
+                    price_input_per_million=price_input_per_million,
+                    price_output_per_million=price_output_per_million,
+                    usage_unit_type="tokens",
+                    billable_sku=public_model.billable_sku or display_model,
+                    upstream_request_id=upstream_request_id,
+                    **_channel_usage_kwargs(used_cfg),
+                    **usage_pricing_kwargs(
+                        public_model,
+                        station_model,
+                        user_cache_read_multiplier_override=user_cache_read_multiplier_override,
+                    ),
+                )
+            elif upstream.status_code >= 400:
+                _record_channel_failure(used_cfg, status_code=upstream.status_code)
+
+    return StreamingResponse(
+        iter_events(),
+        status_code=upstream.status_code,
+        headers=response_headers,
+        media_type="text/event-stream",
+    )
 
 
 def _parse_usage_datetime_filter(value: Optional[str], *, is_end: bool = False):
@@ -951,6 +1319,22 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
             price_output_per_million=price_output_per_million,
             station_model=station_model,
             user_cache_read_multiplier_override=user_cache_read_multiplier_override,
+        )
+
+    if is_anthropic_compatible_config(used_cfg):
+        return await _proxy_anthropic_compatible_chat_completions(
+            payload=payload,
+            user=user,
+            public_model=public_model,
+            display_model=display_model,
+            used_cfg=used_cfg,
+            used_route_reason=used_route_reason,
+            api_key_id=api_key_id,
+            price_input_per_million=price_input_per_million,
+            price_output_per_million=price_output_per_million,
+            station_model=station_model,
+            user_cache_read_multiplier_override=user_cache_read_multiplier_override,
+            effective_provider_model=_effective_provider_model,
         )
 
     if public_model.delivery_lane == CLAUDE_COMPAT_PROVIDER_KIRO_GO:

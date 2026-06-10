@@ -548,14 +548,20 @@ def _provider_channel_auth_headers(channel: ProviderChannel) -> dict[str, str]:
     if not raw_key:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="provider channel api key is not configured")
     headers = {"accept": "application/json"}
-    if (getattr(channel, "auth_style", "") or "bearer") == "azure":
+    auth_style = (getattr(channel, "auth_style", "") or "bearer").strip().lower()
+    channel_type = (getattr(channel, "channel_type", "") or "").strip().lower()
+    if auth_style == "azure":
         headers["api-key"] = raw_key
+    elif auth_style in {"x-api-key", "anthropic_x_api_key", "anthropic"}:
+        headers["x-api-key"] = raw_key
     else:
         headers["authorization"] = f"Bearer {raw_key}"
+    if channel_type == "anthropic_compatible":
+        headers["anthropic-version"] = "2023-06-01"
     return headers
 
 
-def _provider_channel_models_url_candidates(base_url: str) -> list[tuple[str, str]]:
+def _provider_channel_models_url_candidates(base_url: str, *, prefer_v1: bool = False) -> list[tuple[str, str]]:
     cleaned = str(base_url or "").strip().rstrip("/")
     if not cleaned:
         return []
@@ -568,7 +574,8 @@ def _provider_channel_models_url_candidates(base_url: str) -> list[tuple[str, st
         candidates.append((f"{normalized_base}/models", normalized_base))
     result = []
     seen = set()
-    for url, recommended_base_url in candidates:
+    ordered_candidates = [candidates[-1]] if prefer_v1 and len(candidates) > 1 else candidates
+    for url, recommended_base_url in ordered_candidates:
         if url in seen:
             continue
         seen.add(url)
@@ -655,13 +662,105 @@ def _attach_public_model_suggestions(models: list[dict]) -> tuple[list[dict], li
     return enriched, public_models
 
 
+def _provider_channel_messages_url(base_url: str) -> tuple[str, str]:
+    cleaned = str(base_url or "").strip().rstrip("/")
+    if not cleaned:
+        return "", ""
+    parsed = urlsplit(cleaned)
+    path = parsed.path.rstrip("/")
+    if not path.endswith("/v1"):
+        path = f"{path}/v1" if path else "/v1"
+    normalized_base = urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, parsed.fragment)).rstrip("/")
+    return f"{normalized_base}/messages", normalized_base
+
+
+def _anthropic_provider_probe_model_id(public_models: list[dict]) -> str:
+    for item in public_models:
+        if item.get("id") == "claude-fable-5":
+            return str(item.get("upstream_model") or item.get("provider_model") or item["id"])
+    for item in public_models:
+        owned_by = str(item.get("owned_by") or "").strip().lower()
+        provider_name = str(item.get("provider_name") or "").strip().lower()
+        delivery_lane = str(item.get("delivery_lane") or "").strip().lower()
+        capabilities = set(item.get("capabilities") or [])
+        if delivery_lane == "route_only" and "chat/completions" in capabilities and (owned_by == "anthropic" or provider_name == "anthropic"):
+            return str(item.get("upstream_model") or item.get("provider_model") or item.get("id") or "").strip()
+    return "claude-fable-5"
+
+
+async def _anthropic_provider_messages_probe(client: httpx.AsyncClient, channel: ProviderChannel, headers: dict[str, str], attempts: list[dict]) -> Optional[dict]:
+    url, recommended_base_url = _provider_channel_messages_url(getattr(channel, "base_url", ""))
+    if not url:
+        return None
+    _empty_models, public_models = _attach_public_model_suggestions([])
+    probe_model = _anthropic_provider_probe_model_id(public_models)
+    started = time.perf_counter()
+    try:
+        response = await client.post(
+            url,
+            headers=headers,
+            json={
+                "model": probe_model,
+                "max_tokens": 1,
+                "messages": [{"role": "user", "content": "ping"}],
+            },
+        )
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        attempt = {
+            "url": url,
+            "status_code": response.status_code,
+            "latency_ms": latency_ms,
+            "discovery_mode": "messages_probe",
+        }
+        attempts.append(attempt)
+        if 200 <= int(response.status_code) < 300:
+            model_id = probe_model
+            try:
+                payload = response.json()
+            except ValueError:
+                payload = {}
+            if isinstance(payload, dict):
+                model_id = str(payload.get("model") or probe_model).strip() or probe_model
+            models, public_models = _attach_public_model_suggestions([
+                {
+                    "id": model_id,
+                    "object": "model",
+                    "owned_by": "anthropic",
+                    "created": None,
+                }
+            ])
+            return {
+                "ok": True,
+                "channel_id": channel.id,
+                "channel_name": channel.name,
+                "models_url": url,
+                "recommended_base_url": recommended_base_url,
+                "status_code": response.status_code,
+                "latency_ms": latency_ms,
+                "model_count": len(models),
+                "models": models,
+                "public_models": public_models,
+                "attempts": attempts,
+                "discovery_mode": "messages_probe",
+            }
+        attempt["error"] = f"upstream returned HTTP {response.status_code}"
+    except httpx.TimeoutException:
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        attempts.append({"url": url, "status_code": 0, "latency_ms": latency_ms, "discovery_mode": "messages_probe", "error": "upstream messages probe timed out"})
+    except httpx.RequestError as exc:
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        attempts.append({"url": url, "status_code": 0, "latency_ms": latency_ms, "discovery_mode": "messages_probe", "error": str(exc)[:256] or "upstream messages probe failed"})
+    return None
+
+
 async def _provider_channel_models_payload(channel: ProviderChannel) -> dict:
     headers = _provider_channel_auth_headers(channel)
     attempts = []
     last_error = ""
     timeout = httpx.Timeout(connect=5.0, read=15.0, write=5.0, pool=5.0)
     async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
-        for url, recommended_base_url in _provider_channel_models_url_candidates(getattr(channel, "base_url", "")):
+        is_anthropic_channel = str(getattr(channel, "channel_type", "") or "").strip().lower() == "anthropic_compatible"
+        for url, recommended_base_url in _provider_channel_models_url_candidates(getattr(channel, "base_url", ""), prefer_v1=is_anthropic_channel):
             started = time.perf_counter()
             try:
                 response = await client.get(url, headers=headers)
@@ -703,6 +802,12 @@ async def _provider_channel_models_payload(channel: ProviderChannel) -> dict:
                 latency_ms = int((time.perf_counter() - started) * 1000)
                 last_error = str(exc)[:256] or "upstream models request failed"
                 attempts.append({"url": url, "status_code": 0, "latency_ms": latency_ms, "error": last_error})
+        if is_anthropic_channel:
+            probe_payload = await _anthropic_provider_messages_probe(client, channel, headers, attempts)
+            if probe_payload is not None:
+                return probe_payload
+            if attempts:
+                last_error = str((attempts[-1] or {}).get("error") or last_error)
 
     models, public_models = _attach_public_model_suggestions([])
     return {

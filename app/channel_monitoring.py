@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import settings
 from .db import SessionLocal
+from .anthropic_adapter import DEFAULT_ANTHROPIC_VERSION, build_anthropic_messages_url
 from .gemini_cpa import normalize_openai_base_url
 from .models import (
     ProviderChannel,
@@ -93,11 +94,20 @@ def _status_for_response(response: httpx.Response, payload: Any, latency_ms: int
 
 def _headers(channel: ProviderChannel, api_key: str) -> dict[str, str]:
     headers = {"content-type": "application/json"}
-    if str(getattr(channel, "auth_style", "") or "bearer").strip() == "azure":
+    auth_style = str(getattr(channel, "auth_style", "") or "bearer").strip().lower()
+    if auth_style in {"azure", "api-key"}:
         headers["api-key"] = api_key
+    elif auth_style in {"x-api-key", "anthropic_x_api_key", "anthropic"}:
+        headers["x-api-key"] = api_key
     else:
         headers["authorization"] = f"Bearer {api_key}"
+    if _is_anthropic_compatible_channel(channel):
+        headers["anthropic-version"] = DEFAULT_ANTHROPIC_VERSION
     return headers
+
+
+def _is_anthropic_compatible_channel(channel: ProviderChannel) -> bool:
+    return str(getattr(channel, "channel_type", "") or "").strip().lower() == "anthropic_compatible"
 
 
 async def _ping_models(client: httpx.AsyncClient, base_url: str, headers: dict[str, str]) -> tuple[int, str]:
@@ -122,10 +132,19 @@ async def _probe_model(
     model: str,
     ping_latency_ms: int,
     ping_message: str,
+    channel_type: str = "",
 ) -> ProbeResult:
     checked_at = _utcnow()
     endpoint = (endpoint or "responses").strip()
-    if endpoint == "chat/completions":
+    if channel_type == "anthropic_compatible":
+        url = build_anthropic_messages_url(base_url)
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": "ping"}],
+            "max_tokens": 8,
+            "stream": False,
+        }
+    elif endpoint == "chat/completions":
         url = f"{base_url}/chat/completions"
         payload = {
             "model": model,
@@ -209,7 +228,11 @@ async def run_provider_channel_monitor_once(
         await db.commit()
         return [result]
 
-    base_url = normalize_openai_base_url(str(getattr(channel, "base_url", "") or ""))
+    channel_type = str(getattr(channel, "channel_type", "") or "").strip().lower()
+    if channel_type == "anthropic_compatible":
+        base_url = str(getattr(channel, "base_url", "") or "").strip().rstrip("/")
+    else:
+        base_url = normalize_openai_base_url(str(getattr(channel, "base_url", "") or ""))
     headers = _headers(channel, api_key)
     timeout = httpx.Timeout(
         connect=min(10.0, float(monitor.timeout_seconds or settings.provider_channel_monitor_default_timeout)),
@@ -222,12 +245,16 @@ async def run_provider_channel_monitor_once(
         client = httpx.AsyncClient(timeout=timeout, trust_env=False)
         close_client = True
     try:
-        ping_latency_ms, ping_message = await _ping_models(client, base_url, headers)
+        if channel_type == "anthropic_compatible":
+            ping_latency_ms, ping_message = 0, ""
+        else:
+            ping_latency_ms, ping_message = await _ping_models(client, base_url, headers)
         results = [
             await _probe_model(
                 client,
                 base_url=base_url,
                 headers=headers,
+                channel_type=channel_type,
                 endpoint=monitor.endpoint,
                 model=model,
                 ping_latency_ms=ping_latency_ms,

@@ -73,6 +73,29 @@ class _FakeClient:
         )
 
 
+class _FakeAnthropicClient:
+    def __init__(self):
+        self.calls = []
+
+    async def get(self, url, headers):
+        raise AssertionError(f"Anthropic monitor should not probe /models: {url}")
+
+    async def post(self, url, json, headers):
+        self.calls.append(("POST", url, dict(headers), dict(json)))
+        return httpx.Response(
+            200,
+            json={
+                "id": "msg_monitor",
+                "type": "message",
+                "role": "assistant",
+                "model": json.get("model"),
+                "content": [{"type": "text", "text": "pong"}],
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 2, "output_tokens": 1},
+            },
+        )
+
+
 class ChannelMonitoringTests(unittest.IsolatedAsyncioTestCase):
     async def test_run_monitor_once_records_history_and_daily_rollup(self) -> None:
         monitor = SimpleNamespace(
@@ -122,3 +145,43 @@ class ChannelMonitoringTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(daily_rows), 2)
         self.assertEqual(daily_rows[0].total_checks, 1)
         self.assertEqual(daily_rows[0].operational_count, 1)
+
+    async def test_anthropic_compatible_monitor_uses_messages_endpoint(self) -> None:
+        monitor = SimpleNamespace(
+            id="cmon_anthropic",
+            channel_id="ch_anthropic",
+            name="Claude Fable",
+            endpoint="chat/completions",
+            primary_model="claude-fable-5",
+            extra_models="",
+            status="active",
+            interval_seconds=60,
+            timeout_seconds=30,
+            last_checked_at=None,
+            last_status="",
+            last_latency_ms=0,
+            last_ping_latency_ms=0,
+            last_message="",
+        )
+        channel = SimpleNamespace(
+            id="ch_anthropic",
+            base_url="https://claude-relay.example",
+            encrypted_api_key=encrypt_api_key("sk-anthropic"),
+            auth_style="x-api-key",
+            channel_type="anthropic_compatible",
+        )
+        db = _FakeDB(monitor=monitor, channel=channel)
+        client = _FakeAnthropicClient()
+
+        results = await run_provider_channel_monitor_once(db, monitor.id, client=client)
+
+        self.assertEqual([item.model for item in results], ["claude-fable-5"])
+        self.assertEqual(results[0].status, "operational")
+        self.assertEqual(client.calls[0][0], "POST")
+        self.assertEqual(client.calls[0][1], "https://claude-relay.example/v1/messages")
+        self.assertEqual(client.calls[0][2]["x-api-key"], "sk-anthropic")
+        self.assertEqual(client.calls[0][2]["anthropic-version"], "2023-06-01")
+        self.assertNotIn("authorization", client.calls[0][2])
+        self.assertEqual(client.calls[0][3]["model"], "claude-fable-5")
+        self.assertEqual(client.calls[0][3]["messages"], [{"role": "user", "content": "ping"}])
+        self.assertEqual(monitor.last_status, "operational")

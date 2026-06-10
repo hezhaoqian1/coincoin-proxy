@@ -46,8 +46,8 @@ class PublicModelConfig:
     owned_by: str = "coincoin"
     provider_name: str = ""
     capabilities: Tuple[str, ...] = ()
-    routing_mode: str = "direct"  # direct | legacy_auto
-    delivery_lane: str = "upstream_direct"  # legacy | gateway | cpa_gemini | vertex_direct | upstream_direct
+    routing_mode: str = "direct"  # direct | legacy_auto | route_only
+    delivery_lane: str = "upstream_direct"  # legacy | gateway | cpa_gemini | vertex_direct | upstream_direct | route_only
     upstream_model: str = ""
     provider_model: str = ""
     upstream_url: str = ""
@@ -115,7 +115,7 @@ TEXT_ENDPOINTS = frozenset({"chat/completions", "responses"})
 EMBEDDING_ENDPOINTS = frozenset({"embeddings"})
 IMAGE_ENDPOINTS = frozenset({"images/generations", "images/edits"})
 VIDEO_ENDPOINTS = frozenset({"videos/generations"})
-DELIVERY_LANES = frozenset({"legacy", "gateway", "cpa_gemini", "vertex_direct", "upstream_direct", "kiro_go"})
+DELIVERY_LANES = frozenset({"legacy", "gateway", "cpa_gemini", "vertex_direct", "upstream_direct", "kiro_go", "route_only"})
 _ENV_PATTERN = re.compile(r"\$\{([A-Z0-9_]+)(:-([^}]*))?\}")
 _ROOT_DIR = Path(__file__).resolve().parent.parent
 ALIAS_OVERRIDE_FIELDS = frozenset({"provider_model", "upstream_model", "enabled"})
@@ -625,7 +625,7 @@ class ModelRegistry:
             if cap
         )
         routing_mode = str(raw.get("routing_mode") or "direct").strip().lower()
-        default_delivery_lane = "legacy" if routing_mode == "legacy_auto" else "upstream_direct"
+        default_delivery_lane = "legacy" if routing_mode == "legacy_auto" else ("route_only" if routing_mode == "route_only" else "upstream_direct")
         delivery_lane = str(raw.get("delivery_lane") or default_delivery_lane).strip().lower()
         if delivery_lane not in DELIVERY_LANES:
             logger.warning(
@@ -720,7 +720,7 @@ class ModelRegistry:
             model = self._build_public_model(raw)
             if model is None:
                 continue
-            if model.routing_mode != "legacy_auto":
+            if model.routing_mode not in {"legacy_auto", "route_only"}:
                 if not (model.upstream_model and model.upstream_url and model.api_key):
                     logger.warning(
                         "skipping public model %s because upstream config is incomplete for delivery_lane=%s",
@@ -1203,6 +1203,29 @@ class ModelRegistry:
                 endpoint=endpoint,
                 execution_profile=execution_profile,
                 route_reason=f"catalog:{public_model.public_id}:{route_reason}",
+            )
+
+        if public_model.routing_mode == "route_only" or public_model.delivery_lane == "route_only":
+            backend = ModelConfig(
+                model_id=public_model.upstream_model or public_model.provider_model or public_model.public_id,
+                upstream_url="",
+                api_key="",
+                price_input_per_million=public_model.price_input_per_million,
+                price_output_per_million=public_model.price_output_per_million,
+                strip_unsupported=public_model.strip_unsupported,
+                auth_style=public_model.auth_style,
+            )
+            routed_backend = self._apply_channel_route(public_model, backend, endpoint)
+            if routed_backend is None:
+                raise ModelCapabilityError(
+                    f"Model '{public_model.public_id}' requires an active provider channel route for endpoint '{endpoint}'"
+                )
+            return ResolvedModel(
+                public_model=public_model,
+                backend=routed_backend,
+                execution_profile=execution_profile.profile_id,
+                execution_pool=execution_profile.pool_id,
+                route_reason=f"catalog:{public_model.public_id}:route_only:channel:{routed_backend.channel_id}",
             )
 
         backend = ModelConfig(

@@ -11,6 +11,8 @@ from httpx import ASGITransport, AsyncClient
 
 import app.anthropic_compat as anthropic_module
 import app.openai_compat as openai_module
+import app.proxy as proxy_module
+from app.channel_router import ModelChannelRouteSnapshot, ProviderChannelSnapshot, channel_router
 from app.router import registry
 from app.config import settings
 
@@ -111,15 +113,44 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         settings.primary_auth_style = "bearer"
         settings.router_enabled = False
         settings.claude_compat_provider = "upstream_direct"
+        channel_router.clear_snapshot()
         registry.init_from_settings()
         self.app = FastAPI()
         self.app.include_router(anthropic_module.router)
         self.app.include_router(openai_module.router)
 
     def tearDown(self):
+        channel_router.clear_snapshot()
         for key, value in self._originals.items():
             setattr(settings, key, value)
         registry._initialized = False
+
+    def _configure_anthropic_compatible_channel(self, *, public_model_id="claude-opus-4-7", upstream_model="claude-fable-5"):
+        channel_router.set_snapshot(
+            [
+                ProviderChannelSnapshot(
+                    channel_id="ch_anthropic_compat",
+                    name="Claude relay",
+                    provider_platform="claude_relay",
+                    channel_type="anthropic_compatible",
+                    base_url="https://claude-relay.example",
+                    api_key="relay-key",
+                    auth_style="x-api-key",
+                    priority=0,
+                    capabilities=("chat/completions",),
+                )
+            ],
+            [
+                ModelChannelRouteSnapshot(
+                    route_id="mcr_anthropic_compat",
+                    public_model_id=public_model_id,
+                    endpoint="chat/completions",
+                    channel_id="ch_anthropic_compat",
+                    upstream_model=upstream_model,
+                    transform_profile="anthropic_messages",
+                )
+            ],
+        )
 
     async def test_models_returns_claude_shape_for_claude_cli(self):
         async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as client:
@@ -323,6 +354,227 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         prompt_cache_key = client.calls[0]["json"].get("prompt_cache_key", "")
         self.assertTrue(prompt_cache_key.startswith("cc-"))
         self.assertEqual(len(prompt_cache_key), 35)
+
+    async def test_messages_routes_anthropic_compatible_channel_to_native_messages(self):
+        self._configure_anthropic_compatible_channel()
+        registry._initialized = False
+        registry.init_from_settings()
+        fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_anthropic_channel")
+        client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "msg_relay_native",
+                        "type": "message",
+                        "role": "assistant",
+                        "model": "claude-fable-5",
+                        "content": [{"type": "text", "text": "OK"}],
+                        "stop_reason": "end_turn",
+                        "stop_sequence": None,
+                        "usage": {"input_tokens": 8, "output_tokens": 2},
+                    }
+                )
+            ]
+        )
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_http_client", AsyncMock(return_value=client)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()) as add_usage,
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={
+                        "authorization": "Bearer sk_test",
+                        "anthropic-version": "2023-06-01",
+                    },
+                    json={
+                        "model": "claude-opus-4-7",
+                        "max_tokens": 64,
+                        "system": "You are concise.",
+                        "messages": [{"role": "user", "content": [{"type": "text", "text": "Reply OK"}]}],
+                        "tools": [
+                            {
+                                "name": "Read",
+                                "description": "Read a file",
+                                "input_schema": {
+                                    "type": "object",
+                                    "properties": {"path": {"type": "string"}},
+                                    "required": ["path"],
+                                },
+                            }
+                        ],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertEqual(body["model"], "claude-opus-4-7")
+        self.assertEqual(body["content"][0]["text"], "OK")
+        self.assertEqual(client.calls[0]["url"], "https://claude-relay.example/v1/messages")
+        self.assertEqual(client.calls[0]["json"]["model"], "claude-fable-5")
+        self.assertEqual(client.calls[0]["json"]["system"], "You are concise.")
+        self.assertEqual(client.calls[0]["json"]["tools"][0]["name"], "Read")
+        self.assertEqual(client.calls[0]["headers"]["x-api-key"], "relay-key")
+        self.assertEqual(client.calls[0]["headers"]["anthropic-version"], "2023-06-01")
+        self.assertNotIn("authorization", client.calls[0]["headers"])
+        add_usage.assert_awaited_once()
+        usage_kwargs = add_usage.await_args.kwargs
+        self.assertEqual(usage_kwargs["provider_model"], "claude-fable-5")
+        self.assertEqual(usage_kwargs["channel_type"], "anthropic_compatible")
+
+    async def test_chat_completions_routes_to_anthropic_compatible_channel_and_returns_openai_shape(self):
+        self._configure_anthropic_compatible_channel()
+        registry._initialized = False
+        registry.init_from_settings()
+        fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_chat_anthropic")
+        client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "msg_relay_chat",
+                        "type": "message",
+                        "role": "assistant",
+                        "model": "claude-fable-5",
+                        "content": [
+                            {"type": "text", "text": "Using tool."},
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_1",
+                                "name": "Read",
+                                "input": {"path": "README.md"},
+                            },
+                        ],
+                        "stop_reason": "tool_use",
+                        "stop_sequence": None,
+                        "usage": {
+                            "input_tokens": 11,
+                            "output_tokens": 5,
+                            "cache_read_input_tokens": 3,
+                            "cache_creation": {"ephemeral_5m_input_tokens": 2},
+                        },
+                    }
+                )
+            ]
+        )
+
+        with (
+            patch.object(openai_module, "authorize_workbench_request", AsyncMock(return_value=fake_user)),
+            patch.object(proxy_module, "authorize_workbench_request", AsyncMock(return_value=fake_user)),
+            patch.object(openai_module, "get_http_client", AsyncMock(return_value=client)),
+            patch.object(openai_module.usage_buffer, "add", AsyncMock()) as add_usage,
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/chat/completions",
+                    headers={"authorization": "Bearer sk_test"},
+                    json={
+                        "model": "claude-opus-4-7",
+                        "messages": [
+                            {"role": "system", "content": "You are concise."},
+                            {"role": "user", "content": "Read the README"},
+                        ],
+                        "max_tokens": 64,
+                        "temperature": 0.2,
+                        "tools": [
+                            {
+                                "type": "function",
+                                "function": {
+                                    "name": "Read",
+                                    "description": "Read a file",
+                                    "parameters": {
+                                        "type": "object",
+                                        "properties": {"path": {"type": "string"}},
+                                        "required": ["path"],
+                                    },
+                                },
+                            }
+                        ],
+                        "tool_choice": {"type": "function", "function": {"name": "Read"}},
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertEqual(body["object"], "chat.completion")
+        self.assertEqual(body["model"], "claude-opus-4-7")
+        message = body["choices"][0]["message"]
+        self.assertEqual(message["content"], "Using tool.")
+        self.assertEqual(message["tool_calls"][0]["id"], "toolu_1")
+        self.assertEqual(message["tool_calls"][0]["function"]["name"], "Read")
+        self.assertEqual(message["tool_calls"][0]["function"]["arguments"], '{"path":"README.md"}')
+        self.assertEqual(body["choices"][0]["finish_reason"], "tool_calls")
+        self.assertEqual(body["usage"]["prompt_tokens"], 16)
+        self.assertEqual(body["usage"]["total_tokens"], 21)
+        self.assertEqual(body["usage"]["prompt_tokens_details"]["cached_tokens"], 3)
+        upstream_payload = client.calls[0]["json"]
+        self.assertEqual(client.calls[0]["url"], "https://claude-relay.example/v1/messages")
+        self.assertEqual(upstream_payload["model"], "claude-fable-5")
+        self.assertEqual(upstream_payload["system"], "You are concise.")
+        self.assertEqual(upstream_payload["messages"], [{"role": "user", "content": "Read the README"}])
+        self.assertEqual(upstream_payload["tools"][0]["input_schema"]["properties"]["path"]["type"], "string")
+        self.assertEqual(upstream_payload["tool_choice"], {"type": "tool", "name": "Read"})
+        self.assertEqual(client.calls[0]["headers"]["x-api-key"], "relay-key")
+        add_usage.assert_awaited_once()
+        self.assertEqual(add_usage.await_args.kwargs["channel_type"], "anthropic_compatible")
+
+    async def test_chat_completions_stream_translates_anthropic_compatible_sse(self):
+        self._configure_anthropic_compatible_channel()
+        registry._initialized = False
+        registry.init_from_settings()
+        fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_chat_anthropic_stream")
+        stream_client = _RecordingStreamClient(
+            [
+                _FakeAnthropicEventStreamResponse(
+                    [
+                        'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_stream_relay","type":"message","role":"assistant","model":"claude-fable-5","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":7,"output_tokens":0}}}',
+                        'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
+                        'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"OK"}}',
+                        'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}',
+                        'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"input_tokens":7,"output_tokens":2}}',
+                        'event: message_stop\ndata: {"type":"message_stop"}',
+                    ]
+                )
+            ]
+        )
+
+        with (
+            patch.object(openai_module, "authorize_workbench_request", AsyncMock(return_value=fake_user)),
+            patch.object(proxy_module, "authorize_workbench_request", AsyncMock(return_value=fake_user)),
+            patch.object(openai_module, "get_stream_client", AsyncMock(return_value=stream_client)),
+            patch.object(openai_module.usage_buffer, "add", AsyncMock()) as add_usage,
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/chat/completions",
+                    headers={"authorization": "Bearer sk_test"},
+                    json={
+                        "model": "claude-opus-4-7",
+                        "messages": [{"role": "user", "content": "Stream OK"}],
+                        "max_tokens": 64,
+                        "stream": True,
+                        "stream_options": {"include_usage": True},
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.text
+        self.assertIn('"object": "chat.completion.chunk"', body)
+        self.assertIn('"model": "claude-opus-4-7"', body)
+        self.assertIn('"content": "OK"', body)
+        self.assertIn('"finish_reason": "stop"', body)
+        self.assertIn('"usage": {"prompt_tokens": 7, "completion_tokens": 2, "total_tokens": 9}', body)
+        self.assertIn("data: [DONE]", body)
+        self.assertEqual(stream_client.calls[0]["url"], "https://claude-relay.example/v1/messages")
+        self.assertEqual(stream_client.calls[0]["json"]["model"], "claude-fable-5")
+        self.assertTrue(stream_client.calls[0]["json"]["stream"])
+        self.assertEqual(stream_client.calls[0]["headers"]["x-api-key"], "relay-key")
+        add_usage.assert_awaited_once()
+        usage_kwargs = add_usage.await_args.kwargs
+        self.assertEqual(usage_kwargs["input_tokens"], 7)
+        self.assertEqual(usage_kwargs["output_tokens"], 2)
+        self.assertEqual(usage_kwargs["channel_type"], "anthropic_compatible")
 
     async def test_claude_alias_user_override_preserves_public_alias_and_applies_cache_billing_override(self):
         fake_user = SimpleNamespace(

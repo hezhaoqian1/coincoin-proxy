@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 from app.channel_router import ChannelRouter, ModelChannelRouteSnapshot, ProviderChannelSnapshot, channel_router
 from app.config import settings
-from app.router import registry
+from app.router import ModelCapabilityError, registry
 
 
 class ChannelRouterTests(unittest.TestCase):
@@ -180,6 +180,20 @@ class RegistryChannelRouteTests(unittest.TestCase):
                         "price_output_per_million": 200,
                     },
                     {
+                        "id": "claude-fable-5",
+                        "owned_by": "anthropic",
+                        "provider_name": "Anthropic",
+                        "provider_model": "claude-fable-5",
+                        "capabilities": ["chat/completions"],
+                        "routing_mode": "route_only",
+                        "delivery_lane": "route_only",
+                        "upstream_model": "claude-fable-5",
+                        "auth_style": "x-api-key",
+                        "price_input_per_million": 1000,
+                        "price_output_per_million": 5000,
+                        "metadata": {"provider_protocol": "anthropic_messages"},
+                    },
+                    {
                         "id": "seedance-v2-720p",
                         "owned_by": "bytedance",
                         "provider_name": "Seedance",
@@ -271,6 +285,46 @@ class RegistryChannelRouteTests(unittest.TestCase):
         self.assertEqual(resolved.backend.model_id, "catalog-model")
         self.assertEqual(resolved.backend.upstream_url, "https://catalog.example/v1")
         self.assertEqual(resolved.route_reason, "catalog:demo-model:upstream_direct")
+
+    def test_route_only_model_requires_active_provider_route(self) -> None:
+        with self.assertRaises(ModelCapabilityError):
+            registry.resolve_public_model("claude-fable-5", "chat/completions")
+
+    def test_route_only_model_resolves_through_anthropic_channel_route(self) -> None:
+        channel_router.set_snapshot(
+            [
+                ProviderChannelSnapshot(
+                    channel_id="ch_anthropic",
+                    provider_platform="claude_relay",
+                    channel_type="anthropic_compatible",
+                    base_url="https://claude-relay.example",
+                    api_key="relay-key",
+                    auth_style="x-api-key",
+                    priority=0,
+                    capabilities=("chat/completions",),
+                )
+            ],
+            [
+                ModelChannelRouteSnapshot(
+                    route_id="mcr_fable",
+                    public_model_id="claude-fable-5",
+                    endpoint="chat/completions",
+                    channel_id="ch_anthropic",
+                    upstream_model="claude-fable-5",
+                    transform_profile="anthropic_messages",
+                )
+            ],
+        )
+
+        resolved = registry.resolve_public_model("claude-fable-5", "chat/completions")
+
+        self.assertEqual(resolved.public_model.delivery_lane, "route_only")
+        self.assertEqual(resolved.backend.channel_id, "ch_anthropic")
+        self.assertEqual(resolved.backend.channel_type, "anthropic_compatible")
+        self.assertEqual(resolved.backend.transform_profile, "anthropic_messages")
+        self.assertEqual(resolved.backend.model_id, "claude-fable-5")
+        self.assertEqual(resolved.backend.auth_style, "x-api-key")
+        self.assertEqual(resolved.route_reason, "catalog:claude-fable-5:route_only:channel:ch_anthropic")
 
     def test_registry_uses_db_channel_route_for_video_endpoint(self) -> None:
         channel_router.set_snapshot(
