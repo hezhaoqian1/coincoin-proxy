@@ -151,12 +151,13 @@ class Settings(BaseSettings):
     email_max_attempts: int = 5
 
     # Referral system
+    referral_rewards_enabled: bool = False  # Emergency default: no referral credits until abuse controls are in place.
     referral_commission_rate: float = 0.20  # 20% of credited API balance
     referral_max_rewards_per_user: int = 0  # 0 = no per-referred-user order count cap
     referral_reward_cap_cents: int = 0  # 0 = no cumulative cap per referred user
-    referral_signup_bonus_cents: int = 1000  # $10 for the invited user after verified registration
-    referral_signup_referrer_bonus_cents: int = 500  # $5 for the referrer after verified registration
-    referral_first_usage_referrer_bonus_cents: int = 500  # $5 after the invited user first calls the API
+    referral_signup_bonus_cents: int = 0  # Disabled by default; enable only with abuse controls.
+    referral_signup_referrer_bonus_cents: int = 0  # Disabled by default; enable only with abuse controls.
+    referral_first_usage_referrer_bonus_cents: int = 0  # Disabled by default; enable only with abuse controls.
     referral_new_user_bonus_cents: int = 2000  # $20 for the invited user after first purchase
 
     # Station center

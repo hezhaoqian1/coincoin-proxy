@@ -2,6 +2,7 @@
 Shared referral reward logic.
 
 Current product rules:
+- referral credits are disabled by default and must be explicitly enabled
 - invited user gets $10 after verified registration
 - referrer gets $5 after the invited user registers
 - referrer gets another $5 after the invited user first calls the API
@@ -95,6 +96,9 @@ async def _credit_reward(
     order_no: str = "",
     order_amount_cents: int = 0,
 ) -> int:
+    if not settings.referral_rewards_enabled:
+        return 0
+
     reward_cents = int(reward_cents or 0)
     if reward_cents <= 0:
         return 0
