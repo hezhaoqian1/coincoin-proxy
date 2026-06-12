@@ -2642,6 +2642,130 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(upstream_client.calls[0]["json"]["tools"][0]["name"], "read_file")
         add_usage.assert_awaited_once()
 
+    async def test_responses_image_generation_tool_uses_image_route_and_bills_images(self) -> None:
+        channel_router.set_snapshot(
+            [
+                ProviderChannelSnapshot(
+                    channel_id="ch_image_primary",
+                    name="Image Primary",
+                    base_url="https://primary-image.example/v1",
+                    api_key="primary-key",
+                    auth_style="bearer",
+                    channel_type="openai_compatible",
+                    provider_platform="polaris",
+                    provider_account_fingerprint="fp_primary",
+                ),
+            ],
+            [
+                ModelChannelRouteSnapshot(
+                    route_id="rt_image_primary",
+                    public_model_id="gpt-image-2",
+                    endpoint="images/generations",
+                    channel_id="ch_image_primary",
+                    upstream_model="gpt-image-2-upstream",
+                    priority_override=0,
+                ),
+            ],
+            version=3,
+        )
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "created": 1774449999,
+                        "data": [{"b64_json": "from-image-route", "revised_prompt": "blue coin mascot"}],
+                    },
+                    headers={"x-request-id": "req_image_tool"},
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(proxy_module.usage_buffer, "add", AsyncMock()) as add_usage, patch.object(
+                proxy_module,
+                "record_media_artifacts_best_effort",
+                AsyncMock(),
+            ) as record_media:
+                response = await client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={
+                        "model": "gpt-5.5",
+                        "input": "Draw a blue coin mascot",
+                        "tools": [{"type": "image_generation", "size": "1024x1024", "quality": "low"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(len(upstream_client.calls), 1)
+        self.assertEqual(upstream_client.calls[0]["url"], "https://primary-image.example/v1/images/generations")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-image-2-upstream")
+        self.assertEqual(upstream_client.calls[0]["json"]["prompt"], "Draw a blue coin mascot")
+        self.assertEqual(upstream_client.calls[0]["json"]["quality"], "low")
+        payload = response.json()
+        self.assertEqual(payload["model"], "gpt-5.5")
+        self.assertEqual(payload["output"][0]["type"], "image_generation_call")
+        self.assertEqual(payload["output"][0]["result"], "from-image-route")
+        add_usage.assert_awaited_once()
+        usage_kwargs = add_usage.await_args.kwargs
+        self.assertEqual(usage_kwargs["endpoint"], "responses:image_generation")
+        self.assertEqual(usage_kwargs["usage_unit_type"], "images")
+        self.assertEqual(usage_kwargs["usage_unit_count"], 1)
+        self.assertEqual(usage_kwargs["model"], "gpt-image-2")
+        self.assertEqual(usage_kwargs["customer_model_alias"], "gpt-image-2")
+        self.assertEqual(usage_kwargs["provider_model"], "gpt-image-2-upstream")
+        self.assertEqual(usage_kwargs["channel_id"], "ch_image_primary")
+        self.assertEqual(usage_kwargs["upstream_request_id"], "req_image_tool")
+        record_media.assert_awaited_once()
+        self.assertEqual(record_media.await_args.kwargs["endpoint"], "responses:image_generation")
+
+    async def test_responses_image_generation_tool_stream_returns_responses_sse(self) -> None:
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "created": 1774449999,
+                        "data": [{"url": "https://cdn.example/image.png"}],
+                    }
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(proxy_module.usage_buffer, "add", AsyncMock()), patch.object(
+                proxy_module,
+                "record_media_artifacts_best_effort",
+                AsyncMock(),
+            ):
+                response = await client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={
+                        "model": "gpt-5.5",
+                        "input": [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Draw it"}]}],
+                        "stream": True,
+                        "tools": [{"type": "image_generation"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn("event: response.created", response.text)
+        self.assertIn("event: response.output_item.added", response.text)
+        self.assertIn("event: response.completed", response.text)
+        self.assertIn("https://cdn.example/image.png", response.text)
+        self.assertEqual(upstream_client.calls[0]["url"], "https://cliproxy.example/v1/images/generations")
+        self.assertEqual(upstream_client.calls[0]["json"]["prompt"], "Draw it")
+
     async def test_responses_gemini_cpa_lane_uses_chat_endpoint_and_returns_responses_shape(self) -> None:
         upstream_client = _RecordingClient(
             [

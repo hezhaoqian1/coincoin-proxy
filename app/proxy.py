@@ -482,6 +482,108 @@ def _responses_tools_to_chat_tools(raw_tools) -> Optional[List[Dict[str, Any]]]:
     return tools or None
 
 
+def _responses_image_generation_tool(raw_tools) -> Optional[Dict[str, Any]]:
+    if not isinstance(raw_tools, list):
+        return None
+    for tool in raw_tools:
+        if not isinstance(tool, dict):
+            continue
+        tool_type = str(tool.get("type") or "").strip()
+        if tool_type in {"image_generation", "image_generation_call"}:
+            return tool
+    return None
+
+
+def _responses_input_text_fragments(value: Any) -> List[str]:
+    fragments: List[str] = []
+    if value is None:
+        return fragments
+    if isinstance(value, str):
+        text = value.strip()
+        return [text] if text else fragments
+    if isinstance(value, dict):
+        item_type = str(value.get("type") or "").strip()
+        if item_type in {"input_text", "text", "output_text"} and isinstance(value.get("text"), str):
+            text = value["text"].strip()
+            if text:
+                fragments.append(text)
+        elif isinstance(value.get("content"), (str, list, dict)):
+            fragments.extend(_responses_input_text_fragments(value.get("content")))
+        elif isinstance(value.get("text"), str):
+            text = value["text"].strip()
+            if text:
+                fragments.append(text)
+        return fragments
+    if isinstance(value, list):
+        for item in value:
+            fragments.extend(_responses_input_text_fragments(item))
+    return fragments
+
+
+def _responses_image_generation_payload(payload: Dict[str, Any], image_tool: Dict[str, Any]) -> Dict[str, Any]:
+    text_parts: List[str] = []
+    instructions = payload.get("instructions")
+    if isinstance(instructions, str) and instructions.strip():
+        text_parts.append(instructions.strip())
+    text_parts.extend(_responses_input_text_fragments(payload.get("input")))
+    prompt = "\n\n".join(part for part in text_parts if part).strip()
+    if not prompt:
+        prompt = " "
+
+    image_payload: Dict[str, Any] = {"prompt": prompt}
+    requested_image_model = str(
+        image_tool.get("model")
+        or payload.get("image_model")
+        or payload.get("image_generation_model")
+        or ""
+    ).strip()
+    if requested_image_model:
+        image_payload["model"] = requested_image_model
+    for key in ("n", "size", "quality", "background", "moderation", "output_compression", "output_format", "response_format", "style"):
+        if key in image_tool:
+            image_payload[key] = image_tool[key]
+        elif key in payload:
+            image_payload[key] = payload[key]
+    image_payload.setdefault("n", 1)
+    image_payload.setdefault("size", "1024x1024")
+    return image_payload
+
+
+def _responses_payload_from_image_generation(
+    image_data: Dict[str, Any],
+    *,
+    display_model: str,
+    status: str = "completed",
+) -> Dict[str, Any]:
+    output: List[Dict[str, Any]] = []
+    data_items = image_data.get("data")
+    if isinstance(data_items, list):
+        for item in data_items:
+            if not isinstance(item, dict):
+                continue
+            result = item.get("b64_json") or item.get("url")
+            image_item: Dict[str, Any] = {
+                "id": f"ig_{secrets.token_hex(20)}",
+                "type": "image_generation_call",
+                "status": "completed",
+            }
+            if result:
+                image_item["result"] = result
+            if item.get("revised_prompt"):
+                image_item["revised_prompt"] = item["revised_prompt"]
+            output.append(image_item)
+    return {
+        "id": f"resp_{secrets.token_hex(20)}",
+        "object": "response",
+        "created_at": int(image_data.get("created") or time.time()),
+        "status": status,
+        "model": display_model,
+        "output": output,
+        "output_text": "",
+        "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+    }
+
+
 def _safe_int(value: Any, default: int = 0) -> int:
     if value in (None, ""):
         return default
@@ -1614,6 +1716,93 @@ def _openai_error_response(
     )
 
 
+async def _proxy_responses_image_generation_tool(
+    payload: Dict[str, Any],
+    image_tool: Dict[str, Any],
+    user,
+    db: AsyncSession,
+):
+    requested_model = str(payload.get("model") or "").strip()
+    display_model = requested_model or getattr(model_registry, "default_text_model_id", "") or settings.fixed_model
+    if requested_model:
+        try:
+            station_model = await resolve_station_model_for_user(db, user, requested_model, "responses")
+            resolved_model = station_model.resolved_model if station_model else model_registry.resolve_public_model(
+                requested_model,
+                "responses",
+            )
+            resolved_model, station_model, *_ = apply_user_overrides_to_resolution(user, resolved_model, station_model)
+            display_model = station_model.display_model if station_model else resolved_model.public_model.public_id
+        except Exception:
+            # The image tool is owned by the image route. Keep the client-facing
+            # model string stable even if the text model is not image-capable.
+            display_model = requested_model
+
+    image_payload = _responses_image_generation_payload(payload, image_tool)
+    image_response = await _proxy_images_generations_payload(
+        image_payload,
+        user,
+        db,
+        usage_endpoint="responses:image_generation",
+    )
+
+    if not isinstance(image_response, JSONResponse):
+        return image_response
+
+    try:
+        body = json.loads(image_response.body.decode("utf-8"))
+    except Exception:
+        return image_response
+
+    if image_response.status_code >= 400 or not isinstance(body, dict):
+        return image_response
+
+    response_payload = _responses_payload_from_image_generation(body, display_model=display_model)
+    headers = filter_headers(dict(image_response.headers))
+    headers.pop("content-length", None)
+    if bool(payload.get("stream")):
+        async def iter_events():
+            yield _responses_sse_line(
+                "response.created",
+                {
+                    "type": "response.created",
+                    "response": {
+                        "id": response_payload["id"],
+                        "object": "response",
+                        "created_at": response_payload["created_at"],
+                        "status": "in_progress",
+                        "model": display_model,
+                        "output": [],
+                    },
+                },
+            )
+            for item in response_payload.get("output") or []:
+                yield _responses_sse_line(
+                    "response.output_item.added",
+                    {
+                        "type": "response.output_item.added",
+                        "response_id": response_payload["id"],
+                        "item": item,
+                    },
+                )
+            yield _responses_sse_line(
+                "response.completed",
+                {"type": "response.completed", "response": response_payload},
+            )
+            yield "data: [DONE]\n\n"
+
+        headers.setdefault("cache-control", "no-cache")
+        headers.setdefault("x-accel-buffering", "no")
+        return StreamingResponse(
+            iter_events(),
+            status_code=image_response.status_code,
+            headers=headers,
+            media_type="text/event-stream",
+        )
+
+    return JSONResponse(content=response_payload, status_code=image_response.status_code, headers=headers)
+
+
 def _notify_fallback_exhausted(
     *,
     endpoint: str,
@@ -1961,6 +2150,10 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="payload must be a json object")
 
     requested_model = str(payload.get("model") or "").strip()
+    image_generation_tool = _responses_image_generation_tool(payload.get("tools"))
+    if image_generation_tool is not None:
+        return await _proxy_responses_image_generation_tool(payload, image_generation_tool, user, db)
+
     messages_for_route, tools_for_route = extract_messages_for_routing_from_responses_payload(payload)
     try:
         station_model = await resolve_station_model_for_user(
@@ -3160,6 +3353,16 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
     if not isinstance(payload, dict):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="payload must be a json object")
 
+    return await _proxy_images_generations_payload(payload, user, db)
+
+
+async def _proxy_images_generations_payload(
+    payload: Dict[str, Any],
+    user,
+    db: AsyncSession,
+    *,
+    usage_endpoint: str = "images/generations",
+):
     requested_model = str(payload.get("model") or "").strip()
     try:
         station_model = await resolve_station_model_for_user(db, user, requested_model, "images/generations")
@@ -3307,7 +3510,7 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
                     user.id,
                     api_key_id=getattr(user, _KEY_ID_ATTR, ""),
                     requests=1,
-                    endpoint="images/generations",
+                    endpoint=usage_endpoint,
                     model=display_model,
                     customer_model_alias=display_model,
                     provider_model=used_cfg.model_id or _effective_provider_model,
@@ -3440,7 +3643,7 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
             user.id,
             api_key_id=getattr(user, _KEY_ID_ATTR, ""),
             requests=1,
-            endpoint="images/generations",
+            endpoint=usage_endpoint,
             model=display_model,
             customer_model_alias=display_model,
             provider_model=(
@@ -3469,7 +3672,7 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
             user_id=user.id,
             api_key_id=getattr(user, _KEY_ID_ATTR, "") or None,
             media_type="image",
-            endpoint="images/generations",
+            endpoint=usage_endpoint,
             model=display_model,
             provider_model=(
                 cpa_channel.provider_model
@@ -3494,7 +3697,7 @@ async def proxy_images_generations(request: Request, db: AsyncSession = Depends(
             user.id,
             api_key_id=getattr(user, _KEY_ID_ATTR, ""),
             requests=1,
-            endpoint="images/generations",
+            endpoint=usage_endpoint,
             model=display_model,
             customer_model_alias=display_model,
             provider_model=(
