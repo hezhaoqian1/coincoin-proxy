@@ -30,6 +30,7 @@ from .proxy import (
     _chat_completion_chunk_line,
     _normalize_openai_base_url, _responses_tools_to_chat_tools,
     _translate_chat_response_to_responses,
+    _sanitize_upstream_error_payload, _sanitize_upstream_error_text, _upstream_error_response_content,
     authenticate_user, authorize_request, authorize_workbench_request, extract_upstream_request_id,
     filter_headers, get_http_client, get_stream_client, proxy_images_edits, proxy_images_generations,
     proxy_responses, responses_health, _KEY_ID_ATTR,
@@ -1498,11 +1499,15 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
 
         if isinstance(data, dict) and isinstance(data.get("error"), dict):
             _record_channel_failure(used_cfg, status_code=upstream.status_code)
-            return JSONResponse(content={"error": data["error"]}, status_code=upstream.status_code if upstream.status_code >= 400 else 502, headers=response_headers)
+            return JSONResponse(
+                content=_upstream_error_response_content(data, status_code=upstream.status_code if upstream.status_code >= 400 else 502),
+                status_code=upstream.status_code if upstream.status_code >= 400 else 502,
+                headers=response_headers,
+            )
         if upstream.status_code >= 400:
             _record_channel_failure(used_cfg, status_code=upstream.status_code)
             return JSONResponse(
-                content={"error": {"message": str(data)[:500] if data else "upstream error", "type": "upstream_error", "code": str(upstream.status_code)}},
+                content=_upstream_error_response_content(data, status_code=upstream.status_code),
                 status_code=upstream.status_code,
                 headers=response_headers,
             )
@@ -1834,11 +1839,15 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                         try:
                             data = json.loads(body.decode("utf-8"))
                             if "error" in data:
-                                return JSONResponse(content={"error": data["error"]}, status_code=upstream.status_code, headers=response_headers)
+                                return JSONResponse(
+                                    content=_upstream_error_response_content(data, status_code=upstream.status_code),
+                                    status_code=upstream.status_code,
+                                    headers=response_headers,
+                                )
                         except Exception:
                             pass
                     return JSONResponse(
-                        content={"error": {"message": body.decode("utf-8", errors="replace")[:500] or "upstream error", "type": "upstream_error", "code": str(upstream.status_code)}},
+                        content={"error": {"message": _sanitize_upstream_error_text(body.decode("utf-8", errors="replace") or "upstream error"), "type": "upstream_error", "code": str(upstream.status_code)}},
                         status_code=upstream.status_code, headers=response_headers,
                     )
                 if "application/json" in content_type:
@@ -2287,7 +2296,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
             upstream_request_id=upstream_request_id,
         )
         return JSONResponse(
-            content={"error": data["error"]},
+            content=_upstream_error_response_content(data, status_code=upstream.status_code if upstream.status_code >= 400 else 502),
             status_code=upstream.status_code if upstream.status_code >= 400 else 502,
             headers=response_headers,
         )
@@ -2335,9 +2344,13 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
 
     if upstream.status_code >= 400:
         if isinstance(data, dict) and "error" in data:
-            return JSONResponse(content={"error": data["error"]}, status_code=upstream.status_code, headers=response_headers)
+            return JSONResponse(
+                content=_upstream_error_response_content(data, status_code=upstream.status_code),
+                status_code=upstream.status_code,
+                headers=response_headers,
+            )
         return JSONResponse(
-            content={"error": {"message": str(data)[:500] if data else "upstream error", "type": "upstream_error", "code": str(upstream.status_code)}},
+            content=_upstream_error_response_content(data, status_code=upstream.status_code),
             status_code=upstream.status_code, headers=response_headers,
         )
 
@@ -2415,7 +2428,7 @@ async def _proxy_gemini_cpa_chat_completions(
     if isinstance(data, dict) and isinstance(data.get("error"), dict):
         _record_channel_failure(used_cfg, status_code=upstream.status_code)
         return JSONResponse(
-            content={"error": data["error"]},
+            content=_upstream_error_response_content(data, status_code=upstream.status_code if upstream.status_code >= 400 else 502),
             status_code=upstream.status_code if upstream.status_code >= 400 else 502,
             headers=response_headers,
         )
@@ -2457,9 +2470,13 @@ async def _proxy_gemini_cpa_chat_completions(
     if upstream.status_code >= 400:
         _record_channel_failure(used_cfg, status_code=upstream.status_code)
         if isinstance(data, dict) and "error" in data:
-            return JSONResponse(content={"error": data["error"]}, status_code=upstream.status_code, headers=response_headers)
+            return JSONResponse(
+                content=_upstream_error_response_content(data, status_code=upstream.status_code),
+                status_code=upstream.status_code,
+                headers=response_headers,
+            )
         return JSONResponse(
-            content={"error": {"message": str(data)[:500] if data else "upstream error", "type": "upstream_error", "code": str(upstream.status_code)}},
+            content=_upstream_error_response_content(data, status_code=upstream.status_code),
             status_code=upstream.status_code,
             headers=response_headers,
         )

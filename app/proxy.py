@@ -3,6 +3,7 @@ import base64
 import ipaddress
 import json
 import logging
+import re
 import secrets
 import time
 from urllib.parse import urlsplit, urlunsplit
@@ -70,6 +71,14 @@ CHANNEL_FALLBACK_RETRY_ERRORS = frozenset({
     "upstream_unexpected_content_type",
     "upstream_empty_response",
 })
+_UPSTREAM_URL_RE = re.compile(r"https?://[^\s\"'<>),，。]+", re.IGNORECASE)
+_UPSTREAM_HOST_RE = re.compile(
+    r"\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+"
+    r"(?:com|net|org|io|ai|app|dev|cn|cc|cd|pro|top|xyz|bond|love|gd)"
+    r"(?::\d+)?(?:/[^\s\"'<>),，。]*)?",
+    re.IGNORECASE,
+)
+_UPSTREAM_KEY_RE = re.compile(r"\bsk[-_][A-Za-z0-9_\-]{10,}\b")
 _ENCRYPTED_PREFIXES = ("gAAA", "gBAA")
 _ID_STRIP_PREFIXES = ("resp_", "msg_", "fc_", "fco_", "rs_")
 _CONTENT_KEYS = frozenset({
@@ -492,6 +501,44 @@ def _responses_image_generation_tool(raw_tools) -> Optional[Dict[str, Any]]:
         if tool_type in {"image_generation", "image_generation_call"}:
             return tool
     return None
+
+
+def _tool_choice_requires_image_generation(tool_choice: Any) -> bool:
+    if isinstance(tool_choice, str):
+        return tool_choice.strip() in {"image_generation", "image_generation_call"}
+    if not isinstance(tool_choice, dict):
+        return False
+    tool_type = str(tool_choice.get("type") or "").strip()
+    if tool_type in {"image_generation", "image_generation_call"}:
+        return True
+    function = tool_choice.get("function") if isinstance(tool_choice.get("function"), dict) else {}
+    function_name = str(function.get("name") or tool_choice.get("name") or "").strip()
+    return function_name in {"image_generation", "image_generation_call"}
+
+
+def _responses_should_bridge_image_generation(payload: Dict[str, Any], image_tool: Optional[Dict[str, Any]]) -> bool:
+    if image_tool is None:
+        return False
+    requested_model = str(payload.get("model") or "").strip()
+    model_registry.ensure_initialized()
+    if requested_model and requested_model == getattr(model_registry, "default_image_model_id", ""):
+        return True
+    if _tool_choice_requires_image_generation(payload.get("tool_choice")):
+        return True
+    if image_tool.get("force") is True or image_tool.get("required") is True:
+        return True
+    return False
+
+
+def _drop_responses_image_generation_tools(raw_tools: Any) -> Optional[List[Dict[str, Any]]]:
+    if not isinstance(raw_tools, list):
+        return raw_tools
+    kept: List[Dict[str, Any]] = []
+    for tool in raw_tools:
+        if isinstance(tool, dict) and str(tool.get("type") or "").strip() in {"image_generation", "image_generation_call"}:
+            continue
+        kept.append(tool)
+    return kept or None
 
 
 def _responses_input_text_fragments(value: Any) -> List[str]:
@@ -1285,6 +1332,43 @@ def _record_channel_failure(cfg, *, status_code: int | None = None, error_code: 
         return
     if status_code is None or should_record_channel_failure(int(status_code or 0)):
         channel_router.record_failure(channel_id, error_code=error_code or str(status_code or "request_error"))
+
+
+def _sanitize_upstream_error_text(value: str, *, max_length: int = 500) -> str:
+    text = str(value or "")
+    text = _UPSTREAM_KEY_RE.sub("[redacted]", text)
+    text = _UPSTREAM_URL_RE.sub("[upstream]", text)
+    text = _UPSTREAM_HOST_RE.sub("[upstream]", text)
+    if len(text) > max_length:
+        text = text[:max_length]
+    return text
+
+
+def _sanitize_upstream_error_payload(value: Any) -> Any:
+    if isinstance(value, dict):
+        sanitized: Dict[str, Any] = {}
+        for key, item in value.items():
+            key_text = str(key)
+            lowered = key_text.lower()
+            if lowered in {"url", "uri", "base_url", "upstream_url", "endpoint", "host", "hostname"}:
+                sanitized[key] = "[upstream]"
+            elif "key" in lowered or "token" in lowered or "secret" in lowered:
+                sanitized[key] = "[redacted]"
+            else:
+                sanitized[key] = _sanitize_upstream_error_payload(item)
+        return sanitized
+    if isinstance(value, list):
+        return [_sanitize_upstream_error_payload(item) for item in value]
+    if isinstance(value, str):
+        return _sanitize_upstream_error_text(value)
+    return value
+
+
+def _upstream_error_response_content(data: Any, *, status_code: int, default_message: str = "upstream error") -> Dict[str, Any]:
+    if isinstance(data, dict) and isinstance(data.get("error"), dict):
+        return {"error": _sanitize_upstream_error_payload(data["error"])}
+    message = _sanitize_upstream_error_text(str(data) if data else default_message)
+    return {"error": {"message": message, "type": "upstream_error", "code": str(status_code)}}
 
 
 def _channel_fallback_config(previous_cfg, fallback_cfg, *, lock_model_selection: bool = False):
@@ -2151,8 +2235,12 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
 
     requested_model = str(payload.get("model") or "").strip()
     image_generation_tool = _responses_image_generation_tool(payload.get("tools"))
-    if image_generation_tool is not None:
+    if _responses_should_bridge_image_generation(payload, image_generation_tool):
         return await _proxy_responses_image_generation_tool(payload, image_generation_tool, user, db)
+    if image_generation_tool is not None:
+        payload["tools"] = _drop_responses_image_generation_tools(payload.get("tools"))
+        if payload["tools"] is None:
+            payload.pop("tools", None)
 
     messages_for_route, tools_for_route = extract_messages_for_routing_from_responses_payload(payload)
     try:
@@ -2460,14 +2548,14 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         if isinstance(data, dict) and isinstance(data.get("error"), dict):
             _record_channel_failure(used_cfg, status_code=upstream.status_code, error_code=str(upstream.status_code))
             return JSONResponse(
-                content={"error": data["error"]},
+                content=_upstream_error_response_content(data, status_code=upstream.status_code if upstream.status_code >= 400 else 502),
                 status_code=upstream.status_code if upstream.status_code >= 400 else 502,
                 headers=response_headers,
             )
         if upstream.status_code >= 400:
             _record_channel_failure(used_cfg, status_code=upstream.status_code)
             return JSONResponse(
-                content={"error": {"message": str(data)[:500] if data else "upstream error", "type": "upstream_error", "code": str(upstream.status_code)}},
+                content=_upstream_error_response_content(data, status_code=upstream.status_code),
                 status_code=upstream.status_code,
                 headers=response_headers,
             )
@@ -2888,7 +2976,11 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                             data["model"] = display_model
                     except Exception:
                         data = {"detail": "upstream returned non-stream response"}
+                    if upstream.status_code >= 400:
+                        data = _sanitize_upstream_error_payload(data)
                     return JSONResponse(content=data, status_code=upstream.status_code, headers=response_headers)
+                if upstream.status_code >= 400:
+                    body = _sanitize_upstream_error_text(body.decode("utf-8", errors="replace")).encode("utf-8")
                 return Response(content=body, status_code=upstream.status_code, headers=response_headers, media_type=content_type)
 
         stream_t0 = time.monotonic()
@@ -3267,7 +3359,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             upstream_request_id=upstream_request_id,
         )
         return JSONResponse(
-            content={"error": data["error"]},
+            content=_upstream_error_response_content(data, status_code=upstream.status_code if upstream.status_code >= 400 else 502),
             status_code=upstream.status_code if upstream.status_code >= 400 else 502,
             headers=response_headers,
         )
@@ -3330,6 +3422,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 reason=str((data.get("error") or {}).get("code") if isinstance(data.get("error"), dict) else upstream.status_code),
                 upstream_request_id=upstream_request_id,
             )
+            data = _sanitize_upstream_error_payload(data)
         return JSONResponse(content=data, status_code=upstream.status_code, headers=response_headers)
 
     if upstream.status_code >= 400:
@@ -3338,6 +3431,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             reason=str(upstream.status_code or "upstream_error"),
             upstream_request_id=upstream_request_id,
         )
+        data = _sanitize_upstream_error_text(str(data))
     return Response(content=str(data), status_code=upstream.status_code, headers=response_headers, media_type=content_type)
 
 
@@ -3592,6 +3686,7 @@ async def _proxy_images_generations_payload(
                     headers=response_headers,
                 )
         logger.error("image upstream error %s: %s", upstream.status_code, str(data)[:500])
+        data = _sanitize_upstream_error_payload(data)
         return JSONResponse(content=data, status_code=upstream.status_code, headers=response_headers)
 
     if not data_ready and "application/json" in content_type:
@@ -3724,8 +3819,12 @@ async def _proxy_images_generations_payload(
         )
 
     if isinstance(data, dict):
+        if upstream.status_code >= 400:
+            data = _sanitize_upstream_error_payload(data)
         return JSONResponse(content=data, status_code=upstream.status_code, headers=response_headers)
 
+    if upstream.status_code >= 400:
+        data = _sanitize_upstream_error_text(str(data))
     return Response(content=str(data), status_code=upstream.status_code, headers=response_headers, media_type=content_type)
 
 
@@ -4162,6 +4261,10 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
         logger.error("image edit upstream error %s: %s", upstream.status_code, str(data)[:500])
 
     if isinstance(data, dict):
+        if upstream.status_code >= 400:
+            data = _sanitize_upstream_error_payload(data)
         return JSONResponse(content=data, status_code=upstream.status_code, headers=response_headers)
 
+    if upstream.status_code >= 400:
+        data = _sanitize_upstream_error_text(str(data))
     return Response(content=str(data), status_code=upstream.status_code, headers=response_headers, media_type=content_type)

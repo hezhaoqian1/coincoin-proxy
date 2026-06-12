@@ -1263,6 +1263,46 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(usage_kwargs["fallback_from_channel_id"], "ch_test_primary")
         self.assertEqual(usage_kwargs["route_attempt"], 1)
 
+    async def test_responses_upstream_error_does_not_leak_provider_url_or_key(self) -> None:
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "error": {
+                            "message": "unexpected status 403 Forbidden, url: https://secret-upstream.example/v1/responses, key sk-secret1234567890",
+                            "type": "upstream_error",
+                            "code": "403",
+                            "url": "https://secret-upstream.example/v1/responses",
+                        }
+                    },
+                    status_code=403,
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ):
+                response = await client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"model": "gpt-5.2-codex", "input": "hello"},
+                )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        body = response.text
+        self.assertNotIn("secret-upstream.example", body)
+        self.assertNotIn("https://secret-upstream.example", body)
+        self.assertNotIn("sk-secret1234567890", body)
+        payload = response.json()
+        self.assertEqual(payload["error"]["url"], "[upstream]")
+        self.assertIn("[upstream]", payload["error"]["message"])
+        self.assertIn("[redacted]", payload["error"]["message"])
+
     async def test_responses_stream_provider_channel_falls_back_to_next_channel_on_retryable_status(self) -> None:
         channel_router.set_snapshot(
             [
@@ -1974,6 +2014,49 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(usage_kwargs["route_reason"], "channel_fallback:upstream_unexpected_content_type")
         self.assertEqual(usage_kwargs["channel_id"], "ch_chat_html_backup")
         self.assertEqual(usage_kwargs["fallback_from_channel_id"], "ch_chat_html_primary")
+
+    async def test_chat_upstream_error_does_not_leak_provider_url_or_key(self) -> None:
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "error": {
+                            "message": "Provider authentication failed at https://secret-chat.example/v1/responses with key sk-chatsecret123456",
+                            "type": "server_error",
+                            "code": "401",
+                            "endpoint": "https://secret-chat.example/v1/responses",
+                        }
+                    },
+                    status_code=401,
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(openai_module, "authorize_workbench_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                openai_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ):
+                response = await client.post(
+                    "/v1/chat/completions",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={
+                        "model": "gpt-5.2-codex",
+                        "messages": [{"role": "user", "content": "hello"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 401, response.text)
+        body = response.text
+        self.assertNotIn("secret-chat.example", body)
+        self.assertNotIn("https://secret-chat.example", body)
+        self.assertNotIn("sk-chatsecret123456", body)
+        payload = response.json()
+        self.assertEqual(payload["error"]["endpoint"], "[upstream]")
+        self.assertIn("[upstream]", payload["error"]["message"])
+        self.assertIn("[redacted]", payload["error"]["message"])
 
     async def test_chat_provider_channel_can_fallback_across_multiple_routes(self) -> None:
         channel_router.set_snapshot(
@@ -2697,6 +2780,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                     json={
                         "model": "gpt-5.5",
                         "input": "Draw a blue coin mascot",
+                        "tool_choice": {"type": "image_generation"},
                         "tools": [{"type": "image_generation", "size": "1024x1024", "quality": "low"}],
                     },
                 )
@@ -2754,6 +2838,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                         "model": "gpt-5.5",
                         "input": [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Draw it"}]}],
                         "stream": True,
+                        "tool_choice": {"type": "image_generation"},
                         "tools": [{"type": "image_generation"}],
                     },
                 )
@@ -2765,6 +2850,50 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("https://cdn.example/image.png", response.text)
         self.assertEqual(upstream_client.calls[0]["url"], "https://cliproxy.example/v1/images/generations")
         self.assertEqual(upstream_client.calls[0]["json"]["prompt"], "Draw it")
+
+    async def test_responses_optional_image_generation_tool_stays_on_text_route(self) -> None:
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "resp_text_with_optional_image_tool",
+                        "status": "completed",
+                        "output": [
+                            {
+                                "type": "message",
+                                "role": "assistant",
+                                "content": [{"type": "output_text", "text": "今天是星期几"}],
+                            }
+                        ],
+                        "usage": {"input_tokens": 4, "output_tokens": 2, "total_tokens": 6},
+                    }
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(proxy_module.usage_buffer, "add", AsyncMock()) as add_usage:
+                response = await client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={
+                        "model": "gpt-5.5",
+                        "input": "今天星期几",
+                        "tools": [{"type": "image_generation"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(upstream_client.calls[0]["url"], "https://legacy.example/v1/responses")
+        self.assertNotIn("tools", upstream_client.calls[0]["json"])
+        self.assertEqual(response.json()["output"][0]["content"][0]["text"], "今天是星期几")
+        add_usage.assert_awaited_once()
+        self.assertEqual(add_usage.await_args.kwargs["usage_unit_type"], "tokens")
 
     async def test_responses_gemini_cpa_lane_uses_chat_endpoint_and_returns_responses_shape(self) -> None:
         upstream_client = _RecordingClient(
