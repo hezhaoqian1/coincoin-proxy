@@ -10,6 +10,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
+REPORT_DISABLED = os.environ.get("DAILY_REPORT_DISABLED", "1").lower() not in {"0", "false", "no"}
+
+if REPORT_DISABLED:
+    print("CoinCoin daily report worker is disabled; exiting without fetching data or sending Slock message.")
+    raise SystemExit(0)
+
 import pymysql
 import requests
 from PIL import Image, ImageDraw, ImageFont
