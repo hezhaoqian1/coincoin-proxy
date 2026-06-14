@@ -292,14 +292,9 @@ def _body_preview(text: str, limit: int = 300) -> str:
 def _upstream_json_error_message(response, *, code: str, body_text: str = "") -> str:
     status_code = int(getattr(response, "status_code", 0) or 0)
     content_type = str((getattr(response, "headers", {}) or {}).get("content-type") or "unknown")
-    preview = _body_preview(body_text)
     if code == "upstream_unexpected_content_type":
-        message = f"Upstream returned non-JSON response (status={status_code}, content-type={content_type})."
-    else:
-        message = f"Upstream returned invalid JSON (status={status_code}, content-type={content_type})."
-    if preview:
-        message = f"{message} Body preview: {preview}"
-    return message
+        return f"Upstream returned non-JSON response (status={status_code}, content-type={content_type})."
+    return f"Upstream returned invalid JSON (status={status_code}, content-type={content_type})."
 
 
 def _parse_upstream_json_response(response, body: bytes | None = None) -> Tuple[Any, str, str]:

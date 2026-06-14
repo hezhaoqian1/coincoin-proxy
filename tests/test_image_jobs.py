@@ -908,9 +908,125 @@ class ImageJobsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(updated.error_code, "upstream_unexpected_content_type")
         self.assertIn("status=502", updated.error_message)
         self.assertIn("text/html", updated.error_message)
-        self.assertIn("cloudflare", updated.error_message)
+        self.assertNotIn("cloudflare", updated.error_message)
+        self.assertNotIn("<html", updated.error_message)
         add_usage.assert_not_awaited()
         self.assertEqual(self.store.media_artifacts, [])
+
+    async def test_process_image_generation_job_fallbacks_after_non_json_upstream_error(self) -> None:
+        channel_router.set_snapshot(
+            [
+                ProviderChannelSnapshot(
+                    channel_id="ch_image_primary_html",
+                    name="Image Primary HTML",
+                    base_url="https://primary-image.example/v1",
+                    api_key="primary-key",
+                    auth_style="bearer",
+                    channel_type="openai_compatible",
+                    provider_platform="xtokenmirror",
+                    provider_account_fingerprint="fp_primary",
+                ),
+                ProviderChannelSnapshot(
+                    channel_id="ch_image_backup_json",
+                    name="Image Backup JSON",
+                    base_url="https://backup-image.example/v1",
+                    api_key="backup-key",
+                    auth_style="bearer",
+                    channel_type="openai_compatible",
+                    provider_platform="polaris",
+                    provider_account_fingerprint="fp_backup",
+                ),
+            ],
+            [
+                ModelChannelRouteSnapshot(
+                    route_id="rt_primary_html",
+                    public_model_id="gpt-image-2",
+                    endpoint="images/generations",
+                    channel_id="ch_image_primary_html",
+                    upstream_model="gpt-image-2-primary",
+                    priority_override=0,
+                ),
+                ModelChannelRouteSnapshot(
+                    route_id="rt_backup_json",
+                    public_model_id="gpt-image-2",
+                    endpoint="images/generations",
+                    channel_id="ch_image_backup_json",
+                    upstream_model="gpt-image-2-backup",
+                    priority_override=10,
+                ),
+            ],
+            version=3,
+        )
+        job = ImageJob(
+            id="job_generation_html_fallback",
+            user_id=self.fake_user.id,
+            api_key_id="k_image_job",
+            status=image_jobs_module.JOB_STATUS_RUNNING,
+            endpoint="images/generations",
+            public_model="gpt-image-2",
+            provider_model="gpt-image-2-primary",
+            route_reason="catalog:gpt-image-2:direct:channel:ch_image_primary_html",
+            channel_id="ch_image_primary_html",
+            channel_type="openai_compatible",
+            provider_platform="xtokenmirror",
+            provider_account_fingerprint="fp_primary",
+            image_count=1,
+            request_payload_json=json.dumps(
+                {
+                    "requested_model": "gpt-image-2",
+                    "payload": {
+                        "model": "gpt-image-2",
+                        "prompt": "A tiny black dot on a white background",
+                        "n": 1,
+                        "size": "1024x1024",
+                    },
+                    "coincoin_snapshot": {
+                        "display_model": "gpt-image-2",
+                        "resolved_public_model": "gpt-image-2",
+                        "retail_price_per_image_cents": 5.3,
+                    },
+                }
+            ),
+            storage_dir="",
+            created_at=datetime.utcnow(),
+            started_at=datetime.utcnow(),
+        )
+        self.store.jobs[job.id] = job
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {},
+                    status_code=502,
+                    headers={"content-type": "text/html"},
+                    text="<html><title>502 Bad Gateway</title><body>cloudflare</body></html>",
+                ),
+                _FakeUpstreamResponse(
+                    {"created": 1774449999, "data": [{"url": "https://cdn.example/fallback-image.png"}]},
+                    headers={"x-request-id": "req_backup_success"},
+                ),
+            ]
+        )
+
+        with patch.object(image_jobs_module, "SessionLocal", _FakeSessionFactory(self.store)), patch.object(
+            image_jobs_module,
+            "get_http_client",
+            AsyncMock(return_value=upstream_client),
+        ), patch.object(image_jobs_module.usage_buffer, "add", AsyncMock()) as add_usage:
+            await image_jobs_module._process_image_generation_job(job.id)
+
+        updated = self.store.jobs[job.id]
+        self.assertEqual(updated.status, image_jobs_module.JOB_STATUS_COMPLETED)
+        self.assertEqual(updated.upstream_request_id, "req_backup_success")
+        self.assertEqual(updated.channel_id, "ch_image_backup_json")
+        self.assertEqual(updated.provider_model, "gpt-image-2-backup")
+        self.assertEqual(updated.route_reason, "channel_fallback:upstream_unexpected_content_type")
+        self.assertEqual(len(upstream_client.calls), 2)
+        self.assertEqual(upstream_client.calls[0]["url"], "https://primary-image.example/v1/images/generations")
+        self.assertEqual(upstream_client.calls[1]["url"], "https://backup-image.example/v1/images/generations")
+        add_usage.assert_awaited_once()
+        self.assertEqual(add_usage.await_args.kwargs["channel_id"], "ch_image_backup_json")
+        self.assertEqual(add_usage.await_args.kwargs["fallback_from_channel_id"], "ch_image_primary_html")
+        self.assertEqual(len(self.store.media_artifacts), 1)
 
     async def test_process_image_generation_job_fallbacks_to_backup_channel(self) -> None:
         channel_router.set_snapshot(
