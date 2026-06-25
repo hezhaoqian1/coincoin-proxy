@@ -1537,6 +1537,42 @@ def _requested_image_count_from_json(payload: Dict[str, object]) -> int:
         return 1
 
 
+def _single_image_generation_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    single_payload = dict(payload)
+    single_payload["n"] = 1
+    return single_payload
+
+
+def _single_image_edit_form_fields(form_fields: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
+    next_fields: List[Tuple[str, str]] = []
+    replaced = False
+    for key, value in form_fields:
+        if key == "n":
+            next_fields.append((key, "1"))
+            replaced = True
+        else:
+            next_fields.append((key, value))
+    if not replaced:
+        next_fields.append(("n", "1"))
+    return next_fields
+
+
+def _merge_image_payloads(payloads: List[Dict[str, Any]]) -> Dict[str, Any]:
+    merged: Dict[str, Any] = dict(payloads[0]) if payloads else {"created": int(time.time()), "data": []}
+    data_items: List[Any] = []
+    for payload in payloads:
+        items = payload.get("data") if isinstance(payload, dict) else None
+        if isinstance(items, list):
+            data_items.extend(items)
+    merged["data"] = data_items
+    return merged
+
+
+def _merge_upstream_request_ids(headers_list: List[Dict[str, str]]) -> str:
+    request_ids = [extract_upstream_request_id(headers) for headers in headers_list]
+    return ", ".join(item for item in request_ids if item)
+
+
 def _vertex_image_candidate_count_error() -> JSONResponse:
     return _openai_error_response(
         "Gemini image requests currently support only n=1.",
@@ -3580,12 +3616,47 @@ async def _proxy_images_generations_payload(
             headers = _build_upstream_headers(used_cfg)
             t0 = time.monotonic()
             try:
-                upstream = await client.post(
-                    upstream_url,
-                    json=upstream_payload,
-                    headers=headers,
-                    timeout=IMAGE_UPSTREAM_TIMEOUT,
-                )
+                requested_count = _requested_image_count_from_json(upstream_payload)
+                if requested_count <= 1:
+                    upstream = await client.post(
+                        upstream_url,
+                        json=upstream_payload,
+                        headers=headers,
+                        timeout=IMAGE_UPSTREAM_TIMEOUT,
+                    )
+                else:
+                    merged_payloads: List[Dict[str, Any]] = []
+                    merged_headers: List[Dict[str, str]] = []
+                    single_payload = _single_image_generation_payload(upstream_payload)
+                    for _ in range(requested_count):
+                        upstream = await client.post(
+                            upstream_url,
+                            json=single_payload,
+                            headers=headers,
+                            timeout=IMAGE_UPSTREAM_TIMEOUT,
+                        )
+                        if upstream.status_code >= 400:
+                            break
+                        try:
+                            single_json = upstream.json()
+                        except Exception:
+                            break
+                        if not isinstance(single_json, dict):
+                            break
+                        merged_payloads.append(single_json)
+                        merged_headers.append(dict(upstream.headers))
+                    if len(merged_payloads) == requested_count:
+                        data = _merge_image_payloads(merged_payloads)
+                        merged_response_headers = dict(upstream.headers)
+                        merged_request_id = _merge_upstream_request_ids(merged_headers)
+                        if merged_request_id:
+                            merged_response_headers["x-request-id"] = merged_request_id
+                        upstream = httpx.Response(
+                            200,
+                            json=data,
+                            headers=merged_response_headers,
+                            request=httpx.Request("POST", upstream_url),
+                        )
             except httpx.TransportError as exc:
                 _record_channel_failure(used_cfg, error_code="upstream_unreachable")
                 current_failure_recorded = True
@@ -4131,18 +4202,82 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
 
         upstream_form_fields = [(key, value) for key, value in form_fields if key != "model"]
         upstream_form_fields.append(("model", used_cfg.model_id))
-        multipart_body, multipart_content_type = _encode_multipart_form_data(upstream_form_fields, file_fields)
-        headers["content-type"] = multipart_content_type
 
         t0 = time.monotonic()
         try:
-            upstream = await _send_stream_request(
-                stream_client,
-                "POST",
-                upstream_url,
-                content=multipart_body,
-                headers=headers,
-            )
+            requested_count = _requested_image_count_from_pairs(upstream_form_fields)
+            if requested_count <= 1:
+                multipart_body, multipart_content_type = _encode_multipart_form_data(upstream_form_fields, file_fields)
+                request_headers = dict(headers)
+                request_headers["content-type"] = multipart_content_type
+                upstream = await _send_stream_request(
+                    stream_client,
+                    "POST",
+                    upstream_url,
+                    content=multipart_body,
+                    headers=request_headers,
+                )
+            else:
+                merged_payloads: List[Dict[str, Any]] = []
+                merged_headers: List[Dict[str, str]] = []
+                single_form_fields = _single_image_edit_form_fields(upstream_form_fields)
+                for _ in range(requested_count):
+                    multipart_body, multipart_content_type = _encode_multipart_form_data(single_form_fields, file_fields)
+                    request_headers = dict(headers)
+                    request_headers["content-type"] = multipart_content_type
+                    upstream = await _send_stream_request(
+                        stream_client,
+                        "POST",
+                        upstream_url,
+                        content=multipart_body,
+                        headers=request_headers,
+                    )
+                    response_headers_for_merge = dict(upstream.headers)
+                    content_type_for_merge = upstream.headers.get("content-type", "application/json")
+                    try:
+                        upstream_body = await upstream.aread()
+                    finally:
+                        await upstream.aclose()
+                    if upstream.status_code >= 400 or "application/json" not in content_type_for_merge:
+                        upstream = httpx.Response(
+                            upstream.status_code,
+                            content=upstream_body,
+                            headers=response_headers_for_merge,
+                            request=httpx.Request("POST", upstream_url),
+                        )
+                        break
+                    try:
+                        single_json = json.loads(upstream_body.decode("utf-8"))
+                    except Exception:
+                        upstream = httpx.Response(
+                            502,
+                            json={"error": {"message": "Upstream returned invalid JSON", "type": "server_error", "code": "upstream_invalid_json"}},
+                            headers=response_headers_for_merge,
+                            request=httpx.Request("POST", upstream_url),
+                        )
+                        break
+                    if not isinstance(single_json, dict):
+                        upstream = httpx.Response(
+                            502,
+                            json={"error": {"message": "Upstream returned invalid JSON", "type": "server_error", "code": "upstream_invalid_json"}},
+                            headers=response_headers_for_merge,
+                            request=httpx.Request("POST", upstream_url),
+                        )
+                        break
+                    merged_payloads.append(single_json)
+                    merged_headers.append(response_headers_for_merge)
+                if len(merged_payloads) == requested_count:
+                    data = _merge_image_payloads(merged_payloads)
+                    merged_response_headers = dict(upstream.headers)
+                    merged_request_id = _merge_upstream_request_ids(merged_headers)
+                    if merged_request_id:
+                        merged_response_headers["x-request-id"] = merged_request_id
+                    upstream = httpx.Response(
+                        200,
+                        json=data,
+                        headers=merged_response_headers,
+                        request=httpx.Request("POST", upstream_url),
+                    )
         except (httpx.TimeoutException, httpx.RequestError) as exc:
             logger.error("OpenAI image edit transport error: %s", exc)
             _record_channel_failure(used_cfg, error_code="upstream_unreachable")

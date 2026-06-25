@@ -3283,6 +3283,52 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             "Bearer cliproxy-key",
         )
 
+    async def test_openai_image_generation_splits_multi_image_requests(self) -> None:
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {"created": 1774449999, "data": [{"b64_json": "generated-image-1"}]},
+                    headers={"x-request-id": "req_image_1"},
+                ),
+                _FakeUpstreamResponse(
+                    {"created": 1774450000, "data": [{"b64_json": "generated-image-2"}]},
+                    headers={"x-request-id": "req_image_2"},
+                ),
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_workbench_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(proxy_module.usage_buffer, "add", AsyncMock()) as add_usage, patch.object(
+                proxy_module,
+                "record_media_artifacts_best_effort",
+                AsyncMock(),
+            ):
+                response = await client.post(
+                    "/v1/images/generations",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"model": "gpt-image-2", "prompt": "A blue coin mascot", "n": 2, "size": "1024x1024"},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(len(payload["data"]), 2)
+        self.assertEqual(payload["data"][0]["b64_json"], "generated-image-1")
+        self.assertEqual(payload["data"][1]["b64_json"], "generated-image-2")
+        self.assertEqual(len(upstream_client.calls), 2)
+        for call in upstream_client.calls:
+            self.assertEqual(call["url"], "https://cliproxy.example/v1/images/generations")
+            self.assertEqual(call["json"]["model"], "gpt-image-2")
+            self.assertEqual(call["json"]["n"], 1)
+        add_usage.assert_awaited_once()
+        self.assertEqual(add_usage.await_args.kwargs["usage_unit_count"], 2)
+        self.assertEqual(add_usage.await_args.kwargs["image_count"], 2)
+        self.assertEqual(add_usage.await_args.kwargs["upstream_request_id"], "req_image_1, req_image_2")
+
     async def test_openai_image_generation_falls_back_to_backup_channel_on_502(self) -> None:
         channel_router.set_snapshot(
             [
@@ -3925,7 +3971,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
 
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+            with patch.object(proxy_module, "authorize_workbench_request", AsyncMock(return_value=self.fake_user)), patch.object(
                 proxy_module,
                 "get_image_stream_client",
                 AsyncMock(return_value=upstream_client),
@@ -3947,6 +3993,58 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         )
         posted_body = upstream_client.calls[0]["content"].decode("utf-8", errors="replace")
         self.assertIn("gpt-image-2", posted_body)
+
+    async def test_image_edit_splits_multi_image_output_requests(self) -> None:
+        upstream_client = _RecordingStreamClient(
+            [
+                _FakeUpstreamResponse(
+                    {"created": 1774449999, "data": [{"b64_json": "edited-image-1"}]},
+                    headers={"x-request-id": "req_edit_1"},
+                ),
+                _FakeUpstreamResponse(
+                    {"created": 1774450000, "data": [{"b64_json": "edited-image-2"}]},
+                    headers={"x-request-id": "req_edit_2"},
+                ),
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_workbench_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_image_stream_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(proxy_module.usage_buffer, "add", AsyncMock()) as add_usage, patch.object(
+                proxy_module,
+                "record_media_artifacts_best_effort",
+                AsyncMock(),
+            ):
+                response = await client.post(
+                    "/v1/images/edits",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    data={"model": "gpt-image-2", "prompt": "Turn this into two poster variants", "n": "2", "size": "1024x1024"},
+                    files=[
+                        ("image[]", ("input-red.png", b"fake_red_image_data", "image/png")),
+                        ("image[]", ("input-blue.png", b"fake_blue_image_data", "image/png")),
+                    ],
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(len(payload["data"]), 2)
+        self.assertEqual(payload["data"][0]["b64_json"], "edited-image-1")
+        self.assertEqual(payload["data"][1]["b64_json"], "edited-image-2")
+        self.assertEqual(len(upstream_client.calls), 2)
+        for call in upstream_client.calls:
+            self.assertEqual(call["url"], "https://cliproxy.example/v1/images/edits")
+            posted_body = call["content"].decode("utf-8", errors="replace")
+            self.assertIn("gpt-image-2", posted_body)
+            self.assertIn("\r\n\r\n1\r\n", posted_body)
+            self.assertNotIn("\r\n\r\n2\r\n", posted_body)
+        add_usage.assert_awaited_once()
+        self.assertEqual(add_usage.await_args.kwargs["usage_unit_count"], 2)
+        self.assertEqual(add_usage.await_args.kwargs["image_count"], 2)
+        self.assertEqual(add_usage.await_args.kwargs["upstream_request_id"], "req_edit_1, req_edit_2")
 
     async def test_image_edit_user_override_preserves_public_alias_and_usage_identity(self) -> None:
         fake_user = SimpleNamespace(
