@@ -722,6 +722,8 @@ function ImageWorkspace({
 
     const modelId = customModel.trim() || selectedModel
     const { loading, error, statusText, resultImages } = runState
+    const isGoogleImageModel = String(selectedModelInfo?.owned_by || '').toLowerCase() === 'google'
+        || String(selectedModelInfo?.coincoin_delivery_lane || '').toLowerCase().includes('gemini')
 
     const handleReferenceChange = (event) => {
         const files = Array.from(event.target.files || []).slice(0, 8)
@@ -769,12 +771,15 @@ function ImageWorkspace({
         } : null
         if (body && size !== 'auto') body.size = size
         if (body && quality !== 'auto') body.quality = quality
+        const imageMode = references.length === 0
+            ? 'generation-job'
+            : (isGoogleImageModel && references.length > 2 ? 'edit-job' : 'edit')
 
         startImageRun({
             apiKey: workbenchApiKey,
             modelId,
             prompt: trimmedPrompt,
-            mode: references.length === 0 ? 'generation-job' : (references.length <= 2 ? 'edit' : 'edit-job'),
+            mode: imageMode,
             body,
             formData: references.length ? buildImageForm() : null,
         })
