@@ -1257,6 +1257,22 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
             _record_channel_failure(used_cfg, error_code="upstream_unreachable")
             return anthropic_error("Upstream request failed", error_type="api_error", status_code=502)
         upstream_request_id = extract_upstream_request_id(upstream.headers)
+        if upstream.status_code >= 400:
+            error_type = "api_error"
+            message = "Upstream request failed"
+            content_type = upstream.headers.get("content-type", "")
+            if "application/json" in content_type:
+                try:
+                    data = json.loads((await upstream.aread()).decode("utf-8"))
+                except Exception:
+                    data = None
+                if isinstance(data, dict) and isinstance(data.get("error"), dict):
+                    error_info = data["error"]
+                    error_type = str(error_info.get("type") or error_type)
+                    message = str(error_info.get("message") or message)
+            _record_channel_failure(used_cfg, status_code=upstream.status_code)
+            await upstream.aclose()
+            return anthropic_error(message, error_type=error_type, status_code=upstream.status_code)
         stream_headers = filter_headers(dict(upstream.headers))
         stream_headers.pop("content-length", None)
         stream_headers.setdefault("cache-control", "no-cache")

@@ -1,3 +1,4 @@
+import json
 import os
 import asyncio
 import unittest
@@ -57,15 +58,25 @@ class _DelayedRecordingClient(_RecordingClient):
 
 
 class _FakeEventStreamResponse:
-    def __init__(self, lines, status_code=200, headers=None):
+    def __init__(self, lines, status_code=200, headers=None, body=None):
         self._lines = list(lines)
         self.status_code = status_code
         self.headers = {"content-type": "text/event-stream", **(headers or {})}
+        self._body = body
         self._closed = False
 
     async def aiter_lines(self):
         for line in self._lines:
             yield line
+
+    async def aread(self):
+        if self._body is None:
+            return "\n".join(self._lines).encode("utf-8")
+        if isinstance(self._body, bytes):
+            return self._body
+        if isinstance(self._body, str):
+            return self._body.encode("utf-8")
+        return json.dumps(self._body).encode("utf-8")
 
     async def aclose(self):
         self._closed = True
@@ -1554,6 +1565,46 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(usage_kwargs["cache_read_tokens"], 5)
         self.assertEqual(usage_kwargs["cache_creation_tokens"], 0)
         self.assertGreater(usage_kwargs["duration_ms"], 0)
+
+    async def test_streaming_messages_returns_error_when_openai_upstream_stream_fails_before_events(self):
+        fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_claude_stream_502")
+        upstream = _FakeEventStreamResponse(
+            [],
+            status_code=502,
+            headers={"content-type": "application/json"},
+            body={"error": {"type": "server_error", "message": "upstream overloaded"}},
+        )
+        stream_client = _RecordingStreamClient([upstream])
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_stream_client", AsyncMock(return_value=stream_client)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()) as add_usage,
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={
+                        "authorization": "Bearer sk_test",
+                        "anthropic-version": "2023-06-01",
+                        "user-agent": "claude-cli/2.0.76 (external, cli)",
+                    },
+                    json={
+                        "model": "claude-opus-4-7",
+                        "max_tokens": 64,
+                        "stream": True,
+                        "messages": [{"role": "user", "content": "Reply with hello"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 502)
+        body = response.json()
+        self.assertEqual(body["type"], "error")
+        self.assertEqual(body["error"]["type"], "server_error")
+        self.assertEqual(body["error"]["message"], "upstream overloaded")
+        self.assertNotIn("event: message_start", response.text)
+        self.assertTrue(upstream._closed)
+        add_usage.assert_not_awaited()
 
     async def test_streaming_tool_calls_translate_to_tool_use_events(self):
         fake_user = SimpleNamespace(id="u_test", status="active")
