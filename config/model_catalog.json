@@ -361,6 +361,25 @@
       }
     },
     {
+      "id": "claude-sonnet-5",
+      "owned_by": "coincoin",
+      "provider_name": "",
+      "provider_model": "${COINCOIN_CHEAP_MODEL:-${COINCOIN_FIXED_MODEL}}",
+      "capabilities": ["chat/completions", "responses"],
+      "routing_mode": "direct",
+      "delivery_lane": "upstream_direct",
+      "upstream_model": "${COINCOIN_CHEAP_MODEL:-${COINCOIN_FIXED_MODEL}}",
+      "upstream_url": "${COINCOIN_UPSTREAM_BASE_URL}",
+      "api_key": "${COINCOIN_UPSTREAM_API_KEY}",
+      "auth_style": "bearer",
+      "price_input_per_million": "${COINCOIN_CLAUDE_SONNET_INPUT_PRICE:-300}",
+      "price_output_per_million": "${COINCOIN_CLAUDE_SONNET_OUTPUT_PRICE:-1500}",
+      "billable_sku": "claude-code-compat-text",
+      "metadata": {
+        "compat_family": "claude-code"
+      }
+    },
+    {
       "id": "claude-sonnet-4-6",
       "owned_by": "coincoin",
       "provider_name": "",

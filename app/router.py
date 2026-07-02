@@ -142,6 +142,7 @@ CLAUDE_COMPAT_KIRO_MODEL_MAP = {
     "default": "claude-opus-4.7",
     "opus[1m]": "claude-opus-4.7",
     "opusplan": "claude-opus-4.7",
+    "claude-sonnet-5": "claude-sonnet-5",
     "claude-sonnet-4-6": "claude-sonnet-4.6",
     "claude-sonnet-4.6": "claude-sonnet-4.6",
     "claude-sonnet-4.5": "claude-sonnet-4.5",
