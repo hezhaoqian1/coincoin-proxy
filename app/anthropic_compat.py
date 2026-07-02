@@ -279,15 +279,28 @@ def _build_anthropic_upstream_headers(cfg, request: Request) -> Dict[str, str]:
     else:
         headers["anthropic-version"] = "2023-06-01"
 
-    anthropic_beta = request.headers.get("anthropic-beta")
-    if anthropic_beta:
-        headers["anthropic-beta"] = anthropic_beta
-
-    user_agent = request.headers.get("user-agent")
-    if user_agent:
-        headers["user-agent"] = user_agent
+    passthrough_exact = {
+        "anthropic-beta",
+        "anthropic-dangerous-direct-browser-access",
+        "user-agent",
+        "x-app",
+        "x-claude-code-session-id",
+    }
+    passthrough_prefixes = ("x-stainless-",)
+    for name, value in request.headers.items():
+        lower_name = name.lower()
+        if lower_name in passthrough_exact or lower_name.startswith(passthrough_prefixes):
+            headers[lower_name] = value
 
     return headers
+
+
+def _append_request_query(upstream_url: str, request: Request) -> str:
+    query = str(request.url.query or "").strip()
+    if not query:
+        return upstream_url
+    separator = "&" if "?" in upstream_url else "?"
+    return f"{upstream_url}{separator}{query}"
 
 
 def _copy_anthropic_messages_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -1093,7 +1106,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
             openai_payload["messages"] = [{"role": "system", "content": cloak.strip()}] + messages
 
     if is_native_anthropic_upstream:
-        upstream_url = build_anthropic_messages_url(used_cfg.upstream_url)
+        upstream_url = _append_request_query(build_anthropic_messages_url(used_cfg.upstream_url), request)
         headers = _build_anthropic_upstream_headers(used_cfg, request)
         upstream_payload = _copy_anthropic_messages_payload(payload)
         upstream_payload["model"] = _kiro_go_upstream_model(used_cfg.model_id) if is_kiro_go else used_cfg.model_id

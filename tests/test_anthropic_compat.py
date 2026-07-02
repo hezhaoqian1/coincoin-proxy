@@ -393,10 +393,17 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         ):
             async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
                 response = await http_client.post(
-                    "/v1/messages",
+                    "/v1/messages?beta=true",
                     headers={
                         "authorization": "Bearer sk_test",
                         "anthropic-version": "2023-06-01",
+                        "anthropic-beta": "claude-code-20250219,interleaved-thinking-2025-05-14",
+                        "anthropic-dangerous-direct-browser-access": "true",
+                        "user-agent": "claude-cli/2.1.198 (external, sdk-cli)",
+                        "x-app": "cli",
+                        "x-claude-code-session-id": "session-test",
+                        "x-stainless-lang": "js",
+                        "x-stainless-runtime": "node",
                     },
                     json={
                         "model": "claude-opus-4-7",
@@ -421,12 +428,19 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         body = response.json()
         self.assertEqual(body["model"], "claude-opus-4-7")
         self.assertEqual(body["content"][0]["text"], "OK")
-        self.assertEqual(client.calls[0]["url"], "https://claude-relay.example/v1/messages")
+        self.assertEqual(client.calls[0]["url"], "https://claude-relay.example/v1/messages?beta=true")
         self.assertEqual(client.calls[0]["json"]["model"], "claude-fable-5")
         self.assertEqual(client.calls[0]["json"]["system"], "You are concise.")
         self.assertEqual(client.calls[0]["json"]["tools"][0]["name"], "Read")
         self.assertEqual(client.calls[0]["headers"]["x-api-key"], "relay-key")
         self.assertEqual(client.calls[0]["headers"]["anthropic-version"], "2023-06-01")
+        self.assertEqual(client.calls[0]["headers"]["anthropic-beta"], "claude-code-20250219,interleaved-thinking-2025-05-14")
+        self.assertEqual(client.calls[0]["headers"]["anthropic-dangerous-direct-browser-access"], "true")
+        self.assertEqual(client.calls[0]["headers"]["user-agent"], "claude-cli/2.1.198 (external, sdk-cli)")
+        self.assertEqual(client.calls[0]["headers"]["x-app"], "cli")
+        self.assertEqual(client.calls[0]["headers"]["x-claude-code-session-id"], "session-test")
+        self.assertEqual(client.calls[0]["headers"]["x-stainless-lang"], "js")
+        self.assertEqual(client.calls[0]["headers"]["x-stainless-runtime"], "node")
         self.assertNotIn("authorization", client.calls[0]["headers"])
         add_usage.assert_awaited_once()
         usage_kwargs = add_usage.await_args.kwargs
