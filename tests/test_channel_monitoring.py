@@ -185,3 +185,46 @@ class ChannelMonitoringTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client.calls[0][3]["model"], "claude-fable-5")
         self.assertEqual(client.calls[0][3]["messages"], [{"role": "user", "content": "ping"}])
         self.assertEqual(monitor.last_status, "operational")
+
+    async def test_claude_code_monitor_uses_claude_code_headers(self) -> None:
+        monitor = SimpleNamespace(
+            id="cmon_sixoner",
+            channel_id="ch_sixoner",
+            name="Sixoner Sonnet 5",
+            endpoint="chat/completions",
+            primary_model="claude-sonnet-5",
+            extra_models="",
+            status="active",
+            interval_seconds=60,
+            timeout_seconds=30,
+            last_checked_at=None,
+            last_status="",
+            last_latency_ms=0,
+            last_ping_latency_ms=0,
+            last_message="",
+        )
+        channel = SimpleNamespace(
+            id="ch_sixoner",
+            base_url="https://sub.sixoner.com",
+            encrypted_api_key=encrypt_api_key("sk-sixoner"),
+            auth_style="bearer",
+            channel_type="anthropic_compatible",
+            cost_tier="claude-code",
+            provider_account_fingerprint="sixoner-claude-code-only",
+            notes="Claude Code only upstream",
+        )
+        db = _FakeDB(monitor=monitor, channel=channel)
+        client = _FakeAnthropicClient()
+
+        results = await run_provider_channel_monitor_once(db, monitor.id, client=client)
+
+        self.assertEqual(results[0].status, "operational")
+        self.assertEqual(client.calls[0][1], "https://sub.sixoner.com/v1/messages?beta=true")
+        self.assertEqual(client.calls[0][2]["authorization"], "Bearer sk-sixoner")
+        self.assertIn("claude-code-20250219", client.calls[0][2]["anthropic-beta"])
+        self.assertEqual(client.calls[0][2]["anthropic-dangerous-direct-browser-access"], "true")
+        self.assertEqual(client.calls[0][2]["user-agent"], "claude-cli/2.1.198 (external, sdk-cli)")
+        self.assertEqual(client.calls[0][2]["x-app"], "cli")
+        self.assertEqual(client.calls[0][2]["x-claude-code-session-id"], "coincoin-monitor")
+        self.assertEqual(client.calls[0][2]["x-stainless-lang"], "js")
+        self.assertEqual(client.calls[0][3]["model"], "claude-sonnet-5")

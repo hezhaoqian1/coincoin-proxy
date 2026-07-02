@@ -103,11 +103,38 @@ def _headers(channel: ProviderChannel, api_key: str) -> dict[str, str]:
         headers["authorization"] = f"Bearer {api_key}"
     if _is_anthropic_compatible_channel(channel):
         headers["anthropic-version"] = DEFAULT_ANTHROPIC_VERSION
+        if _is_claude_code_only_channel(channel):
+            headers.update(
+                {
+                    "anthropic-beta": "claude-code-20250219,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24",
+                    "anthropic-dangerous-direct-browser-access": "true",
+                    "user-agent": "claude-cli/2.1.198 (external, sdk-cli)",
+                    "x-app": "cli",
+                    "x-claude-code-session-id": "coincoin-monitor",
+                    "x-stainless-arch": "arm64",
+                    "x-stainless-lang": "js",
+                    "x-stainless-os": "MacOS",
+                    "x-stainless-package-version": "0.94.0",
+                    "x-stainless-runtime": "node",
+                    "x-stainless-runtime-version": "v26.3.0",
+                    "x-stainless-timeout": str(settings.provider_channel_monitor_default_timeout),
+                }
+            )
     return headers
 
 
 def _is_anthropic_compatible_channel(channel: ProviderChannel) -> bool:
     return str(getattr(channel, "channel_type", "") or "").strip().lower() == "anthropic_compatible"
+
+
+def _is_claude_code_only_channel(channel: ProviderChannel) -> bool:
+    values = (
+        getattr(channel, "cost_tier", ""),
+        getattr(channel, "provider_account_fingerprint", ""),
+        getattr(channel, "notes", ""),
+    )
+    text = " ".join(str(item or "").lower() for item in values)
+    return "claude-code" in text
 
 
 async def _ping_models(client: httpx.AsyncClient, base_url: str, headers: dict[str, str]) -> tuple[int, str]:
@@ -138,6 +165,8 @@ async def _probe_model(
     endpoint = (endpoint or "responses").strip()
     if channel_type == "anthropic_compatible":
         url = build_anthropic_messages_url(base_url)
+        if "claude-code" in str(headers.get("anthropic-beta", "")).lower():
+            url = f"{url}?beta=true"
         payload = {
             "model": model,
             "messages": [{"role": "user", "content": "ping"}],
