@@ -194,6 +194,22 @@ class RegistryChannelRouteTests(unittest.TestCase):
                         "metadata": {"provider_protocol": "anthropic_messages"},
                     },
                     {
+                        "id": "claude-sonnet-4-6",
+                        "owned_by": "coincoin",
+                        "provider_name": "",
+                        "provider_model": "gpt-5.4-mini",
+                        "capabilities": ["chat/completions", "responses"],
+                        "routing_mode": "direct",
+                        "delivery_lane": "upstream_direct",
+                        "upstream_model": "gpt-5.4-mini",
+                        "upstream_url": "https://catalog.example/v1",
+                        "api_key": "catalog-key",
+                        "auth_style": "bearer",
+                        "price_input_per_million": 300,
+                        "price_output_per_million": 1500,
+                        "metadata": {"compat_family": "claude-code"},
+                    },
+                    {
                         "id": "seedance-v2-720p",
                         "owned_by": "bytedance",
                         "provider_name": "Seedance",
@@ -289,6 +305,50 @@ class RegistryChannelRouteTests(unittest.TestCase):
     def test_route_only_model_requires_active_provider_route(self) -> None:
         with self.assertRaises(ModelCapabilityError):
             registry.resolve_public_model("claude-fable-5", "chat/completions")
+
+    def test_claude_code_alias_requires_active_provider_route(self) -> None:
+        public_model = registry.public_models["claude-sonnet-4-6"]
+
+        self.assertEqual(public_model.routing_mode, "route_only")
+        self.assertEqual(public_model.delivery_lane, "route_only")
+        with self.assertRaises(ModelCapabilityError):
+            registry.resolve_public_model("claude-sonnet-4-6", "chat/completions")
+
+    def test_claude_code_alias_resolves_through_anthropic_channel_route(self) -> None:
+        channel_router.set_snapshot(
+            [
+                ProviderChannelSnapshot(
+                    channel_id="ch_sixoner",
+                    provider_platform="sixoner",
+                    channel_type="anthropic_compatible",
+                    base_url="https://sub.sixoner.com",
+                    api_key="sixoner-key",
+                    auth_style="x-api-key",
+                    priority=0,
+                    capabilities=("chat/completions",),
+                )
+            ],
+            [
+                ModelChannelRouteSnapshot(
+                    route_id="mcr_sixoner_sonnet",
+                    public_model_id="claude-sonnet-4-6",
+                    endpoint="chat/completions",
+                    channel_id="ch_sixoner",
+                    upstream_model="claude-sonnet-4-6",
+                    transform_profile="anthropic_messages",
+                )
+            ],
+        )
+
+        resolved = registry.resolve_public_model("claude-sonnet-4-6", "chat/completions")
+
+        self.assertEqual(resolved.public_model.delivery_lane, "route_only")
+        self.assertEqual(resolved.backend.channel_id, "ch_sixoner")
+        self.assertEqual(resolved.backend.model_id, "claude-sonnet-4-6")
+        self.assertEqual(resolved.backend.upstream_url, "https://sub.sixoner.com")
+        self.assertEqual(resolved.backend.channel_type, "anthropic_compatible")
+        self.assertEqual(resolved.backend.transform_profile, "anthropic_messages")
+        self.assertEqual(resolved.route_reason, "catalog:claude-sonnet-4-6:route_only:channel:ch_sixoner")
 
     def test_route_only_model_resolves_through_anthropic_channel_route(self) -> None:
         channel_router.set_snapshot(

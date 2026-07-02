@@ -659,6 +659,10 @@ class ModelRegistry:
                 delivery_lane = CLAUDE_COMPAT_PROVIDER_KIRO_GO
                 metadata = {**metadata, "claude_compat_provider": CLAUDE_COMPAT_PROVIDER_KIRO_GO}
             else:
+                routing_mode = "route_only"
+                delivery_lane = "route_only"
+                upstream_url = ""
+                api_key = ""
                 metadata = {**metadata, "claude_compat_provider": CLAUDE_COMPAT_PROVIDER_UPSTREAM_DIRECT}
         prices = self._compile_prices(public_id, raw, routing_mode)
 

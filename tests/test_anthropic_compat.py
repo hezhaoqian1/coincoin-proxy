@@ -324,7 +324,7 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(usage_kwargs["cache_read_tokens"], 7)
         self.assertEqual(usage_kwargs["cache_creation_tokens"], 8)
 
-    async def test_claude_alias_resolves_to_gpt_55_upstream(self):
+    async def test_claude_alias_requires_provider_route_instead_of_gpt_fallback(self):
         fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_alias")
         client = _RecordingClient(
             [
@@ -358,13 +358,11 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
                     },
                 )
 
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 400)
         body = response.json()
-        self.assertEqual(body["model"], "claude-opus-4-7")
-        self.assertEqual(client.calls[0]["json"]["model"], "gpt-5.5")
-        prompt_cache_key = client.calls[0]["json"].get("prompt_cache_key", "")
-        self.assertTrue(prompt_cache_key.startswith("cc-"))
-        self.assertEqual(len(prompt_cache_key), 35)
+        self.assertEqual(body["type"], "error")
+        self.assertIn("requires an active provider channel route", body["error"]["message"])
+        self.assertEqual(client.calls, [])
 
     async def test_messages_routes_anthropic_compatible_channel_to_native_messages(self):
         self._configure_anthropic_compatible_channel()
@@ -650,7 +648,7 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(usage_kwargs["output_tokens"], 2)
         self.assertEqual(usage_kwargs["channel_type"], "anthropic_compatible")
 
-    async def test_claude_alias_user_override_preserves_public_alias_and_applies_cache_billing_override(self):
+    async def test_claude_alias_user_override_does_not_bypass_provider_route_requirement(self):
         fake_user = SimpleNamespace(
             id="u_test",
             status="active",
@@ -707,16 +705,12 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
                     },
                 )
 
-        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.status_code, 400)
         body = response.json()
-        self.assertEqual(body["model"], "claude-opus-4-7")
-        self.assertEqual(client.calls[0]["json"]["model"], "gpt-5.4-mini")
-        add_usage.assert_awaited_once()
-        usage_kwargs = add_usage.await_args.kwargs
-        self.assertEqual(usage_kwargs["customer_model_alias"], "claude-opus-4-7")
-        self.assertEqual(usage_kwargs["provider_model"], "gpt-5.4-mini")
-        self.assertEqual(usage_kwargs["cache_read_multiplier"], 1.0)
-        self.assertEqual(usage_kwargs["effective_cached_input_per_million"], 500.0)
+        self.assertEqual(body["type"], "error")
+        self.assertIn("requires an active provider channel route", body["error"]["message"])
+        self.assertEqual(client.calls, [])
+        add_usage.assert_not_awaited()
 
     async def test_messages_can_route_to_kiro_go_native_messages_path(self):
         fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_kiro_native")
@@ -1526,7 +1520,7 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
                         "user-agent": "claude-cli/2.1.121 (external, cli)",
                     },
                     json={
-                        "model": "claude-opus-4-7",
+                        "model": "gpt-5.5",
                         "max_tokens": 256,
                         "tools": [
                             {
@@ -1604,7 +1598,7 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
                         "user-agent": "claude-cli/2.0.76 (external, cli)",
                     },
                     json={
-                        "model": "claude-opus-4-7",
+                        "model": "gpt-5.5",
                         "max_tokens": 64,
                         "stream": True,
                         "messages": [{"role": "user", "content": "Reply with hello"}],
@@ -1653,7 +1647,7 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
                         "user-agent": "claude-cli/2.0.76 (external, cli)",
                     },
                     json={
-                        "model": "claude-opus-4-7",
+                        "model": "gpt-5.5",
                         "max_tokens": 64,
                         "stream": True,
                         "messages": [{"role": "user", "content": "Reply with hello"}],
@@ -1698,7 +1692,7 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
                         "user-agent": "claude-cli/2.0.76 (external, cli)",
                     },
                     json={
-                        "model": "claude-opus-4-7",
+                        "model": "gpt-5.5",
                         "max_tokens": 64,
                         "stream": True,
                         "messages": [{"role": "user", "content": "Read foo.txt"}],
@@ -1742,7 +1736,7 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
                         "user-agent": "claude-cli/2.1.121 (external, cli)",
                     },
                     json={
-                        "model": "claude-opus-4-7",
+                        "model": "gpt-5.5",
                         "max_tokens": 128,
                         "stream": True,
                         "messages": [{"role": "user", "content": "Reason step by step"}],
@@ -1786,7 +1780,7 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
                         "user-agent": "claude-cli/2.1.121 (external, cli)",
                     },
                     json={
-                        "model": "claude-opus-4-7",
+                        "model": "gpt-5.5",
                         "max_tokens": 128,
                         "stream": True,
                         "messages": [{"role": "user", "content": "Research first, then ask me a question"}],
@@ -1836,7 +1830,7 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
                         "user-agent": "claude-cli/2.1.121 (external, cli)",
                     },
                     json={
-                        "model": "claude-opus-4-7",
+                        "model": "gpt-5.5",
                         "max_tokens": 128,
                         "stream": True,
                         "messages": [{"role": "user", "content": "Think, then ask for confirmation"}],
@@ -1883,7 +1877,7 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
                         "user-agent": "claude-cli/2.1.121 (external, cli)",
                     },
                     json={
-                        "model": "claude-opus-4-7",
+                        "model": "gpt-5.5",
                         "max_tokens": 64,
                         "messages": [
                             {
@@ -1939,7 +1933,7 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
                         "user-agent": "claude-cli/2.1.121 (external, cli)",
                     },
                     json={
-                        "model": "claude-opus-4-7",
+                        "model": "gpt-5.5",
                         "max_tokens": 64,
                         "messages": [
                             {
@@ -2021,7 +2015,7 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
                         "user-agent": "claude-cli/2.1.121 (external, cli)",
                     },
                     json={
-                        "model": "claude-opus-4-7",
+                        "model": "gpt-5.5",
                         "max_tokens": 64,
                         "messages": [
                             {
