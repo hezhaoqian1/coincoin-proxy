@@ -260,6 +260,14 @@ uvicorn app.main:app --reload --port 8000
 
 更完整的后台操作说明以本 README 的 `上游渠道、模型 route 与 fallback` 章节和后台页面提示为准。
 
+### Claude Code 专用上游
+
+Claude Code-only 上游和普通 OpenAI-compatible 上游不完全一样：真实 Claude Code 客户端请求需要走 Anthropic Messages 形状、Claude Code headers 和 `?beta=true`，普通脚本探测或后台服务端监控可能被上游边缘策略拒绝。不要只根据普通 `/v1/chat/completions` 或监控 `503` 判定这类渠道不可用。
+
+当前 Sixoner Claude Code 接入使用 `anthropic_compatible` provider channel 加 model route 的方式承载，`claude-sonnet-5` 等公开 Claude 模型保持 route-only，避免重新落回旧的 GPT-backed Claude alias。Claude Code 模型的倍率通过 `/admin/model-pricing/{model_id}` 管理；当前生产策略是 `claude-*` 公共模型统一 `model_multiplier=6.0`、`output_multiplier=1.0`、`cache_read_multiplier=0.1`。
+
+详细验收项、价格计算公式和运维命令见 [`docs/architecture/claude-code-upstream-runbook.md`](./docs/architecture/claude-code-upstream-runbook.md)。
+
 ---
 
 ## API 文档
