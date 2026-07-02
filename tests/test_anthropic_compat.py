@@ -435,6 +435,69 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(usage_kwargs["provider_model"], "claude-fable-5")
         self.assertEqual(usage_kwargs["channel_type"], "anthropic_compatible")
 
+    async def test_messages_records_usage_when_native_non_stream_response_is_sse(self):
+        self._configure_anthropic_compatible_channel(upstream_model="claude-sonnet-4-6")
+        registry._initialized = False
+        registry.init_from_settings()
+        fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_anthropic_sse_non_stream")
+        client = _RecordingClient(
+            [
+                _FakeAnthropicEventStreamResponse(
+                    [
+                        'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_sse_non_stream","type":"message","role":"assistant","model":"claude-sonnet-4-6","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":6,"cache_creation_input_tokens":29818,"cache_read_input_tokens":7,"output_tokens":0}}}',
+                        'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
+                        'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"OK"}}',
+                        'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}',
+                        'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"input_tokens":6,"cache_creation_input_tokens":29818,"cache_read_input_tokens":7,"output_tokens":12}}',
+                        'event: message_stop\ndata: {"type":"message_stop"}',
+                    ],
+                    headers={"content-type": "text/event-stream; charset=utf-8"},
+                )
+            ]
+        )
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_http_client", AsyncMock(return_value=client)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()) as add_usage,
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={
+                        "authorization": "Bearer sk_test",
+                        "anthropic-version": "2023-06-01",
+                        "user-agent": "claude-cli/2.0.76 (external, cli)",
+                    },
+                    json={
+                        "model": "claude-opus-4-7",
+                        "max_tokens": 64,
+                        "stream": False,
+                        "messages": [{"role": "user", "content": "Reply OK"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.text
+        self.assertIn("event: message_start", body)
+        self.assertIn('"model":"claude-opus-4-7"', body)
+        self.assertNotIn('"model":"claude-sonnet-4-6"', body)
+        self.assertIn('"cache_creation_input_tokens":29818', body)
+        self.assertIn('"cache_read_input_tokens":7', body)
+        self.assertIn('"output_tokens":12', body)
+        self.assertEqual(client.calls[0]["url"], "https://claude-relay.example/v1/messages")
+        self.assertEqual(client.calls[0]["json"]["model"], "claude-sonnet-4-6")
+        self.assertFalse(client.calls[0]["json"]["stream"])
+        add_usage.assert_awaited_once()
+        usage_kwargs = add_usage.await_args.kwargs
+        self.assertEqual(usage_kwargs["input_tokens"], 29831)
+        self.assertEqual(usage_kwargs["output_tokens"], 12)
+        self.assertEqual(usage_kwargs["cache_read_tokens"], 7)
+        self.assertEqual(usage_kwargs["cache_creation_tokens"], 29818)
+        self.assertEqual(usage_kwargs["provider_model"], "claude-sonnet-4-6")
+        self.assertIn("channel:ch_anthropic_compat", usage_kwargs["route_reason"])
+        self.assertEqual(usage_kwargs["channel_type"], "anthropic_compatible")
+
     async def test_chat_completions_routes_to_anthropic_compatible_channel_and_returns_openai_shape(self):
         self._configure_anthropic_compatible_channel()
         registry._initialized = False

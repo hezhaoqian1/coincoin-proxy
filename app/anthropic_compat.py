@@ -557,6 +557,61 @@ def _parse_anthropic_sse_event(raw_event: str) -> tuple[str, Optional[Dict[str, 
     return event_type, payload
 
 
+async def _consume_native_anthropic_sse_response(
+    upstream: Any,
+    *,
+    display_model: str,
+) -> tuple[bytes, Dict[str, Any]]:
+    state = _AnthropicStreamState()
+    events: List[bytes] = []
+    anthropic_event_lines: List[str] = []
+    saw_anthropic_event = False
+
+    def _flush_anthropic_event() -> None:
+        if not anthropic_event_lines:
+            return
+        raw_event = "\n".join(anthropic_event_lines)
+        event_type, payload_dict = _parse_anthropic_sse_event(raw_event)
+        if event_type and payload_dict is not None:
+            should_forward_event = not (event_type == "message_start" and state.message_started)
+            _update_state_from_anthropic_event(
+                state,
+                event_type=event_type,
+                event_payload=payload_dict,
+            )
+            if should_forward_event:
+                masked_event = _mask_anthropic_sse_event_model(raw_event, display_model)
+                events.append((masked_event + "\n\n").encode("utf-8"))
+        anthropic_event_lines.clear()
+
+    async for line in upstream.aiter_lines():
+        raw_line = str(line or "")
+        if anthropic_event_lines or raw_line.startswith("event:"):
+            if raw_line.startswith("event:"):
+                saw_anthropic_event = True
+            if raw_line == "":
+                _flush_anthropic_event()
+                continue
+            anthropic_event_lines.append(raw_line)
+            continue
+        if raw_line == "":
+            continue
+        if saw_anthropic_event:
+            continue
+        events.extend(
+            _translate_openai_chunk_to_anthropic_events(
+                state,
+                display_model=display_model,
+                raw_line=raw_line,
+            )
+        )
+
+    _flush_anthropic_event()
+    if not state.message_stopped and state.usage:
+        events.extend(_finalize_anthropic_stream(state, display_model=display_model))
+    return b"".join(events), state.usage
+
+
 def _normalize_anthropic_stop_reason(finish_reason: str, saw_tool_call: bool) -> str:
     reason = str(finish_reason or "").strip()
     if saw_tool_call or reason == "tool_calls":
@@ -1348,6 +1403,44 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
 
     content_type = upstream.headers.get("content-type", "application/json")
     if "application/json" not in content_type:
+        if is_native_anthropic_upstream and "text/event-stream" in content_type:
+            body, usage = await _consume_native_anthropic_sse_response(
+                upstream,
+                display_model=display_model,
+            )
+            if upstream.status_code >= 400:
+                _record_channel_failure(used_cfg, status_code=upstream.status_code)
+                return Response(content=body, status_code=upstream.status_code, headers=response_headers, media_type=content_type)
+            if usage:
+                _record_channel_success(used_cfg, duration_ms=duration_ms)
+                await usage_buffer.add(
+                    user.id,
+                    api_key_id=api_key_id,
+                    input_tokens=extract_total_input_tokens(usage),
+                    output_tokens=int(usage.get("completion_tokens") or usage.get("output_tokens") or 0),
+                    cache_read_tokens=extract_cache_read_tokens(usage),
+                    cache_creation_tokens=extract_cache_creation_tokens(usage),
+                    requests=1,
+                    endpoint="messages",
+                    model=display_model,
+                    customer_model_alias=display_model,
+                    provider_model=used_cfg.model_id or _effective_provider_model,
+                    route_reason=used_route_reason,
+                    duration_ms=duration_ms,
+                    status_code=upstream.status_code,
+                    price_input_per_million=price_input_per_million,
+                    price_output_per_million=price_output_per_million,
+                    usage_unit_type="tokens",
+                    billable_sku=public_model.billable_sku or display_model,
+                    upstream_request_id=upstream_request_id,
+                    **_channel_usage_kwargs(used_cfg),
+                    **usage_pricing_kwargs(
+                        public_model,
+                        station_model,
+                        user_cache_read_multiplier_override=user_cache_read_multiplier_override,
+                    ),
+                )
+            return Response(content=body, status_code=upstream.status_code, headers=response_headers, media_type=content_type)
         body = await upstream.aread()
         return Response(content=body, status_code=upstream.status_code, headers=response_headers, media_type=content_type)
 
