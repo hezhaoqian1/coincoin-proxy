@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish the 2026-06-23 CoinCoin WeChat group announcement.
+"""Publish the 2026-07-03 CoinCoin WeChat group announcement.
 
 Run this after deploying the bundled static image:
 
@@ -19,12 +19,12 @@ import urllib.request
 from typing import Any
 
 
-DEFAULT_IMAGE_URL = "/wechat-group-coincoin-2026-06-23.jpg?v=20260623-1"
+DEFAULT_IMAGE_URL = "/wechat-group-coincoin-2026-07-03.jpg?v=20260703-1"
 ANNOUNCEMENT_TEMPLATE: dict[str, Any] = {
     "title": "进群再领 $10",
     "content": (
         "加入 Life Coding 交流群，联系管理员领取额外 $10 API 额度。"
-        "该二维码 6 月 30 日前有效，过期后可复制微信号 birdsync。"
+        "该二维码 7 月 10 日前有效，过期后可复制微信号 birdsync。"
     ),
     "priority": "info",
     "display_type": "modal",
