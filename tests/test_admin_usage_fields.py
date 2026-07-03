@@ -236,6 +236,10 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("anthropic_messages", admin_html)
         self.assertIn("handleProviderChannelTypeChange", admin_html)
         self.assertIn("handleModelChannelRouteChannelChange", admin_html)
+        self.assertIn("modelChannelRouteChannelPriority", admin_html)
+        self.assertIn("route override", admin_html)
+        self.assertIn("inherits channel", admin_html)
+        self.assertIn("留空时继承渠道本身的优先级和权重", admin_html)
 
     def test_provider_channel_schema_accepts_anthropic_x_api_key(self) -> None:
         created = AdminProviderChannelCreate(

@@ -2852,6 +2852,7 @@
           <div class="form-group"><label class="form-label">优先级覆盖</label><input id="modelChannelRoutePriority" type="number" min="0" class="form-input" placeholder="留空" /></div>
           <div class="form-group"><label class="form-label">权重覆盖</label><input id="modelChannelRouteWeight" type="number" min="1" class="form-input" placeholder="留空" /></div>
         </div>
+        <div class="form-help">这里留空时继承渠道本身的优先级和权重；填数字时会覆盖渠道设置，之后修改渠道优先级不会影响这条 route。</div>
         <div class="form-row">
           <div class="form-group"><label class="form-label">状态</label><select id="modelChannelRouteStatus" class="form-select"><option value="active">active</option><option value="disabled">disabled</option></select></div>
           <div class="form-group"><label class="form-label">备注</label><input id="modelChannelRouteNotes" class="form-input" /></div>
@@ -4910,6 +4911,18 @@
       return providerChannelCache.find(channel => channel.id === channelId) || {};
     }
 
+    function modelChannelRouteChannelPriority(route) {
+      if (route.channel_priority !== null && route.channel_priority !== undefined) return Number(route.channel_priority || 0);
+      const channel = providerChannelById(route.channel_id);
+      return Number(channel.priority || 0);
+    }
+
+    function modelChannelRouteChannelWeight(route) {
+      if (route.channel_weight !== null && route.channel_weight !== undefined) return Number(route.channel_weight || 1);
+      const channel = providerChannelById(route.channel_id);
+      return Number(channel.weight || 1);
+    }
+
     function modelChannelRouteChannelLabel(route) {
       const channel = providerChannelById(route.channel_id);
       return route.channel_name || channel.name || route.channel_id || '-';
@@ -4917,14 +4930,12 @@
 
     function modelChannelRouteEffectivePriority(route) {
       if (route.priority_override !== null && route.priority_override !== undefined) return Number(route.priority_override || 0);
-      const channel = providerChannelById(route.channel_id);
-      return Number(channel.priority || 0);
+      return modelChannelRouteChannelPriority(route);
     }
 
     function modelChannelRouteEffectiveWeight(route) {
       if (route.weight_override !== null && route.weight_override !== undefined) return Number(route.weight_override || 1);
-      const channel = providerChannelById(route.channel_id);
-      return Number(channel.weight || 1);
+      return modelChannelRouteChannelWeight(route);
     }
 
     function modelChannelRouteEndpointValue(route) {
@@ -5045,6 +5056,14 @@
         const weight = modelChannelRouteEffectiveWeight(route);
         const prioritySource = route.priority_override === null || route.priority_override === undefined ? 'channel' : 'override';
         const weightSource = route.weight_override === null || route.weight_override === undefined ? 'channel' : 'override';
+        const channelPriority = modelChannelRouteChannelPriority(route);
+        const channelWeight = modelChannelRouteChannelWeight(route);
+        const priorityDetail = prioritySource === 'override'
+          ? `route override ${Number(route.priority_override || 0)} · channel ${channelPriority}`
+          : `inherits channel ${channelPriority}`;
+        const weightDetail = weightSource === 'override'
+          ? `route override ${Number(route.weight_override || 1)} · channel ${channelWeight}`
+          : `inherits channel ${channelWeight}`;
         const channel = providerChannelById(route.channel_id);
         return `
           <tr>
@@ -5052,7 +5071,7 @@
             <td>${escapeHtml(route.endpoint || '全部')}</td>
             <td><div>${escapeHtml(modelChannelRouteChannelLabel(route))}</div><div class="text-sm text-muted">${escapeHtml(route.provider_platform || channel.provider_platform || '-')} · ${escapeHtml(route.channel_id || '')}</div></td>
             <td>${escapeHtml(route.upstream_model || '沿用 catalog')}</td>
-            <td><div>priority ${priority} · ${prioritySource}</div><div class="text-sm text-muted">weight ${weight} · ${weightSource} · ${escapeHtml(route.transform_profile || '-')}</div></td>
+            <td><div>priority ${priority} · ${prioritySource}</div><div class="text-sm text-muted">${escapeHtml(priorityDetail)}</div><div class="text-sm text-muted">weight ${weight} · ${weightSource} · ${escapeHtml(weightDetail)} · ${escapeHtml(route.transform_profile || '-')}</div></td>
             <td><span class="badge ${channelBadgeClass(route.status)}">${escapeHtml(route.status || '-')}</span></td>
             <td><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-sm btn-secondary" onclick="openModelChannelRouteModal('${escapeHtml(route.id)}')">编辑</button><button class="btn btn-sm btn-danger" onclick="deleteModelChannelRoute('${escapeHtml(route.id)}')">删除</button></div></td>
           </tr>

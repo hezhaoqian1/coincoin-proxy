@@ -521,6 +521,8 @@ def _model_channel_route_payload(row: ModelChannelRoute, channel: Optional[Provi
         "channel_name": getattr(channel, "name", "") if channel else "",
         "channel_status": getattr(channel, "status", "") if channel else "",
         "provider_platform": getattr(channel, "provider_platform", "") if channel else "",
+        "channel_priority": int(getattr(channel, "priority", 0) or 0) if channel else None,
+        "channel_weight": int(getattr(channel, "weight", 1) or 1) if channel else None,
         "upstream_model": row.upstream_model,
         "priority_override": row.priority_override,
         "weight_override": row.weight_override,
