@@ -604,7 +604,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                 openai_module,
                 "get_http_client",
                 AsyncMock(return_value=upstream_client),
-            ), patch.object(openai_module.usage_buffer, "add", AsyncMock()):
+            ), patch.object(openai_module.usage_buffer, "add", AsyncMock()) as add_usage:
                 response = await client.post(
                     "/v1/chat/completions",
                     headers={"Authorization": "Bearer sk_cc_test"},
@@ -1326,6 +1326,11 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                         }
                     },
                     status_code=403,
+                    headers={
+                        "cf-ray": "a15309ba9be0fe8e-SIN",
+                        "server": "cloudflare",
+                        "x-request-id": "upstream-req-secret",
+                    },
                 )
             ]
         )
@@ -1352,6 +1357,9 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["error"]["url"], "[upstream]")
         self.assertIn("[upstream]", payload["error"]["message"])
         self.assertIn("[redacted]", payload["error"]["message"])
+        self.assertNotIn("cf-ray", response.headers)
+        self.assertNotIn("server", response.headers)
+        self.assertNotIn("x-request-id", response.headers)
 
     async def test_responses_stream_provider_channel_falls_back_to_next_channel_on_retryable_status(self) -> None:
         channel_router.set_snapshot(
@@ -1867,6 +1875,55 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(upstream_client.calls[0]["json"]["model"], "claude-opus-4.7")
         add_usage.assert_awaited_once()
         self.assertEqual(add_usage.await_args.kwargs["endpoint"], "chat/completions:stream")
+
+    async def test_chat_stream_error_event_does_not_leak_provider_details(self) -> None:
+        self._add_claude_code_model()
+        settings.claude_compat_provider = "kiro_go"
+        registry._initialized = False
+        registry.init_from_settings()
+        fake_user = SimpleNamespace(id="u_test", _api_key_id="k_claude_chat_stream_error")
+        upstream_client = _RecordingStreamClient(
+            [
+                _FakeEventStreamResponse(
+                    [
+                        (
+                            'data: {"error":{"message":"bad gateway from https://sub.sixoner.com/v1/chat/completions, '
+                            'cf-ray: a15309ba9be0fe8e-SIN, provider Cloudflare, key sk-secret1234567890",'
+                            '"type":"server_error","endpoint":"https://sub.sixoner.com/v1/chat/completions"}}'
+                        ),
+                        "data: [DONE]",
+                    ]
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(openai_module, "authorize_request", AsyncMock(return_value=fake_user)), patch.object(
+                openai_module,
+                "get_stream_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(openai_module.usage_buffer, "add", AsyncMock()) as add_usage:
+                response = await client.post(
+                    "/v1/chat/completions",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={
+                        "model": "claude-opus-4-7",
+                        "stream": True,
+                        "messages": [{"role": "user", "content": "Reply with only: OK"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.text
+        self.assertIn('"error"', body)
+        self.assertNotIn("sub.sixoner.com", body)
+        self.assertNotIn("https://sub.sixoner.com", body)
+        self.assertNotIn("sk-secret1234567890", body)
+        self.assertNotIn("a15309ba9be0fe8e", body)
+        self.assertNotIn("cf-ray", body)
+        self.assertNotIn("Cloudflare", body)
+        self.assertNotIn("cloudflare", body)
 
     async def test_chat_claude_alias_stream_forwards_include_usage_to_kiro_go(self) -> None:
         self._add_claude_code_model()
@@ -4642,6 +4699,63 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(upstream_client.calls[0]["json"]["model"], "text-embedding-3-small")
+
+    async def test_embeddings_upstream_error_does_not_leak_provider_details(self) -> None:
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "error": {
+                            "message": (
+                                "bad gateway from https://sub.sixoner.com/v1/embeddings, "
+                                "cf-ray: a15309ba9be0fe8e-SIN, provider Cloudflare, key sk-secret1234567890"
+                            ),
+                            "type": "upstream_error",
+                            "code": "https://sub.sixoner.com/v1/embeddings",
+                            "url": "https://sub.sixoner.com/v1/embeddings",
+                            "headers": {
+                                "cf-ray": "a15309ba9be0fe8e-SIN",
+                                "server": "cloudflare",
+                                "x-request-id": "upstream-req-secret",
+                            },
+                        }
+                    },
+                    status_code=502,
+                    headers={
+                        "cf-ray": "a15309ba9be0fe8e-SIN",
+                        "server": "cloudflare",
+                        "x-request-id": "upstream-req-secret",
+                    },
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(openai_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                openai_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ):
+                response = await client.post(
+                    "/v1/embeddings",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"input": "hello"},
+                )
+
+        self.assertEqual(response.status_code, 502, response.text)
+        body = response.text
+        self.assertIn('"error"', body)
+        self.assertNotIn("sub.sixoner.com", body)
+        self.assertNotIn("https://sub.sixoner.com", body)
+        self.assertNotIn("sk-secret1234567890", body)
+        self.assertNotIn("a15309ba9be0fe8e", body)
+        self.assertNotIn("cf-ray", body)
+        self.assertNotIn("Cloudflare", body)
+        self.assertNotIn("cloudflare", body)
+        self.assertNotIn("cf-ray", response.headers)
+        self.assertNotIn("server", response.headers)
+        self.assertNotIn("x-request-id", response.headers)
 
     async def test_models_endpoint_returns_curated_metadata(self) -> None:
         transport = httpx.ASGITransport(app=app)

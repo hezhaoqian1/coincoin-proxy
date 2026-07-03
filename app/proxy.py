@@ -83,6 +83,8 @@ _UPSTREAM_HOST_RE = re.compile(
     re.IGNORECASE,
 )
 _UPSTREAM_KEY_RE = re.compile(r"\bsk[-_][A-Za-z0-9_\-]{10,}\b")
+_UPSTREAM_CF_RAY_RE = re.compile(r"\bcf-ray\s*[:=]\s*[A-Za-z0-9_-]+(?:-[A-Z]+)?", re.IGNORECASE)
+_UPSTREAM_PROVIDER_WORD_RE = re.compile(r"\bcloudflare\b", re.IGNORECASE)
 _ENCRYPTED_PREFIXES = ("gAAA", "gBAA")
 _ID_STRIP_PREFIXES = ("resp_", "msg_", "fc_", "fco_", "rs_")
 _CONTENT_KEYS = frozenset({
@@ -1278,12 +1280,39 @@ HOP_BY_HOP_HEADERS = {
     "transfer-encoding",
     "upgrade",
 }
+UPSTREAM_PRIVATE_RESPONSE_HEADERS = {
+    "alt-svc",
+    "apim-request-id",
+    "cf-cache-status",
+    "cf-ray",
+    "nel",
+    "openai-processing-ms",
+    "report-to",
+    "request-id",
+    "server",
+    "via",
+    "x-envoy-upstream-service-time",
+    "x-ms-request-id",
+    "x-powered-by",
+    "x-request-id",
+}
+UPSTREAM_PRIVATE_RESPONSE_HEADER_PREFIXES = (
+    "anthropic-ratelimit-",
+    "openai-",
+    "x-ratelimit-",
+)
 
 IMAGE_EDIT_FILE_FIELDS = frozenset({"image", "image[]", "mask", "mask[]"})
 
 
 def filter_headers(headers: Dict[str, str]) -> Dict[str, str]:
-    return {k: v for k, v in headers.items() if k.lower() not in HOP_BY_HOP_HEADERS}
+    def _allowed(name: str) -> bool:
+        lowered = name.lower()
+        if lowered in HOP_BY_HOP_HEADERS or lowered in UPSTREAM_PRIVATE_RESPONSE_HEADERS:
+            return False
+        return not any(lowered.startswith(prefix) for prefix in UPSTREAM_PRIVATE_RESPONSE_HEADER_PREFIXES)
+
+    return {k: v for k, v in headers.items() if _allowed(k)}
 
 
 def extract_upstream_request_id(headers) -> str:
@@ -1341,8 +1370,10 @@ def _record_channel_failure(cfg, *, status_code: int | None = None, error_code: 
 def _sanitize_upstream_error_text(value: str, *, max_length: int = 500) -> str:
     text = str(value or "")
     text = _UPSTREAM_KEY_RE.sub("[redacted]", text)
+    text = _UPSTREAM_CF_RAY_RE.sub("upstream trace: [redacted]", text)
     text = _UPSTREAM_URL_RE.sub("[upstream]", text)
     text = _UPSTREAM_HOST_RE.sub("[upstream]", text)
+    text = _UPSTREAM_PROVIDER_WORD_RE.sub("upstream edge", text)
     if len(text) > max_length:
         text = text[:max_length]
     return text
@@ -1356,6 +1387,8 @@ def _sanitize_upstream_error_payload(value: Any) -> Any:
             lowered = key_text.lower()
             if lowered in {"url", "uri", "base_url", "upstream_url", "endpoint", "host", "hostname"}:
                 sanitized[key] = "[upstream]"
+            elif lowered in UPSTREAM_PRIVATE_RESPONSE_HEADERS or any(lowered.startswith(prefix) for prefix in UPSTREAM_PRIVATE_RESPONSE_HEADER_PREFIXES):
+                sanitized["upstream_metadata"] = "[redacted]"
             elif "key" in lowered or "token" in lowered or "secret" in lowered:
                 sanitized[key] = "[redacted]"
             else:

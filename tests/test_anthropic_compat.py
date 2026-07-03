@@ -245,6 +245,64 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(usage_kwargs["cache_creation_tokens"], 0)
         self.assertGreater(usage_kwargs["duration_ms"], 0)
 
+    async def test_messages_upstream_html_error_does_not_leak_provider_details(self):
+        self._configure_anthropic_compatible_channel(
+            public_model_id="claude-opus-4-7",
+            upstream_model="claude-opus-4-7",
+        )
+        fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_claude_html_error")
+        client = _RecordingClient(
+            [
+                _FakeEventStreamResponse(
+                    [],
+                    status_code=502,
+                    headers={
+                        "content-type": "text/html",
+                        "cf-ray": "a15309ba9be0fe8e-SIN",
+                        "server": "cloudflare",
+                        "x-request-id": "upstream-req-secret",
+                    },
+                    body=(
+                        "unexpected status 502 Bad Gateway: error code: 502, "
+                        "url: https://sub.sixoner.com/responses, cf-ray: a15309ba9be0fe8e-SIN, "
+                        "provider Cloudflare, key sk-secret1234567890"
+                    ),
+                )
+            ]
+        )
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_http_client", AsyncMock(return_value=client)),
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={
+                        "authorization": "Bearer sk_test",
+                        "anthropic-version": "2023-06-01",
+                    },
+                    json={
+                        "model": "claude-opus-4-7",
+                        "max_tokens": 64,
+                        "messages": [{"role": "user", "content": "Reply with exactly OK"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 502, response.text)
+        body = response.text
+        self.assertIn('"type":"error"', body)
+        self.assertNotIn("sub.sixoner.com", body)
+        self.assertNotIn("https://sub.sixoner.com", body)
+        self.assertNotIn("sk-secret1234567890", body)
+        self.assertNotIn("a15309ba9be0fe8e", body)
+        self.assertNotIn("cf-ray", body)
+        self.assertNotIn("Cloudflare", body)
+        self.assertNotIn("cloudflare", body)
+        self.assertNotIn("cf-ray", response.headers)
+        self.assertNotIn("server", response.headers)
+        self.assertNotIn("x-request-id", response.headers)
+
     async def test_messages_normalizes_root_openai_compatible_base_url(self):
         settings.upstream_base_url = "https://sub2api.example"
         registry.init_from_settings()
@@ -1297,6 +1355,65 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("event: error", body)
         self.assertIn('"type":"api_error"', body)
         self.assertNotIn("event: message_stop", body)
+        add_usage.assert_not_awaited()
+
+    async def test_messages_stream_upstream_json_error_does_not_leak_provider_details(self):
+        fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_kiro_stream_json_error")
+        settings.claude_compat_provider = "kiro_go"
+        settings.claude_compat_base_url = "https://kiro-go.example"
+        settings.claude_compat_api_key = "kiro-key"
+        settings.claude_compat_auth_style = "bearer"
+        registry._initialized = False
+        registry.init_from_settings()
+        stream_client = _RecordingStreamClient(
+            [
+                _FakeEventStreamResponse(
+                    [],
+                    status_code=502,
+                    headers={"content-type": "application/json", "cf-ray": "a15309ba9be0fe8e-SIN"},
+                    body={
+                        "error": {
+                            "message": (
+                                "bad gateway from https://sub.sixoner.com/v1/messages, "
+                                "cf-ray: a15309ba9be0fe8e-SIN, provider Cloudflare, key sk-secret1234567890"
+                            ),
+                            "type": "https://sub.sixoner.com/v1/messages",
+                        }
+                    },
+                )
+            ]
+        )
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_stream_client", AsyncMock(return_value=stream_client)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()) as add_usage,
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={
+                        "authorization": "Bearer sk_test",
+                        "anthropic-version": "2023-06-01",
+                    },
+                    json={
+                        "model": "claude-opus-4-7",
+                        "stream": True,
+                        "max_tokens": 64,
+                        "messages": [{"role": "user", "content": "Reply with exactly OK"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.text
+        self.assertIn("event: error", body)
+        self.assertNotIn("sub.sixoner.com", body)
+        self.assertNotIn("https://sub.sixoner.com", body)
+        self.assertNotIn("sk-secret1234567890", body)
+        self.assertNotIn("a15309ba9be0fe8e", body)
+        self.assertNotIn("cf-ray", body)
+        self.assertNotIn("Cloudflare", body)
+        self.assertNotIn("cloudflare", body)
         add_usage.assert_not_awaited()
 
     async def test_messages_stream_kiro_go_tool_call_finishes_with_message_stop(self):

@@ -148,7 +148,12 @@ def _openai_error_from_anthropic_error(data: Any, *, status_code: int) -> JSONRe
             message = str(data.get("message"))
     elif data:
         message = str(data)
-    return openai_error(message[:500], error_type, code=code, status_code=status_code if status_code >= 400 else 502)
+    return openai_error(
+        _sanitize_upstream_error_text(message),
+        _sanitize_upstream_error_text(error_type, max_length=100),
+        code=_sanitize_upstream_error_text(code, max_length=100),
+        status_code=status_code if status_code >= 400 else 502,
+    )
 
 
 async def _proxy_anthropic_compatible_chat_completions(
@@ -431,7 +436,8 @@ async def _proxy_anthropic_compatible_chat_completions_stream(
                     continue
 
                 if event_type == "error" or isinstance(event.get("error"), dict):
-                    yield f"data: {json.dumps({'error': event.get('error') or event}, ensure_ascii=False)}\n\n"
+                    sanitized_error = _sanitize_upstream_error_payload(event.get("error") or event)
+                    yield f"data: {json.dumps({'error': sanitized_error}, ensure_ascii=False)}\n\n"
                     finish_sent = True
                     break
 
@@ -1421,7 +1427,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                             stream_usage["cache_read"] = extract_cache_read_tokens(usage)
                             stream_usage["cache_creation"] = extract_cache_creation_tokens(usage)
                         if isinstance(event.get("error"), dict):
-                            err = event["error"]
+                            err = _sanitize_upstream_error_payload(event["error"])
                             yield _chat_completion_chunk_line(
                                 stream_id=str(event.get("id") or f"chatcmpl-{secrets.token_hex(12)}"),
                                 display_model=display_model,
@@ -2529,9 +2535,21 @@ async def _proxy_gemini_cpa_chat_completions(
         )
 
     if isinstance(data, dict):
+        if upstream.status_code >= 400:
+            return JSONResponse(
+                content=_upstream_error_response_content(data, status_code=upstream.status_code),
+                status_code=upstream.status_code,
+                headers=response_headers,
+            )
         data["model"] = display_model
         return JSONResponse(content=data, status_code=upstream.status_code, headers=response_headers)
 
+    if upstream.status_code >= 400:
+        return JSONResponse(
+            content=_upstream_error_response_content(data, status_code=upstream.status_code),
+            status_code=upstream.status_code,
+            headers=response_headers,
+        )
     return Response(content=str(data), status_code=upstream.status_code, headers=response_headers, media_type=content_type)
 
 
@@ -2647,7 +2665,19 @@ async def embeddings(request: Request, db: AsyncSession = Depends(get_db)):
         _record_channel_failure(used_cfg, status_code=upstream.status_code)
 
     if isinstance(data, dict):
+        if upstream.status_code >= 400:
+            return JSONResponse(
+                content=_upstream_error_response_content(data, status_code=upstream.status_code),
+                status_code=upstream.status_code,
+                headers=response_headers,
+            )
         data["model"] = display_model
         return JSONResponse(content=data, status_code=upstream.status_code, headers=response_headers)
 
+    if upstream.status_code >= 400:
+        return JSONResponse(
+            content=_upstream_error_response_content(data, status_code=upstream.status_code),
+            status_code=upstream.status_code,
+            headers=response_headers,
+        )
     return Response(content=str(data), status_code=upstream.status_code, headers=response_headers, media_type=content_type)

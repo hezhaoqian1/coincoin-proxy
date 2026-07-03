@@ -31,6 +31,8 @@ from .proxy import (
     _channel_usage_kwargs,
     _record_channel_failure,
     _record_channel_success,
+    _sanitize_upstream_error_payload,
+    _sanitize_upstream_error_text,
 )
 from .router import (
     CLAUDE_COMPAT_PROVIDER_KIRO_GO,
@@ -1156,8 +1158,8 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                             data = None
                         if isinstance(data, dict) and isinstance(data.get("error"), dict):
                             error_info = data["error"]
-                            error_type = str(error_info.get("type") or error_type)
-                            message = str(error_info.get("message") or message)
+                            error_type = _sanitize_upstream_error_text(str(error_info.get("type") or error_type), max_length=100)
+                            message = _sanitize_upstream_error_text(str(error_info.get("message") or message))
                     yield _anthropic_stream_error_bytes(message, error_type=error_type)
                     stream_failed = True
                     return
@@ -1336,8 +1338,8 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                     data = None
                 if isinstance(data, dict) and isinstance(data.get("error"), dict):
                     error_info = data["error"]
-                    error_type = str(error_info.get("type") or error_type)
-                    message = str(error_info.get("message") or message)
+                    error_type = _sanitize_upstream_error_text(str(error_info.get("type") or error_type), max_length=100)
+                    message = _sanitize_upstream_error_text(str(error_info.get("message") or message))
             _record_channel_failure(used_cfg, status_code=upstream.status_code)
             await upstream.aclose()
             return anthropic_error(message, error_type=error_type, status_code=upstream.status_code)
@@ -1423,7 +1425,11 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
             )
             if upstream.status_code >= 400:
                 _record_channel_failure(used_cfg, status_code=upstream.status_code)
-                return Response(content=body, status_code=upstream.status_code, headers=response_headers, media_type=content_type)
+                return anthropic_error(
+                    _sanitize_upstream_error_text(body.decode("utf-8", errors="replace") or "Upstream request failed"),
+                    error_type="api_error",
+                    status_code=upstream.status_code,
+                )
             if usage:
                 _record_channel_success(used_cfg, duration_ms=duration_ms)
                 await usage_buffer.add(
@@ -1455,6 +1461,13 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                 )
             return Response(content=body, status_code=upstream.status_code, headers=response_headers, media_type=content_type)
         body = await upstream.aread()
+        if upstream.status_code >= 400:
+            _record_channel_failure(used_cfg, status_code=upstream.status_code)
+            return anthropic_error(
+                _sanitize_upstream_error_text(body.decode("utf-8", errors="replace") or "Upstream request failed"),
+                error_type="api_error",
+                status_code=upstream.status_code,
+            )
         return Response(content=body, status_code=upstream.status_code, headers=response_headers, media_type=content_type)
 
     try:
@@ -1467,8 +1480,9 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
         _record_channel_failure(used_cfg, status_code=upstream.status_code)
         if isinstance(data, dict) and "error" in data:
             error_info = data["error"]
-            message = error_info.get("message") if isinstance(error_info, dict) else str(error_info)
-            error_type = error_info.get("type") if isinstance(error_info, dict) else "api_error"
+            sanitized_error = _sanitize_upstream_error_payload(error_info)
+            message = sanitized_error.get("message") if isinstance(sanitized_error, dict) else str(sanitized_error)
+            error_type = sanitized_error.get("type") if isinstance(sanitized_error, dict) else "api_error"
             return anthropic_error(message or "Upstream request failed", error_type=error_type or "api_error", status_code=upstream.status_code)
         return anthropic_error("Upstream request failed", error_type="api_error", status_code=upstream.status_code)
 
