@@ -2125,7 +2125,7 @@
         <div class="card">
           <div class="card-header">
             <div class="filter-bar">
-              <input type="text" id="orderSearch" class="form-input" style="width:320px" placeholder="搜索用户名、邮箱、user_id、订单号、交易号..." oninput="debouncePaymentOrderSearch()" />
+              <input type="text" id="orderSearch" class="form-input" style="width:320px" placeholder="搜索用户名、邮箱、订单号、交易号..." oninput="debouncePaymentOrderSearch()" />
               <select id="orderStatusFilter" class="form-select" onchange="loadPaymentOrders()">
                 <option value="">全部状态</option>
                 <option value="pending">待确认</option>
@@ -6043,7 +6043,7 @@
           const secondary = o.email || o.external_id || '';
           return `<tr>
             <td class="text-mono text-sm">${escapeHtml(o.order_no || '-')}</td>
-            <td><div class="user-cell"><div class="user-avatar">${getInitials(displayName)}</div><div class="user-info"><strong>${escapeHtml(displayName)}</strong>${secondary ? `<span>${escapeHtml(secondary)}</span>` : ''}<span>${escapeHtml(o.user_id || '')}</span></div></div></td>
+            <td><div class="user-cell"><div class="user-avatar">${getInitials(displayName)}</div><div class="user-info"><strong>${escapeHtml(displayName)}</strong>${secondary ? `<span>${escapeHtml(secondary)}</span>` : ''}</div></div></td>
             <td>¥${escapeHtml(o.amount_rmb || '0')}</td>
             <td>${productLabel(o)}<div class="text-sm text-muted">${escapeHtml(o.product_id || 'legacy')}</div></td>
             <td>${formatMoney(o.add_balance_cents || 0)}<div class="text-sm text-muted">${o.add_balance_cents || 0}¢</div></td>
