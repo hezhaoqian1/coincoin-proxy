@@ -784,12 +784,14 @@ class ModelRegistry:
         exclude_channel_ids: Tuple[str, ...] = (),
         fallback_from_channel_id: str = "",
         route_attempt: int = 0,
+        channel_affinity_key: str = "",
     ) -> Optional[ModelConfig]:
         choice = channel_router.select_for_model(
             public_model,
             backend,
             endpoint,
             exclude_channel_ids=exclude_channel_ids,
+            affinity_key=channel_affinity_key,
         )
         if choice is None:
             return None
@@ -823,6 +825,7 @@ class ModelRegistry:
         endpoint: str,
         *,
         exclude_channel_ids: Tuple[str, ...] = (),
+        channel_affinity_key: str = "",
     ) -> Optional[ModelConfig]:
         previous_channel_id = (previous_backend.channel_id or "").strip()
         if not previous_channel_id:
@@ -838,6 +841,7 @@ class ModelRegistry:
             exclude_channel_ids=excluded,
             fallback_from_channel_id=fallback_from_channel_id,
             route_attempt=int(previous_backend.route_attempt or 0) + 1,
+            channel_affinity_key=channel_affinity_key,
         )
 
     def resolve_system_fallback(
@@ -933,8 +937,14 @@ class ModelRegistry:
         execution_profile: ExecutionProfile,
         route_reason: str,
         lock_model_selection: bool = False,
+        channel_affinity_key: str = "",
     ) -> ResolvedModel:
-        routed_backend = self._apply_channel_route(public_model, backend, endpoint)
+        routed_backend = self._apply_channel_route(
+            public_model,
+            backend,
+            endpoint,
+            channel_affinity_key=channel_affinity_key,
+        )
         if routed_backend is not None:
             backend = routed_backend
             route_reason = f"{route_reason}:channel:{backend.channel_id}"
@@ -1177,6 +1187,8 @@ class ModelRegistry:
         endpoint: str,
         messages: Optional[List[dict]] = None,
         tools: Optional[list] = None,
+        *,
+        channel_affinity_key: str = "",
     ) -> ResolvedModel:
         public_model = self._select_public_model(requested_model, endpoint)
         explicit_requested = bool((requested_model or "").strip())
@@ -1188,6 +1200,7 @@ class ModelRegistry:
                 endpoint=endpoint,
                 execution_profile=execution_profile,
                 route_reason=f"catalog:{public_model.public_id}:{public_model.delivery_lane or 'upstream_direct'}",
+                channel_affinity_key=channel_affinity_key,
             )
         if public_model.routing_mode == "legacy_auto":
             if explicit_requested:
@@ -1200,6 +1213,7 @@ class ModelRegistry:
                         execution_profile=execution_profile,
                         route_reason=f"catalog:{public_model.public_id}:legacy_explicit",
                         lock_model_selection=True,
+                        channel_affinity_key=channel_affinity_key,
                     )
             backend, route_reason = resolve(messages or [], tools, execution_profile=execution_profile)
             return self._resolved_with_channel_route(
@@ -1208,6 +1222,7 @@ class ModelRegistry:
                 endpoint=endpoint,
                 execution_profile=execution_profile,
                 route_reason=f"catalog:{public_model.public_id}:{route_reason}",
+                channel_affinity_key=channel_affinity_key,
             )
 
         if public_model.routing_mode == "route_only" or public_model.delivery_lane == "route_only":
@@ -1220,7 +1235,12 @@ class ModelRegistry:
                 strip_unsupported=public_model.strip_unsupported,
                 auth_style=public_model.auth_style,
             )
-            routed_backend = self._apply_channel_route(public_model, backend, endpoint)
+            routed_backend = self._apply_channel_route(
+                public_model,
+                backend,
+                endpoint,
+                channel_affinity_key=channel_affinity_key,
+            )
             if routed_backend is None:
                 raise ModelCapabilityError(
                     f"Model '{public_model.public_id}' requires an active provider channel route for endpoint '{endpoint}'"
@@ -1248,6 +1268,7 @@ class ModelRegistry:
             endpoint=endpoint,
             execution_profile=execution_profile,
             route_reason=f"catalog:{public_model.public_id}:{public_model.delivery_lane}",
+            channel_affinity_key=channel_affinity_key,
         )
 
     def _resolve_execution_profile(self, public_model: PublicModelConfig, endpoint: str) -> ExecutionProfile:

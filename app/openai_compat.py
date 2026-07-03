@@ -22,7 +22,11 @@ from .anthropic_adapter import (
     is_anthropic_compatible_config,
     openai_chat_to_anthropic_messages_payload,
 )
-from .prompt_cache import build_claude_code_prompt_cache_key
+from .prompt_cache import (
+    apply_default_openai_prompt_cache_retention,
+    build_channel_affinity_key,
+    build_claude_code_prompt_cache_key,
+)
 from .proxy import (
     _build_upstream_headers, _ensure_content_text, _sanitize_encrypted_ids,
     _build_openai_responses_upstream_url,
@@ -1273,6 +1277,14 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
     converted_messages = convert_messages_for_responses_api(messages)
 
     requested_model = str(payload.get("model") or "").strip()
+    api_key_id = getattr(user, _KEY_ID_ATTR, "")
+    channel_affinity_key = build_channel_affinity_key(
+        user,
+        api_key_id,
+        "chat/completions",
+        requested_model,
+        payload.get("prompt_cache_key"),
+    )
     tools = payload.get("tools") if isinstance(payload.get("tools"), list) else None
     try:
         station_model = await resolve_station_model_for_user(
@@ -1282,12 +1294,14 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
             "chat/completions",
             messages,
             tools,
+            channel_affinity_key=channel_affinity_key,
         )
         resolved_model = station_model.resolved_model if station_model else model_registry.resolve_public_model(
             requested_model,
             "chat/completions",
             messages,
             tools,
+            channel_affinity_key=channel_affinity_key,
         )
     except Exception as exc:
         return _model_resolution_to_openai_error(exc)
@@ -1302,7 +1316,6 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
     display_model = station_model.display_model if station_model else public_model.public_id
     used_cfg = resolved_model.backend
     used_route_reason = resolved_model.route_reason
-    api_key_id = getattr(user, _KEY_ID_ATTR, "")
     price_input_per_million = station_model.retail_input_per_million if station_model else public_model.price_input_per_million
     price_output_per_million = station_model.retail_output_per_million if station_model else public_model.price_output_per_million
     stream_include_usage = _chat_stream_include_usage(payload)
@@ -1361,6 +1374,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
             display_model,
             public_model,
             effective_backend_model=used_cfg.model_id,
+            include_openai_models=True,
         )
         if prompt_cache_key:
             chat_payload["prompt_cache_key"] = prompt_cache_key
@@ -1554,15 +1568,29 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
         "input": converted_messages,
         "stream": bool(payload.get("stream")),
     }
+    client_prompt_cache_key = "prompt_cache_key" in payload
+    if client_prompt_cache_key:
+        resp_payload["prompt_cache_key"] = payload.get("prompt_cache_key")
     prompt_cache_key = build_claude_code_prompt_cache_key(
         user,
         api_key_id,
         display_model,
         public_model,
         effective_backend_model=used_cfg.model_id,
+        include_openai_models=True,
     )
-    if prompt_cache_key:
+    if prompt_cache_key and not client_prompt_cache_key:
         resp_payload["prompt_cache_key"] = prompt_cache_key
+    client_prompt_cache_retention = "prompt_cache_retention" in payload
+    if client_prompt_cache_retention:
+        resp_payload["prompt_cache_retention"] = payload.get("prompt_cache_retention")
+    else:
+        apply_default_openai_prompt_cache_retention(
+            resp_payload,
+            display_model,
+            public_model,
+            effective_backend_model=used_cfg.model_id,
+        )
 
     if used_cfg.strip_unsupported:
         _sanitize_encrypted_ids(resp_payload)
@@ -1755,17 +1783,26 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
         async def _send_stream(cfg):
             send_payload = dict(resp_payload)
             send_payload["model"] = cfg.model_id
-            stream_prompt_cache_key = build_claude_code_prompt_cache_key(
-                user,
-                api_key_id,
-                display_model,
-                public_model,
-                effective_backend_model=cfg.model_id,
-            )
-            if stream_prompt_cache_key:
-                send_payload["prompt_cache_key"] = stream_prompt_cache_key
-            else:
-                send_payload.pop("prompt_cache_key", None)
+            if not client_prompt_cache_key:
+                stream_prompt_cache_key = build_claude_code_prompt_cache_key(
+                    user,
+                    api_key_id,
+                    display_model,
+                    public_model,
+                    effective_backend_model=cfg.model_id,
+                    include_openai_models=True,
+                )
+                if stream_prompt_cache_key:
+                    send_payload["prompt_cache_key"] = stream_prompt_cache_key
+                else:
+                    send_payload.pop("prompt_cache_key", None)
+            if not client_prompt_cache_retention:
+                apply_default_openai_prompt_cache_retention(
+                    send_payload,
+                    display_model,
+                    public_model,
+                    effective_backend_model=cfg.model_id,
+                )
             if cfg.strip_unsupported:
                 for field in _STRIP_PARAMS:
                     send_payload.pop(field, None)
@@ -2101,6 +2138,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
             tools,
             lock_model_selection=resolved_model.lock_model_selection,
             reason=reason,
+            channel_affinity_key=channel_affinity_key,
         )
 
     def _notify_chat_fallback_exhausted(
@@ -2123,17 +2161,26 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
     async def _post_json(cfg):
         send_payload = dict(resp_payload)
         send_payload["model"] = cfg.model_id
-        json_prompt_cache_key = build_claude_code_prompt_cache_key(
-            user,
-            api_key_id,
-            display_model,
-            public_model,
-            effective_backend_model=cfg.model_id,
-        )
-        if json_prompt_cache_key:
-            send_payload["prompt_cache_key"] = json_prompt_cache_key
-        else:
-            send_payload.pop("prompt_cache_key", None)
+        if not client_prompt_cache_key:
+            json_prompt_cache_key = build_claude_code_prompt_cache_key(
+                user,
+                api_key_id,
+                display_model,
+                public_model,
+                effective_backend_model=cfg.model_id,
+                include_openai_models=True,
+            )
+            if json_prompt_cache_key:
+                send_payload["prompt_cache_key"] = json_prompt_cache_key
+            else:
+                send_payload.pop("prompt_cache_key", None)
+        if not client_prompt_cache_retention:
+            apply_default_openai_prompt_cache_retention(
+                send_payload,
+                display_model,
+                public_model,
+                effective_backend_model=cfg.model_id,
+            )
         if cfg.strip_unsupported:
             for field in _STRIP_PARAMS:
                 send_payload.pop(field, None)

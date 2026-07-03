@@ -371,6 +371,22 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
 
         app.dependency_overrides[proxy_module.get_db] = fake_get_db
         app.dependency_overrides[openai_module.get_db] = fake_get_db
+        self._workbench_auth_patchers = []
+
+        async def delegate_openai_workbench_auth(request, db):
+            return await openai_module.authorize_request(request, db)
+
+        async def delegate_proxy_workbench_auth(request, db):
+            return await proxy_module.authorize_request(request, db)
+
+        self._workbench_auth_patchers.append(
+            patch.object(openai_module, "authorize_workbench_request", delegate_openai_workbench_auth)
+        )
+        self._workbench_auth_patchers.append(
+            patch.object(proxy_module, "authorize_workbench_request", delegate_proxy_workbench_auth)
+        )
+        for patcher in self._workbench_auth_patchers:
+            patcher.start()
 
     def _set_model_delivery_lane(self, model_id: str, delivery_lane: str) -> None:
         catalog = json.loads(settings.model_catalog_json)
@@ -395,7 +411,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         registry._initialized = False
         registry.init_from_settings()
 
-    def _add_claude_code_model(self) -> None:
+    def _add_claude_code_model(self, *, with_route: bool = False) -> None:
         catalog = json.loads(settings.model_catalog_json)
         catalog.setdefault("models", []).append(
             {
@@ -419,6 +435,38 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         settings.model_catalog_json = json.dumps(catalog)
         registry._initialized = False
         registry.init_from_settings()
+        if with_route:
+            self._install_claude_code_route()
+
+    def _install_claude_code_route(self) -> None:
+        channel_router.set_snapshot(
+            [
+                ProviderChannelSnapshot(
+                    channel_id="ch_claude_code_test",
+                    provider_platform="new_api",
+                    base_url="https://legacy.example/v1",
+                    api_key="legacy-key",
+                    auth_style="bearer",
+                    priority=0,
+                )
+            ],
+            [
+                ModelChannelRouteSnapshot(
+                    route_id="mcr_claude_code_responses",
+                    public_model_id="claude-opus-4-7",
+                    endpoint="responses",
+                    channel_id="ch_claude_code_test",
+                    upstream_model="gpt-5.5",
+                ),
+                ModelChannelRouteSnapshot(
+                    route_id="mcr_claude_code_chat",
+                    public_model_id="claude-opus-4-7",
+                    endpoint="chat/completions",
+                    channel_id="ch_claude_code_test",
+                    upstream_model="gpt-5.5",
+                ),
+            ],
+        )
 
     def _add_root_base_text_model(self) -> None:
         catalog = json.loads(settings.model_catalog_json)
@@ -444,6 +492,8 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         registry.init_from_settings()
 
     def tearDown(self) -> None:
+        for patcher in reversed(getattr(self, "_workbench_auth_patchers", [])):
+            patcher.stop()
         for key, value in self._originals.items():
             setattr(settings, key, value)
         channel_router.clear_snapshot()
@@ -1455,7 +1505,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(usage_kwargs["route_attempt"], 1)
 
     async def test_responses_claude_code_alias_adds_prompt_cache_key(self) -> None:
-        self._add_claude_code_model()
+        self._add_claude_code_model(with_route=True)
         fake_user = SimpleNamespace(id="u_test", _api_key_id="k_claude_resp")
         upstream_client = _RecordingClient(
             [
@@ -1502,8 +1552,96 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(add_usage.await_args.kwargs["api_key_id"], "k_claude_resp")
         self.assertEqual(add_usage.await_args.kwargs["cache_read_tokens"], 7)
 
+    async def test_responses_gpt_5_5_adds_prompt_cache_key_and_retention(self) -> None:
+        fake_user = SimpleNamespace(id="u_test", _api_key_id="k_gpt55_resp")
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "resp_gpt55_cache",
+                        "output": [
+                            {
+                                "type": "message",
+                                "content": [{"type": "output_text", "text": "OK"}],
+                            }
+                        ],
+                        "usage": {
+                            "input_tokens": 12,
+                            "input_tokens_details": {"cached_tokens": 7},
+                            "output_tokens": 2,
+                            "total_tokens": 14,
+                        },
+                    }
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(proxy_module.usage_buffer, "add", AsyncMock()):
+                response = await client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"model": "gpt-5.5", "input": "Reply with only: OK"},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        request_json = upstream_client.calls[0]["json"]
+        self.assertEqual(request_json["model"], "gpt-5.5")
+        self.assertTrue(request_json.get("prompt_cache_key", "").startswith("cc-"))
+        self.assertEqual(request_json.get("prompt_cache_retention"), "24h")
+
+    async def test_responses_gpt_5_5_preserves_client_prompt_cache_key(self) -> None:
+        fake_user = SimpleNamespace(id="u_test", _api_key_id="k_gpt55_client_cache")
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "resp_gpt55_client_cache",
+                        "output": [
+                            {
+                                "type": "message",
+                                "content": [{"type": "output_text", "text": "OK"}],
+                            }
+                        ],
+                        "usage": {
+                            "input_tokens": 12,
+                            "output_tokens": 2,
+                            "total_tokens": 14,
+                        },
+                    }
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(proxy_module.usage_buffer, "add", AsyncMock()):
+                response = await client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={
+                        "model": "gpt-5.5",
+                        "input": "Reply with only: OK",
+                        "prompt_cache_key": "client-session-key",
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        request_json = upstream_client.calls[0]["json"]
+        self.assertEqual(request_json.get("prompt_cache_key"), "client-session-key")
+        self.assertEqual(request_json.get("prompt_cache_retention"), "24h")
+
     async def test_responses_claude_code_user_override_changes_backend_and_prompt_cache_key(self) -> None:
-        self._add_claude_code_model()
+        self._add_claude_code_model(with_route=True)
         baseline_user = SimpleNamespace(id="u_test", _api_key_id="k_claude_resp_override")
         override_user = SimpleNamespace(
             id="u_test",
@@ -2169,7 +2307,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(usage_kwargs["route_attempt"], 2)
 
     async def test_chat_claude_code_alias_maps_response_cached_tokens(self) -> None:
-        self._add_claude_code_model()
+        self._add_claude_code_model(with_route=True)
         fake_user = SimpleNamespace(id="u_test", _api_key_id="k_claude_chat")
         upstream_client = _RecordingClient(
             [
@@ -2221,7 +2359,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(add_usage.await_args.kwargs["cache_read_tokens"], 7)
 
     async def test_chat_claude_code_user_override_preserves_alias_and_applies_cache_billing_override(self) -> None:
-        self._add_claude_code_model()
+        self._add_claude_code_model(with_route=True)
         fake_user = SimpleNamespace(
             id="u_test",
             _api_key_id="k_claude_chat_override",

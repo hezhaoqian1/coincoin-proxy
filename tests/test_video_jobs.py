@@ -219,7 +219,7 @@ class VideoJobsTests(unittest.IsolatedAsyncioTestCase):
     async def test_rejects_pure_text_seedance_request(self) -> None:
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-            with patch.object(video_jobs_module, "authorize_request", AsyncMock(return_value=self.fake_user)):
+            with patch.object(video_jobs_module, "authorize_workbench_request", AsyncMock(return_value=self.fake_user)):
                 response = await client.post(
                     "/v1/videos/generations",
                     headers={"Authorization": "Bearer sk_cc_test"},
@@ -237,7 +237,7 @@ class VideoJobsTests(unittest.IsolatedAsyncioTestCase):
     async def test_rejects_video_reference_on_non_video_seedance_model(self) -> None:
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-            with patch.object(video_jobs_module, "authorize_request", AsyncMock(return_value=self.fake_user)):
+            with patch.object(video_jobs_module, "authorize_workbench_request", AsyncMock(return_value=self.fake_user)):
                 response = await client.post(
                     "/v1/videos/generations",
                     headers={"Authorization": "Bearer sk_cc_test"},
@@ -281,7 +281,7 @@ class VideoJobsTests(unittest.IsolatedAsyncioTestCase):
 
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-            with patch.object(video_jobs_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+            with patch.object(video_jobs_module, "authorize_workbench_request", AsyncMock(return_value=self.fake_user)), patch.object(
                 video_jobs_module,
                 "get_http_client",
                 AsyncMock(return_value=upstream_client),
@@ -349,7 +349,7 @@ class VideoJobsTests(unittest.IsolatedAsyncioTestCase):
 
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-            with patch.object(video_jobs_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+            with patch.object(video_jobs_module, "authorize_workbench_request", AsyncMock(return_value=self.fake_user)), patch.object(
                 video_jobs_module,
                 "get_http_client",
                 AsyncMock(return_value=upstream_client),
@@ -408,7 +408,7 @@ class VideoJobsTests(unittest.IsolatedAsyncioTestCase):
 
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-            with patch.object(video_jobs_module, "authorize_request", AsyncMock(return_value=fake_user)), patch.object(
+            with patch.object(video_jobs_module, "authorize_workbench_request", AsyncMock(return_value=fake_user)), patch.object(
                 video_jobs_module,
                 "get_http_client",
                 AsyncMock(return_value=upstream_client),

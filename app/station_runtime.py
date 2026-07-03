@@ -93,6 +93,8 @@ async def resolve_station_model_for_user(
     endpoint: str,
     messages: list | None = None,
     tools: list | None = None,
+    *,
+    channel_affinity_key: str = "",
 ) -> StationResolvedModel | None:
     context = _station_context(user)
     if not context:
@@ -123,6 +125,7 @@ async def resolve_station_model_for_user(
         endpoint,
         messages,
         tools,
+        channel_affinity_key=channel_affinity_key,
     )
     public_model = resolved_model.public_model
 

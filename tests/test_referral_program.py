@@ -66,6 +66,7 @@ class _FakeDB:
 class ReferralProgramTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self._settings = {
+            "referral_rewards_enabled": referral_module.settings.referral_rewards_enabled,
             "referral_signup_bonus_cents": referral_module.settings.referral_signup_bonus_cents,
             "referral_signup_referrer_bonus_cents": referral_module.settings.referral_signup_referrer_bonus_cents,
             "referral_first_usage_referrer_bonus_cents": referral_module.settings.referral_first_usage_referrer_bonus_cents,
@@ -74,6 +75,7 @@ class ReferralProgramTests(unittest.IsolatedAsyncioTestCase):
             "referral_max_rewards_per_user": referral_module.settings.referral_max_rewards_per_user,
             "referral_reward_cap_cents": referral_module.settings.referral_reward_cap_cents,
         }
+        referral_module.settings.referral_rewards_enabled = True
         referral_module.settings.referral_signup_bonus_cents = 1000
         referral_module.settings.referral_signup_referrer_bonus_cents = 500
         referral_module.settings.referral_first_usage_referrer_bonus_cents = 500

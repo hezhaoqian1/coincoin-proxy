@@ -29,7 +29,11 @@ from .fallback_alerts import FallbackExhaustedAlert, notify_fallback_exhausted
 from . import gemini_cpa
 from .models import ApiKey, RequestLog, UsageDaily, User
 from .media_store import record_media_artifacts_best_effort
-from .prompt_cache import build_claude_code_prompt_cache_key
+from .prompt_cache import (
+    apply_default_openai_prompt_cache_retention,
+    build_channel_affinity_key,
+    build_claude_code_prompt_cache_key,
+)
 from .quota_lifecycle import reserve_quota_for_request
 from .rate_limiter import rate_limiter
 from .security import extract_api_key, hash_key
@@ -1401,7 +1405,14 @@ def _channel_attempted_ids(cfg) -> Tuple[str, ...]:
     return tuple(dict.fromkeys(values))
 
 
-def _next_channel_fallback_config(public_model, previous_cfg, endpoint: str, *, reason: str):
+def _next_channel_fallback_config(
+    public_model,
+    previous_cfg,
+    endpoint: str,
+    *,
+    reason: str,
+    channel_affinity_key: str = "",
+):
     previous_channel_id = getattr(previous_cfg, "channel_id", "") or ""
     if not previous_channel_id or str(previous_channel_id).startswith("system:"):
         return None
@@ -1413,6 +1424,7 @@ def _next_channel_fallback_config(public_model, previous_cfg, endpoint: str, *, 
         previous_cfg,
         endpoint,
         exclude_channel_ids=attempted,
+        channel_affinity_key=channel_affinity_key,
     )
     if fallback_cfg is None:
         return None
@@ -1470,12 +1482,14 @@ def _next_provider_or_system_fallback_config(
     *,
     lock_model_selection: bool = False,
     reason: str = "",
+    channel_affinity_key: str = "",
 ) -> Tuple[Optional[Any], str]:
     channel_fallback_cfg = _next_channel_fallback_config(
         public_model,
         previous_cfg,
         endpoint,
         reason=reason,
+        channel_affinity_key=channel_affinity_key,
     )
     if channel_fallback_cfg is not None:
         if lock_model_selection:
@@ -2270,6 +2284,14 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="payload must be a json object")
 
     requested_model = str(payload.get("model") or "").strip()
+    api_key_id = getattr(user, _KEY_ID_ATTR, "")
+    channel_affinity_key = build_channel_affinity_key(
+        user,
+        api_key_id,
+        "responses",
+        requested_model,
+        payload.get("prompt_cache_key"),
+    )
     image_generation_tool = _responses_image_generation_tool(payload.get("tools"))
     if _responses_should_bridge_image_generation(payload, image_generation_tool):
         return await _proxy_responses_image_generation_tool(payload, image_generation_tool, user, db)
@@ -2287,12 +2309,14 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             "responses",
             messages_for_route,
             tools_for_route,
+            channel_affinity_key=channel_affinity_key,
         )
         resolved_model = station_model.resolved_model if station_model else model_registry.resolve_public_model(
             requested_model,
             "responses",
             messages_for_route,
             tools_for_route,
+            channel_affinity_key=channel_affinity_key,
         )
     except Exception as exc:
         return _model_resolution_error_response(exc)
@@ -2307,7 +2331,6 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
     display_model = station_model.display_model if station_model else public_model.public_id
     used_cfg = resolved_model.backend
     used_route_reason = resolved_model.route_reason
-    api_key_id = getattr(user, _KEY_ID_ATTR, "")
     price_input_per_million = station_model.retail_input_per_million if station_model else public_model.price_input_per_million
     price_output_per_million = station_model.retail_output_per_million if station_model else public_model.price_output_per_million
 
@@ -2337,6 +2360,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             display_model,
             public_model,
             effective_backend_model=used_cfg.model_id,
+            include_openai_models=True,
         )
         if prompt_cache_key:
             chat_payload["prompt_cache_key"] = prompt_cache_key
@@ -2643,15 +2667,25 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
     payload.pop("model_provider", None)
     _sanitize_encrypted_ids(payload)
     _ensure_content_text(payload)
+    client_prompt_cache_key = "prompt_cache_key" in payload
     prompt_cache_key = build_claude_code_prompt_cache_key(
         user,
         api_key_id,
         display_model,
         public_model,
         effective_backend_model=used_cfg.model_id,
+        include_openai_models=True,
     )
-    if prompt_cache_key:
+    if prompt_cache_key and not client_prompt_cache_key:
         payload["prompt_cache_key"] = prompt_cache_key
+    client_prompt_cache_retention = "prompt_cache_retention" in payload
+    if not client_prompt_cache_retention:
+        apply_default_openai_prompt_cache_retention(
+            payload,
+            display_model,
+            public_model,
+            effective_backend_model=used_cfg.model_id,
+        )
 
     _text = payload.get("text")
     if isinstance(_text, dict) and "verbosity" in _text:
@@ -2748,17 +2782,26 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             cpa_channel = _select_gemini_cpa_channel(cfg)
             send_payload = dict(base_payload)
             send_payload["model"] = cpa_channel.provider_model if cpa_channel is not None else cfg.model_id
-            stream_prompt_cache_key = build_claude_code_prompt_cache_key(
-                user,
-                api_key_id,
-                display_model,
-                public_model,
-                effective_backend_model=str(send_payload.get("model") or ""),
-            )
-            if stream_prompt_cache_key:
-                send_payload["prompt_cache_key"] = stream_prompt_cache_key
-            else:
-                send_payload.pop("prompt_cache_key", None)
+            if not client_prompt_cache_key:
+                stream_prompt_cache_key = build_claude_code_prompt_cache_key(
+                    user,
+                    api_key_id,
+                    display_model,
+                    public_model,
+                    effective_backend_model=str(send_payload.get("model") or ""),
+                    include_openai_models=True,
+                )
+                if stream_prompt_cache_key:
+                    send_payload["prompt_cache_key"] = stream_prompt_cache_key
+                else:
+                    send_payload.pop("prompt_cache_key", None)
+            if not client_prompt_cache_retention:
+                apply_default_openai_prompt_cache_retention(
+                    send_payload,
+                    display_model,
+                    public_model,
+                    effective_backend_model=str(send_payload.get("model") or ""),
+                )
             if is_fallback:
                 send_payload.pop("previous_response_id", None)
             send_payload["store"] = True
@@ -2826,6 +2869,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 tools_for_route,
                 lock_model_selection=resolved_model.lock_model_selection,
                 reason=failure_reason,
+                channel_affinity_key=channel_affinity_key,
             )
             if route_fallback_cfg is None:
                 return None
@@ -2878,6 +2922,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 tools_for_route,
                 lock_model_selection=resolved_model.lock_model_selection,
                 reason=str(_code),
+                channel_affinity_key=channel_affinity_key,
             )
             if route_fallback_cfg is not None:
                 _err_body = await _close_stream_for_retry(upstream)
@@ -2967,6 +3012,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                     tools_for_route,
                     lock_model_selection=resolved_model.lock_model_selection,
                     reason="upstream_unexpected_content_type",
+                    channel_affinity_key=channel_affinity_key,
                 )
             if route_fallback_cfg is not None:
                 await _close_stream_for_retry(upstream)
@@ -3132,17 +3178,26 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         cpa_channel = _select_gemini_cpa_channel(cfg)
         send_payload = dict(base_payload)
         send_payload["model"] = cpa_channel.provider_model if cpa_channel is not None else cfg.model_id
-        json_prompt_cache_key = build_claude_code_prompt_cache_key(
-            user,
-            api_key_id,
-            display_model,
-            public_model,
-            effective_backend_model=str(send_payload.get("model") or ""),
-        )
-        if json_prompt_cache_key:
-            send_payload["prompt_cache_key"] = json_prompt_cache_key
-        else:
-            send_payload.pop("prompt_cache_key", None)
+        if not client_prompt_cache_key:
+            json_prompt_cache_key = build_claude_code_prompt_cache_key(
+                user,
+                api_key_id,
+                display_model,
+                public_model,
+                effective_backend_model=str(send_payload.get("model") or ""),
+                include_openai_models=True,
+            )
+            if json_prompt_cache_key:
+                send_payload["prompt_cache_key"] = json_prompt_cache_key
+            else:
+                send_payload.pop("prompt_cache_key", None)
+        if not client_prompt_cache_retention:
+            apply_default_openai_prompt_cache_retention(
+                send_payload,
+                display_model,
+                public_model,
+                effective_backend_model=str(send_payload.get("model") or ""),
+            )
         if is_fallback:
             send_payload.pop("previous_response_id", None)
         send_payload["store"] = True
@@ -3198,6 +3253,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             tools_for_route,
             lock_model_selection=resolved_model.lock_model_selection,
             reason=reason,
+            channel_affinity_key=channel_affinity_key,
         )
 
     def _notify_responses_fallback_exhausted(

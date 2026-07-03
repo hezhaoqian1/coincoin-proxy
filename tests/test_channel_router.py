@@ -56,6 +56,67 @@ class ChannelRouterTests(unittest.TestCase):
         self.assertTrue(seen <= {"ch_a", "ch_b"})
         self.assertNotIn("ch_c", seen)
 
+    def test_affinity_choice_is_stable_within_best_priority_tier(self) -> None:
+        router = ChannelRouter()
+        router.set_snapshot(
+            [
+                ProviderChannelSnapshot(channel_id="ch_a", base_url="https://a.example", api_key="a", priority=0, weight=1),
+                ProviderChannelSnapshot(channel_id="ch_b", base_url="https://b.example", api_key="b", priority=0, weight=1),
+                ProviderChannelSnapshot(channel_id="ch_c", base_url="https://c.example", api_key="c", priority=5, weight=100),
+            ],
+            [
+                ModelChannelRouteSnapshot(route_id="r_a", public_model_id="demo-model", channel_id="ch_a"),
+                ModelChannelRouteSnapshot(route_id="r_b", public_model_id="demo-model", channel_id="ch_b"),
+                ModelChannelRouteSnapshot(route_id="r_c", public_model_id="demo-model", channel_id="ch_c"),
+            ],
+        )
+
+        choices = [
+            router.select_for_model(
+                self._public(),
+                self._backend(),
+                "responses",
+                affinity_key="user-key-model",
+            ).channel_id
+            for _ in range(10)
+        ]
+
+        self.assertEqual(len(set(choices)), 1)
+        self.assertIn(choices[0], {"ch_a", "ch_b"})
+
+    def test_affinity_fallback_excludes_failed_channel(self) -> None:
+        router = ChannelRouter()
+        router.set_snapshot(
+            [
+                ProviderChannelSnapshot(channel_id="ch_a", base_url="https://a.example", api_key="a", priority=0, weight=1),
+                ProviderChannelSnapshot(channel_id="ch_b", base_url="https://b.example", api_key="b", priority=0, weight=1),
+                ProviderChannelSnapshot(channel_id="ch_c", base_url="https://c.example", api_key="c", priority=5, weight=1),
+            ],
+            [
+                ModelChannelRouteSnapshot(route_id="r_a", public_model_id="demo-model", channel_id="ch_a"),
+                ModelChannelRouteSnapshot(route_id="r_b", public_model_id="demo-model", channel_id="ch_b"),
+                ModelChannelRouteSnapshot(route_id="r_c", public_model_id="demo-model", channel_id="ch_c"),
+            ],
+        )
+
+        affinity = "user-key-model"
+        first = router.select_for_model(
+            self._public(),
+            self._backend(),
+            "responses",
+            affinity_key=affinity,
+        )
+        fallback = router.select_for_model(
+            self._public(),
+            self._backend(),
+            "responses",
+            exclude_channel_ids=(first.channel_id,),
+            affinity_key=affinity,
+        )
+
+        self.assertNotEqual(fallback.channel_id, first.channel_id)
+        self.assertIn(fallback.channel_id, {"ch_a", "ch_b"})
+
     def test_failure_cooldown_excludes_channel_and_falls_back(self) -> None:
         router = ChannelRouter()
         router.set_snapshot(

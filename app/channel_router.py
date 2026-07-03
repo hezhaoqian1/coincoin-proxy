@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import random
 import time
+import hashlib
+import math
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -165,6 +167,7 @@ class ChannelRouter:
         endpoint: str,
         *,
         exclude_channel_ids: Iterable[str] = (),
+        affinity_key: str = "",
     ) -> Optional[ChannelChoice]:
         public_id = str(getattr(public_model, "public_id", "") or "").strip()
         if not public_id:
@@ -201,15 +204,30 @@ class ChannelRouter:
 
         best_priority = min(item[2] for item in candidates)
         tier = [item for item in candidates if item[2] == best_priority]
-        total_weight = sum(item[3] for item in tier)
-        cursor = random.uniform(0, total_weight)
-        upto = 0.0
-        selected = tier[-1]
-        for item in tier:
-            upto += item[3]
-            if cursor <= upto:
-                selected = item
-                break
+        affinity = str(affinity_key or "").strip()
+        if affinity:
+            selected = tier[-1]
+            best_score = float("inf")
+            for item in tier:
+                route, channel, _priority, weight = item
+                seed = f"{affinity}:{public_id}:{endpoint}:{route.route_id}:{channel.channel_id}"
+                digest = hashlib.sha256(seed.encode("utf-8")).digest()
+                bucket = int.from_bytes(digest[:8], "big")
+                unit = (bucket + 1) / ((1 << 64) + 1)
+                score = -math.log(unit) / max(1, int(weight or 1))
+                if score < best_score:
+                    best_score = score
+                    selected = item
+        else:
+            total_weight = sum(item[3] for item in tier)
+            cursor = random.uniform(0, total_weight)
+            upto = 0.0
+            selected = tier[-1]
+            for item in tier:
+                upto += item[3]
+                if cursor <= upto:
+                    selected = item
+                    break
 
         route, channel, priority, weight = selected
         provider_model = str(
