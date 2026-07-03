@@ -1840,56 +1840,6 @@
           <h1 class="page-title">上游渠道</h1>
           <p class="page-desc">集中管理可用上游 URL、Key、优先级、权重和保底 route。用户仍只看到 CoinCoin 公共 API。</p>
         </div>
-        <div class="card collapsible-card" id="defaultProviderChannelsCard" data-collapse-key="default-provider-channels" style="margin-bottom:20px">
-          <div class="card-header">
-            <div>
-              <span class="card-title">系统默认渠道</span>
-              <div class="text-sm text-muted" id="defaultProviderChannelSummary">加载中...</div>
-            </div>
-            <button class="btn btn-secondary btn-sm card-collapse-btn" type="button" onclick="toggleCollapsibleCard('default-provider-channels')">
-              <span class="chevron">▾</span>
-              <span class="label">收起</span>
-            </button>
-          </div>
-          <div class="card-body flush">
-            <div class="table-wrapper">
-              <table>
-                <thead>
-                  <tr>
-                    <th>默认路径</th>
-                    <th>来源</th>
-                    <th>能力</th>
-                    <th>模型</th>
-                    <th>调度</th>
-                    <th>状态</th>
-                  </tr>
-                </thead>
-                <tbody id="defaultProviderChannelsBody"></tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-        <div class="card collapsible-card" id="providerChannelStabilityCard" data-collapse-key="provider-channel-stability" style="margin-bottom:20px">
-          <div class="card-header">
-            <div>
-              <span class="card-title">渠道稳定性</span>
-              <div class="text-sm text-muted" id="providerChannelStabilitySummary">真实请求聚合，展示可用率、延迟和 fallback 流向</div>
-            </div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap">
-              <button class="btn btn-secondary btn-sm card-collapse-btn" type="button" onclick="toggleCollapsibleCard('provider-channel-stability')">
-                <span class="chevron">▾</span>
-                <span class="label">收起</span>
-              </button>
-              <button class="btn btn-secondary btn-sm" data-stability-period="7d" onclick="setProviderChannelStabilityPeriod('7d')">7天</button>
-              <button class="btn btn-secondary btn-sm" data-stability-period="15d" onclick="setProviderChannelStabilityPeriod('15d')">15天</button>
-              <button class="btn btn-secondary btn-sm" data-stability-period="30d" onclick="setProviderChannelStabilityPeriod('30d')">30天</button>
-              <button class="btn btn-secondary btn-sm" onclick="loadProviderChannelStability()">刷新</button>
-            </div>
-          </div>
-          <div class="card-body">
-            <div id="providerChannelStabilityGrid" class="channel-stability-grid"></div>
-          </div>
-        </div>
         <div class="card collapsible-card" id="providerChannelMonitorCard" data-collapse-key="provider-channel-monitor" style="margin-bottom:20px">
           <div class="card-header">
             <div>
@@ -3291,11 +3241,8 @@
     let modelPricingCache = [];
     let currentModelPricingId = null;
     let providerChannelCache = [];
-    let defaultProviderChannelCache = [];
     let modelChannelRouteCache = [];
     let modelChannelRouteRouterVersion = 0;
-    let providerChannelStabilityCache = [];
-    let providerChannelStabilityPeriod = '7d';
     let providerChannelMonitorCache = [];
     let providerChannelMonitorPeriod = '7d';
     let providerChannelMonitorSearchTimeout = null;
@@ -5094,73 +5041,6 @@
       return `<span class="badge ${cls}">${escapeHtml(labels[normalized] || normalized)}</span>`;
     }
 
-    function renderProviderChannelStability(payload = {}) {
-      const items = payload.items || [];
-      providerChannelStabilityCache = items;
-      const summary = payload.summary || {};
-      const summaryEl = document.getElementById('providerChannelStabilitySummary');
-      if (summaryEl) {
-        summaryEl.textContent = `${payload.period || providerChannelStabilityPeriod} · ${formatNum(summary.requests || 0)} req · 可用率 ${formatPct(summary.availability_rate || 0)} · fallback ${formatNum(summary.fallback_out_requests || 0)}`;
-      }
-      document.querySelectorAll('[data-stability-period]').forEach(btn => {
-        const active = btn.getAttribute('data-stability-period') === (payload.period || providerChannelStabilityPeriod);
-        btn.classList.toggle('btn-primary', active);
-        btn.classList.toggle('btn-secondary', !active);
-      });
-      const grid = document.getElementById('providerChannelStabilityGrid');
-      if (!grid) return;
-      grid.innerHTML = items.length ? items.map(item => {
-        const recent = (item.recent || []).slice(-30);
-        const padded = Array(Math.max(0, 30 - recent.length)).fill({ status: 'idle' }).concat(recent);
-        const bars = padded.map(point => {
-          const status = ['ok', 'fallback', 'failed'].includes(point.status) ? point.status : 'idle';
-          const title = point.status === 'idle'
-            ? 'no request'
-            : `${point.status_code || '-'} · ${formatLatency(point.latency_ms || 0)} · ${formatDate(point.at)}`;
-          return `<span class="stability-bar ${escapeHtml(status)}" title="${escapeHtml(title)}"></span>`;
-        }).join('');
-        return `
-          <div class="channel-stability-card">
-            <div class="channel-stability-head">
-              <div style="min-width:0">
-                <strong>${escapeHtml(item.name || item.channel_id)}</strong>
-                <div class="text-sm text-muted">${escapeHtml(item.provider_platform || item.channel_type || '-')} · ${escapeHtml(item.channel_id || '-')}</div>
-              </div>
-              ${providerChannelHealthBadge(item.health_status)}
-            </div>
-            <div class="channel-stability-metrics">
-              <div class="channel-stability-metric"><div class="text-sm text-muted">可用率</div><strong>${formatPct(item.availability_rate || 0)}</strong></div>
-              <div class="channel-stability-metric"><div class="text-sm text-muted">平均延迟</div><strong>${formatLatency(item.avg_latency_ms || 0)}</strong></div>
-              <div class="channel-stability-metric"><div class="text-sm text-muted">请求</div><strong>${formatNum(item.requests || 0)}</strong></div>
-            </div>
-            <div class="stability-bars" aria-label="recent channel stability">${bars}</div>
-            <div class="text-sm text-muted" style="margin-top:10px">
-              失败 ${formatNum(item.failed_requests || 0)} · 流入 ${formatNum(item.fallback_in_requests || 0)} · 流出 ${formatNum(item.fallback_out_requests || 0)} · 最近 ${formatDate(item.last_seen_at)}
-            </div>
-          </div>
-        `;
-      }).join('') : '<div class="empty-state" style="grid-column:1/-1"><div class="empty-state-icon">S</div><h3>暂无渠道请求</h3><p>渠道产生真实请求后会展示稳定性</p></div>';
-    }
-
-    async function loadProviderChannelStability(showError = true) {
-      try {
-        const r = await fetch(`/admin/provider-channels/stability?period=${encodeURIComponent(providerChannelStabilityPeriod)}&limit=60`, { headers: adminHeaders() });
-        if (!r.ok) {
-          if (showError) toast('加载渠道稳定性失败', 'error');
-          return;
-        }
-        renderProviderChannelStability(await r.json());
-      } catch (e) {
-        console.error(e);
-        if (showError) toast('加载渠道稳定性失败', 'error');
-      }
-    }
-
-    function setProviderChannelStabilityPeriod(period) {
-      providerChannelStabilityPeriod = period || '7d';
-      loadProviderChannelStability();
-    }
-
     function renderMonitorTimeline(points = []) {
       const recent = (points || []).slice(-30);
       const padded = Array(Math.max(0, 30 - recent.length)).fill({ status: 'idle' }).concat(recent);
@@ -5334,7 +5214,6 @@
         toast(`检测完成：${primary.status || '-'} ${formatLatency(primary.latency_ms || 0)}`, primary.status === 'operational' ? 'success' : 'warning');
         renderProviderChannelMonitorRunResults(providerChannelMonitorCache.find(item => item.id === monitorId), d);
         loadProviderChannelMonitors();
-        loadProviderChannelStability(false);
       } catch (e) {
         console.error(e);
         toast('主动检测失败', 'error');
@@ -5414,25 +5293,11 @@
         const channelsPayload = await channelsResp.json();
         const routesPayload = await routesResp.json();
         providerChannelCache = channelsPayload.channels || [];
-        defaultProviderChannelCache = channelsPayload.default_channels || [];
         modelChannelRouteCache = routesPayload.routes || [];
         modelChannelRouteRouterVersion = routesPayload.router_version || 0;
         fillProviderChannelMonitorFilterOptions();
         fillModelChannelRouteFilterOptions();
-        document.getElementById('defaultProviderChannelSummary').textContent = `${defaultProviderChannelCache.length} 条只读默认路径，来自 catalog/env；新增渠道后会覆盖命中的模型 route`;
         document.getElementById('providerChannelSummary').textContent = `${providerChannelCache.length} 个渠道，router v${channelsPayload.router_version || 0}`;
-
-        const defaultBody = document.getElementById('defaultProviderChannelsBody');
-        defaultBody.innerHTML = defaultProviderChannelCache.length ? defaultProviderChannelCache.map(channel => `
-          <tr>
-            <td><strong>${escapeHtml(channel.name || channel.id)}</strong><div class="text-sm text-muted">${escapeHtml(channel.id)}</div></td>
-            <td><div>${escapeHtml(channel.provider_platform || '-')}</div><div class="text-sm text-muted">${escapeHtml(channel.source || '-')} · ${escapeHtml(channel.channel_type || '-')}</div></td>
-            <td>${escapeHtml((channel.capabilities || []).join(', ') || '全部')}</td>
-            <td><strong>${Number(channel.model_count || 0)}</strong><div class="text-sm text-muted">${escapeHtml((channel.public_models || []).join(', ') || '-')}</div></td>
-            <td><div>priority ${Number(channel.priority || 0)} · weight ${Number(channel.weight || 1)}</div><div class="text-sm text-muted">fails ${Number(channel.allowed_fails || 0)} / ${Number(channel.cooldown_seconds || 0)}s</div></td>
-            <td><span class="badge badge-success">${escapeHtml(channel.status || 'default')}</span><div class="text-sm text-muted">${escapeHtml(channel.notes || '')}</div></td>
-          </tr>
-        `).join('') : '<tr><td colspan="6"><div class="empty-state"><div class="empty-state-icon">D</div><h3>暂无默认路径</h3><p>catalog 当前没有可展示的默认上游路径</p></div></td></tr>';
 
         const channelBody = document.getElementById('providerChannelsBody');
         channelBody.innerHTML = providerChannelCache.length ? providerChannelCache.map(channel => {
@@ -5462,7 +5327,6 @@
         }).join('') : '<tr><td colspan="8"><div class="empty-state"><div class="empty-state-icon">C</div><h3>暂无上游渠道</h3><p>添加第一个 Provider Channel 后即可配置模型 route</p></div></td></tr>';
 
         renderModelChannelRoutes();
-        await loadProviderChannelStability(false);
         await loadProviderChannelMonitors(false);
       } catch (e) {
         console.error(e);
