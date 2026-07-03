@@ -1706,7 +1706,7 @@
         <div class="card">
           <div class="card-header">
             <div class="filter-bar">
-              <input type="text" id="userSearch" class="form-input" style="width:300px" placeholder="搜索用户名、邮箱、external_id、user_id 或 API Key（sk_cc_...）..." oninput="debounceSearch()" />
+              <input type="text" id="userSearch" class="form-input" style="width:300px" placeholder="搜索用户名、邮箱、external_id 或 API Key（sk_cc_...）..." oninput="debounceSearch()" />
               <select id="userUsageSort" class="form-select" style="width:170px" onchange="loadUsers()">
                 <option value="">按创建时间</option>
                 <option value="1d">近 1 天消耗</option>
@@ -3886,8 +3886,10 @@
           const periodHtml = period
             ? `<div><strong>${formatMoney(period.cost_cents || 0)}</strong></div><div class="text-sm text-muted">${formatNum(period.requests_total || 0)} req · ${formatNum(period.tokens_total || 0)} tokens</div>`
             : '<span class="text-sm text-muted">选择 1天/7天</span>';
+          const displayName = u.username || u.external_id || u.email || '未知用户';
+          const secondary = u.email && u.email !== displayName ? u.email : (u.external_id && u.external_id !== displayName ? u.external_id : '');
           return `<tr>
-            <td><div class="user-cell"><div class="user-avatar">${getInitials(u.username || u.email || u.external_id)}</div><div class="user-info"><strong>${escapeHtml(u.username || u.external_id || '未知用户')}</strong><span>${escapeHtml(u.email || u.id)}</span><span>${escapeHtml(u.id)}</span></div></div></td>
+            <td><div class="user-cell"><div class="user-avatar">${getInitials(displayName)}</div><div class="user-info"><strong>${escapeHtml(displayName)}</strong>${secondary ? `<span>${escapeHtml(secondary)}</span>` : ''}</div></div></td>
             <td><span class="badge ${u.status === 'active' ? 'badge-success' : 'badge-error'}">${u.status === 'active' ? '正常' : '已封禁'}</span></td>
             <td>${stationHtml}</td>
             <td>${billingSummaryHtml(u.billing_summary, true)}</td>
