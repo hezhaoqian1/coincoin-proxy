@@ -2125,7 +2125,7 @@
         <div class="card">
           <div class="card-header">
             <div class="filter-bar">
-              <input type="text" id="orderSearch" class="form-input" style="width:260px" placeholder="搜索 user_id、订单号、交易号..." oninput="debouncePaymentOrderSearch()" />
+              <input type="text" id="orderSearch" class="form-input" style="width:320px" placeholder="搜索用户名、邮箱、user_id、订单号、交易号..." oninput="debouncePaymentOrderSearch()" />
               <select id="orderStatusFilter" class="form-select" onchange="loadPaymentOrders()">
                 <option value="">全部状态</option>
                 <option value="pending">待确认</option>
@@ -6039,17 +6039,19 @@
         body.innerHTML = data.map(o => {
           const isPending = o.status === 'pending';
           const badgeCls = isPending ? 'badge-warning' : 'badge-success';
+          const displayName = o.display_name || o.username || o.email || o.external_id || o.user_id || '-';
+          const secondary = o.email || o.external_id || '';
           return `<tr>
-            <td class="text-mono text-sm">${o.order_no}</td>
-            <td>${o.user_id}</td>
-            <td>¥${o.amount_rmb}</td>
+            <td class="text-mono text-sm">${escapeHtml(o.order_no || '-')}</td>
+            <td><div class="user-cell"><div class="user-avatar">${getInitials(displayName)}</div><div class="user-info"><strong>${escapeHtml(displayName)}</strong>${secondary ? `<span>${escapeHtml(secondary)}</span>` : ''}<span>${escapeHtml(o.user_id || '')}</span></div></div></td>
+            <td>¥${escapeHtml(o.amount_rmb || '0')}</td>
             <td>${productLabel(o)}<div class="text-sm text-muted">${escapeHtml(o.product_id || 'legacy')}</div></td>
             <td>${formatMoney(o.add_balance_cents || 0)}<div class="text-sm text-muted">${o.add_balance_cents || 0}¢</div></td>
             <td><span class="badge ${badgeCls}">${isPending ? '待确认' : '已确认'}</span></td>
-            <td class="text-mono text-sm text-muted">${o.trade_no || '-'}</td>
+            <td class="text-mono text-sm text-muted">${escapeHtml(o.trade_no || '-')}</td>
             <td class="text-sm text-muted">${formatDate(o.created_at)}</td>
             <td class="text-sm text-muted">${formatDate(o.confirmed_at)}</td>
-            <td>${isPending ? `<button class="btn btn-sm btn-warning" onclick="forceConfirmOrder('${o.order_no}')">强制确认</button>` : '<span class="text-sm text-muted">—</span>'}</td>
+            <td>${isPending ? `<button class="btn btn-sm btn-warning" onclick="forceConfirmOrder('${escapeHtml(o.order_no || '')}')">强制确认</button>` : '<span class="text-sm text-muted">—</span>'}</td>
           </tr>`;
         }).join('');
       } catch (e) { console.error(e); toast('加载失败', 'error'); }

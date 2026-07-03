@@ -5096,7 +5096,11 @@ async def list_payment_orders(
     limit: int = 50,
     db: AsyncSession = Depends(get_db),
 ):
-    query = select(PaymentOrder).order_by(PaymentOrder.created_at.desc())
+    query = (
+        select(PaymentOrder, User)
+        .outerjoin(User, PaymentOrder.user_id == User.id)
+        .order_by(PaymentOrder.created_at.desc())
+    )
     if status_filter:
         query = query.where(PaymentOrder.status == status_filter)
     if search:
@@ -5105,14 +5109,33 @@ async def list_payment_orders(
             PaymentOrder.user_id.ilike(pat)
             | PaymentOrder.order_no.ilike(pat)
             | PaymentOrder.trade_no.ilike(pat)
+            | User.username.ilike(pat)
+            | User.email.ilike(pat)
+            | User.external_id.ilike(pat)
         )
     result = await db.execute(query.limit(limit))
-    orders = result.scalars().all()
-    return [
-        {
+    rows = result.all()
+    items = []
+    for row in rows:
+        try:
+            o = row[0]
+            user = row[1] if len(row) > 1 else None
+            if not hasattr(o, "order_no"):
+                raise TypeError("unexpected payment order row")
+        except (TypeError, IndexError, KeyError):
+            o = row
+            user = None
+        username = getattr(user, "username", None) if user else None
+        email = getattr(user, "email", None) if user else None
+        external_id = getattr(user, "external_id", None) if user else None
+        items.append({
             **_product_admin_payload(getattr(o, "product_id", "") or ""),
             "id": o.id,
             "user_id": o.user_id,
+            "username": username,
+            "email": email,
+            "external_id": external_id,
+            "display_name": _display_name(username, email, external_id, o.user_id),
             "order_no": o.order_no,
             "amount_rmb": o.amount_rmb,
             "add_balance_cents": o.add_balance_cents,
@@ -5121,9 +5144,8 @@ async def list_payment_orders(
             "pay_url": o.pay_url,
             "created_at": o.created_at,
             "confirmed_at": o.confirmed_at,
-        }
-        for o in orders
-    ]
+        })
+    return items
 
 
 @router.post("/payment-orders/{order_no}/force-confirm", dependencies=[Depends(admin_guard)])

@@ -1842,7 +1842,8 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                 confirmed_at=None,
             ),
         ]
-        fake_db = _FakeDB(execute_results=[_FakeScalarsResult(orders)])
+        user = SimpleNamespace(id="u_1", username="alice", email="alice@example.com", external_id="ext_alice")
+        fake_db = _FakeDB(execute_results=[_FakeAllResult([(orders[0], user), (orders[1], user)])])
 
         async def fake_get_db():
             yield fake_db
@@ -1860,6 +1861,10 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload[0]["product_name"], "基础月卡")
         self.assertEqual(payload[0]["product_kind"], "monthly")
         self.assertEqual(payload[0]["product_balance_cents"], 40000)
+        self.assertEqual(payload[0]["username"], "alice")
+        self.assertEqual(payload[0]["email"], "alice@example.com")
+        self.assertEqual(payload[0]["external_id"], "ext_alice")
+        self.assertEqual(payload[0]["display_name"], "alice")
         self.assertEqual(payload[1]["product_id"], "addon_ultra")
         self.assertEqual(payload[1]["product_name"], "超大包")
         self.assertEqual(payload[1]["product_kind"], "addon")
