@@ -387,11 +387,29 @@ claude`
   "ANTHROPIC_AUTH_TOKEN" = "${snippetKey}"
 }
 
+$ClaudeDir = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $HOME ".claude" }
+New-Item -ItemType Directory -Force $ClaudeDir | Out-Null
+
+$BackupFile = Join-Path $ClaudeDir ("clawfather-env-backup-{0}.txt" -f (Get-Date -Format "yyyyMMddHHmmss"))
+$BackupLines = @(
+  "# ClawFather Claude Code environment backup",
+  "# Created at $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')",
+  "# Restore a User value with: [Environment]::SetEnvironmentVariable(""KEY"", ""VALUE"", ""User"")"
+)
+
+foreach ($Item in $EnvMap.GetEnumerator()) {
+  $BackupLines += "$($Item.Key).User=$([Environment]::GetEnvironmentVariable($Item.Key, 'User'))"
+  $BackupLines += "$($Item.Key).Process=$([Environment]::GetEnvironmentVariable($Item.Key, 'Process'))"
+}
+
+$BackupLines | Set-Content $BackupFile -Encoding UTF8
+
 foreach ($Item in $EnvMap.GetEnumerator()) {
   [Environment]::SetEnvironmentVariable($Item.Key, $Item.Value, "User")
   Set-Item -Path "Env:$($Item.Key)" -Value $Item.Value
 }
 
+Write-Host "Previous Claude Code gateway environment saved to $BackupFile"
 Write-Host "Claude Code gateway configured for current and future PowerShell sessions."
 
 claude`
@@ -549,7 +567,7 @@ aider --model openai/${codingModelId}`
                     {
                         title: 'Windows PowerShell 一键配置',
                         platform: 'Windows',
-                        summary: '只写入当前 PowerShell 和用户级 URL / Key 环境变量；不指定模型，交给 Claude Code 默认 sonnet。',
+                        summary: '先备份旧 URL / Key 环境变量，再写入当前 PowerShell 和用户级环境变量；不指定模型，交给 Claude Code 默认 sonnet。',
                         code: claudeWindowsCommand,
                     },
                 ],
