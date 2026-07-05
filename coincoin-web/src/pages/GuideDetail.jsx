@@ -371,14 +371,9 @@ if not isinstance(env, dict):
     env = {}
 
 data["$schema"] = "https://json.schemastore.org/claude-code-settings.json"
-data["model"] = "${CLAUDE_DEFAULT_ALIAS}"
 env.update({
     "ANTHROPIC_BASE_URL": "${SITE_ROOT}",
     "ANTHROPIC_AUTH_TOKEN": "${snippetKey}",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "${CLAUDE_OPUS_OPTIONAL_MODEL_ID}",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "${CLAUDE_DEFAULT_MODEL_ID}",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-4-5",
-    "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "1",
 })
 data["env"] = env
 
@@ -387,45 +382,17 @@ EOF
 
 claude`
 
-        const claudeWindowsCommand = `$ClaudeDir = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $HOME ".claude" }
-$SettingsFile = Join-Path $ClaudeDir "settings.json"
-
-New-Item -ItemType Directory -Force $ClaudeDir | Out-Null
-if (Test-Path $SettingsFile) {
-  $stamp = Get-Date -Format "yyyyMMddHHmmss"
-  Copy-Item $SettingsFile "$SettingsFile.bak.$stamp"
+        const claudeWindowsCommand = `$EnvMap = @{
+  "ANTHROPIC_BASE_URL" = "${SITE_ROOT}"
+  "ANTHROPIC_AUTH_TOKEN" = "${snippetKey}"
 }
 
-$Data = @{}
-if (Test-Path $SettingsFile) {
-  $Raw = Get-Content $SettingsFile -Raw
-  if ($Raw.Trim()) {
-    $Data = $Raw | ConvertFrom-Json -AsHashtable
-  }
+foreach ($Item in $EnvMap.GetEnumerator()) {
+  [Environment]::SetEnvironmentVariable($Item.Key, $Item.Value, "User")
+  Set-Item -Path "Env:$($Item.Key)" -Value $Item.Value
 }
 
-if (-not ($Data -is [System.Collections.IDictionary])) {
-  throw "Existing settings.json must contain a JSON object."
-}
-
-$EnvMap = @{}
-if ($Data.Contains("env") -and $Data["env"] -is [System.Collections.IDictionary]) {
-  foreach ($Key in $Data["env"].Keys) {
-    $EnvMap[$Key] = $Data["env"][$Key]
-  }
-}
-
-$Data['$schema'] = "https://json.schemastore.org/claude-code-settings.json"
-$Data["model"] = "${CLAUDE_DEFAULT_ALIAS}"
-$EnvMap["ANTHROPIC_BASE_URL"] = "${SITE_ROOT}"
-$EnvMap["ANTHROPIC_AUTH_TOKEN"] = "${snippetKey}"
-$EnvMap["ANTHROPIC_DEFAULT_OPUS_MODEL"] = "${CLAUDE_OPUS_OPTIONAL_MODEL_ID}"
-$EnvMap["ANTHROPIC_DEFAULT_SONNET_MODEL"] = "${CLAUDE_DEFAULT_MODEL_ID}"
-$EnvMap["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = "claude-haiku-4-5"
-$EnvMap["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"] = "1"
-$Data["env"] = $EnvMap
-
-$Data | ConvertTo-Json -Depth 20 | Set-Content $SettingsFile -Encoding UTF8
+Write-Host "Claude Code gateway configured for current and future PowerShell sessions."
 
 claude`
 
@@ -571,18 +538,18 @@ aider --model openai/${codingModelId}`
             },
             'claude-code': {
                 title: 'Claude Code 配置',
-                description: 'Claude Code 走 Anthropic 兼容入口，地址填根域名，不要手动加 `/v1`。默认推荐 `sonnet`，`claude-opus-4-8` 作为显式高配选项保留。',
+                description: 'Claude Code 走 Anthropic 兼容入口，地址填根域名，不要手动加 `/v1`。脚本只写 URL 和 Key，模型交给 Claude Code 默认 sonnet。',
                 commandGroup: [
                     {
                         title: 'macOS / Linux 一键配置',
                         platform: 'macOS / Linux',
-                        summary: '按 Claude Code 官方 `~/.claude/settings.json` 机制写入用户级配置；旧文件先备份，再保留其他设置并合并 ClawFather 所需的网关和模型字段。',
+                        summary: '按 Claude Code 官方 `~/.claude/settings.json` 机制写入 URL 和 Key；旧文件先备份，再保留其他设置。',
                         code: claudeUnixCommand,
                     },
                     {
                         title: 'Windows PowerShell 一键配置',
                         platform: 'Windows',
-                        summary: '按官方 `%USERPROFILE%\\.claude\\settings.json` 路径写入；旧文件先备份，再保留其他设置并合并 ClawFather 所需的网关和模型字段。',
+                        summary: '只写入当前 PowerShell 和用户级 URL / Key 环境变量；不指定模型，交给 Claude Code 默认 sonnet。',
                         code: claudeWindowsCommand,
                     },
                 ],

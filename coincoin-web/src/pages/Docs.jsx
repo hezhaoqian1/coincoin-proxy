@@ -444,14 +444,9 @@ wire_api = "responses"`}</pre>
             <pre className="code-block">{`mkdir -p ~/.claude && cat > ~/.claude/settings.json <<'EOF'
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
-  "model": "${CLAUDE_DEFAULT_ALIAS}",
   "env": {
     "ANTHROPIC_BASE_URL": "${SITE}",
-    "ANTHROPIC_AUTH_TOKEN": "sk_cc_xxxxx",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "${CLAUDE_OPUS_OPTIONAL_MODEL_ID}",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "${CLAUDE_DEFAULT_MODEL_ID}",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-4-5",
-    "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "1"
+    "ANTHROPIC_AUTH_TOKEN": "sk_cc_xxxxx"
   }
 }
 EOF
@@ -1025,14 +1020,9 @@ wire_api = "responses"`}</pre>
             <pre className="code-block">{`mkdir -p ~/.claude && cat > ~/.claude/settings.json <<'EOF'
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
-  "model": "${CLAUDE_DEFAULT_ALIAS}",
   "env": {
     "ANTHROPIC_BASE_URL": "${SITE}",
-    "ANTHROPIC_AUTH_TOKEN": "sk_cc_xxxxx",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "${CLAUDE_OPUS_OPTIONAL_MODEL_ID}",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "${CLAUDE_DEFAULT_MODEL_ID}",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-4-5",
-    "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "1"
+    "ANTHROPIC_AUTH_TOKEN": "sk_cc_xxxxx"
   }
 }
 EOF
@@ -1041,8 +1031,7 @@ claude`}</pre>
             <ul className="doc-list">
                 <li>官方用户级配置文件路径是 <code>~/.claude/settings.json</code>；Windows 对应 <code>%USERPROFILE%\.claude\settings.json</code>。</li>
                 <li>这里的 <code>ANTHROPIC_BASE_URL</code> 必须填站点根地址，不能带 <code>/v1</code>。</li>
-                <li><code>model</code> 默认建议填 <code>sonnet</code>；要固定到具体版本时，再配 <code>ANTHROPIC_DEFAULT_*_MODEL</code>，例如 <code>claude-opus-4-8</code> 或 <code>claude-sonnet-4-6</code>。</li>
-                <li>如果想让 <code>/model</code> 自动列出我们网关返回的 Claude 模型，记得打开 <code>CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1</code>。</li>
+                <li>默认模型交给 Claude Code 自己选择；通常会走系统默认的 sonnet，不需要额外指定。</li>
                 <li>如果之前用过 <code>/login</code> 托管登录，先执行一次 <code>/logout</code>，避免本地登录态和环境变量打架。</li>
             </ul>
 
