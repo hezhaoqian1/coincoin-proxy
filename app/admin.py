@@ -20,6 +20,7 @@ from .finance_summary import (
     build_user_finance_snapshot,
     build_user_finance_snapshots,
     ensure_finance_summary_initialized,
+    increment_finance_summary,
 )
 from .models import (
     Announcement,
@@ -60,7 +61,7 @@ from .payment_common import PaymentConfirmError, confirm_paid_order
 from .schemas import (
     AdminKeyUpdate, AdminPaymentManualConfirmRequest, AdminSubscriptionAdjustRequest,
     AdminTrafficPackGrantRequest, AdminTrafficPackUpdateRequest, AdminUserPasswordResetRequest,
-    AdminUserPasswordResetResponse, AdminUserUpdate,
+    AdminUserPasswordResetResponse, AdminUserCreateRequest, AdminUserCreateResponse, AdminUserUpdate,
     AdminClaudeCompatSettingsUpdate, AdminModelAliasUpdate, AdminModelChannelRouteCreate,
     AdminModelChannelRouteUpdate, AdminModelPricingUpdate, AdminProviderChannelCreate,
     AdminProviderChannelMonitorCreate, AdminProviderChannelMonitorUpdate,
@@ -104,7 +105,7 @@ from .router import (
     CLAUDE_COMPAT_PROVIDER_UPSTREAM_DIRECT,
     CLAUDE_COMPAT_PROVIDERS,
 )
-from .security import decrypt_api_key, encrypt_api_key, generate_api_key, generate_id, hash_key, hash_password, require_admin
+from .security import decrypt_api_key, encrypt_api_key, generate_api_key, generate_id, generate_referral_code, hash_key, hash_password, require_admin
 
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -2450,6 +2451,123 @@ async def list_users(
             },
         })
     return items
+
+
+@router.post(
+    "/users",
+    dependencies=[Depends(admin_guard)],
+    response_model=AdminUserCreateResponse,
+)
+async def create_admin_user(
+    payload: AdminUserCreateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    username = (payload.username or "").strip() or None
+    external_id = (payload.external_id or "").strip() or None
+    password = (payload.password or "").strip()
+    if not username and not external_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="username or external_id required")
+    if password and not username:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="username required when password is provided")
+
+    username_user = None
+    if username:
+        username_user = (
+            await db.execute(select(User).where(User.username == username))
+        ).scalar_one_or_none()
+    external_user = None
+    if external_id:
+        external_user = (
+            await db.execute(select(User).where(User.external_id == external_id))
+        ).scalar_one_or_none()
+    if username_user and external_user and username_user.id != external_user.id:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="username and external_id belong to different users")
+
+    user = username_user or external_user
+    if not user and external_id:
+        user = external_user
+    if user and user.status != "active":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="user blocked")
+    if user and username and user.username and user.username != username:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="username belongs to a different user identity")
+    if user and external_id and user.external_id and user.external_id != external_id:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="external_id belongs to a different user identity")
+
+    if not user:
+        user = User(
+            id=generate_id("u_"),
+            username=username,
+            external_id=external_id,
+            status="active",
+            token_used=0,
+            balance=_settings.default_balance,
+            referral_code=generate_referral_code(),
+        )
+        db.add(user)
+        await db.flush()
+        await ensure_finance_summary_initialized(db, user.id, commit=False)
+        if _settings.default_balance > 0:
+            await increment_finance_summary(db, user.id, bonus_cents=_settings.default_balance)
+    else:
+        if username and not user.username:
+            user.username = username
+        if external_id and not user.external_id:
+            user.external_id = external_id
+
+    account_status = None
+    if password:
+        account_by_user = (
+            await db.execute(select(Account).where(Account.linked_user_id == user.id))
+        ).scalar_one_or_none()
+        account_by_username = (
+            await db.execute(select(Account).where(Account.username == username))
+        ).scalar_one_or_none()
+        if account_by_user and account_by_username and account_by_user.id != account_by_username.id:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="username already has an account")
+        if account_by_username and account_by_username.linked_user_id != user.id:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="username already has an account")
+        account = account_by_user or account_by_username
+        if not account:
+            account = Account(
+                id=generate_id("acc_"),
+                username=username,
+                password_hash="",
+                linked_user_id=user.id,
+            )
+            db.add(account)
+        account.username = username
+        account.password_hash = await hash_password(password)
+        account.status = "active"
+        account.failed_attempts = 0
+        account.locked_until = None
+        account_status = account.status
+
+    api_key_value = None
+    key = None
+    if payload.create_api_key:
+        api_key_value = generate_api_key()
+        key = ApiKey(
+            id=generate_id("k_"),
+            user_id=user.id,
+            key_hash=hash_key(api_key_value),
+            encrypted_key=encrypt_api_key(api_key_value),
+            kind="api",
+            status="active",
+            created_at=datetime.utcnow(),
+        )
+        db.add(key)
+
+    await db.commit()
+
+    return {
+        "user_id": user.id,
+        "username": user.username,
+        "external_id": user.external_id,
+        "api_key": api_key_value,
+        "key_id": getattr(key, "id", None),
+        "account_status": account_status,
+        "status": user.status,
+    }
 
 
 @router.patch("/users/{user_id}", dependencies=[Depends(admin_guard)])

@@ -112,6 +112,9 @@ class _FakeDB:
     async def rollback(self):
         self.rollbacks += 1
 
+    async def flush(self):
+        pass
+
     def add(self, obj):
         self.added.append(obj)
 
@@ -290,6 +293,15 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("params.set('usage_sort', usageSort)", admin_html)
         self.assertIn("周期消耗", admin_html)
         self.assertIn("u.period_usage", admin_html)
+
+    def test_admin_quick_create_uses_admin_user_endpoint_with_password(self) -> None:
+        admin_html = (Path(admin_module.__file__).parent / "static" / "admin.html").read_text()
+
+        self.assertIn('id="newPassword"', admin_html)
+        self.assertIn("payload.password = password", admin_html)
+        self.assertIn("fetch('/admin/users'", admin_html)
+        self.assertIn("...adminHeaders()", admin_html)
+        self.assertNotIn("fetch('/v1/keys/activate'", admin_html)
 
     def test_admin_ui_wires_user_model_override_sections(self) -> None:
         admin_html = (Path(admin_module.__file__).parent / "static" / "admin.html").read_text()
@@ -1025,6 +1037,61 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(account.password_hash, "new-hash")
         self.assertEqual(account.failed_attempts, 0)
         self.assertIsNone(account.locked_until)
+        self.assertEqual(fake_db.commits, 1)
+
+    async def test_admin_can_create_user_with_password_and_key(self) -> None:
+        fake_db = _FakeDB(
+            execute_results=[
+                _FakeScalarOneResult(None),
+                _FakeScalarOneResult(None),
+                _FakeScalarOneResult(None),
+                _FakeScalarOneResult(None),
+                _FakeScalarOneResult(None),
+            ]
+        )
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+
+        with patch.object(admin_module, "generate_id", side_effect=["u_new", "acc_new", "k_new"]), patch.object(
+            admin_module, "generate_api_key", return_value="sk_cc_new"
+        ), patch.object(admin_module, "hash_key", return_value="hashed-key"), patch.object(
+            admin_module, "encrypt_api_key", return_value="encrypted-key"
+        ), patch.object(admin_module, "generate_referral_code", return_value="REF2026"), patch.object(
+            admin_module, "hash_password", AsyncMock(return_value="hashed-password")
+        ) as hashed, patch.object(
+            admin_module, "ensure_finance_summary_initialized", AsyncMock()
+        ), patch.object(
+            admin_module, "increment_finance_summary", AsyncMock()
+        ):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                response = await client.post(
+                    "/admin/users",
+                    json={"username": "alice", "external_id": "ext_alice", "password": "new-secret"},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["user_id"], "u_new")
+        self.assertEqual(payload["username"], "alice")
+        self.assertEqual(payload["external_id"], "ext_alice")
+        self.assertEqual(payload["api_key"], "sk_cc_new")
+        self.assertEqual(payload["key_id"], "k_new")
+        self.assertEqual(payload["account_status"], "active")
+        hashed.assert_awaited_once_with("new-secret")
+
+        added_by_type = {type(item).__name__: item for item in fake_db.added}
+        self.assertEqual(added_by_type["User"].username, "alice")
+        self.assertEqual(added_by_type["User"].external_id, "ext_alice")
+        self.assertEqual(added_by_type["Account"].username, "alice")
+        self.assertEqual(added_by_type["Account"].linked_user_id, "u_new")
+        self.assertEqual(added_by_type["Account"].password_hash, "hashed-password")
+        self.assertEqual(added_by_type["ApiKey"].user_id, "u_new")
+        self.assertEqual(added_by_type["ApiKey"].encrypted_key, "encrypted-key")
         self.assertEqual(fake_db.commits, 1)
 
     async def test_admin_reset_user_password_requires_existing_account(self) -> None:

@@ -108,6 +108,23 @@ class AdminUserUpdate(BaseModel):
     request_limit_per_day: Optional[int] = None
 
 
+class AdminUserCreateRequest(BaseModel):
+    username: Optional[str] = Field(default=None, min_length=2, max_length=128)
+    external_id: Optional[str] = Field(default=None, max_length=128)
+    password: Optional[str] = Field(default=None, min_length=6, max_length=128, description="可选控制台登录密码")
+    create_api_key: bool = True
+
+
+class AdminUserCreateResponse(BaseModel):
+    user_id: str
+    username: Optional[str] = None
+    external_id: Optional[str] = None
+    api_key: Optional[str] = None
+    key_id: Optional[str] = None
+    account_status: Optional[str] = None
+    status: str = "active"
+
+
 class AdminUserPasswordResetRequest(BaseModel):
     new_password: str = Field(..., min_length=6, max_length=128, description="新的控制台登录密码")
 

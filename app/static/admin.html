@@ -1468,7 +1468,11 @@
                 <label class="form-label">External ID（可选）</label>
                 <input type="text" id="newExternal" class="form-input" placeholder="外部系统 ID" />
               </div>
-              <button class="btn btn-primary" onclick="createUserKey()">创建用户并生成密钥</button>
+              <div class="form-group">
+                <label class="form-label">登录密码（可选）</label>
+                <input type="password" id="newPassword" class="form-input" placeholder="设置后可直接登录控制台" autocomplete="new-password" />
+              </div>
+              <button class="btn btn-primary" onclick="createUserKey()">创建用户 / 账号并生成密钥</button>
             </div>
           </div>
           <div class="card">
@@ -4388,18 +4392,25 @@
     async function createUserKey() {
       const username = document.getElementById('newUsername').value.trim();
       const external_id = document.getElementById('newExternal').value.trim();
+      const password = document.getElementById('newPassword').value.trim();
       if (!username && !external_id) return toast('请填写用户名或 External ID', 'error');
+      if (password && !username) return toast('设置登录密码时必须填写用户名', 'error');
       const payload = {};
       if (username) payload.username = username;
       if (external_id) payload.external_id = external_id;
+      if (password) payload.password = password;
       try {
-        const r = await fetch('/v1/keys/activate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        const r = await fetch('/admin/users', { method: 'POST', headers: { 'Content-Type': 'application/json', ...adminHeaders() }, body: JSON.stringify(payload) });
         const d = await r.json();
         if (r.ok) {
-          document.getElementById('newKeyValue').textContent = d.api_key;
-          openModal('keyModal');
+          if (d.api_key) {
+            document.getElementById('newKeyValue').textContent = d.api_key;
+            openModal('keyModal');
+          }
+          toast(password ? '用户、账号和密钥已创建' : '用户和密钥已创建', 'success');
           document.getElementById('newUsername').value = '';
           document.getElementById('newExternal').value = '';
+          document.getElementById('newPassword').value = '';
           loadUsers(); loadSummary();
         } else toast(d.detail || '操作失败', 'error');
       } catch (e) { toast('操作失败', 'error'); }
