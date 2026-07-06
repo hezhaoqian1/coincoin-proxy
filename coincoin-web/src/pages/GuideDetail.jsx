@@ -163,7 +163,7 @@ function OtherGuideGrid({ items }) {
 
 export default function GuideDetail() {
     const { guideId } = useParams()
-    const { developerKeyLoading, effectiveApiKey, hasCopyableDeveloperKey, hasDeveloperKey, latestDeveloperKey } = useAuth({ loadRecoverableKey: true })
+    const { developerKeyLoading, effectiveApiKey, hasDeveloperKey, latestDeveloperKey } = useAuth({ loadRecoverableKey: true })
     const { models, textModels, imageModels, defaultTextModel, defaultImageModel } = usePublicModels()
 
     const key = effectiveApiKey || ''
@@ -176,11 +176,6 @@ export default function GuideDetail() {
     const maskedKey = effectiveApiKey
         ? `${effectiveApiKey.slice(0, 8)}\u2022\u2022\u2022\u2022${effectiveApiKey.slice(-4)}`
         : latestDeveloperKey?.masked_key || '还没有可用开发者 Key'
-    const copyableKeyLabel = hasCopyableDeveloperKey
-        ? '当前浏览器可直接复制真 Key'
-        : developerKeyLoading
-            ? '正在读取开发者 Key'
-            : '当前浏览器暂未取到真 Key'
 
     const guides = useMemo(() => {
         const apiQuickstartCommand = `curl ${OPENAI_BASE_URL}/chat/completions \\
@@ -651,7 +646,6 @@ aider --model openai/${codingModelId}`
                     </div>
                     <div className="guide-hero-meta">
                         <span className="meta-pill">开发者 Key：{hasDeveloperKey ? maskedKey : '未生成'}</span>
-                        <span className="meta-pill">{copyableKeyLabel}</span>
                     </div>
                 </section>
 
