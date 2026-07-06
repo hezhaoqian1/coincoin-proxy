@@ -208,12 +208,22 @@
     display: flex;
     align-items: center;
     gap: var(--space-sm);
+    min-width: 0;
 }
 
 .api-key-title code {
     display: inline-flex;
     margin-top: 8px;
     color: var(--text-secondary);
+}
+
+.api-key-card-primary-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+    flex-shrink: 0;
 }
 
 .api-key-status {
@@ -342,8 +352,14 @@
     }
 
     .api-keys-toolbar,
-    .api-keys-section-head {
+    .api-keys-section-head,
+    .api-key-card-top {
         flex-direction: column;
+    }
+
+    .api-key-card-primary-actions {
+        width: 100%;
+        justify-content: flex-start;
     }
 
     .api-keys-toolbar-actions,

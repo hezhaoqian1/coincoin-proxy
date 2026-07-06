@@ -409,6 +409,8 @@ export default function ApiKeys() {
                     )}
                     {filteredKeys.map((item) => {
                         const isEditing = editingId === item.key_id
+                        const copyValue = item.api_key || item.masked_key
+                        const copyLabel = item.api_key ? '复制完整 Key' : '复制脱敏 Key'
                         return (
                             <article className="glass-card api-key-card" key={item.key_id}>
                                 <div className="api-key-card-top">
@@ -419,7 +421,12 @@ export default function ApiKeys() {
                                         </div>
                                         {revealedMaskedKey && item.masked_key === revealedMaskedKey && <span className="meta-pill">本次新建</span>}
                                     </div>
-                                    <KeyStatusPill status={item.status} />
+                                    <div className="api-key-card-primary-actions">
+                                        <button className="btn btn-primary btn-sm" onClick={() => handleCopy(copyValue, `${item.key_id}-primary`)}>
+                                            {copied === `${item.key_id}-primary` ? '已复制完整 Key' : copyLabel}
+                                        </button>
+                                        <KeyStatusPill status={item.status} />
+                                    </div>
                                 </div>
 
                                 {isEditing ? (
@@ -466,9 +473,6 @@ export default function ApiKeys() {
                                         </>
                                     ) : (
                                         <>
-                                            <button className="btn btn-ghost btn-sm" onClick={() => handleCopy(item.api_key || item.masked_key, item.key_id)}>
-                                                {copied === item.key_id ? '已复制' : '复制'}
-                                            </button>
                                             <button className="btn btn-ghost btn-sm" onClick={() => startEdit(item)}>编辑</button>
                                             <Link className="btn btn-ghost btn-sm" to={`/usage?api_key_id=${encodeURIComponent(item.key_id)}`}>记录</Link>
                                             {item.status === 'active' ? (
