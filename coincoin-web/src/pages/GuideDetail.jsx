@@ -163,7 +163,7 @@ function OtherGuideGrid({ items }) {
 
 export default function GuideDetail() {
     const { guideId } = useParams()
-    const { effectiveApiKey, hasDeveloperKey, hasLocalDeveloperKey, latestDeveloperKey } = useAuth()
+    const { developerKeyLoading, effectiveApiKey, hasCopyableDeveloperKey, hasDeveloperKey, latestDeveloperKey } = useAuth({ loadRecoverableKey: true })
     const { models, textModels, imageModels, defaultTextModel, defaultImageModel } = usePublicModels()
 
     const key = effectiveApiKey || ''
@@ -175,7 +175,12 @@ export default function GuideDetail() {
     const snippetKey = key || 'YOUR_DEVELOPER_API_KEY'
     const maskedKey = effectiveApiKey
         ? `${effectiveApiKey.slice(0, 8)}\u2022\u2022\u2022\u2022${effectiveApiKey.slice(-4)}`
-        : latestDeveloperKey?.masked_key || '还没有本地可用开发者 Key'
+        : latestDeveloperKey?.masked_key || '还没有可用开发者 Key'
+    const copyableKeyLabel = hasCopyableDeveloperKey
+        ? '当前浏览器可直接复制真 Key'
+        : developerKeyLoading
+            ? '正在读取开发者 Key'
+            : '当前浏览器暂未取到真 Key'
 
     const guides = useMemo(() => {
         const apiQuickstartCommand = `curl ${OPENAI_BASE_URL}/chat/completions \\
@@ -646,14 +651,14 @@ aider --model openai/${codingModelId}`
                     </div>
                     <div className="guide-hero-meta">
                         <span className="meta-pill">开发者 Key：{hasDeveloperKey ? maskedKey : '未生成'}</span>
-                        <span className="meta-pill">{hasLocalDeveloperKey ? '当前浏览器可直接复制真 Key' : '当前浏览器没有保存真 Key'}</span>
+                        <span className="meta-pill">{copyableKeyLabel}</span>
                     </div>
                 </section>
 
-                {!effectiveApiKey && (
+                {!developerKeyLoading && !effectiveApiKey && (
                     <section className="guide-alert glass-card">
-                        <strong>当前浏览器还没有可直接复制的开发者 Key</strong>
-                        <p>先去 <Link to="/api-keys">API 密钥</Link> 页面生成或重新复制一把开发者 Key。拿到明文后，这里才会显示可直接复制的一键命令。</p>
+                        <strong>当前浏览器暂时没有可直接复制的开发者 Key</strong>
+                        <p>先去 <Link to="/api-keys">API 密钥</Link> 页面刷新、复制或重新生成开发者 Key。拿到明文后，这里会显示可直接复制的一键命令。</p>
                     </section>
                 )}
 

@@ -122,7 +122,7 @@ function ReadinessCard({ authMode, username, hasDeveloperKey }) {
     )
 }
 
-function KeyManagement({ copied, copy, username, generatedApiKey, hasLocalDeveloperKey, latestDeveloperKey, activeDeveloperKeyCount, authMode, effectiveApiKey }) {
+function KeyManagement({ copied, copy, username, generatedApiKey, hasCopyableDeveloperKey, latestDeveloperKey, activeDeveloperKeyCount, authMode, effectiveApiKey }) {
     const [generatedKey, setGeneratedKey] = useState(generatedApiKey || '')
     const [showKey, setShowKey] = useState(false)
     const [generating, setGenerating] = useState(false)
@@ -152,8 +152,9 @@ function KeyManagement({ copied, copy, username, generatedApiKey, hasLocalDevelo
         }
     }
 
-    const maskedKey = generatedKey
-        ? generatedKey.substring(0, 10) + '...' + generatedKey.substring(generatedKey.length - 4)
+    const visibleKey = generatedKey || effectiveApiKey
+    const maskedKey = visibleKey
+        ? visibleKey.substring(0, 10) + '...' + visibleKey.substring(visibleKey.length - 4)
         : ''
 
     return (
@@ -180,13 +181,13 @@ function KeyManagement({ copied, copy, username, generatedApiKey, hasLocalDevelo
                         <Link to="/docs" className="btn btn-ghost btn-sm">查看文档</Link>
                     </div>
                 </div>
-            ) : generatedKey && !showKey ? (
+            ) : hasCopyableDeveloperKey && !showKey ? (
                 <div>
                     <p className="key-panel-copy">
                         这把 Key 已可使用。复制 Key 或直接查看客户端配置。
                     </p>
                     <div className="action-grid key-action-grid">
-                        <button className="action-item key-copy-row" type="button" onClick={() => copy(generatedKey, 'apikey')}>
+                        <button className="action-item key-copy-row" type="button" onClick={() => copy(visibleKey, 'apikey')}>
                             <span className="action-icon">&#128273;</span>
                             <span className="key-copy-body">
                                 <strong>开发者 API Key</strong>
@@ -203,11 +204,11 @@ function KeyManagement({ copied, copy, username, generatedApiKey, hasLocalDevelo
                     </div>
                     {genError && <p style={{ color: 'var(--accent-rose)', fontSize: '0.85rem', marginTop: 'var(--space-sm)' }}>{genError}</p>}
                 </div>
-            ) : username && !hasLocalDeveloperKey && latestDeveloperKey ? (
+            ) : username && !hasCopyableDeveloperKey && latestDeveloperKey ? (
                 <div>
                     <p className="key-panel-copy">
-                        当前账户已经有开发者 Key，但明文不会跨浏览器恢复。
-                        如果你没有保存原值，需要重新生成一把新的开发者 Key。
+                        当前账户已经有开发者 Key，但这个浏览器暂时没有取到完整值。
+                        可以刷新重试，或重新生成一把新的开发者 Key。
                     </p>
                     <div className="action-grid key-action-grid">
                         <div className="action-item key-copy-row key-copy-row-static">
@@ -307,11 +308,12 @@ export default function Dashboard() {
         authMode,
         effectiveApiKey,
         generatedApiKey,
+        hasCopyableDeveloperKey,
         hasDeveloperKey,
         hasLocalDeveloperKey,
         latestDeveloperKey,
         username,
-    } = useAuth()
+    } = useAuth({ loadRecoverableKey: true })
     const [balance, setBalance] = useState(null)
     const [usage, setUsage] = useState(null)
     const [todayUsage, setTodayUsage] = useState(null)
@@ -634,6 +636,7 @@ export default function Dashboard() {
                     copy={copy}
                     username={username}
                     generatedApiKey={generatedApiKey}
+                    hasCopyableDeveloperKey={hasCopyableDeveloperKey}
                     hasLocalDeveloperKey={hasLocalDeveloperKey}
                     latestDeveloperKey={latestDeveloperKey}
                     activeDeveloperKeyCount={activeDeveloperKeyCount}

@@ -8,6 +8,7 @@ import {
     getDeveloperKeyState,
     getGeneratedKey,
     getUsername,
+    listDeveloperKeys,
     setUserId,
     getStationContext,
     loginUser,
@@ -16,13 +17,16 @@ import {
 
 const LEGACY_DEMO_KEY = 'sk_cc_demo_key'
 
-export function useAuth() {
+export function useAuth(options = {}) {
+    const shouldLoadRecoverableKey = !!options.loadRecoverableKey
     const initialKey = getApiKey()
     const [apiKey, setApiKeyState] = useState(initialKey === LEGACY_DEMO_KEY ? '' : initialKey)
     const [isLoggedIn, setIsLoggedIn] = useState(!!initialKey && initialKey !== LEGACY_DEMO_KEY)
     const [username, setUsernameState] = useState(getUsername())
     const [generatedApiKey, setGeneratedApiKeyState] = useState(getGeneratedKey())
+    const [recoverableApiKey, setRecoverableApiKey] = useState('')
     const [developerKeyState, setDeveloperKeyState] = useState({ hasActiveKey: false, activeKeyCount: 0, latestKey: null })
+    const [developerKeyLoading, setDeveloperKeyLoading] = useState(!!initialKey && !!getUsername() && shouldLoadRecoverableKey)
     const [loading, setLoading] = useState(false)
 
     useEffect(() => {
@@ -36,13 +40,16 @@ export function useAuth() {
                 setIsLoggedIn(false)
                 setUsernameState('')
                 setGeneratedApiKeyState('')
+                setRecoverableApiKey('')
                 setDeveloperKeyState({ hasActiveKey: false, activeKeyCount: 0, latestKey: null })
+                setDeveloperKeyLoading(false)
                 return
             }
             setApiKeyState(k)
             setIsLoggedIn(!!k)
             setUsernameState(getUsername())
             setGeneratedApiKeyState(getGeneratedKey())
+            setRecoverableApiKey('')
         }
         window.addEventListener('storage', sync)
         window.addEventListener('coincoin-auth-changed', sync)
@@ -62,20 +69,42 @@ export function useAuth() {
             if (!currentKey || !currentUsername) {
                 if (!active) return
                 setDeveloperKeyState({ hasActiveKey: false, activeKeyCount: 0, latestKey: null })
+                setRecoverableApiKey('')
+                setDeveloperKeyLoading(false)
                 return
+            }
+
+            if (active) {
+                setDeveloperKeyLoading(shouldLoadRecoverableKey)
             }
 
             try {
                 const state = await getDeveloperKeyState()
+                let recoveredKey = ''
+                if (state?.has_active_key && shouldLoadRecoverableKey && !getGeneratedKey()) {
+                    try {
+                        const keys = await listDeveloperKeys()
+                        const activeKey = (keys?.data || []).find((item) => item.status === 'active' && item.api_key)
+                        recoveredKey = activeKey?.api_key || ''
+                    } catch {
+                        recoveredKey = ''
+                    }
+                }
                 if (!active) return
                 setDeveloperKeyState({
                     hasActiveKey: !!state?.has_active_key,
                     activeKeyCount: state?.active_key_count || 0,
                     latestKey: state?.latest_key || null,
                 })
+                setRecoverableApiKey(recoveredKey)
             } catch {
                 if (!active) return
                 setDeveloperKeyState({ hasActiveKey: false, activeKeyCount: 0, latestKey: null })
+                setRecoverableApiKey('')
+            } finally {
+                if (active) {
+                    setDeveloperKeyLoading(false)
+                }
             }
         }
 
@@ -85,7 +114,7 @@ export function useAuth() {
             active = false
             window.removeEventListener('coincoin-auth-changed', syncDeveloperKeyState)
         }
-    }, [apiKey, username])
+    }, [apiKey, username, shouldLoadRecoverableKey])
 
     const login = useCallback(async (key) => {
         setLoading(true)
@@ -101,14 +130,18 @@ export function useAuth() {
             setIsLoggedIn(true)
             setUsernameState('')
             setGeneratedApiKeyState('')
+            setRecoverableApiKey('')
             setDeveloperKeyState({ hasActiveKey: true, activeKeyCount: 1, latestKey: null })
+            setDeveloperKeyLoading(false)
             return { success: true, data: balance }
         } catch (err) {
             clearApiKey()
             setApiKeyState('')
             setIsLoggedIn(false)
             setUsernameState('')
+            setRecoverableApiKey('')
             setDeveloperKeyState({ hasActiveKey: false, activeKeyCount: 0, latestKey: null })
+            setDeveloperKeyLoading(false)
             return { success: false, error: 'API Key 无效或已过期' }
         } finally {
             setLoading(false)
@@ -123,7 +156,9 @@ export function useAuth() {
         setIsLoggedIn(false)
         setUsernameState('')
         setGeneratedApiKeyState('')
+        setRecoverableApiKey('')
         setDeveloperKeyState({ hasActiveKey: false, activeKeyCount: 0, latestKey: null })
+        setDeveloperKeyLoading(false)
     }, [])
 
     const loginWithPassword = useCallback(async (username, password, stationSlug) => {
@@ -139,7 +174,9 @@ export function useAuth() {
             setIsLoggedIn(true)
             setUsernameState(data.username)
             setGeneratedApiKeyState('')
+            setRecoverableApiKey('')
             setDeveloperKeyState({ hasActiveKey: false, activeKeyCount: 0, latestKey: null })
+            setDeveloperKeyLoading(shouldLoadRecoverableKey)
             return { success: true, data }
         } catch (err) {
             return { success: false, error: err.message || '登录失败' }
@@ -150,8 +187,9 @@ export function useAuth() {
 
     const isConsoleSession = !!username
     const hasLocalDeveloperKey = !!generatedApiKey || (!!apiKey && !isConsoleSession)
-    const hasDeveloperKey = hasLocalDeveloperKey || (isConsoleSession && developerKeyState.hasActiveKey)
-    const effectiveApiKey = generatedApiKey || (!isConsoleSession && apiKey ? apiKey : '')
+    const effectiveApiKey = generatedApiKey || recoverableApiKey || (!isConsoleSession && apiKey ? apiKey : '')
+    const hasCopyableDeveloperKey = !!effectiveApiKey
+    const hasDeveloperKey = hasLocalDeveloperKey || !!recoverableApiKey || (isConsoleSession && developerKeyState.hasActiveKey)
     const workbenchApiKey = effectiveApiKey || (isConsoleSession && hasDeveloperKey ? apiKey : '')
     const canUseWorkbench = !!workbenchApiKey && hasDeveloperKey
     const authMode = !apiKey
@@ -165,8 +203,10 @@ export function useAuth() {
         apiKey,
         authMode,
         canUseWorkbench,
+        developerKeyLoading,
         effectiveApiKey,
         generatedApiKey,
+        hasCopyableDeveloperKey,
         hasDeveloperKey,
         hasLocalDeveloperKey,
         isConsoleSession,

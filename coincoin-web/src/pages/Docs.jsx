@@ -526,7 +526,7 @@ claude`}</pre>
 }
 
 function ModelsAndPricing({ textModels, imageModels, videoModels, defaultTextModel, defaultImageModel }) {
-    const { effectiveApiKey } = useAuth()
+    const { effectiveApiKey } = useAuth({ loadRecoverableKey: true })
     const [activeCategory, setActiveCategory] = useState('all')
     const [copied, setCopied] = useState('')
     const openaiBaseUrl = `${SITE}/v1`
