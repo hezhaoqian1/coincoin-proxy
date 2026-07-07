@@ -1361,6 +1361,45 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("server", response.headers)
         self.assertNotIn("x-request-id", response.headers)
 
+    async def test_responses_upstream_balance_error_is_reported_as_service_unavailable(self) -> None:
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "type": "error",
+                        "error": {
+                            "type": "new_api_error",
+                            "message": "用户额度不足, 剩余额度: $ 14.518750, 最低保留额度: $ 9.000000 (request id: req_secret)",
+                        },
+                    },
+                    status_code=403,
+                    headers={"x-request-id": "req_secret"},
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ):
+                response = await client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"model": "gpt-5.2-codex", "input": "hello"},
+                )
+
+        self.assertEqual(response.status_code, 503, response.text)
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "service_quota_unavailable")
+        self.assertEqual(payload["error"]["type"], "server_error")
+        self.assertEqual(payload["error"]["message"], "当前服务额度不足，请联系管理员处理。")
+        self.assertNotIn("14.518750", response.text)
+        self.assertNotIn("req_secret", response.text)
+        self.assertNotIn("x-request-id", response.headers)
+
     async def test_responses_stream_provider_channel_falls_back_to_next_channel_on_retryable_status(self) -> None:
         channel_router.set_snapshot(
             [

@@ -75,6 +75,22 @@ CHANNEL_FALLBACK_RETRY_ERRORS = frozenset({
     "upstream_unexpected_content_type",
     "upstream_empty_response",
 })
+UPSTREAM_INSUFFICIENT_BALANCE_STATUS_CODE = 503
+UPSTREAM_INSUFFICIENT_BALANCE_MESSAGE = "当前服务额度不足，请联系管理员处理。"
+UPSTREAM_INSUFFICIENT_BALANCE_CODE = "service_quota_unavailable"
+UPSTREAM_INSUFFICIENT_BALANCE_PATTERNS = (
+    "用户额度不足",
+    "额度不足",
+    "余额不足",
+    "剩余额度",
+    "最低保留额度",
+    "insufficient balance",
+    "insufficient account balance",
+    "insufficient quota",
+    "insufficient_quota",
+    "billing hard limit",
+    "exceeded your current quota",
+)
 _UPSTREAM_URL_RE = re.compile(r"https?://[^\s\"'<>),，。]+", re.IGNORECASE)
 _UPSTREAM_HOST_RE = re.compile(
     r"\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+"
@@ -1401,11 +1417,46 @@ def _sanitize_upstream_error_payload(value: Any) -> Any:
     return value
 
 
+def _upstream_error_search_text(value: Any) -> str:
+    try:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    except (TypeError, ValueError):
+        return str(value or "")
+
+
+def _is_upstream_insufficient_balance_error(value: Any) -> bool:
+    text = _upstream_error_search_text(value).lower()
+    return any(pattern.lower() in text for pattern in UPSTREAM_INSUFFICIENT_BALANCE_PATTERNS)
+
+
+def _upstream_error_status_code(data: Any, *, status_code: int) -> int:
+    if _is_upstream_insufficient_balance_error(data):
+        return UPSTREAM_INSUFFICIENT_BALANCE_STATUS_CODE
+    return status_code
+
+
 def _upstream_error_response_content(data: Any, *, status_code: int, default_message: str = "upstream error") -> Dict[str, Any]:
+    if _is_upstream_insufficient_balance_error(data):
+        return {
+            "error": {
+                "message": UPSTREAM_INSUFFICIENT_BALANCE_MESSAGE,
+                "type": "server_error",
+                "code": UPSTREAM_INSUFFICIENT_BALANCE_CODE,
+            }
+        }
     if isinstance(data, dict) and isinstance(data.get("error"), dict):
         return {"error": _sanitize_upstream_error_payload(data["error"])}
     message = _sanitize_upstream_error_text(str(data) if data else default_message)
     return {"error": {"message": message, "type": "upstream_error", "code": str(status_code)}}
+
+
+def _upstream_error_json_response(data: Any, *, status_code: int, headers: Optional[Dict[str, str]] = None) -> JSONResponse:
+    normalized_status_code = _upstream_error_status_code(data, status_code=status_code)
+    return JSONResponse(
+        content=_upstream_error_response_content(data, status_code=normalized_status_code),
+        status_code=normalized_status_code,
+        headers=headers,
+    )
 
 
 def _channel_fallback_config(previous_cfg, fallback_cfg, *, lock_model_selection: bool = False):
@@ -2640,18 +2691,14 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
 
         if isinstance(data, dict) and isinstance(data.get("error"), dict):
             _record_channel_failure(used_cfg, status_code=upstream.status_code, error_code=str(upstream.status_code))
-            return JSONResponse(
-                content=_upstream_error_response_content(data, status_code=upstream.status_code if upstream.status_code >= 400 else 502),
+            return _upstream_error_json_response(
+                data,
                 status_code=upstream.status_code if upstream.status_code >= 400 else 502,
                 headers=response_headers,
             )
         if upstream.status_code >= 400:
             _record_channel_failure(used_cfg, status_code=upstream.status_code)
-            return JSONResponse(
-                content=_upstream_error_response_content(data, status_code=upstream.status_code),
-                status_code=upstream.status_code,
-                headers=response_headers,
-            )
+            return _upstream_error_json_response(data, status_code=upstream.status_code, headers=response_headers)
         if not isinstance(data, dict):
             _record_channel_success(used_cfg, duration_ms=duration_ms)
             return Response(content=str(data), status_code=upstream.status_code, headers=response_headers, media_type=content_type)
@@ -3092,9 +3139,17 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                     except Exception:
                         data = {"detail": "upstream returned non-stream response"}
                     if upstream.status_code >= 400:
+                        if _is_upstream_insufficient_balance_error(data):
+                            return _upstream_error_json_response(data, status_code=upstream.status_code, headers=response_headers)
                         data = _sanitize_upstream_error_payload(data)
                     return JSONResponse(content=data, status_code=upstream.status_code, headers=response_headers)
                 if upstream.status_code >= 400:
+                    if _is_upstream_insufficient_balance_error(body.decode("utf-8", errors="replace")):
+                        return _upstream_error_json_response(
+                            body.decode("utf-8", errors="replace"),
+                            status_code=upstream.status_code,
+                            headers=response_headers,
+                        )
                     body = _sanitize_upstream_error_text(body.decode("utf-8", errors="replace")).encode("utf-8")
                 return Response(content=body, status_code=upstream.status_code, headers=response_headers, media_type=content_type)
 
@@ -3483,8 +3538,8 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             reason=str(data["error"].get("code") or upstream.status_code or "upstream_error"),
             upstream_request_id=upstream_request_id,
         )
-        return JSONResponse(
-            content=_upstream_error_response_content(data, status_code=upstream.status_code if upstream.status_code >= 400 else 502),
+        return _upstream_error_json_response(
+            data,
             status_code=upstream.status_code if upstream.status_code >= 400 else 502,
             headers=response_headers,
         )
@@ -3547,6 +3602,8 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 reason=str((data.get("error") or {}).get("code") if isinstance(data.get("error"), dict) else upstream.status_code),
                 upstream_request_id=upstream_request_id,
             )
+            if _is_upstream_insufficient_balance_error(data):
+                return _upstream_error_json_response(data, status_code=upstream.status_code, headers=response_headers)
             data = _sanitize_upstream_error_payload(data)
         return JSONResponse(content=data, status_code=upstream.status_code, headers=response_headers)
 
@@ -3556,6 +3613,8 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             reason=str(upstream.status_code or "upstream_error"),
             upstream_request_id=upstream_request_id,
         )
+        if _is_upstream_insufficient_balance_error(data):
+            return _upstream_error_json_response(data, status_code=upstream.status_code, headers=response_headers)
         data = _sanitize_upstream_error_text(str(data))
     return Response(content=str(data), status_code=upstream.status_code, headers=response_headers, media_type=content_type)
 
@@ -3846,6 +3905,8 @@ async def _proxy_images_generations_payload(
                     headers=response_headers,
                 )
         logger.error("image upstream error %s: %s", upstream.status_code, str(data)[:500])
+        if _is_upstream_insufficient_balance_error(data):
+            return _upstream_error_json_response(data, status_code=upstream.status_code, headers=response_headers)
         data = _sanitize_upstream_error_payload(data)
         return JSONResponse(content=data, status_code=upstream.status_code, headers=response_headers)
 
@@ -3980,10 +4041,14 @@ async def _proxy_images_generations_payload(
 
     if isinstance(data, dict):
         if upstream.status_code >= 400:
+            if _is_upstream_insufficient_balance_error(data):
+                return _upstream_error_json_response(data, status_code=upstream.status_code, headers=response_headers)
             data = _sanitize_upstream_error_payload(data)
         return JSONResponse(content=data, status_code=upstream.status_code, headers=response_headers)
 
     if upstream.status_code >= 400:
+        if _is_upstream_insufficient_balance_error(data):
+            return _upstream_error_json_response(data, status_code=upstream.status_code, headers=response_headers)
         data = _sanitize_upstream_error_text(str(data))
     return Response(content=str(data), status_code=upstream.status_code, headers=response_headers, media_type=content_type)
 
@@ -4486,9 +4551,13 @@ async def proxy_images_edits(request: Request, db: AsyncSession = Depends(get_db
 
     if isinstance(data, dict):
         if upstream.status_code >= 400:
+            if _is_upstream_insufficient_balance_error(data):
+                return _upstream_error_json_response(data, status_code=upstream.status_code, headers=response_headers)
             data = _sanitize_upstream_error_payload(data)
         return JSONResponse(content=data, status_code=upstream.status_code, headers=response_headers)
 
     if upstream.status_code >= 400:
+        if _is_upstream_insufficient_balance_error(data):
+            return _upstream_error_json_response(data, status_code=upstream.status_code, headers=response_headers)
         data = _sanitize_upstream_error_text(str(data))
     return Response(content=str(data), status_code=upstream.status_code, headers=response_headers, media_type=content_type)
