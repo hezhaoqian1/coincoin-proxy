@@ -984,7 +984,7 @@ async def get_referral_info(request: Request, db: AsyncSession = Depends(get_db)
 
     return {
         "referral_code": user.referral_code,
-        "invite_url_path": f"/register?ref={user.referral_code}",
+        "invite_url_path": f"/r/{user.referral_code}",
         "invited_count": len(referred_users),
         "total_reward_cents": total_reward,
         "total_reward_usd": total_reward / 100,
@@ -1042,7 +1042,7 @@ async def update_referral_code(
     user = (await db.execute(select(User).where(User.id == cached_user.id))).scalar_one()
     user.referral_code = next_code
     await db.commit()
-    return {"referral_code": user.referral_code, "invite_url_path": f"/register?ref={user.referral_code}"}
+    return {"referral_code": user.referral_code, "invite_url_path": f"/r/{user.referral_code}"}
 
 
 @router.get("/announcements")

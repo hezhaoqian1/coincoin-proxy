@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom'
 import { useAuth } from './hooks/useAuth'
 import Navbar from './components/Navbar'
 import Footer from './components/Footer'
@@ -42,6 +42,15 @@ function GuestOnlyRoute({ children }) {
     return children
 }
 
+function ReferralRedirect() {
+    const { code = '' } = useParams()
+    const referralCode = code.trim()
+    const target = referralCode
+        ? `/register?ref=${encodeURIComponent(referralCode)}`
+        : '/register'
+    return <Navigate to={target} replace />
+}
+
 function ScrollManager() {
     const location = useLocation()
 
@@ -82,6 +91,7 @@ export default function App() {
                 <Route path="/register" element={
                     <GuestOnlyRoute><PublicShell><Register /></PublicShell></GuestOnlyRoute>
                 } />
+                <Route path="/r/:code" element={<ReferralRedirect />} />
                 <Route path="/dashboard" element={
                     <ProtectedRoute><Dashboard /></ProtectedRoute>
                 } />

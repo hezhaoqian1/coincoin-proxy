@@ -259,7 +259,7 @@ class ReferralProgramTests(unittest.IsolatedAsyncioTestCase):
             payload = await openai_module.get_referral_info(SimpleNamespace(), db)
 
         self.assertEqual(payload["referral_code"], "BIRD2026")
-        self.assertEqual(payload["invite_url_path"], "/register?ref=BIRD2026")
+        self.assertEqual(payload["invite_url_path"], "/r/BIRD2026")
         self.assertEqual(payload["invited_count"], 1)
         self.assertEqual(payload["total_reward_cents"], 1000)
         self.assertEqual(payload["friend_reward_cents"], 1000)
@@ -312,7 +312,7 @@ class ReferralProgramTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(user.referral_code, "NEW2026")
-        self.assertEqual(payload, {"referral_code": "NEW2026", "invite_url_path": "/register?ref=NEW2026"})
+        self.assertEqual(payload, {"referral_code": "NEW2026", "invite_url_path": "/r/NEW2026"})
 
 
 if __name__ == "__main__":

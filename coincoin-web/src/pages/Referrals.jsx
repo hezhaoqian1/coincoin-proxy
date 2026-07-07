@@ -57,7 +57,7 @@ export default function Referrals() {
 
     const inviteUrl = useMemo(() => {
         if (!referral?.referral_code || typeof window === 'undefined') return ''
-        return `${window.location.origin}/register?ref=${referral.referral_code}`
+        return `${window.location.origin}/r/${encodeURIComponent(referral.referral_code)}`
     }, [referral?.referral_code])
 
     const copyText = async (text, label) => {
