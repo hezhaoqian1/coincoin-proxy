@@ -1400,6 +1400,54 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("req_secret", response.text)
         self.assertNotIn("x-request-id", response.headers)
 
+    async def test_openai_responses_upstream_no_available_channel_is_reported_as_service_unavailable(self) -> None:
+        upstream_error = {
+            "error": {
+                "message": "unexpected status 503 Service Unavailable: No available channel for model gpt-54-2026-03-05 under group pro尊享顶级反应速度oen (distributor(requestid202607080749365715285518268d9d6PsV6XNTw),urt:https://secret-upstream.example/openai/v1/responses",
+                "type": "upstream_error",
+                "code": "503",
+                "url": "https://secret-upstream.example/openai/v1/responses",
+            }
+        }
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    upstream_error,
+                    status_code=503,
+                    headers={"x-request-id": "requestid202607080749365715285518268d9d6PsV6XNTw"},
+                ),
+                _FakeUpstreamResponse(
+                    upstream_error,
+                    status_code=503,
+                    headers={"x-request-id": "requestid202607080749365715285518268d9d6PsV6XNTw"},
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ):
+                response = await client.post(
+                    "/openai/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"model": "gpt-5.4", "input": "hello"},
+                )
+
+        self.assertEqual(response.status_code, 503, response.text)
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "service_temporarily_unavailable")
+        self.assertEqual(payload["error"]["type"], "server_error")
+        self.assertEqual(payload["error"]["message"], "当前服务暂时不可用，请联系管理员处理。")
+        self.assertNotIn("gpt-54-2026-03-05", response.text)
+        self.assertNotIn("pro尊享顶级反应速度oen", response.text)
+        self.assertNotIn("requestid202607080749365715285518268d9d6PsV6XNTw", response.text)
+        self.assertNotIn("secret-upstream.example", response.text)
+        self.assertNotIn("x-request-id", response.headers)
+
     async def test_responses_stream_provider_channel_falls_back_to_next_channel_on_retryable_status(self) -> None:
         channel_router.set_snapshot(
             [
