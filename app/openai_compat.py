@@ -19,6 +19,8 @@ from .anthropic_adapter import (
     anthropic_message_to_openai_chat_response,
     anthropic_stop_reason_to_openai,
     build_anthropic_messages_url,
+    ensure_claude_code_messages_url,
+    ensure_claude_code_upstream_headers,
     is_anthropic_compatible_config,
     openai_chat_to_anthropic_messages_payload,
 )
@@ -129,7 +131,7 @@ def _chat_completion_usage_chunk_line(*, stream_id: str, display_model: str, usa
 def _anthropic_upstream_headers(cfg) -> Dict[str, str]:
     headers = _build_upstream_headers(cfg)
     headers["anthropic-version"] = DEFAULT_ANTHROPIC_VERSION
-    return headers
+    return ensure_claude_code_upstream_headers(headers, cfg)
 
 
 def _openai_error_from_anthropic_error(data: Any, *, status_code: int) -> JSONResponse:
@@ -172,7 +174,7 @@ async def _proxy_anthropic_compatible_chat_completions(
     effective_provider_model: str,
 ):
     upstream_payload = openai_chat_to_anthropic_messages_payload(payload, model=used_cfg.model_id)
-    upstream_url = build_anthropic_messages_url(used_cfg.upstream_url)
+    upstream_url = ensure_claude_code_messages_url(build_anthropic_messages_url(used_cfg.upstream_url), used_cfg)
     headers = _anthropic_upstream_headers(used_cfg)
     request_t0 = time.monotonic()
 

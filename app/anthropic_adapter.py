@@ -4,6 +4,7 @@ import json
 import secrets
 import time
 from typing import Any, Dict, List, Optional
+from urllib.parse import parse_qsl, urlsplit
 
 from .usage_buffer import extract_cache_read_tokens, extract_total_input_tokens
 
@@ -11,12 +12,74 @@ ANTHROPIC_COMPATIBLE_CHANNEL_TYPE = "anthropic_compatible"
 ANTHROPIC_MESSAGES_TRANSFORM_PROFILE = "anthropic_messages"
 ANTHROPIC_X_API_KEY_AUTH_STYLES = frozenset({"x-api-key", "anthropic_x_api_key", "anthropic"})
 DEFAULT_ANTHROPIC_VERSION = "2023-06-01"
+CLAUDE_CODE_DEFAULT_BETA = (
+    "claude-code-20250219,"
+    "interleaved-thinking-2025-05-14,"
+    "thinking-token-count-2026-05-13,"
+    "context-management-2025-06-27,"
+    "prompt-caching-scope-2026-01-05,"
+    "effort-2025-11-24"
+)
+CLAUDE_CODE_DEFAULT_HEADERS = {
+    "anthropic-beta": CLAUDE_CODE_DEFAULT_BETA,
+    "anthropic-dangerous-direct-browser-access": "true",
+    "user-agent": "claude-cli/2.1.198 (external, sdk-cli)",
+    "x-app": "cli",
+    "x-claude-code-session-id": "coincoin-proxy",
+    "x-stainless-arch": "arm64",
+    "x-stainless-lang": "js",
+    "x-stainless-os": "MacOS",
+    "x-stainless-package-version": "0.94.0",
+    "x-stainless-runtime": "node",
+    "x-stainless-runtime-version": "v26.3.0",
+}
 
 
 def is_anthropic_compatible_config(cfg: Any) -> bool:
     channel_type = str(getattr(cfg, "channel_type", "") or "").strip().lower()
     transform_profile = str(getattr(cfg, "transform_profile", "") or "").strip().lower()
     return channel_type == ANTHROPIC_COMPATIBLE_CHANNEL_TYPE or transform_profile == ANTHROPIC_MESSAGES_TRANSFORM_PROFILE
+
+
+def is_claude_code_upstream_config(cfg: Any) -> bool:
+    if not is_anthropic_compatible_config(cfg):
+        return False
+    cost_tier = str(getattr(cfg, "cost_tier", "") or "").strip().lower()
+    fingerprint = str(getattr(cfg, "provider_account_fingerprint", "") or "").strip().lower()
+    return cost_tier == "claude-code" or "claude-code" in fingerprint
+
+
+def ensure_claude_code_upstream_headers(headers: Dict[str, str], cfg: Any) -> Dict[str, str]:
+    if not is_claude_code_upstream_config(cfg):
+        return headers
+    existing_beta = str(headers.get("anthropic-beta") or "")
+    if existing_beta:
+        beta_parts = [item.strip() for item in existing_beta.split(",") if item.strip()]
+        for item in CLAUDE_CODE_DEFAULT_BETA.split(","):
+            if item not in beta_parts:
+                beta_parts.append(item)
+        headers["anthropic-beta"] = ",".join(beta_parts)
+    else:
+        headers["anthropic-beta"] = CLAUDE_CODE_DEFAULT_BETA
+
+    for name, value in CLAUDE_CODE_DEFAULT_HEADERS.items():
+        if name == "anthropic-beta":
+            continue
+        if name in {"anthropic-dangerous-direct-browser-access", "user-agent", "x-app"}:
+            headers[name] = value
+        else:
+            headers.setdefault(name, value)
+    return headers
+
+
+def ensure_claude_code_messages_url(upstream_url: str, cfg: Any) -> str:
+    if not is_claude_code_upstream_config(cfg):
+        return upstream_url
+    query_params = parse_qsl(urlsplit(str(upstream_url or "")).query, keep_blank_values=True)
+    if any(key == "beta" for key, _value in query_params):
+        return upstream_url
+    separator = "&" if "?" in upstream_url else "?"
+    return f"{upstream_url}{separator}beta=true"
 
 
 def build_anthropic_messages_url(base_url: str) -> str:

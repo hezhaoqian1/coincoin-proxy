@@ -16,6 +16,8 @@ from .db import get_db
 from .prompt_cache import build_claude_code_prompt_cache_key
 from .anthropic_adapter import (
     build_anthropic_messages_url,
+    ensure_claude_code_messages_url,
+    ensure_claude_code_upstream_headers,
     is_anthropic_compatible_config,
 )
 from .proxy import (
@@ -294,7 +296,7 @@ def _build_anthropic_upstream_headers(cfg, request: Request) -> Dict[str, str]:
         if lower_name in passthrough_exact or lower_name.startswith(passthrough_prefixes):
             headers[lower_name] = value
 
-    return headers
+    return ensure_claude_code_upstream_headers(headers, cfg)
 
 
 def _append_request_query(upstream_url: str, request: Request) -> str:
@@ -1108,7 +1110,10 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
             openai_payload["messages"] = [{"role": "system", "content": cloak.strip()}] + messages
 
     if is_native_anthropic_upstream:
-        upstream_url = _append_request_query(build_anthropic_messages_url(used_cfg.upstream_url), request)
+        upstream_url = ensure_claude_code_messages_url(
+            _append_request_query(build_anthropic_messages_url(used_cfg.upstream_url), request),
+            used_cfg,
+        )
         headers = _build_anthropic_upstream_headers(used_cfg, request)
         upstream_payload = _copy_anthropic_messages_payload(payload)
         upstream_payload["model"] = _kiro_go_upstream_model(used_cfg.model_id) if is_kiro_go else used_cfg.model_id

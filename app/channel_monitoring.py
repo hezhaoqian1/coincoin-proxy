@@ -14,7 +14,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import settings
 from .db import SessionLocal
-from .anthropic_adapter import DEFAULT_ANTHROPIC_VERSION, build_anthropic_messages_url
+from .anthropic_adapter import (
+    DEFAULT_ANTHROPIC_VERSION,
+    build_anthropic_messages_url,
+    ensure_claude_code_upstream_headers,
+)
 from .gemini_cpa import normalize_openai_base_url
 from .models import (
     ProviderChannel,
@@ -104,22 +108,9 @@ def _headers(channel: ProviderChannel, api_key: str) -> dict[str, str]:
     if _is_anthropic_compatible_channel(channel):
         headers["anthropic-version"] = DEFAULT_ANTHROPIC_VERSION
         if _is_claude_code_only_channel(channel):
-            headers.update(
-                {
-                    "anthropic-beta": "claude-code-20250219,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24",
-                    "anthropic-dangerous-direct-browser-access": "true",
-                    "user-agent": "claude-cli/2.1.198 (external, sdk-cli)",
-                    "x-app": "cli",
-                    "x-claude-code-session-id": "coincoin-monitor",
-                    "x-stainless-arch": "arm64",
-                    "x-stainless-lang": "js",
-                    "x-stainless-os": "MacOS",
-                    "x-stainless-package-version": "0.94.0",
-                    "x-stainless-runtime": "node",
-                    "x-stainless-runtime-version": "v26.3.0",
-                    "x-stainless-timeout": str(settings.provider_channel_monitor_default_timeout),
-                }
-            )
+            ensure_claude_code_upstream_headers(headers, channel)
+            headers["x-claude-code-session-id"] = "coincoin-monitor"
+            headers["x-stainless-timeout"] = str(settings.provider_channel_monitor_default_timeout)
     return headers
 
 
