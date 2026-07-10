@@ -7,10 +7,18 @@ from typing import Any
 
 _OPENAI_PROMPT_CACHE_MODELS = {
     "gpt-5-5",
+    "gpt-5-6",
+    "gpt-5-6-sol",
+    "gpt-5-6-terra",
+    "gpt-5-6-luna",
 }
 
 _OPENAI_PROMPT_CACHE_24H_MODELS = {
     "gpt-5-5",
+    "gpt-5-6",
+    "gpt-5-6-sol",
+    "gpt-5-6-terra",
+    "gpt-5-6-luna",
 }
 
 

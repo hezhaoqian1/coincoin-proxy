@@ -1704,6 +1704,49 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(request_json.get("prompt_cache_key", "").startswith("cc-"))
         self.assertEqual(request_json.get("prompt_cache_retention"), "24h")
 
+    async def test_responses_gpt_5_6_adds_prompt_cache_key_and_retention(self) -> None:
+        fake_user = SimpleNamespace(id="u_test", _api_key_id="k_gpt56_resp")
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "resp_gpt56_cache",
+                        "output": [
+                            {
+                                "type": "message",
+                                "content": [{"type": "output_text", "text": "OK"}],
+                            }
+                        ],
+                        "usage": {
+                            "input_tokens": 12,
+                            "input_tokens_details": {"cached_tokens": 7},
+                            "output_tokens": 2,
+                            "total_tokens": 14,
+                        },
+                    }
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(proxy_module.usage_buffer, "add", AsyncMock()):
+                response = await client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"model": "gpt-5.6", "input": "Reply with only: OK"},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        request_json = upstream_client.calls[0]["json"]
+        self.assertEqual(request_json["model"], "gpt-5.6-sol")
+        self.assertTrue(request_json.get("prompt_cache_key", "").startswith("cc-"))
+        self.assertEqual(request_json.get("prompt_cache_retention"), "24h")
+
     async def test_responses_gpt_5_5_preserves_client_prompt_cache_key(self) -> None:
         fake_user = SimpleNamespace(id="u_test", _api_key_id="k_gpt55_client_cache")
         upstream_client = _RecordingClient(

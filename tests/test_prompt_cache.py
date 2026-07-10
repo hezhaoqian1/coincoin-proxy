@@ -33,6 +33,39 @@ class PromptCacheTests(unittest.TestCase):
             "24h",
         )
 
+    def test_gpt_5_6_family_gets_prompt_cache_key_and_retention(self) -> None:
+        user = SimpleNamespace(id="u_test")
+
+        for model_id in ("gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"):
+            with self.subTest(model_id=model_id):
+                public_model = SimpleNamespace(
+                    public_id=model_id,
+                    provider_model="gpt-5.6-sol" if model_id == "gpt-5.6" else model_id,
+                    upstream_model="",
+                    billable_sku="",
+                    metadata={},
+                )
+
+                key = build_claude_code_prompt_cache_key(
+                    user,
+                    "k_test",
+                    model_id,
+                    public_model,
+                    effective_backend_model=public_model.provider_model,
+                    include_openai_models=True,
+                )
+
+                self.assertTrue(key.startswith("cc-"))
+                self.assertEqual(len(key), 35)
+                self.assertEqual(
+                    build_openai_prompt_cache_retention(
+                        model_id,
+                        public_model,
+                        effective_backend_model=public_model.provider_model,
+                    ),
+                    "24h",
+                )
+
     def test_non_cache_model_without_codex_does_not_get_prompt_cache_key(self) -> None:
         user = SimpleNamespace(id="u_test")
         public_model = SimpleNamespace(public_id="gpt-5.4-mini", provider_model="gpt-5.4-mini", upstream_model="", billable_sku="", metadata={})
