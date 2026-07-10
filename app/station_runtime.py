@@ -198,6 +198,7 @@ def public_model_pricing_kwargs(public_model: Any) -> dict:
         "base_price_per_image_cents": getattr(public_model, "base_price_per_image_cents", 0.0) or 0.0,
         "base_price_per_video_cents": getattr(public_model, "base_price_per_video_cents", 0.0) or 0.0,
         "effective_cached_input_per_million": getattr(public_model, "effective_cached_input_per_million", 0.0) or 0.0,
+        "effective_cache_creation_input_per_million": getattr(public_model, "effective_cache_creation_input_per_million", 0.0) or 0.0,
         "price_version": getattr(public_model, "price_version", 0) or 0,
     }
 

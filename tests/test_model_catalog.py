@@ -23,6 +23,10 @@ LEGACY_PUBLIC_TEXT_MODELS = [
     "gpt-5.3-codex-spark",
     "codex-auto-review",
     "gpt-5.4-mini",
+    "gpt-5.6",
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
     "gpt-5-codex",
     "gpt-5-codex-mini",
 ]
@@ -40,13 +44,21 @@ LEGACY_PUBLIC_TEXT_PRICES = {
     "gpt-5.3-codex-spark": (175, 1400),
     "codex-auto-review": (500, 3000),
     "gpt-5.4-mini": (75, 450),
+    "gpt-5.6": (500, 3000),
+    "gpt-5.6-sol": (500, 3000),
+    "gpt-5.6-terra": (250, 1500),
+    "gpt-5.6-luna": (100, 600),
     "gpt-5-codex": (175, 1400),
     "gpt-5-codex-mini": (75, 450),
 }
 
 
 def _legacy_text_model(model_id: str) -> dict:
-    provider_model = "gpt-5.3-codex" if model_id == "gpt-5.2-codex" else model_id
+    provider_model_aliases = {
+        "gpt-5.2-codex": "gpt-5.3-codex",
+        "gpt-5.6": "gpt-5.6-sol",
+    }
+    provider_model = provider_model_aliases.get(model_id, model_id)
     model = {
         "id": model_id,
         "owned_by": "openai",
@@ -60,6 +72,8 @@ def _legacy_text_model(model_id: str) -> dict:
     if prices:
         model["price_input_per_million"] = prices[0]
         model["price_output_per_million"] = prices[1]
+    if model_id in {"gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}:
+        model["pricing"] = {"cache_creation_multiplier": 1.25}
     if model_id == "gpt-5.4":
         model["metadata"] = {
             "execution_profile": "legacy_general",
@@ -643,6 +657,34 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertEqual(resolved.backend.model_id, "gpt-5.3-codex")
         self.assertEqual(resolved.execution_profile, "legacy_coding")
         self.assertEqual(resolved.execution_pool, "cpa_coding_pool")
+
+    def test_fixed_model_gpt_5_6_maps_to_sol_provider_model(self) -> None:
+        settings.fixed_model = "gpt-5.6"
+        registry._initialized = False
+        registry.init_from_settings()
+
+        resolved = registry.resolve_public_model(
+            "gpt-5.6",
+            "chat/completions",
+            messages=[{"role": "user", "content": "hello"}],
+            tools=None,
+        )
+
+        self.assertEqual(resolved.public_model.public_id, "gpt-5.6")
+        self.assertEqual(resolved.public_model.provider_model, "gpt-5.6-sol")
+        self.assertEqual(resolved.backend.model_id, "gpt-5.6-sol")
+
+    def test_gpt_5_6_uses_official_cache_creation_multiplier(self) -> None:
+        resolved = registry.resolve_public_model(
+            "gpt-5.6-terra",
+            "responses",
+            messages=[{"role": "user", "content": "hello"}],
+            tools=None,
+        )
+
+        self.assertEqual(resolved.public_model.price_input_per_million, 250)
+        self.assertEqual(resolved.public_model.cache_creation_multiplier, 1.25)
+        self.assertEqual(resolved.public_model.effective_cache_creation_input_per_million, 312.5)
 
     def test_explicit_gpt_5_2_alias_keeps_legacy_lane(self) -> None:
         resolved = registry.resolve_public_model(

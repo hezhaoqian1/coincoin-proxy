@@ -97,9 +97,11 @@ def calculate_cost_cents(
     input_tokens: int,
     output_tokens: int,
     cached_tokens: int = 0,
+    cache_creation_tokens: int = 0,
     price_input_per_million: int = 0,
     price_output_per_million: int = 0,
     cached_price_input_per_million: Optional[float] = None,
+    cache_creation_price_input_per_million: Optional[float] = None,
 ) -> float:
     """计算消费金额（单位：分，保留小数精度）
     
@@ -123,16 +125,26 @@ def calculate_cost_cents(
         discount = 1.0
 
     ct = max(0, int(cached_tokens or 0))
-    it = int(input_tokens or 0)
-    if ct > it:
-        ct = it
+    cct = max(0, int(cache_creation_tokens or 0))
+    it = max(0, int(input_tokens or 0))
+    if ct + cct > it:
+        overflow = ct + cct - it
+        if cct >= overflow:
+            cct -= overflow
+        else:
+            ct = max(0, ct - (overflow - cct))
+            cct = 0
 
-    non_cached = max(0, it - ct)
+    non_cached = max(0, it - ct - cct)
     if cached_price_input_per_million is None:
         cached_price_in = price_in * discount
     else:
         cached_price_in = max(0.0, float(cached_price_input_per_million or 0.0))
-    input_cost = (non_cached * price_in + ct * cached_price_in) / 1_000_000
+    if cache_creation_price_input_per_million is None:
+        cache_creation_price_in = price_in
+    else:
+        cache_creation_price_in = max(0.0, float(cache_creation_price_input_per_million or 0.0))
+    input_cost = (non_cached * price_in + ct * cached_price_in + cct * cache_creation_price_in) / 1_000_000
     output_cost = (int(output_tokens or 0) * price_out) / 1_000_000
     return input_cost + output_cost
 
@@ -252,6 +264,7 @@ class UsageBuffer:
         base_price_per_image_cents: float = 0.0,
         base_price_per_video_cents: float = 0.0,
         effective_cached_input_per_million: float = 0.0,
+        effective_cache_creation_input_per_million: float = 0.0,
         reservation_id: str = "",
     ) -> None:
         """添加使用量（高性能，不阻塞请求）
@@ -297,9 +310,11 @@ class UsageBuffer:
                     input_tokens,
                     output_tokens,
                     cached_tokens=cache_read_tokens or cached_tokens,
+                    cache_creation_tokens=cache_creation_tokens,
                     price_input_per_million=price_input_per_million,
                     price_output_per_million=price_output_per_million,
                     cached_price_input_per_million=effective_cached_input_per_million or None,
+                    cache_creation_price_input_per_million=effective_cache_creation_input_per_million or None,
                 )
         else:
             cost_cents = float(cost_cents_override)
@@ -322,6 +337,7 @@ class UsageBuffer:
                     input_tokens,
                     output_tokens,
                     cached_tokens=cache_read_tokens or cached_tokens,
+                    cache_creation_tokens=cache_creation_tokens,
                     price_input_per_million=wholesale_price_input_per_million,
                     price_output_per_million=wholesale_price_output_per_million,
                 )

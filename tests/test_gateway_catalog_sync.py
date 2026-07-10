@@ -66,6 +66,10 @@ OFFICIAL_DEFAULT_TEXT_PRICES = {
     "codex-auto-review": FIXED_TEXT_PRICE,
     "gpt-5.4-mini": CHEAP_TEXT_PRICE,
     "gpt-5.5": FIXED_TEXT_PRICE,
+    "gpt-5.6": FIXED_TEXT_PRICE,
+    "gpt-5.6-sol": FIXED_TEXT_PRICE,
+    "gpt-5.6-terra": (250, 1500),
+    "gpt-5.6-luna": (100, 600),
     "claude-fable-5": CLAUDE_FABLE_PRICE,
     "claude-opus-4-8": CLAUDE_OPUS_PRICE,
     "claude-opus-4.8": CLAUDE_OPUS_PRICE,
@@ -202,6 +206,30 @@ class GatewayCatalogSyncTests(unittest.TestCase):
         self.assertEqual(model.get("routing_mode"), "legacy_auto")
         self.assertIn("chat/completions", model.get("capabilities") or [])
         self.assertIn("responses", model.get("capabilities") or [])
+
+    def test_gpt_5_6_family_stays_public_for_provider_routes(self) -> None:
+        public_models = {
+            item["id"]: item
+            for item in (self.catalog.get("models") or [])
+            if isinstance(item, dict) and item.get("id")
+        }
+
+        expected_provider_models = {
+            "gpt-5.6": "gpt-5.6-sol",
+            "gpt-5.6-sol": "gpt-5.6-sol",
+            "gpt-5.6-terra": "gpt-5.6-terra",
+            "gpt-5.6-luna": "gpt-5.6-luna",
+        }
+        for public_id, provider_model in expected_provider_models.items():
+            with self.subTest(model=public_id):
+                model = public_models[public_id]
+                self.assertEqual(model.get("provider_model"), provider_model)
+                self.assertEqual(model.get("routing_mode"), "legacy_auto")
+                self.assertEqual(model.get("delivery_lane"), "legacy")
+                self.assertIn("chat/completions", model.get("capabilities") or [])
+                self.assertIn("responses", model.get("capabilities") or [])
+                pricing = model.get("pricing") or {}
+                self.assertEqual(pricing.get("cache_creation_multiplier"), 1.25)
 
     def test_claude_compat_aliases_use_official_claude_price_defaults(self) -> None:
         public_models = {

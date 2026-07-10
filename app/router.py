@@ -62,10 +62,12 @@ class PublicModelConfig:
     price_per_image_cents: float = 0.0
     price_per_video_cents: float = 0.0
     effective_cached_input_per_million: float = 0.0
+    effective_cache_creation_input_per_million: float = 0.0
     pricing_mode: str = "explicit_price"
     model_multiplier: float = 1.0
     output_multiplier: float = 1.0
     cache_read_multiplier: float = 0.0
+    cache_creation_multiplier: float = 1.0
     image_multiplier: float = 1.0
     video_multiplier: float = 1.0
     price_version: int = 0
@@ -123,6 +125,7 @@ LEGACY_PROVIDER_MODEL_ALIASES = {
     # CPA no longer publishes this historical public alias directly.
     # Keep the user-facing model id stable, but send a provider model CPA knows.
     "gpt-5.2-codex": "gpt-5.3-codex",
+    "gpt-5.6": "gpt-5.6-sol",
 }
 LEGACY_CODING_PUBLIC_ALIASES = frozenset({"gpt-5.2-codex", "gpt-5.3-codex", "gpt-5.3-codex-spark"})
 CLAUDE_COMPAT_FAMILY = "claude-code"
@@ -581,11 +584,12 @@ class ModelRegistry:
         output_multiplier = _non_negative_float(pricing.get("output_multiplier"), 1.0)
         cache_default = _as_float(getattr(settings, "cache_discount_rate", 0.0), 0.0)
         cache_read_multiplier = _non_negative_float(pricing.get("cache_read_multiplier"), cache_default)
+        cache_creation_multiplier = _non_negative_float(pricing.get("cache_creation_multiplier"), 1.0)
         image_multiplier = _non_negative_float(pricing.get("image_multiplier"), 1.0)
         video_multiplier = _non_negative_float(pricing.get("video_multiplier"), 1.0)
         has_multiplier = any(
             key in pricing
-            for key in ("model_multiplier", "output_multiplier", "cache_read_multiplier", "image_multiplier", "video_multiplier")
+            for key in ("model_multiplier", "output_multiplier", "cache_read_multiplier", "cache_creation_multiplier", "image_multiplier", "video_multiplier")
         )
         pricing_mode = str(pricing.get("pricing_mode") or ("multiplier" if has_multiplier else "explicit_price")).strip() or "explicit_price"
 
@@ -594,6 +598,7 @@ class ModelRegistry:
         effective_image = base_image * image_multiplier
         effective_video = base_video * video_multiplier
         effective_cached = round(effective_input * cache_read_multiplier, 4)
+        effective_cache_creation = round(effective_input * cache_creation_multiplier, 4)
 
         return {
             "base_price_input_per_million": base_input,
@@ -605,10 +610,12 @@ class ModelRegistry:
             "price_per_image_cents": effective_image,
             "price_per_video_cents": effective_video,
             "effective_cached_input_per_million": effective_cached,
+            "effective_cache_creation_input_per_million": effective_cache_creation,
             "pricing_mode": pricing_mode,
             "model_multiplier": model_multiplier,
             "output_multiplier": output_multiplier,
             "cache_read_multiplier": cache_read_multiplier,
+            "cache_creation_multiplier": cache_creation_multiplier,
             "image_multiplier": image_multiplier,
             "video_multiplier": video_multiplier,
             "price_version": _as_int(pricing.get("price_version"), 0),
@@ -688,10 +695,12 @@ class ModelRegistry:
             price_per_image_cents=prices["price_per_image_cents"],
             price_per_video_cents=prices["price_per_video_cents"],
             effective_cached_input_per_million=prices["effective_cached_input_per_million"],
+            effective_cache_creation_input_per_million=prices["effective_cache_creation_input_per_million"],
             pricing_mode=prices["pricing_mode"],
             model_multiplier=prices["model_multiplier"],
             output_multiplier=prices["output_multiplier"],
             cache_read_multiplier=prices["cache_read_multiplier"],
+            cache_creation_multiplier=prices["cache_creation_multiplier"],
             image_multiplier=prices["image_multiplier"],
             video_multiplier=prices["video_multiplier"],
             price_version=prices["price_version"],
@@ -1106,10 +1115,12 @@ class ModelRegistry:
                 "price_per_image_cents": (model.price_per_image_cents if model else _as_float(raw.get("price_per_image_cents"), 0.0)),
                 "price_per_video_cents": (model.price_per_video_cents if model else _as_float(raw.get("price_per_video_cents"), 0.0)),
                 "effective_cached_input_per_million": (model.effective_cached_input_per_million if model else 0.0),
+                "effective_cache_creation_input_per_million": (model.effective_cache_creation_input_per_million if model else 0.0),
                 "pricing_mode": (model.pricing_mode if model else "explicit_price"),
                 "model_multiplier": (model.model_multiplier if model else 1.0),
                 "output_multiplier": (model.output_multiplier if model else 1.0),
                 "cache_read_multiplier": (model.cache_read_multiplier if model else _as_float(getattr(settings, "cache_discount_rate", 0.0), 0.0)),
+                "cache_creation_multiplier": (model.cache_creation_multiplier if model else 1.0),
                 "image_multiplier": (model.image_multiplier if model else 1.0),
                 "video_multiplier": (model.video_multiplier if model else 1.0),
                 "price_version": (model.price_version if model else 0),

@@ -184,6 +184,45 @@ class UsageBufferUnitsTests(unittest.TestCase):
         self.assertEqual(request_logs[0]["cache_read_tokens"], 500_000)
         self.assertEqual(request_logs[0]["cache_creation_tokens"], 100_000)
 
+    def test_cache_creation_tokens_can_use_model_specific_effective_price(self) -> None:
+        original_rate = settings.cache_discount_rate
+        settings.cache_discount_rate = 0.1
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        buffer = UsageBuffer()
+
+        async def scenario():
+            await buffer.add(
+                "u_gpt56_cache_write",
+                input_tokens=1_000_000,
+                output_tokens=0,
+                cache_read_tokens=500_000,
+                cache_creation_tokens=100_000,
+                requests=1,
+                api_key_id="k_gpt56_cache_write",
+                endpoint="responses",
+                model="gpt-5.6",
+                customer_model_alias="gpt-5.6",
+                provider_model="gpt-5.6-sol",
+                usage_unit_type="tokens",
+                billable_sku="legacy-gpt-5.6-sol-text",
+                price_input_per_million=100,
+                price_output_per_million=0,
+                effective_cached_input_per_million=10,
+                effective_cache_creation_input_per_million=125,
+            )
+            return await buffer.snapshot_and_reset()
+
+        try:
+            _, usage_by_user, request_logs = loop.run_until_complete(scenario())
+        finally:
+            settings.cache_discount_rate = original_rate
+            asyncio.set_event_loop(None)
+            loop.close()
+
+        self.assertAlmostEqual(usage_by_user["u_gpt56_cache_write"]["cost_cents_f"], 57.5)
+        self.assertEqual(request_logs[0]["cache_creation_tokens"], 100_000)
+
     def test_tracks_image_generation_units_and_cost(self) -> None:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)

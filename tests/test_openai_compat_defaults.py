@@ -30,6 +30,10 @@ LEGACY_PUBLIC_TEXT_MODELS = [
     "gpt-5.3-codex-spark",
     "codex-auto-review",
     "gpt-5.4-mini",
+    "gpt-5.6",
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
     "gpt-5-codex",
     "gpt-5-codex-mini",
 ]
@@ -47,13 +51,21 @@ LEGACY_PUBLIC_TEXT_PRICES = {
     "gpt-5.3-codex-spark": (175, 1400),
     "codex-auto-review": (500, 3000),
     "gpt-5.4-mini": (75, 450),
+    "gpt-5.6": (500, 3000),
+    "gpt-5.6-sol": (500, 3000),
+    "gpt-5.6-terra": (250, 1500),
+    "gpt-5.6-luna": (100, 600),
     "gpt-5-codex": (175, 1400),
     "gpt-5-codex-mini": (75, 450),
 }
 
 
 def _legacy_text_model(model_id: str) -> dict:
-    provider_model = "gpt-5.3-codex" if model_id == "gpt-5.2-codex" else model_id
+    provider_model_aliases = {
+        "gpt-5.2-codex": "gpt-5.3-codex",
+        "gpt-5.6": "gpt-5.6-sol",
+    }
+    provider_model = provider_model_aliases.get(model_id, model_id)
     model = {
         "id": model_id,
         "owned_by": "openai",
@@ -67,6 +79,8 @@ def _legacy_text_model(model_id: str) -> dict:
     if prices:
         model["price_input_per_million"] = prices[0]
         model["price_output_per_million"] = prices[1]
+    if model_id in {"gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}:
+        model["pricing"] = {"cache_creation_multiplier": 1.25}
     if model_id == "gpt-5.4":
         model["metadata"] = {
             "execution_profile": "legacy_general",
@@ -4868,6 +4882,10 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                 "gpt-5.3-codex-spark",
                 "codex-auto-review",
                 "gpt-5.4-mini",
+                "gpt-5.6",
+                "gpt-5.6-sol",
+                "gpt-5.6-terra",
+                "gpt-5.6-luna",
                 "gpt-5-codex",
                 "gpt-5-codex-mini",
                 "text-embedding-3-small",
@@ -4883,31 +4901,33 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["data"][0]["coincoin_price_cached_input_per_million"], 25.0)
         self.assertNotIn("coincoin_provider_model", payload["data"][0])
         self.assertNotIn("coincoin_provider", payload["data"][0])
-        self.assertEqual(payload["data"][8]["coincoin_billable_sku"], "gpt-5.2-codex")
-        self.assertEqual(payload["data"][10]["id"], "gpt-5.3-codex-spark")
-        self.assertEqual(payload["data"][10]["created"], 1770912000)
-        self.assertEqual(payload["data"][10]["coincoin_metadata"]["display_name"], "GPT 5.3 Codex Spark")
-        self.assertEqual(payload["data"][10]["coincoin_metadata"]["context_length"], 128000)
-        self.assertEqual(payload["data"][11]["id"], "codex-auto-review")
-        self.assertEqual(payload["data"][11]["created"], 1776902400)
-        self.assertEqual(payload["data"][11]["coincoin_billable_sku"], "codex-auto-review")
-        self.assertEqual(payload["data"][11]["coincoin_delivery_lane"], "legacy")
-        self.assertEqual(payload["data"][11]["coincoin_metadata"]["supported_parameters"], ["tools"])
-        self.assertEqual(payload["data"][11]["coincoin_metadata"]["thinking"]["levels"], ["low", "medium", "high", "xhigh"])
-        self.assertEqual(payload["data"][15]["coincoin_capabilities"], ["embeddings"])
-        self.assertEqual(payload["data"][15]["coincoin_billable_sku"], "azure-text-embedding-3-small")
-        self.assertEqual(payload["data"][15]["coincoin_default_for"], ["embedding"])
-        self.assertEqual(payload["data"][15]["coincoin_delivery_lane"], "upstream_direct")
-        self.assertEqual(payload["data"][16]["coincoin_capabilities"], ["images/generations", "images/edits"])
-        self.assertEqual(payload["data"][16]["coincoin_billable_sku"], "openai-image")
-        self.assertEqual(payload["data"][16]["coincoin_default_for"], ["image"])
-        self.assertEqual(payload["data"][16]["coincoin_delivery_lane"], "upstream_direct")
-        self.assertEqual(payload["data"][17]["coincoin_capabilities"], ["chat/completions", "responses"])
-        self.assertEqual(payload["data"][17]["coincoin_billable_sku"], "gemini-fast")
-        self.assertEqual(payload["data"][17]["coincoin_delivery_lane"], "cpa_gemini")
-        self.assertEqual(payload["data"][18]["coincoin_capabilities"], ["images/generations", "images/edits"])
-        self.assertEqual(payload["data"][18]["coincoin_default_for"], [])
-        self.assertEqual(payload["data"][18]["coincoin_delivery_lane"], "cpa_gemini")
+        models_by_id = {item["id"]: item for item in payload["data"]}
+        self.assertEqual(models_by_id["gpt-5.2-codex"]["coincoin_billable_sku"], "gpt-5.2-codex")
+        self.assertEqual(models_by_id["gpt-5.3-codex-spark"]["created"], 1770912000)
+        self.assertEqual(models_by_id["gpt-5.3-codex-spark"]["coincoin_metadata"]["display_name"], "GPT 5.3 Codex Spark")
+        self.assertEqual(models_by_id["gpt-5.3-codex-spark"]["coincoin_metadata"]["context_length"], 128000)
+        self.assertEqual(models_by_id["codex-auto-review"]["created"], 1776902400)
+        self.assertEqual(models_by_id["codex-auto-review"]["coincoin_billable_sku"], "codex-auto-review")
+        self.assertEqual(models_by_id["codex-auto-review"]["coincoin_delivery_lane"], "legacy")
+        self.assertEqual(models_by_id["codex-auto-review"]["coincoin_metadata"]["supported_parameters"], ["tools"])
+        self.assertEqual(models_by_id["codex-auto-review"]["coincoin_metadata"]["thinking"]["levels"], ["low", "medium", "high", "xhigh"])
+        self.assertEqual(models_by_id["gpt-5.6"]["coincoin_price_cache_creation_input_per_million"], 625.0)
+        self.assertEqual(models_by_id["gpt-5.6"]["coincoin_cache_creation_multiplier"], 1.25)
+        self.assertEqual(models_by_id["gpt-5.6-terra"]["coincoin_price_cache_creation_input_per_million"], 312.5)
+        self.assertEqual(models_by_id["text-embedding-3-small"]["coincoin_capabilities"], ["embeddings"])
+        self.assertEqual(models_by_id["text-embedding-3-small"]["coincoin_billable_sku"], "azure-text-embedding-3-small")
+        self.assertEqual(models_by_id["text-embedding-3-small"]["coincoin_default_for"], ["embedding"])
+        self.assertEqual(models_by_id["text-embedding-3-small"]["coincoin_delivery_lane"], "upstream_direct")
+        self.assertEqual(models_by_id["gpt-image-2"]["coincoin_capabilities"], ["images/generations", "images/edits"])
+        self.assertEqual(models_by_id["gpt-image-2"]["coincoin_billable_sku"], "openai-image")
+        self.assertEqual(models_by_id["gpt-image-2"]["coincoin_default_for"], ["image"])
+        self.assertEqual(models_by_id["gpt-image-2"]["coincoin_delivery_lane"], "upstream_direct")
+        self.assertEqual(models_by_id["gemini-fast"]["coincoin_capabilities"], ["chat/completions", "responses"])
+        self.assertEqual(models_by_id["gemini-fast"]["coincoin_billable_sku"], "gemini-fast")
+        self.assertEqual(models_by_id["gemini-fast"]["coincoin_delivery_lane"], "cpa_gemini")
+        self.assertEqual(models_by_id["gemini-image"]["coincoin_capabilities"], ["images/generations", "images/edits"])
+        self.assertEqual(models_by_id["gemini-image"]["coincoin_default_for"], [])
+        self.assertEqual(models_by_id["gemini-image"]["coincoin_delivery_lane"], "cpa_gemini")
 
     async def test_models_endpoint_hides_user_specific_backend_overrides(self) -> None:
         fake_user = SimpleNamespace(

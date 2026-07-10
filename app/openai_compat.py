@@ -530,6 +530,11 @@ def _serialize_public_model(public_model) -> Dict[str, Any]:
         float(explicit_cached_price if explicit_cached_price is not None else float(public_model.price_input_per_million or 0) * float(settings.cache_discount_rate or 0)),
         4,
     )
+    explicit_cache_creation_price = getattr(public_model, "effective_cache_creation_input_per_million", None)
+    cache_creation_input_price = round(
+        float(explicit_cache_creation_price if explicit_cache_creation_price is not None else float(public_model.price_input_per_million or 0)),
+        4,
+    )
     return {
         "id": public_model.public_id,
         "object": "model",
@@ -543,6 +548,7 @@ def _serialize_public_model(public_model) -> Dict[str, Any]:
         "coincoin_metadata": dict(public_model.metadata or {}),
         "coincoin_price_input_per_million": public_model.price_input_per_million,
         "coincoin_price_cached_input_per_million": cached_input_price,
+        "coincoin_price_cache_creation_input_per_million": cache_creation_input_price,
         "coincoin_price_output_per_million": public_model.price_output_per_million,
         "coincoin_price_per_image_cents": public_model.price_per_image_cents,
         "coincoin_price_per_video_cents": getattr(public_model, "price_per_video_cents", 0.0),
@@ -554,6 +560,7 @@ def _serialize_public_model(public_model) -> Dict[str, Any]:
         "coincoin_model_multiplier": getattr(public_model, "model_multiplier", 1.0),
         "coincoin_output_multiplier": getattr(public_model, "output_multiplier", 1.0),
         "coincoin_cache_read_multiplier": getattr(public_model, "cache_read_multiplier", 0.0),
+        "coincoin_cache_creation_multiplier": getattr(public_model, "cache_creation_multiplier", 1.0),
         "coincoin_image_multiplier": getattr(public_model, "image_multiplier", 1.0),
         "coincoin_video_multiplier": getattr(public_model, "video_multiplier", 1.0),
         "coincoin_price_version": getattr(public_model, "price_version", 0),
