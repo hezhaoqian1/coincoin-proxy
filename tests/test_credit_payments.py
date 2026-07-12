@@ -111,6 +111,24 @@ class CreditPaymentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["purchase_action"], "credit_purchase")
         self.assertEqual(payload["promised_credit_cents"], 12345)
 
+    def test_confirm_response_compat_balance_aliases_total_available(self):
+        response = payment_module._response_from_confirm_result(
+            {
+                "user": SimpleNamespace(balance=0),
+                "order": _credit_order(status="confirmed"),
+                "amount_rmb": "59.90",
+                "added_cents": 10000,
+                "available_cents": 10000,
+                "billing_action": "credit_purchase",
+            },
+            "recharge success",
+        )
+
+        self.assertEqual(response.new_balance, 10000)
+        self.assertEqual(response.new_balance_usd, 100.0)
+        self.assertEqual(response.available_cents, 10000)
+        self.assertEqual(response.available_usd, 100.0)
+
     def test_credit_quotes_require_exact_catalog_rmb_amounts(self):
         try:
             quoted = {
@@ -465,7 +483,7 @@ class CreditPaymentTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_admin_manual_confirmation_uses_common_station_owner(self):
         order = _credit_order(promised_credit_cents=10000)
-        user = SimpleNamespace(id="u_1", balance=500, referred_by=None, status="active")
+        user = SimpleNamespace(id="u_1", balance=0, referred_by=None, status="active")
         db = _FakeDB(
             execute_results=[
                 _EntityResult(order),
@@ -492,6 +510,11 @@ class CreditPaymentTests(unittest.IsolatedAsyncioTestCase):
             patch("app.payment_common.ensure_finance_summary_initialized", AsyncMock()),
             patch("app.payment_common.increment_finance_summary", AsyncMock()),
             patch("app.payment_common.process_referral_reward", AsyncMock()),
+            patch.object(
+                payment_module,
+                "get_available_balance_cents",
+                AsyncMock(return_value={"available_cents": 10000}),
+            ),
         ):
             result = await admin_module.manual_confirm_order(
                 order.order_no,
@@ -500,8 +523,45 @@ class CreditPaymentTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(result["status"], "confirmed")
+        self.assertEqual(result["new_balance"], 10000)
+        self.assertEqual(result["new_balance_usd"], 100.0)
         station_commission.assert_awaited_once_with(db, order)
         self.assertEqual(db.commits, 1)
+
+    async def test_admin_force_confirmation_aliases_total_available_balance(self):
+        order = _credit_order(status="pending", promised_credit_cents=10000)
+        confirmed_order = _credit_order(
+            status="confirmed",
+            promised_credit_cents=10000,
+            trade_no="trade_force",
+        )
+        result = {
+            "order": confirmed_order,
+            "user": SimpleNamespace(id="u_1", balance=0),
+            "amount_rmb": "59.90",
+            "added_cents": 10000,
+            "billing_action": "credit_purchase",
+            "available_cents": None,
+        }
+        db = _FakeDB(execute_results=[_EntityResult(order)])
+
+        with (
+            patch.object(
+                payment_module,
+                "_confirm_with_query_fallback",
+                AsyncMock(return_value=result),
+            ),
+            patch.object(
+                payment_module,
+                "get_available_balance_cents",
+                AsyncMock(return_value={"available_cents": 10000}),
+            ),
+        ):
+            response = await admin_module.force_confirm_order(order.order_no, db)
+
+        self.assertEqual(response["status"], "confirmed")
+        self.assertEqual(response["new_balance"], 10000)
+        self.assertEqual(response["new_balance_usd"], 100.0)
 
     async def test_admin_confirmed_replays_backfill_station_commission_once(self):
         for route_name in ("force", "manual"):
@@ -525,14 +585,19 @@ class CreditPaymentTests(unittest.IsolatedAsyncioTestCase):
                     ]
                 )
 
-                if route_name == "force":
-                    first = await admin_module.force_confirm_order(order.order_no, first_db)
-                else:
-                    first = await admin_module.manual_confirm_order(
-                        order.order_no,
-                        SimpleNamespace(proof_url="unused-for-confirmed-order"),
-                        first_db,
-                    )
+                with patch.object(
+                    payment_module,
+                    "get_available_balance_cents",
+                    AsyncMock(return_value={"available_cents": 10500}),
+                ):
+                    if route_name == "force":
+                        first = await admin_module.force_confirm_order(order.order_no, first_db)
+                    else:
+                        first = await admin_module.manual_confirm_order(
+                            order.order_no,
+                            SimpleNamespace(proof_url="unused-for-confirmed-order"),
+                            first_db,
+                        )
 
                 station_entries = [
                     item for item in first_db.added if isinstance(item, StationCommissionLedgerEntry)
@@ -548,17 +613,28 @@ class CreditPaymentTests(unittest.IsolatedAsyncioTestCase):
                         _EntityResult(station_entry),
                     ]
                 )
-                if route_name == "force":
-                    replay = await admin_module.force_confirm_order(order.order_no, replay_db)
-                else:
-                    replay = await admin_module.manual_confirm_order(
-                        order.order_no,
-                        SimpleNamespace(proof_url="unused-for-confirmed-order"),
-                        replay_db,
-                    )
+                with patch.object(
+                    payment_module,
+                    "get_available_balance_cents",
+                    AsyncMock(return_value={"available_cents": 10500}),
+                ):
+                    if route_name == "force":
+                        replay = await admin_module.force_confirm_order(order.order_no, replay_db)
+                    else:
+                        replay = await admin_module.manual_confirm_order(
+                            order.order_no,
+                            SimpleNamespace(proof_url="unused-for-confirmed-order"),
+                            replay_db,
+                        )
 
                 self.assertEqual(first["status"], "already_confirmed")
                 self.assertEqual(replay["status"], "already_confirmed")
+                for response in (first, replay):
+                    self.assertEqual(response["trade_no"], "trade_existing")
+                    self.assertEqual(response["added_cents"], 10000)
+                    self.assertEqual(response["billing_action"], "already_confirmed")
+                    self.assertEqual(response["new_balance"], 10500)
+                    self.assertEqual(response["new_balance_usd"], 105.0)
                 self.assertFalse(
                     any(isinstance(item, StationCommissionLedgerEntry) for item in replay_db.added)
                 )

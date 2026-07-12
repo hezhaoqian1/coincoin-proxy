@@ -5,7 +5,7 @@ import logging
 import secrets
 import time
 from copy import deepcopy
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Dict, Optional
 from urllib.parse import urlsplit, urlunsplit
 
@@ -45,7 +45,7 @@ from .proxy import (
 from .router import ModelConfig, registry as model_registry
 from .security import generate_id
 from .config import settings
-from .credit_wallet import refund_credit_allocations
+from .credit_wallet import grant_permanent_credit, refund_credit_allocations
 from .station_runtime import public_model_pricing_kwargs, resolve_station_model_for_user
 from .user_model_overrides import apply_user_overrides_to_resolution
 from .usage_buffer import china_today, usage_buffer
@@ -62,6 +62,8 @@ JOB_STATUS_RUNNING = "running"
 JOB_STATUS_COMPLETED = "completed"
 JOB_STATUS_FAILED = "failed"
 TERMINAL_STATUSES = {JOB_STATUS_COMPLETED, JOB_STATUS_FAILED}
+VIDEO_SUBSCRIPTION_REFUND_SOURCE_TYPE = "video_subscription_refund"
+VIDEO_SUBSCRIPTION_REFUND_PRODUCT = "legacy_subscription_refund"
 SEEDANCE_RATIOS = {"16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "adaptive"}
 SEEDANCE_VIDEO_MODELS = {
     "seedance-v2-720p-video",
@@ -442,6 +444,31 @@ def _video_job_billable_sku(job: VideoJob) -> str:
     return str(getattr(job, "billable_sku", "") or getattr(job, "public_model", "") or "")
 
 
+def _utc_naive_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value.replace(tzinfo=None)
+    return value.astimezone(UTC).replace(tzinfo=None)
+
+
+def _subscription_pool_unavailable_for_refund(job: VideoJob, sub: UserSubscription) -> bool:
+    charged_at = _utc_naive_datetime(
+        getattr(job, "started_at", None) or getattr(job, "created_at", None)
+    )
+    current_period_start = _utc_naive_datetime(getattr(sub, "period_start", None))
+    current_period_end = _utc_naive_datetime(getattr(sub, "period_end", None))
+    paid_until = _utc_naive_datetime(getattr(sub, "paid_until", None))
+    now = datetime.now(UTC).replace(tzinfo=None)
+    return bool(
+        str(getattr(sub, "status", "") or "") != "active"
+        or not paid_until
+        or paid_until <= now
+        or (charged_at and current_period_start and current_period_start > charged_at)
+        or (current_period_end and current_period_end <= now)
+    )
+
+
 async def _record_video_usage_daily(
     db: AsyncSession,
     user_id: str,
@@ -665,6 +692,7 @@ async def _refund_failed_job_once(
         raise BillingError("video job refund user not found", status_code=500)
 
     sub = None
+    subscription_refund_to_credit = False
     if subscription_cents > 0:
         sub = (
             await db.execute(
@@ -673,10 +701,12 @@ async def _refund_failed_job_once(
                 .with_for_update()
             )
         ).scalar_one_or_none()
+        if not sub or str(getattr(sub, "user_id", "") or "") != str(job.user_id):
+            raise BillingError("video job subscription debit reference mismatch", status_code=500)
+        subscription_refund_to_credit = _subscription_pool_unavailable_for_refund(job, sub)
         if (
-            not sub
-            or str(getattr(sub, "user_id", "") or "") != str(job.user_id)
-            or int(getattr(sub, "used_cents", 0) or 0) < subscription_cents
+            not subscription_refund_to_credit
+            and int(getattr(sub, "used_cents", 0) or 0) < subscription_cents
         ):
             raise BillingError("video job subscription debit reference mismatch", status_code=500)
 
@@ -705,7 +735,32 @@ async def _refund_failed_job_once(
             raise BillingError("video job credit refund amount mismatch", status_code=500)
         refunded += credit_refunded
 
-    if sub:
+    if sub and subscription_refund_to_credit:
+        fallback_product_id = (
+            str(getattr(job, "subscription_plan_id", "") or "").strip()
+            or VIDEO_SUBSCRIPTION_REFUND_PRODUCT
+        )
+        fallback_balance = await grant_permanent_credit(
+            db,
+            user_id=job.user_id,
+            source_type=VIDEO_SUBSCRIPTION_REFUND_SOURCE_TYPE,
+            source_id=job.id,
+            amount_cents=subscription_cents,
+            product_id=fallback_product_id,
+        )
+        refunded += subscription_cents
+        add_billing_ledger(
+            db,
+            user_id=job.user_id,
+            entry_type="usage_subscription_refund_credit",
+            amount_cents=subscription_cents,
+            source_type="video_job",
+            source_id=job.id,
+            product_id=fallback_product_id,
+            balance_after_cents=int(getattr(fallback_balance, "remaining_cents", 0) or 0),
+            note=f"Subscription period rolled over before Seedance refund: {job.upstream_task_id or job.id}",
+        )
+    elif sub:
         sub.used_cents = max(0, int(sub.used_cents or 0) - subscription_cents)
         refunded += subscription_cents
         add_billing_ledger(

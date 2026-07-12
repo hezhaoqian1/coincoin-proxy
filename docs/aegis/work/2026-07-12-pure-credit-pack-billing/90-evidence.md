@@ -31,8 +31,16 @@ Evidence is recorded below.
 - Artifact key: final-python-regression
 - Type: test
 - Source: `python -m pytest -q`
-- Summary: 518 passed, 4 skipped, 162 subtests passed; exactly three failures remain, all the recorded `RequestLog.effective_cache_creation_input_per_million` video baseline mismatch.
+- Summary: 524 passed, 4 skipped, 162 subtests passed; exactly three failures remain, all the recorded `RequestLog.effective_cache_creation_input_per_million` video baseline mismatch.
 - Verifier: Codex root agent
+
+## EvidenceBundleDraft
+
+- Artifact key: pre-landing-payment-refund-boundaries
+- Type: test-and-review
+- Source: focused payment/admin/video regression tests plus independent pre-landing review
+- Summary: Payment confirmation and admin replay compatibility balances now equal total available value. Failed video subscription debits from rolled-over, expired, disabled, or shortened-paid-until periods restore value as permanent credit without decrementing current-period usage. Seven focused regressions passed, including current-period usage greater than the old debit, expired rows not yet normalized, and a future `period_end` with an already elapsed `paid_until`.
+- Verifier: Codex root agent and independent reviewer
 
 ## EvidenceBundleDraft
 

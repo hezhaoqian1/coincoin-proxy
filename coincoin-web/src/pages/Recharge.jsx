@@ -280,7 +280,7 @@ export default function Recharge() {
         try {
             const res = await redeemCode(redeemInput.trim())
             if (res.success) {
-                setRedeemMsg({ type: 'success', text: `兑换成功！获得 $${(res.added_cents / 100).toFixed(2)} 美金额度，当前余额 $${res.new_balance_usd.toFixed(2)}` })
+                setRedeemMsg({ type: 'success', text: `兑换成功！获得 $${(res.added_cents / 100).toFixed(2)} 可用美金额度，账户额度正在刷新。` })
                 setRedeemInput('')
                 loadBillingState()
             } else {

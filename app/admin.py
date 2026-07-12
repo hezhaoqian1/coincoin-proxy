@@ -5430,7 +5430,7 @@ async def list_payment_orders(
 @router.post("/payment-orders/{order_no}/force-confirm", dependencies=[Depends(admin_guard)])
 async def force_confirm_order(order_no: str, db: AsyncSession = Depends(get_db)):
     """Admin 手动补单：查询支付服务验证后强制入账。"""
-    from .payment import _confirm_with_query_fallback
+    from .payment import _attach_available_balance, _confirm_with_query_fallback
 
     order = (
         await db.execute(select(PaymentOrder).where(PaymentOrder.order_no == order_no))
@@ -5439,7 +5439,7 @@ async def force_confirm_order(order_no: str, db: AsyncSession = Depends(get_db))
         raise HTTPException(status_code=404, detail="order not found")
     if order.status == "confirmed":
         try:
-            await confirm_paid_order(
+            result = await confirm_paid_order(
                 order_no=order.order_no,
                 money=order.amount_rmb,
                 trade_no=order.trade_no or "",
@@ -5447,20 +5447,32 @@ async def force_confirm_order(order_no: str, db: AsyncSession = Depends(get_db))
             )
         except PaymentConfirmError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
-        return {"order_no": order_no, "status": "already_confirmed"}
+        result = await _attach_available_balance(result, db)
+        available_cents = int(result["available_cents"])
+        return {
+            "order_no": order_no,
+            "status": "already_confirmed",
+            "trade_no": result["order"].trade_no,
+            "added_cents": result["added_cents"],
+            "billing_action": result.get("billing_action"),
+            "new_balance": available_cents,
+            "new_balance_usd": available_cents / 100,
+        }
 
     try:
         result = await _confirm_with_query_fallback(order_no, db)
     except HTTPException as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    result = await _attach_available_balance(result, db)
+    available_cents = int(result["available_cents"])
     return {
         "order_no": order_no,
         "status": "already_confirmed" if result.get("already_confirmed") else "confirmed",
         "trade_no": result["order"].trade_no,
         "added_cents": result["added_cents"],
         "billing_action": result.get("billing_action"),
-        "new_balance": result["user"].balance,
-        "new_balance_usd": result["user"].balance / 100,
+        "new_balance": available_cents,
+        "new_balance_usd": available_cents / 100,
     }
 
 
@@ -5474,6 +5486,8 @@ async def manual_confirm_order(
     Admin 手工补单：当支付服务不给查单接口或没有回调到 CoinCoin 时，
     允许管理员基于支付成功回跳 URL 手工确认 pending 订单。
     """
+    from .payment import _attach_available_balance
+
     order = (
         await db.execute(
             select(PaymentOrder)
@@ -5484,7 +5498,7 @@ async def manual_confirm_order(
         raise HTTPException(status_code=404, detail="order not found")
     if order.status == "confirmed":
         try:
-            await confirm_paid_order(
+            result = await confirm_paid_order(
                 order_no=order.order_no,
                 money=order.amount_rmb,
                 trade_no=order.trade_no or "",
@@ -5492,7 +5506,17 @@ async def manual_confirm_order(
             )
         except PaymentConfirmError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
-        return {"order_no": order_no, "status": "already_confirmed"}
+        result = await _attach_available_balance(result, db)
+        available_cents = int(result["available_cents"])
+        return {
+            "order_no": order_no,
+            "status": "already_confirmed",
+            "trade_no": result["order"].trade_no,
+            "added_cents": result["added_cents"],
+            "billing_action": result.get("billing_action"),
+            "new_balance": available_cents,
+            "new_balance_usd": available_cents / 100,
+        }
 
     try:
         callback = verify_epay_callback_params(
@@ -5515,7 +5539,8 @@ async def manual_confirm_order(
     except PaymentConfirmError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
-    user = result["user"]
+    result = await _attach_available_balance(result, db)
+    available_cents = int(result["available_cents"])
 
     return {
         "order_no": order_no,
@@ -5523,8 +5548,8 @@ async def manual_confirm_order(
         "trade_no": callback["trade_no"],
         "added_cents": result["added_cents"],
         "billing_action": result.get("billing_action"),
-        "new_balance": user.balance,
-        "new_balance_usd": user.balance / 100,
+        "new_balance": available_cents,
+        "new_balance_usd": available_cents / 100,
     }
 
 

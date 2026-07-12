@@ -155,7 +155,7 @@ Planning is required because this slice introduces a new billing source of truth
 **Verification:**
 
 ```bash
-COINCOIN_DATABASE_URL='mysql://test:test@127.0.0.1:3306/test' /Users/windupbird/Documents/Coincoin中转站/coincoin-proxy/.venv/bin/python -m pytest tests/test_credit_wallet.py -q
+COINCOIN_DATABASE_URL="$COINCOIN_TEST_DATABASE_URL" .venv/bin/python -m pytest tests/test_credit_wallet.py -q
 ```
 
 - [ ] Write RED tests for idempotent order grant, available total, FIFO debit, insufficient balance, multi-batch allocation, and allocation refund.
@@ -175,7 +175,7 @@ COINCOIN_DATABASE_URL='mysql://test:test@127.0.0.1:3306/test' /Users/windupbird/
 **Verification:**
 
 ```bash
-COINCOIN_DATABASE_URL='mysql://test:test@127.0.0.1:3306/test' /Users/windupbird/Documents/Coincoin中转站/coincoin-proxy/.venv/bin/python -m pytest tests/test_subscription_billing.py tests/test_admin_usage_fields.py -k 'billing or payment or order or subscription or traffic_pack' -q
+COINCOIN_DATABASE_URL="$COINCOIN_TEST_DATABASE_URL" .venv/bin/python -m pytest tests/test_subscription_billing.py tests/test_admin_usage_fields.py -k 'billing or payment or order or subscription or traffic_pack' -q
 ```
 
 - [ ] Write RED tests asserting the three products and prices, exact money validation, rejection of `monthly_*`/`addon_*` creation, frozen `credit-v1` order fields, and one-batch confirmation.
@@ -196,7 +196,7 @@ COINCOIN_DATABASE_URL='mysql://test:test@127.0.0.1:3306/test' /Users/windupbird/
 **Verification:**
 
 ```bash
-COINCOIN_DATABASE_URL='mysql://test:test@127.0.0.1:3306/test' /Users/windupbird/Documents/Coincoin中转站/coincoin-proxy/.venv/bin/python -m pytest tests/test_credit_wallet.py tests/test_subscription_billing.py tests/test_video_jobs.py -q
+COINCOIN_DATABASE_URL="$COINCOIN_TEST_DATABASE_URL" .venv/bin/python -m pytest tests/test_credit_wallet.py tests/test_subscription_billing.py tests/test_video_jobs.py -q
 ```
 
 - [ ] Write RED tests for legacy-monthly → legacy-pack → wallet → scalar fallback order, no monthly gate on valid old packs, and video refund by stored wallet allocations.
@@ -216,7 +216,7 @@ COINCOIN_DATABASE_URL='mysql://test:test@127.0.0.1:3306/test' /Users/windupbird/
 **Verification:**
 
 ```bash
-COINCOIN_DATABASE_URL='mysql://test:test@127.0.0.1:3306/test' /Users/windupbird/Documents/Coincoin中转站/coincoin-proxy/.venv/bin/python -m pytest tests/test_credit_migration.py -q
+COINCOIN_DATABASE_URL="$COINCOIN_TEST_DATABASE_URL" .venv/bin/python -m pytest tests/test_credit_migration.py -q
 ```
 
 - [ ] Write RED tests for positive scalar conversion, valid pack conversion, expired/depleted skip, negative-balance reporting, idempotent rerun, and zero-drift totals.
@@ -236,7 +236,7 @@ COINCOIN_DATABASE_URL='mysql://test:test@127.0.0.1:3306/test' /Users/windupbird/
 **Verification:**
 
 ```bash
-COINCOIN_DATABASE_URL='mysql://test:test@127.0.0.1:3306/test' /Users/windupbird/Documents/Coincoin中转站/coincoin-proxy/.venv/bin/python -m pytest tests/test_admin_usage_fields.py -k 'billing or finance or user' -q
+COINCOIN_DATABASE_URL="$COINCOIN_TEST_DATABASE_URL" .venv/bin/python -m pytest tests/test_admin_usage_fields.py -k 'billing or finance or user' -q
 cd coincoin-web && npm run build
 ```
 
@@ -256,7 +256,7 @@ cd coincoin-web && npm run build
 
 ```bash
 rg -n 'purchase_action.*upgrade|本周期补差|流量包仅限|monthly_light|monthly_basic|monthly_flagship|addon_boost|addon_project|addon_ultra' app coincoin-web/src
-COINCOIN_DATABASE_URL='mysql://test:test@127.0.0.1:3306/test' /Users/windupbird/Documents/Coincoin中转站/coincoin-proxy/.venv/bin/python -m pytest -q
+COINCOIN_DATABASE_URL="$COINCOIN_TEST_DATABASE_URL" .venv/bin/python -m pytest -q
 cd coincoin-web && npm run build
 cd ../usage-quota-service && go test ./...
 ```

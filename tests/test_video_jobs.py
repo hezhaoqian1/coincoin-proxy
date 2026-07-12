@@ -1,6 +1,6 @@
 import json
 import unittest
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -634,11 +634,15 @@ class VideoJobsTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_subscription_used_insufficient_blocks_mixed_refund_before_wallet_or_scalar(self) -> None:
         self.fake_user.balance = 990
+        now = datetime.now(UTC).replace(tzinfo=None)
         sub = UserSubscription(
             id="sub_underflow",
             user_id=self.fake_user.id,
             plan_id="monthly_light",
             status="active",
+            period_start=now - timedelta(days=1),
+            period_end=now + timedelta(days=29),
+            paid_until=now + timedelta(days=29),
             quota_cents=100,
             used_cents=5,
         )
@@ -660,6 +664,8 @@ class VideoJobsTests(unittest.IsolatedAsyncioTestCase):
             ),
             legacy_debit_cents=10,
             refunded_cents=0,
+            created_at=now,
+            started_at=now,
         )
         self.store.jobs[job.id] = job
         db = _FakeVideoDBSession(self.store)
@@ -677,6 +683,237 @@ class VideoJobsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.fake_user.balance, 990)
         self.assertEqual(job.refunded_cents, 0)
         self.assertEqual(self.store.ledger_entries, [])
+
+    async def test_subscription_rollover_refunds_old_period_debit_to_credit_and_wallet_once(self) -> None:
+        sub = UserSubscription(
+            id="sub_rollover_refund",
+            user_id=self.fake_user.id,
+            plan_id="monthly_light",
+            status="active",
+            period_start=datetime(2026, 7, 1),
+            period_end=datetime(2026, 7, 31),
+            paid_until=datetime(2026, 7, 31),
+            quota_cents=100,
+            used_cents=0,
+        )
+        self.store.subscriptions[sub.id] = sub
+        allocation = {
+            "allocation_id": "ca_rollover_wallet",
+            "credit_balance_id": "cb_rollover_wallet",
+            "amount_cents": 50,
+        }
+        job = VideoJob(
+            id="job_rollover_refund",
+            user_id=self.fake_user.id,
+            status=video_jobs_module.JOB_STATUS_FAILED,
+            endpoint="videos/generations",
+            public_model="seedance-v2-720p",
+            provider_model="seedance-v2-720p",
+            request_payload_json="{}",
+            charged_cents=60,
+            subscription_debit_cents=10,
+            subscription_id=sub.id,
+            subscription_plan_id="monthly_light",
+            credit_debit_cents=50,
+            credit_allocations_json=json.dumps([allocation]),
+            refunded_cents=0,
+            created_at=datetime(2026, 6, 15),
+            started_at=datetime(2026, 6, 15),
+        )
+        self.store.jobs[job.id] = job
+        db = _FakeVideoDBSession(self.store)
+
+        with patch.object(
+            video_jobs_module,
+            "refund_credit_allocations",
+            AsyncMock(return_value={"refunded_cents": 50, "allocations": [allocation]}),
+        ) as refund_wallet, patch.object(
+            video_jobs_module,
+            "grant_permanent_credit",
+            AsyncMock(return_value=SimpleNamespace(remaining_cents=10)),
+        ) as grant_fallback, patch.object(
+            video_jobs_module,
+            "_record_video_usage_daily",
+            AsyncMock(),
+        ), patch.object(
+            video_jobs_module,
+            "increment_finance_summary",
+            AsyncMock(),
+        ):
+            await video_jobs_module._refund_failed_job_once(job, db)
+            await video_jobs_module._refund_failed_job_once(job, db)
+
+        refund_wallet.assert_awaited_once_with(
+            db,
+            user_id=self.fake_user.id,
+            allocation_ids=[allocation["allocation_id"]],
+            expected_allocations=[allocation],
+        )
+        grant_fallback.assert_awaited_once_with(
+            db,
+            user_id=self.fake_user.id,
+            source_type=video_jobs_module.VIDEO_SUBSCRIPTION_REFUND_SOURCE_TYPE,
+            source_id=job.id,
+            amount_cents=10,
+            product_id="monthly_light",
+        )
+        self.assertEqual(sub.used_cents, 0)
+        self.assertEqual(job.refunded_cents, 60)
+        self.assertEqual(len(self.store.ledger_entries), 1)
+        self.assertEqual(self.store.ledger_entries[0].entry_type, "usage_subscription_refund_credit")
+
+    async def test_subscription_rollover_never_decrements_usage_from_new_period(self) -> None:
+        sub = UserSubscription(
+            id="sub_rollover_used_refund",
+            user_id=self.fake_user.id,
+            plan_id="monthly_light",
+            status="active",
+            period_start=datetime(2026, 7, 1),
+            period_end=datetime(2026, 7, 31),
+            paid_until=datetime(2026, 7, 31),
+            quota_cents=100,
+            used_cents=20,
+        )
+        self.store.subscriptions[sub.id] = sub
+        job = VideoJob(
+            id="job_rollover_used_refund",
+            user_id=self.fake_user.id,
+            status=video_jobs_module.JOB_STATUS_FAILED,
+            endpoint="videos/generations",
+            public_model="seedance-v2-720p",
+            provider_model="seedance-v2-720p",
+            request_payload_json="{}",
+            charged_cents=10,
+            subscription_debit_cents=10,
+            subscription_id=sub.id,
+            subscription_plan_id="monthly_light",
+            refunded_cents=0,
+            created_at=datetime(2026, 6, 15),
+            started_at=datetime(2026, 6, 15),
+        )
+        self.store.jobs[job.id] = job
+        db = _FakeVideoDBSession(self.store)
+
+        with patch.object(
+            video_jobs_module,
+            "grant_permanent_credit",
+            AsyncMock(return_value=SimpleNamespace(remaining_cents=10)),
+        ) as grant_fallback, patch.object(
+            video_jobs_module,
+            "_record_video_usage_daily",
+            AsyncMock(),
+        ), patch.object(
+            video_jobs_module,
+            "increment_finance_summary",
+            AsyncMock(),
+        ):
+            await video_jobs_module._refund_failed_job_once(job, db)
+
+        grant_fallback.assert_awaited_once()
+        self.assertEqual(sub.used_cents, 20)
+        self.assertEqual(job.refunded_cents, 10)
+
+    async def test_expired_unrolled_subscription_refunds_debit_to_permanent_credit(self) -> None:
+        sub = UserSubscription(
+            id="sub_expired_refund",
+            user_id=self.fake_user.id,
+            plan_id="monthly_light",
+            status="active",
+            period_start=datetime(2026, 5, 1),
+            period_end=datetime(2026, 5, 31),
+            paid_until=datetime(2026, 5, 31),
+            quota_cents=100,
+            used_cents=20,
+        )
+        self.store.subscriptions[sub.id] = sub
+        job = VideoJob(
+            id="job_expired_refund",
+            user_id=self.fake_user.id,
+            status=video_jobs_module.JOB_STATUS_FAILED,
+            endpoint="videos/generations",
+            public_model="seedance-v2-720p",
+            provider_model="seedance-v2-720p",
+            request_payload_json="{}",
+            charged_cents=10,
+            subscription_debit_cents=10,
+            subscription_id=sub.id,
+            subscription_plan_id="monthly_light",
+            refunded_cents=0,
+            created_at=datetime(2026, 5, 15),
+            started_at=datetime(2026, 5, 15),
+        )
+        self.store.jobs[job.id] = job
+        db = _FakeVideoDBSession(self.store)
+
+        with patch.object(
+            video_jobs_module,
+            "grant_permanent_credit",
+            AsyncMock(return_value=SimpleNamespace(remaining_cents=10)),
+        ) as grant_fallback, patch.object(
+            video_jobs_module,
+            "_record_video_usage_daily",
+            AsyncMock(),
+        ), patch.object(
+            video_jobs_module,
+            "increment_finance_summary",
+            AsyncMock(),
+        ):
+            await video_jobs_module._refund_failed_job_once(job, db)
+
+        grant_fallback.assert_awaited_once()
+        self.assertEqual(sub.used_cents, 20)
+        self.assertEqual(job.refunded_cents, 10)
+
+    async def test_shortened_paid_until_refunds_debit_to_permanent_credit(self) -> None:
+        sub = UserSubscription(
+            id="sub_shortened_paid_until_refund",
+            user_id=self.fake_user.id,
+            plan_id="monthly_light",
+            status="active",
+            period_start=datetime(2026, 7, 1),
+            period_end=datetime(2026, 7, 31),
+            paid_until=datetime(2026, 7, 10),
+            quota_cents=100,
+            used_cents=20,
+        )
+        self.store.subscriptions[sub.id] = sub
+        job = VideoJob(
+            id="job_shortened_paid_until_refund",
+            user_id=self.fake_user.id,
+            status=video_jobs_module.JOB_STATUS_FAILED,
+            endpoint="videos/generations",
+            public_model="seedance-v2-720p",
+            provider_model="seedance-v2-720p",
+            request_payload_json="{}",
+            charged_cents=10,
+            subscription_debit_cents=10,
+            subscription_id=sub.id,
+            subscription_plan_id="monthly_light",
+            refunded_cents=0,
+            created_at=datetime(2026, 7, 5),
+            started_at=datetime(2026, 7, 5),
+        )
+        self.store.jobs[job.id] = job
+        db = _FakeVideoDBSession(self.store)
+
+        with patch.object(
+            video_jobs_module,
+            "grant_permanent_credit",
+            AsyncMock(return_value=SimpleNamespace(remaining_cents=10)),
+        ) as grant_fallback, patch.object(
+            video_jobs_module,
+            "_record_video_usage_daily",
+            AsyncMock(),
+        ), patch.object(
+            video_jobs_module,
+            "increment_finance_summary",
+            AsyncMock(),
+        ):
+            await video_jobs_module._refund_failed_job_once(job, db)
+
+        grant_fallback.assert_awaited_once()
+        self.assertEqual(sub.used_cents, 20)
+        self.assertEqual(job.refunded_cents, 10)
 
     async def test_negative_legacy_total_blocks_mixed_refund_before_wallet(self) -> None:
         self.fake_user.balance = 1000

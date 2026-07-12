@@ -386,8 +386,8 @@ class OrderConfirmResponse(BaseModel):
     order_no: str
     amount_rmb: str
     added_cents: int = Field(description="发放的美金额度（美分）")
-    new_balance: int = Field(description="充值后余额（分）")
-    new_balance_usd: float
+    new_balance: int = Field(description="充值后可用总额（分），兼容字段，与 available_cents 相同")
+    new_balance_usd: float = Field(description="充值后可用总额（美元），兼容字段，与 available_usd 相同")
     available_cents: Optional[int] = Field(default=None, description="充值后可用总额（分，含套餐、流量包、历史余额）")
     available_usd: Optional[float] = Field(default=None, description="充值后可用总额（美元）")
     billing_action: Optional[str] = Field(default=None, description="本次入账动作")
@@ -402,8 +402,8 @@ class RedeemRequest(BaseModel):
 class RedeemResponse(BaseModel):
     success: bool
     added_cents: int
-    new_balance: int
-    new_balance_usd: float
+    new_balance: int = Field(description="兑换后历史余额账户值（分），不含月卡、流量包或永久美金额度")
+    new_balance_usd: float = Field(description="兑换后历史余额账户值（美元），不代表当前可用总额")
     message: str
 
 class RedemptionGenerateRequest(BaseModel):

@@ -109,18 +109,17 @@ async def _confirm_with_query_fallback(order_no: str, db: AsyncSession):
 
 
 def _response_from_confirm_result(result: dict, message: str) -> OrderConfirmResponse:
-    user = result["user"]
     order = result["order"]
-    available_cents = result.get("available_cents")
+    available_cents = int(result["available_cents"])
     return OrderConfirmResponse(
         success=True,
         order_no=order.order_no,
         amount_rmb=result["amount_rmb"],
         added_cents=result["added_cents"],
-        new_balance=user.balance,
-        new_balance_usd=user.balance / 100,
+        new_balance=available_cents,
+        new_balance_usd=available_cents / 100,
         available_cents=available_cents,
-        available_usd=(available_cents / 100) if available_cents is not None else None,
+        available_usd=available_cents / 100,
         billing_action=result.get("billing_action"),
         message=message,
     )

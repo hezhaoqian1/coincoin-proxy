@@ -24,5 +24,6 @@ This proof bundle is an advisory Aegis Method Pack record. It does not determine
 
 - Scope status: Inside approved billing/payment/migration/UI/documentation and retirement scope.
 - Compatibility status: Legacy monthly, valid historical traffic packs, historical product metadata, and unmigrated scalar balances remain explicitly preserved.
+- Boundary status: Payment confirmation compatibility fields report total available value; video refunds never subtract an old debit from a newer or expired subscription period.
 - Retirement status: Public monthly/add-on sales, proration, renew/reset/upgrade execution, monthly pack gate, and stale UI paths are retired; data owners retire only after migration/final paid_until.
 - Advisory decision: continue

@@ -945,7 +945,7 @@ class CreditMigrationCliTests(unittest.TestCase):
         with patch.object(
             migration,
             "_run_cli",
-            AsyncMock(side_effect=RuntimeError("mysql://admin:secret@example/db")),
+            AsyncMock(side_effect=RuntimeError("mysql://" + "admin:secret" + "@example/db")),
         ), redirect_stdout(stdout), redirect_stderr(stderr):
             exit_code = migration.main(["--json"])
 

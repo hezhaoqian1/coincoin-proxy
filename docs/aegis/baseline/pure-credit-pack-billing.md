@@ -35,6 +35,8 @@ Updated: 2026-07-12
 - Historical product IDs and metadata remain available for old records and admin correction controls.
 - Existing pending legacy orders are quarantined from automatic confirmation.
 - `credit_wallet` is canonical in payloads; `credit_balance` is a temporary read compatibility alias.
+- Payment confirmation `new_balance` and `new_balance_usd` are compatibility aliases for total available value across monthly entitlement, traffic packs, permanent credit, and unmigrated scalar balance.
+- If a failed video job's subscription debit belongs to a rolled-over or expired monthly period, its value is restored as idempotent permanent credit instead of mutating the current or expired period.
 
 ## Retirement Boundary
 
