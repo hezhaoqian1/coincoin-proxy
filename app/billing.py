@@ -37,8 +37,25 @@ class PaymentProduct:
     def money_decimal(self) -> Decimal:
         return Decimal(self.money).quantize(Decimal("0.01"))
 
+    @property
+    def amount_fen(self) -> int:
+        return int((self.money_decimal * 100).to_integral_value())
 
-PAYMENT_PRODUCTS: tuple[PaymentProduct, ...] = (
+    @property
+    def promised_credit_cents(self) -> int:
+        return self.balance_cents
+
+
+CREDIT_CATALOG_VERSION = "credit-v1"
+CREDIT_PURCHASE_ACTION = "credit_purchase"
+
+CREDIT_PRODUCTS: tuple[PaymentProduct, ...] = (
+    PaymentProduct("credit_light", "credit", "轻量美金额度 $100", "59.90", 10000),
+    PaymentProduct("credit_standard", "credit", "标准美金额度 $400", "199.00", 40000),
+    PaymentProduct("credit_pro", "credit", "专业美金额度 $1,000", "399.00", 100000),
+)
+
+LEGACY_PAYMENT_PRODUCTS: tuple[PaymentProduct, ...] = (
     PaymentProduct("monthly_light", "monthly", "轻量月卡", "49.90", 8000, rank=1),
     PaymentProduct("monthly_basic", "monthly", "基础月卡", "199.00", 40000, rank=2),
     PaymentProduct("monthly_flagship", "monthly", "旗舰月卡", "399.00", 100000, rank=3),
@@ -47,14 +64,17 @@ PAYMENT_PRODUCTS: tuple[PaymentProduct, ...] = (
     PaymentProduct("addon_ultra", "addon", "超大包", "699.00", 200000, min_plan_rank=3),
 )
 
-PRODUCTS_BY_ID: dict[str, PaymentProduct] = {product.id: product for product in PAYMENT_PRODUCTS}
-PRODUCTS_BY_MONEY: dict[Decimal, PaymentProduct] = {}
-MONTHLY_PRODUCTS: tuple[PaymentProduct, ...] = tuple(p for p in PAYMENT_PRODUCTS if p.kind == "monthly")
-ADDON_PRODUCTS: tuple[PaymentProduct, ...] = tuple(p for p in PAYMENT_PRODUCTS if p.kind == "addon")
+PAYMENT_PRODUCTS: tuple[PaymentProduct, ...] = CREDIT_PRODUCTS
+HISTORICAL_PAYMENT_PRODUCTS: tuple[PaymentProduct, ...] = CREDIT_PRODUCTS + LEGACY_PAYMENT_PRODUCTS
+PRODUCTS_BY_ID: dict[str, PaymentProduct] = {product.id: product for product in HISTORICAL_PAYMENT_PRODUCTS}
+CREDIT_PRODUCTS_BY_ID: dict[str, PaymentProduct] = {product.id: product for product in CREDIT_PRODUCTS}
+CREDIT_CATALOGS: dict[str, dict[str, PaymentProduct]] = {
+    CREDIT_CATALOG_VERSION: CREDIT_PRODUCTS_BY_ID,
+}
+MONTHLY_PRODUCTS: tuple[PaymentProduct, ...] = tuple(p for p in LEGACY_PAYMENT_PRODUCTS if p.kind == "monthly")
+ADDON_PRODUCTS: tuple[PaymentProduct, ...] = tuple(p for p in LEGACY_PAYMENT_PRODUCTS if p.kind == "addon")
 MONTHLY_BY_ID: dict[str, PaymentProduct] = {product.id: product for product in MONTHLY_PRODUCTS}
 ADDONS_BY_ID: dict[str, PaymentProduct] = {product.id: product for product in ADDON_PRODUCTS}
-for product in PAYMENT_PRODUCTS:
-    PRODUCTS_BY_MONEY.setdefault(product.money_decimal, product)
 
 
 def utcnow() -> datetime:
@@ -75,13 +95,24 @@ def rmb_cents_to_money(cents: int) -> str:
 
 def normalize_money(money: str) -> str:
     try:
-        return format(Decimal(str(money)).quantize(Decimal("0.01")), "f")
+        value = Decimal(str(money))
+        normalized = value.quantize(Decimal("0.01"))
     except (InvalidOperation, ValueError, TypeError):
         raise BillingError("invalid money amount", status_code=400)
+    if not value.is_finite() or value != normalized:
+        raise BillingError("invalid money amount", status_code=400)
+    return format(normalized, "f")
 
 
 def product_by_id(product_id: Optional[str]) -> Optional[PaymentProduct]:
     return PRODUCTS_BY_ID.get(product_id or "")
+
+
+def credit_product_by_id(
+    product_id: Optional[str],
+    catalog_version: str = CREDIT_CATALOG_VERSION,
+) -> Optional[PaymentProduct]:
+    return CREDIT_CATALOGS.get(catalog_version, {}).get(product_id or "")
 
 
 def active_subscription(sub: UserSubscription | None, now: datetime | None = None) -> bool:
@@ -609,8 +640,7 @@ def serialize_billing_state(sub: UserSubscription | None, packs: list[TrafficPac
             "remaining_usd": cents_to_usd(subscription_remaining + traffic_remaining + legacy_balance),
         },
         "products": {
-            "monthly": [serialize_product(product, sub=sub, current_rank=current_rank, now=current) for product in MONTHLY_PRODUCTS],
-            "addons": [serialize_product(product, sub=sub, current_rank=current_rank, now=current) for product in ADDON_PRODUCTS],
+            "credits": [serialize_product(product) for product in CREDIT_PRODUCTS],
         },
     }
 
@@ -622,6 +652,20 @@ def serialize_product(
     current_rank: int = 0,
     now: datetime | None = None,
 ) -> dict:
+    if product.kind == "credit":
+        return {
+            "id": product.id,
+            "kind": product.kind,
+            "name": product.name,
+            "money": product.money,
+            "price": f"¥{product.money}",
+            "amount_fen": product.amount_fen,
+            "promised_credit_cents": product.promised_credit_cents,
+            "promised_credit_usd": cents_to_usd(product.promised_credit_cents),
+            "purchase_action": CREDIT_PURCHASE_ACTION,
+            "catalog_version": CREDIT_CATALOG_VERSION,
+        }
+
     current = now or utcnow()
     allowed = True
     reason = ""
@@ -699,20 +743,9 @@ async def validate_product_purchase(
     db: AsyncSession,
     now: datetime | None = None,
 ) -> str:
-    current = now or utcnow()
-    sub = await get_subscription_for_update(db, user_id)
-    if sub:
-        normalize_subscription_period(sub, current)
-
-    if product.kind == "addon":
-        if not active_subscription(sub, current):
-            raise BillingError("traffic packs require an active monthly subscription", status_code=409)
-        monthly = MONTHLY_BY_ID.get(getattr(sub, "plan_id", None))
-        current_rank = monthly.rank if monthly else 0
-        if current_rank < product.min_plan_rank:
-            raise BillingError("traffic pack is not available for the current subscription tier", status_code=409)
-
-    expected_money = quote_product_money(product, sub, current)
-    if normalize_money(money) != normalize_money(expected_money):
+    del user_id, db, now
+    if credit_product_by_id(product.id) is None:
+        raise BillingError("unknown payment product", status_code=400)
+    if normalize_money(money) != format(product.money_decimal, "f"):
         raise BillingError("payment amount does not match selected product", status_code=400)
-    return expected_money
+    return format(product.money_decimal, "f")

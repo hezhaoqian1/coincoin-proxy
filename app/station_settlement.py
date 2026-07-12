@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_DOWN
 
@@ -9,6 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .config import settings
 from .models import PaymentOrder, Station, StationCommissionLedgerEntry, StationCustomerLink
 from .security import generate_id
+
+
+@dataclass(frozen=True)
+class StationCommissionEnsureResult:
+    entry: StationCommissionLedgerEntry | None
+    created: bool
 
 
 def rmb_to_minor_cents_safe(money_str: str) -> int:
@@ -60,10 +67,10 @@ async def attach_station_to_order(db: AsyncSession, order: PaymentOrder, user_id
 async def create_station_commission_entry_for_confirmed_order(
     db: AsyncSession,
     order: PaymentOrder,
-) -> StationCommissionLedgerEntry | None:
+) -> StationCommissionEnsureResult:
     station_id = getattr(order, "station_id", None)
     if not station_id or order.status != "confirmed":
-        return None
+        return StationCommissionEnsureResult(entry=None, created=False)
 
     existing = (
         await db.execute(
@@ -73,7 +80,7 @@ async def create_station_commission_entry_for_confirmed_order(
         )
     ).scalar_one_or_none()
     if existing:
-        return existing
+        return StationCommissionEnsureResult(entry=existing, created=False)
 
     gross_rmb_cents = rmb_to_minor_cents_safe(order.amount_rmb)
     commission_rate = float(getattr(order, "station_commission_rate", 0.0) or 0.0)
@@ -98,4 +105,4 @@ async def create_station_commission_entry_for_confirmed_order(
 
     order.station_commission_rmb_cents = commission_rmb_cents
     order.station_payout_status = "pending"
-    return entry
+    return StationCommissionEnsureResult(entry=entry, created=True)

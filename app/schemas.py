@@ -363,15 +363,15 @@ class ReferralCodeUpdateRequest(BaseModel):
 
 class OrderCreateRequest(BaseModel):
     money: str = Field(..., description="支付金额（元），如 '9.90'")
-    name: str = Field(default="CoinCoin 充值", description="商品名称")
+    name: str = Field(default="CoinCoin 美金额度", description="商品名称")
     pay_type: str = Field(default="alipay", description="支付方式: alipay / wxpay")
-    product_id: Optional[str] = Field(default=None, description="预设套餐或流量包 ID")
+    product_id: Optional[str] = Field(default=None, description="美金额度产品 ID")
 
 class OrderCreateResponse(BaseModel):
     order_no: str
     pay_url: str
     amount_rmb: str
-    expected_cents: int = Field(description="预计充值余额（分）")
+    expected_cents: int = Field(description="承诺发放的美金额度（美分）")
 
 class OrderConfirmRequest(BaseModel):
     order_no: str = Field(..., description="proxy 侧订单号")
@@ -381,7 +381,7 @@ class OrderConfirmResponse(BaseModel):
     success: bool
     order_no: str
     amount_rmb: str
-    added_cents: int = Field(description="充值金额（分）")
+    added_cents: int = Field(description="发放的美金额度（美分）")
     new_balance: int = Field(description="充值后余额（分）")
     new_balance_usd: float
     available_cents: Optional[int] = Field(default=None, description="充值后可用总额（分，含套餐、流量包、历史余额）")

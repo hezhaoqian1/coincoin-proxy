@@ -1717,7 +1717,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["slow_requests"][0]["upstream_request_id"], "req_slow")
         self.assertEqual(payload["slow_requests"][0]["fallback_from_channel_id"], "ch_primary")
 
-    async def test_manual_payment_confirm_credits_pending_order_from_proof_url(self) -> None:
+    async def test_manual_payment_confirm_rejects_pending_order_without_frozen_credit(self) -> None:
         admin_module._settings.epay_api_url = "https://code.nxslq.top/"
         admin_module._settings.epay_pid = "177938431"
         admin_module._settings.epay_key = "j9J4loEx5Qy"
@@ -1769,16 +1769,13 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                 },
             )
 
-        self.assertEqual(response.status_code, 200, response.text)
-        payload = response.json()
-        self.assertEqual(payload["status"], "confirmed")
-        self.assertEqual(payload["trade_no"], "2026032622080275954")
-        self.assertEqual(payload["added_cents"], 4999)
-        self.assertEqual(user.balance, 5499)
-        self.assertEqual(order.status, "confirmed")
-        self.assertEqual(order.trade_no, "2026032622080275954")
-        self.assertEqual(fake_db.commits, 1)
-        self.assertIsNotNone(order.confirmed_at)
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertIn("frozen credit commitment", response.text)
+        self.assertEqual(user.balance, 500)
+        self.assertEqual(order.status, "pending")
+        self.assertIsNone(order.trade_no)
+        self.assertEqual(fake_db.commits, 0)
+        self.assertIsNone(order.confirmed_at)
 
     async def test_manual_payment_confirm_rejects_proof_for_another_order(self) -> None:
         admin_module._settings.epay_api_url = "https://code.nxslq.top/"
@@ -1848,10 +1845,10 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                 response = await client.post(
                     "/v1/orders/create",
                     json={
-                        "name": "基础月卡 套餐",
+                        "name": "标准美金额度 $400",
                         "money": "199.00",
                         "pay_type": "alipay",
-                        "product_id": "monthly_basic",
+                        "product_id": "credit_standard",
                     },
                     headers={"Authorization": "Bearer sk_cc_test"},
                 )
@@ -1867,12 +1864,16 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("sign=", payload["pay_url"])
         self.assertEqual(payload["expected_cents"], 40000)
         self.assertEqual(fake_db.commits, 1)
+        created_order = fake_db.added[-1]
+        self.assertEqual(created_order.product_id, "credit_standard")
+        self.assertEqual(created_order.catalog_version, "credit-v1")
+        self.assertEqual(created_order.purchase_action, "credit_purchase")
+        self.assertEqual(created_order.promised_credit_cents, 40000)
 
     def test_product_quote_uses_selected_product_id(self) -> None:
-        self.assertEqual(quote_payment_cents("49.90", "monthly_light"), 8000)
-        self.assertEqual(quote_payment_cents("399.00", "monthly_flagship"), 100000)
-        self.assertEqual(quote_payment_cents("399.00", "addon_project"), 100000)
-        self.assertEqual(quote_payment_cents("699.00", "addon_ultra"), 200000)
+        self.assertEqual(quote_payment_cents("59.90", "credit_light"), 10000)
+        self.assertEqual(quote_payment_cents("199.00", "credit_standard"), 40000)
+        self.assertEqual(quote_payment_cents("399.00", "credit_pro"), 100000)
 
     def test_product_quote_rejects_unknown_or_mismatched_product(self) -> None:
         with self.assertRaises(payment_module.PaymentConfirmError):
@@ -1889,6 +1890,9 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                 amount_rmb="199.00",
                 add_balance_cents=40000,
                 product_id="monthly_basic",
+                catalog_version="legacy-monthly-v1",
+                purchase_action="subscription_purchase",
+                promised_credit_cents=None,
                 status="confirmed",
                 trade_no="trade_1",
                 pay_url="https://code.nxslq.top/submit.php?...",
@@ -1902,6 +1906,9 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                 amount_rmb="699.00",
                 add_balance_cents=200000,
                 product_id="addon_ultra",
+                catalog_version=None,
+                purchase_action=None,
+                promised_credit_cents=None,
                 status="pending",
                 trade_no=None,
                 pay_url="https://code.nxslq.top/submit.php?...",
@@ -1928,6 +1935,9 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload[0]["product_name"], "基础月卡")
         self.assertEqual(payload[0]["product_kind"], "monthly")
         self.assertEqual(payload[0]["product_balance_cents"], 40000)
+        self.assertEqual(payload[0]["catalog_version"], "legacy-monthly-v1")
+        self.assertEqual(payload[0]["purchase_action"], "subscription_purchase")
+        self.assertIsNone(payload[0]["promised_credit_cents"])
         self.assertEqual(payload[0]["username"], "alice")
         self.assertEqual(payload[0]["email"], "alice@example.com")
         self.assertEqual(payload[0]["external_id"], "ext_alice")
@@ -1990,7 +2000,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload[0]["add_balance_usd"], 49.99)
         self.assertEqual(payload[1]["status"], "pending")
 
-    async def test_confirm_order_accepts_signed_proof_url(self) -> None:
+    async def test_confirm_order_rejects_signed_proof_for_order_without_frozen_credit(self) -> None:
         payment_module.settings.epay_api_url = "https://code.nxslq.top/"
         payment_module.settings.epay_pid = "177938431"
         payment_module.settings.epay_key = "j9J4loEx5Qy"
@@ -2053,15 +2063,14 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             payment_module.authenticate_user = original_authenticate_user
             payment_module.rate_limiter.allow = original_allow
 
-        self.assertEqual(response.status_code, 200, response.text)
-        payload = response.json()
-        self.assertTrue(payload["success"])
-        self.assertEqual(payload["added_cents"], 4999)
-        self.assertEqual(user.balance, 5499)
-        self.assertEqual(order.trade_no, "2026032622080275954")
-        self.assertEqual(fake_db.commits, 1)
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertIn("frozen credit commitment", response.text)
+        self.assertEqual(user.balance, 500)
+        self.assertIsNone(order.trade_no)
+        self.assertEqual(order.status, "pending")
+        self.assertEqual(fake_db.commits, 0)
 
-    async def test_confirm_order_reports_available_balance_for_monthly_product(self) -> None:
+    async def test_confirm_order_rejects_pending_monthly_product_without_frozen_credit(self) -> None:
         payment_module.settings.epay_api_url = "https://code.nxslq.top/"
         payment_module.settings.epay_pid = "177938431"
         payment_module.settings.epay_key = "j9J4loEx5Qy"
@@ -2132,16 +2141,13 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             payment_module.authenticate_user = original_authenticate_user
             payment_module.rate_limiter.allow = original_allow
 
-        self.assertEqual(response.status_code, 200, response.text)
-        payload = response.json()
-        self.assertEqual(payload["billing_action"], "subscription_start")
-        self.assertEqual(payload["new_balance"], 500)
-        self.assertEqual(payload["available_cents"], 40500)
-        self.assertEqual(payload["available_usd"], 405.0)
-        self.assertEqual(payload["added_cents"], 40000)
-        self.assertEqual(fake_db.commits, 1)
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertIn("frozen credit commitment", response.text)
+        self.assertEqual(user.balance, 500)
+        self.assertEqual(order.status, "pending")
+        self.assertEqual(fake_db.commits, 0)
 
-    async def test_confirm_order_keeps_stored_pending_balance_quote(self) -> None:
+    async def test_confirm_order_rejects_legacy_stored_pending_balance_quote(self) -> None:
         payment_module.settings.epay_api_url = "https://code.nxslq.top/"
         payment_module.settings.epay_pid = "177938431"
         payment_module.settings.epay_key = "j9J4loEx5Qy"
@@ -2204,14 +2210,14 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             payment_module.authenticate_user = original_authenticate_user
             payment_module.rate_limiter.allow = original_allow
 
-        self.assertEqual(response.status_code, 200, response.text)
-        payload = response.json()
-        self.assertEqual(payload["added_cents"], 4321)
-        self.assertEqual(user.balance, 4821)
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertIn("frozen credit commitment", response.text)
+        self.assertEqual(user.balance, 500)
         self.assertEqual(order.add_balance_cents, 4321)
-        self.assertEqual(fake_db.commits, 1)
+        self.assertEqual(order.status, "pending")
+        self.assertEqual(fake_db.commits, 0)
 
-    async def test_pay_notify_confirms_order_from_signed_callback(self) -> None:
+    async def test_pay_notify_rejects_order_without_frozen_credit(self) -> None:
         webhook_module.settings.epay_api_url = "https://code.nxslq.top/"
         webhook_module.settings.epay_pid = "177938431"
         webhook_module.settings.epay_key = "j9J4loEx5Qy"
@@ -2267,11 +2273,11 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                 },
             )
 
-        self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.text, "success")
-        self.assertEqual(order.status, "confirmed")
-        self.assertEqual(user.balance, 5499)
-        self.assertEqual(fake_db.commits, 1)
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(response.text, "fail")
+        self.assertEqual(order.status, "pending")
+        self.assertEqual(user.balance, 500)
+        self.assertEqual(fake_db.commits, 0)
 
     async def test_user_detail_exposes_finance_summary(self) -> None:
         user = SimpleNamespace(

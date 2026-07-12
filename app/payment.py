@@ -21,7 +21,13 @@ from .epay import (
     query_epay_order,
     verify_epay_callback_params,
 )
-from .billing import BillingError, product_by_id, validate_product_purchase
+from .billing import (
+    CREDIT_CATALOG_VERSION,
+    CREDIT_PURCHASE_ACTION,
+    BillingError,
+    credit_product_by_id,
+    validate_product_purchase,
+)
 from .billing import available_subscription_cents, get_available_balance_cents, serialize_billing_state
 from .models import PaymentOrder
 from .payment_common import PaymentConfirmError, confirm_paid_order, quote_payment_cents
@@ -34,7 +40,7 @@ from .schemas import (
     OrderCreateResponse,
 )
 from .security import generate_id
-from .station_settlement import attach_station_to_order, create_station_commission_entry_for_confirmed_order
+from .station_settlement import attach_station_to_order
 
 router = APIRouter(prefix="/v1", tags=["payment"])
 logger = logging.getLogger("coincoin.payment")
@@ -145,6 +151,10 @@ def _payment_order_payload(order: PaymentOrder) -> dict:
         "amount_rmb": order.amount_rmb,
         "add_balance_cents": order.add_balance_cents,
         "add_balance_usd": order.add_balance_cents / 100,
+        "product_id": getattr(order, "product_id", "") or "",
+        "catalog_version": getattr(order, "catalog_version", None),
+        "purchase_action": getattr(order, "purchase_action", None),
+        "promised_credit_cents": getattr(order, "promised_credit_cents", None),
         "status": order.status,
         "trade_no": order.trade_no,
         "created_at": order.created_at,
@@ -198,7 +208,7 @@ async def create_order(
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "too many order requests")
 
     try:
-        product = product_by_id(payload.product_id)
+        product = credit_product_by_id(payload.product_id)
         if product:
             normalized_money = await validate_product_purchase(
                 user_id=user_id,
@@ -243,6 +253,9 @@ async def create_order(
         amount_rmb=payload.money,
         add_balance_cents=expected_cents,
         product_id=payload.product_id or "",
+        catalog_version=CREDIT_CATALOG_VERSION,
+        purchase_action=CREDIT_PURCHASE_ACTION,
+        promised_credit_cents=expected_cents,
         status="pending",
         pay_url=pay_url,
     )
@@ -291,13 +304,15 @@ async def confirm_order(
         raise HTTPException(status.HTTP_403_FORBIDDEN, "order does not belong to this user")
 
     if payment_order.status == "confirmed":
-        result = {
-            "order": payment_order,
-            "user": cached,
-            "amount_rmb": payment_order.amount_rmb,
-            "added_cents": payment_order.add_balance_cents,
-            "billing_action": "already_confirmed",
-        }
+        try:
+            result = await confirm_paid_order(
+                order_no=payment_order.order_no,
+                money=payment_order.amount_rmb,
+                trade_no=payment_order.trade_no or "",
+                db=db,
+            )
+        except PaymentConfirmError as exc:
+            raise _translate_confirm_error(exc) from exc
         return _response_from_confirm_result(await _attach_available_balance(result, db), "order already confirmed")
 
     if payload.proof_url:
@@ -322,15 +337,6 @@ async def confirm_order(
         except PaymentConfirmError as exc:
             raise _translate_confirm_error(exc) from exc
 
-        try:
-            refreshed_order_result = await db.execute(select(PaymentOrder).where(PaymentOrder.order_no == payload.order_no))
-            refreshed_order = getattr(refreshed_order_result, "scalar_one_or_none", lambda: None)()
-            if refreshed_order:
-                await create_station_commission_entry_for_confirmed_order(db, refreshed_order)
-                await db.commit()
-        except Exception:
-            logger.exception("failed to create station commission entry for %s", payload.order_no)
-
         message = "order already confirmed" if result.get("already_confirmed") else "recharge success"
         return _response_from_confirm_result(await _attach_available_balance(result, db), message)
 
@@ -338,13 +344,5 @@ async def confirm_order(
         result = await _confirm_with_query_fallback(payload.order_no, db)
     except HTTPException:
         raise
-    try:
-        refreshed_order_result = await db.execute(select(PaymentOrder).where(PaymentOrder.order_no == payload.order_no))
-        refreshed_order = getattr(refreshed_order_result, "scalar_one_or_none", lambda: None)()
-        if refreshed_order:
-            await create_station_commission_entry_for_confirmed_order(db, refreshed_order)
-            await db.commit()
-    except Exception:
-        logger.exception("failed to create station commission entry for %s", payload.order_no)
     message = "order already confirmed" if result.get("already_confirmed") else "recharge success"
     return _response_from_confirm_result(await _attach_available_balance(result, db), message)

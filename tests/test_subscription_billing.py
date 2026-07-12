@@ -1,16 +1,15 @@
 import unittest
+import json
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 from app.billing import (
     ADDONS_BY_ID,
     MONTHLY_BY_ID,
-    BillingError,
     active_subscription,
     apply_payment_product,
     debit_usage_cents,
     serialize_billing_state,
-    validate_product_purchase,
 )
 
 
@@ -127,7 +126,7 @@ class SubscriptionBillingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sub.period_end, now + timedelta(days=30))
         self.assertEqual(sub.paid_until, now + timedelta(days=30))
 
-    def test_serialize_marks_same_tier_purchase_as_reset_when_quota_is_depleted(self):
+    def test_public_catalog_contains_only_three_permanent_usd_credit_products(self):
         now = datetime(2026, 5, 10, 12, 0, 0)
         sub = SimpleNamespace(
             id="sub_1",
@@ -142,65 +141,59 @@ class SubscriptionBillingTests(unittest.IsolatedAsyncioTestCase):
         )
         user = SimpleNamespace(id="u_1", balance=0, referred_by=None, status="active")
         snapshot = serialize_billing_state(sub, [], user, now=now)
-        basic = next(item for item in snapshot["products"]["monthly"] if item["id"] == "monthly_basic")
+        products = snapshot["products"]
+        credits = products.get("credits")
 
-        self.assertEqual(basic["purchase_action"], "reset")
-        self.assertEqual(basic["pay_money"], "199.00")
+        self.assertIsNotNone(credits, "public catalog must expose permanent USD credits")
+        self.assertEqual(
+            [
+                (
+                    item["id"],
+                    item["money"],
+                    item["amount_fen"],
+                    item["promised_credit_cents"],
+                    item["purchase_action"],
+                    item["catalog_version"],
+                )
+                for item in credits
+            ],
+            [
+                ("credit_light", "59.90", 5990, 10000, "credit_purchase", "credit-v1"),
+                ("credit_standard", "199.00", 19900, 40000, "credit_purchase", "credit-v1"),
+                ("credit_pro", "399.00", 39900, 100000, "credit_purchase", "credit-v1"),
+            ],
+        )
+        self.assertEqual(set(products), {"credits"})
+        public_text = json.dumps(products, ensure_ascii=False)
+        self.assertNotIn("月卡", public_text)
+        self.assertNotIn("流量包", public_text)
+        self.assertNotIn("upgrade", public_text)
+        self.assertNotIn("renew", public_text)
+        self.assertNotIn("reset", public_text)
+        self.assertIn("美金额度", public_text)
+        self.assertIn("$", public_text)
 
-    async def test_lower_tier_purchase_is_rejected(self):
+    def test_public_state_keeps_historical_active_subscription_metadata(self):
         now = datetime(2026, 5, 10, 12, 0, 0)
         sub = SimpleNamespace(
             id="sub_1",
             user_id="u_1",
-            plan_id="monthly_flagship",
+            plan_id="monthly_basic",
             status="active",
             period_start=datetime(2026, 5, 1, 12, 0, 0),
             period_end=datetime(2026, 5, 31, 12, 0, 0),
             paid_until=datetime(2026, 5, 31, 12, 0, 0),
-            quota_cents=100000,
-            used_cents=0,
-        )
-        db = _FakeDB(execute_results=[_EntityResult(sub)])
-
-        with self.assertRaises(BillingError):
-            await validate_product_purchase(
-                user_id="u_1",
-                product=MONTHLY_BY_ID["monthly_light"],
-                money="49.90",
-                db=db,
-                now=now,
-            )
-
-    async def test_upgrade_quote_uses_remaining_period_proration(self):
-        now = datetime(2026, 5, 11, 12, 0, 0)
-        sub = SimpleNamespace(
-            id="sub_1",
-            user_id="u_1",
-            plan_id="monthly_light",
-            status="active",
-            period_start=datetime(2026, 5, 1, 12, 0, 0),
-            period_end=datetime(2026, 5, 31, 12, 0, 0),
-            paid_until=datetime(2026, 5, 31, 12, 0, 0),
-            quota_cents=8000,
+            quota_cents=40000,
             used_cents=2500,
         )
         user = SimpleNamespace(id="u_1", balance=0, referred_by=None, status="active")
+
         snapshot = serialize_billing_state(sub, [], user, now=now)
-        basic = next(item for item in snapshot["products"]["monthly"] if item["id"] == "monthly_basic")
 
-        self.assertEqual(basic["purchase_action"], "upgrade")
-        self.assertEqual(basic["pay_money"], "99.40")
-
-        db = _FakeDB(execute_results=[_EntityResult(sub)])
-        normalized_money = await validate_product_purchase(
-            user_id="u_1",
-            product=MONTHLY_BY_ID["monthly_basic"],
-            money="99.40",
-            db=db,
-            now=now,
-        )
-
-        self.assertEqual(normalized_money, "99.40")
+        self.assertTrue(snapshot["subscription"]["active"])
+        self.assertEqual(snapshot["subscription"]["plan_id"], "monthly_basic")
+        self.assertEqual(snapshot["subscription"]["plan_name"], "基础月卡")
+        self.assertEqual(snapshot["subscription"]["remaining_cents"], 37500)
 
     async def test_addon_requires_active_subscription_and_grants_180_days(self):
         now = datetime(2026, 5, 10, 12, 0, 0)

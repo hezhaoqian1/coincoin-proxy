@@ -5257,6 +5257,9 @@ async def list_payment_orders(
             "order_no": o.order_no,
             "amount_rmb": o.amount_rmb,
             "add_balance_cents": o.add_balance_cents,
+            "catalog_version": getattr(o, "catalog_version", None),
+            "purchase_action": getattr(o, "purchase_action", None),
+            "promised_credit_cents": getattr(o, "promised_credit_cents", None),
             "status": o.status,
             "trade_no": o.trade_no,
             "pay_url": o.pay_url,
@@ -5277,6 +5280,15 @@ async def force_confirm_order(order_no: str, db: AsyncSession = Depends(get_db))
     if not order:
         raise HTTPException(status_code=404, detail="order not found")
     if order.status == "confirmed":
+        try:
+            await confirm_paid_order(
+                order_no=order.order_no,
+                money=order.amount_rmb,
+                trade_no=order.trade_no or "",
+                db=db,
+            )
+        except PaymentConfirmError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
         return {"order_no": order_no, "status": "already_confirmed"}
 
     try:
@@ -5313,6 +5325,15 @@ async def manual_confirm_order(
     if not order:
         raise HTTPException(status_code=404, detail="order not found")
     if order.status == "confirmed":
+        try:
+            await confirm_paid_order(
+                order_no=order.order_no,
+                money=order.amount_rmb,
+                trade_no=order.trade_no or "",
+                db=db,
+            )
+        except PaymentConfirmError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
         return {"order_no": order_no, "status": "already_confirmed"}
 
     try:
