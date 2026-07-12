@@ -5,10 +5,12 @@ from types import SimpleNamespace
 
 from app.billing import (
     ADDONS_BY_ID,
+    BillingError,
     MONTHLY_BY_ID,
     active_subscription,
     apply_payment_product,
     debit_usage_cents,
+    get_available_balance_cents,
     serialize_billing_state,
 )
 
@@ -31,8 +33,10 @@ class _FakeDB:
     def __init__(self, execute_results=None):
         self.execute_results = list(execute_results or [])
         self.added = []
+        self.queries = []
 
-    async def execute(self, _query):
+    async def execute(self, query):
+        self.queries.append(query)
         if not self.execute_results:
             raise AssertionError("unexpected execute call")
         return self.execute_results.pop(0)
@@ -247,7 +251,7 @@ class SubscriptionBillingTests(unittest.IsolatedAsyncioTestCase):
             created_at=now,
         )
         user = SimpleNamespace(id="u_1", balance=1000, referred_by=None, status="active")
-        db = _FakeDB(execute_results=[_EntityResult(sub), _EntityResult([pack])])
+        db = _FakeDB(execute_results=[_EntityResult(sub), _EntityResult([pack]), _EntityResult([])])
 
         result = await debit_usage_cents(db=db, user=user, cost_cents=1600, now=now)
 
@@ -258,6 +262,272 @@ class SubscriptionBillingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pack.remaining_cents, 0)
         self.assertEqual(pack.status, "depleted")
         self.assertEqual(user.balance, 700)
+
+    async def test_debit_uses_subscription_pack_wallet_then_scalar_across_sources(self):
+        now = datetime(2026, 7, 12, 12, 0, 0)
+        sub = SimpleNamespace(
+            id="sub_1",
+            user_id="u_1",
+            plan_id="monthly_light",
+            status="active",
+            period_start=datetime(2026, 7, 1, 12, 0, 0),
+            period_end=datetime(2026, 7, 31, 12, 0, 0),
+            paid_until=datetime(2026, 7, 31, 12, 0, 0),
+            quota_cents=8000,
+            used_cents=7900,
+        )
+        pack = SimpleNamespace(
+            id="tp_1",
+            user_id="u_1",
+            product_id="addon_boost",
+            status="active",
+            remaining_cents=200,
+            expires_at=datetime(2026, 8, 1),
+            created_at=datetime(2026, 7, 2),
+        )
+        wallet_batch = SimpleNamespace(
+            id="cb_1",
+            user_id="u_1",
+            status="active",
+            original_cents=300,
+            remaining_cents=300,
+            created_at=datetime(2026, 7, 3),
+        )
+        user = SimpleNamespace(id="u_1", balance=400, referred_by=None, status="active")
+        db = _FakeDB(
+            execute_results=[
+                _EntityResult(sub),
+                _EntityResult([pack]),
+                _EntityResult([wallet_batch]),
+                _EntityResult([wallet_batch]),
+            ]
+        )
+
+        result = await debit_usage_cents(
+            db=db,
+            user=user,
+            cost_cents=700,
+            allow_negative_legacy=False,
+            now=now,
+        )
+
+        self.assertEqual(result["subscription_cents"], 100)
+        self.assertEqual(result["traffic_pack_cents"], 200)
+        self.assertEqual(result["credit_cents"], 300)
+        self.assertEqual(result["legacy_cents"], 100)
+        self.assertEqual(len(result["credit_allocations"]), 1)
+        self.assertEqual(result["credit_allocations"][0]["credit_balance_id"], "cb_1")
+        self.assertEqual(sub.used_cents, 8000)
+        self.assertEqual(pack.remaining_cents, 0)
+        self.assertEqual(wallet_batch.remaining_cents, 0)
+        self.assertEqual(user.balance, 300)
+
+    async def test_valid_pack_is_spendable_after_subscription_expiry(self):
+        now = datetime(2026, 7, 12, 12, 0, 0)
+        expired_sub = SimpleNamespace(
+            id="sub_expired",
+            user_id="u_1",
+            plan_id="monthly_light",
+            status="active",
+            period_start=datetime(2026, 6, 1),
+            period_end=datetime(2026, 7, 1),
+            paid_until=datetime(2026, 7, 1),
+            quota_cents=8000,
+            used_cents=0,
+        )
+        pack = SimpleNamespace(
+            id="tp_still_valid",
+            user_id="u_1",
+            product_id="addon_boost",
+            status="active",
+            remaining_cents=200,
+            expires_at=datetime(2026, 8, 1),
+            created_at=datetime(2026, 7, 2),
+        )
+        user = SimpleNamespace(id="u_1", balance=0, referred_by=None, status="active")
+        db = _FakeDB(
+            execute_results=[
+                _EntityResult(expired_sub),
+                _EntityResult([pack]),
+                _EntityResult([]),
+            ]
+        )
+
+        result = await debit_usage_cents(
+            db=db,
+            user=user,
+            cost_cents=150,
+            allow_negative_legacy=False,
+            now=now,
+        )
+
+        self.assertEqual(result["subscription_cents"], 0)
+        self.assertEqual(result["traffic_pack_cents"], 150)
+        self.assertEqual(pack.remaining_cents, 50)
+        self.assertEqual(user.balance, 0)
+        pack_query = str(db.queries[1])
+        self.assertIn(
+            "ORDER BY coincoin_traffic_pack_balances.expires_at ASC, "
+            "coincoin_traffic_pack_balances.created_at ASC, "
+            "coincoin_traffic_pack_balances.id ASC",
+            pack_query,
+        )
+
+    async def test_insufficient_total_does_not_partially_mutate_any_source(self):
+        now = datetime(2026, 7, 12, 12, 0, 0)
+        sub = SimpleNamespace(
+            id="sub_1",
+            user_id="u_1",
+            plan_id="monthly_light",
+            status="active",
+            period_start=datetime(2026, 7, 1),
+            period_end=datetime(2026, 7, 31),
+            paid_until=datetime(2026, 7, 31),
+            quota_cents=8000,
+            used_cents=7900,
+        )
+        pack = SimpleNamespace(
+            id="tp_1",
+            user_id="u_1",
+            product_id="addon_boost",
+            status="active",
+            remaining_cents=100,
+            expires_at=datetime(2026, 8, 1),
+            created_at=datetime(2026, 7, 2),
+        )
+        wallet_batch = SimpleNamespace(
+            id="cb_1",
+            user_id="u_1",
+            status="active",
+            original_cents=100,
+            remaining_cents=100,
+            created_at=datetime(2026, 7, 3),
+        )
+        user = SimpleNamespace(id="u_1", balance=-50, referred_by=None, status="active")
+        db = _FakeDB(
+            execute_results=[
+                _EntityResult(sub),
+                _EntityResult([pack]),
+                _EntityResult([wallet_batch]),
+            ]
+        )
+
+        with self.assertRaises(BillingError):
+            await debit_usage_cents(
+                db=db,
+                user=user,
+                cost_cents=251,
+                allow_negative_legacy=False,
+                now=now,
+            )
+
+        self.assertEqual(sub.used_cents, 7900)
+        self.assertEqual(pack.remaining_cents, 100)
+        self.assertEqual(pack.status, "active")
+        self.assertEqual(wallet_batch.remaining_cents, 100)
+        self.assertEqual(wallet_batch.status, "active")
+        self.assertEqual(user.balance, -50)
+        self.assertEqual(db.added, [])
+
+    async def test_expired_subscription_insufficiency_does_not_normalize_or_dirty_fields(self):
+        now = datetime(2026, 7, 12, 12, 0, 0)
+        sub = SimpleNamespace(
+            id="sub_expired",
+            user_id="u_1",
+            plan_id="monthly_light",
+            status="active",
+            period_start=datetime(2026, 6, 1),
+            period_end=datetime(2026, 7, 1),
+            paid_until=datetime(2026, 7, 1),
+            quota_cents=8000,
+            used_cents=123,
+        )
+        original = vars(sub).copy()
+        user = SimpleNamespace(id="u_1", balance=0, referred_by=None, status="active")
+        db = _FakeDB(
+            execute_results=[_EntityResult(sub), _EntityResult([]), _EntityResult([])]
+        )
+
+        with self.assertRaises(BillingError):
+            await debit_usage_cents(
+                db=db,
+                user=user,
+                cost_cents=1,
+                allow_negative_legacy=False,
+                now=now,
+            )
+
+        self.assertEqual(vars(sub), original)
+        self.assertEqual(db.added, [])
+
+    async def test_rollover_subscription_insufficiency_does_not_reset_period_or_usage(self):
+        now = datetime(2026, 7, 12, 12, 0, 0)
+        sub = SimpleNamespace(
+            id="sub_rollover",
+            user_id="u_1",
+            plan_id="monthly_light",
+            status="active",
+            period_start=datetime(2026, 6, 1),
+            period_end=datetime(2026, 7, 1),
+            paid_until=datetime(2026, 8, 1),
+            quota_cents=100,
+            used_cents=99,
+        )
+        original = vars(sub).copy()
+        user = SimpleNamespace(id="u_1", balance=0, referred_by=None, status="active")
+        db = _FakeDB(
+            execute_results=[_EntityResult(sub), _EntityResult([]), _EntityResult([])]
+        )
+
+        with self.assertRaises(BillingError):
+            await debit_usage_cents(
+                db=db,
+                user=user,
+                cost_cents=101,
+                allow_negative_legacy=False,
+                now=now,
+            )
+
+        self.assertEqual(vars(sub), original)
+        self.assertEqual(db.added, [])
+
+    async def test_available_balance_and_serialization_include_wallet_and_scalar_debt(self):
+        now = datetime(2026, 7, 12, 12, 0, 0)
+        pack = SimpleNamespace(
+            id="tp_1",
+            user_id="u_1",
+            product_id="addon_boost",
+            status="active",
+            original_cents=100,
+            remaining_cents=100,
+            expires_at=datetime(2026, 8, 1),
+            created_at=datetime(2026, 7, 2),
+        )
+        wallet_batch = SimpleNamespace(id="cb_1", remaining_cents=300)
+        user = SimpleNamespace(id="u_1", balance=-50, referred_by=None, status="active")
+        db = _FakeDB(
+            execute_results=[
+                _EntityResult(None),
+                _EntityResult([pack]),
+                _EntityResult([wallet_batch]),
+            ]
+        )
+
+        available = await get_available_balance_cents(db, user, now=now)
+        serialized = serialize_billing_state(
+            available["subscription"],
+            available["traffic_packs"],
+            user,
+            now=now,
+            credit_cents=available["credit_cents"],
+        )
+
+        self.assertEqual(available["traffic_pack_remaining_cents"], 100)
+        self.assertEqual(available["credit_cents"], 300)
+        self.assertEqual(available["legacy_balance_cents"], -50)
+        self.assertEqual(available["available_cents"], 350)
+        self.assertEqual(serialized["credit_balance"]["remaining_cents"], 300)
+        self.assertEqual(serialized["available"]["remaining_cents"], 350)
 
     def test_serialize_billing_state_separates_active_and_historical_traffic_packs(self):
         now = datetime(2026, 5, 10, 12, 0, 0)

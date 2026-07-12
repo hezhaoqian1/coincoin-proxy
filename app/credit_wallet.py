@@ -262,13 +262,37 @@ async def refund_credit_allocations(
     *,
     user_id: str,
     allocation_ids: Iterable[str],
+    expected_allocations: Iterable[dict] | None = None,
     now: datetime | None = None,
 ) -> dict:
-    """Fully refund stored allocations exactly once, ignoring already-refunded rows."""
+    """Refund allocations; optional expected metadata enables strict fail-closed mode."""
     normalized_user_id = _required_text(user_id, field="user_id")
     normalized_ids = sorted({_required_text(value, field="allocation_id") for value in allocation_ids})
     if not normalized_ids:
         return {"refunded_cents": 0, "allocations": []}
+    expected_by_id = None
+    if expected_allocations is not None:
+        expected_by_id = {}
+        try:
+            for item in expected_allocations:
+                allocation_id = _required_text(item.get("allocation_id"), field="allocation_id")
+                if allocation_id in expected_by_id:
+                    raise CreditWalletError("duplicate expected credit allocation")
+                expected_by_id[allocation_id] = {
+                    "allocation_id": allocation_id,
+                    "credit_balance_id": _required_text(
+                        item.get("credit_balance_id"),
+                        field="credit_balance_id",
+                    ),
+                    "amount_cents": _positive_cents(
+                        item.get("amount_cents"),
+                        field="amount_cents",
+                    ),
+                }
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise CreditWalletError("invalid expected credit allocation metadata") from exc
+        if set(expected_by_id) != set(normalized_ids):
+            raise CreditWalletError("expected credit allocation ids do not match")
 
     allocation_query = (
         select(CreditAllocation)
@@ -284,10 +308,11 @@ async def refund_credit_allocations(
         raise CreditWalletError("credit allocation not found")
 
     pending = [allocation for allocation in allocations if allocation.refunded_at is None]
-    if not pending:
+    if expected_by_id is None and not pending:
         return {"refunded_cents": 0, "allocations": []}
 
-    balance_ids = sorted({allocation.credit_balance_id for allocation in pending})
+    refund_candidates = allocations if expected_by_id is not None else pending
+    balance_ids = sorted({allocation.credit_balance_id for allocation in refund_candidates})
     balance_query = _ordered_credit_balances(
         select(CreditBalance)
         .where(
@@ -300,8 +325,21 @@ async def refund_credit_allocations(
     if set(balances_by_id) != set(balance_ids):
         raise CreditWalletError("credit balance for allocation not found")
 
+    if expected_by_id is not None:
+        for allocation in allocations:
+            expected = expected_by_id[allocation.id]
+            if (
+                str(allocation.user_id or "") != normalized_user_id
+                or allocation.refunded_at is not None
+                or str(allocation.credit_balance_id or "") != expected["credit_balance_id"]
+                or int(allocation.amount_cents or 0) != expected["amount_cents"]
+            ):
+                raise CreditWalletError("credit allocation metadata mismatch")
+        if any(str(balance.user_id or "") != normalized_user_id for balance in balances):
+            raise CreditWalletError("credit balance owner mismatch")
+
     restore_by_balance: dict[str, int] = {}
-    for allocation in pending:
+    for allocation in refund_candidates:
         restore_by_balance[allocation.credit_balance_id] = (
             restore_by_balance.get(allocation.credit_balance_id, 0)
             + int(allocation.amount_cents or 0)
@@ -318,7 +356,7 @@ async def refund_credit_allocations(
         balance = balances_by_id[balance_id]
         balance.remaining_cents = int(balance.remaining_cents or 0) + restore_cents
         balance.status = "active"
-    for allocation in pending:
+    for allocation in refund_candidates:
         allocation.refunded_at = refunded_at
         payload.append(
             {

@@ -12,6 +12,26 @@ No evidence has been recorded yet.
 
 ## EvidenceBundleDraft
 
+- Artifact key: task-3-wallet-usage-video
+- Type: test
+- Source: `pytest tests/test_credit_wallet.py tests/test_subscription_billing.py tests/test_video_jobs.py -q`
+- Summary: 52 passed, 16 subtests passed, with exactly 3 known baseline video failures caused by the pre-existing RequestLog constructor mismatch.
+- Verifier: Codex root agent
+
+## EvidenceBundleDraft
+
+- Artifact key: task-3-review
+- Type: review
+- Source: independent specification and code-quality reviewer agents
+- Summary: Specification compliant and code-quality approved after pure subscription projection, stable four-source debit ordering, terminal VideoJob row locking, strict allocation/reference validation, charged-total reconciliation, and frozen refund SKU support.
+- Verifier: Codex root agent
+
+## Task 3 Evidence Limitation
+
+- Real MySQL multi-connection behavior for user/subscription/pack/wallet/job locks was not exercised because the local configured credentials are rejected. Current evidence is SQL shape, canonical-row refresh behavior, stale-view simulations, and object-level mutation assertions.
+
+## EvidenceBundleDraft
+
 - Artifact key: baseline-plan
 - Type: plan
 - Source: docs/aegis/plans/2026-07-12-pure-credit-pack-billing.md

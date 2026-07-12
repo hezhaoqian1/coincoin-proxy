@@ -78,3 +78,30 @@
 - New risk signals:
 - Registered catalog versions must remain available until no pending order references them.
 - Advisory decision: continue; Task 3 must not recompute frozen payment promises or reintroduce scalar writes.
+
+## Task 3 Completion Update
+
+- Current todo: Task 4: add dry-run-first legacy credit migration tooling.
+- Active slice: Deterministic migration planning, zero-drift reporting, and guarded transactional apply.
+- Completed todos:
+- Billing availability and debit order is active monthly, valid legacy traffic pack, permanent wallet, then scalar fallback/debt.
+- Valid legacy traffic packs are spendable without an active monthly subscription.
+- Video jobs persist exact wallet allocations and refund all sources exactly once after terminal job locking and full reference validation.
+- Subscription precheck uses a pure period projection so insufficient debits do not mutate ORM state.
+- Task 3 specification review passed after concurrent job locking, strict all-source refund validation, and DDL parity fixes.
+- Task 3 code-quality review approved after strict wallet metadata validation, charged-total reconciliation, and frozen billable SKU support.
+- Evidence refs:
+- `tests/test_credit_wallet.py tests/test_subscription_billing.py tests/test_video_jobs.py`: 52 passed, 3 known baseline failures, 16 subtests passed.
+- The three failures remain exactly the recorded `RequestLog.effective_cache_creation_input_per_million` constructor mismatch.
+- Blocked on: No Task 4 code blocker. Real MySQL multi-connection verification remains unavailable.
+- Next step: Build deterministic dry-run plans for positive scalar balance and valid traffic packs; never run production `--apply`.
+
+## Task 3 Drift Check
+
+- Scope status: Inside approved billing/video/schema/test scope; wallet strict refund API was extended to preserve the canonical allocation owner.
+- Compatibility status: Active paid monthly periods, valid legacy packs, and scalar fallback remain spendable; old video jobs retain legacy refund compatibility.
+- Retirement status: The monthly gate on legacy pack spending is retired. Pack/scalar compatibility owners remain until migration evidence and apply.
+- New risk signals:
+- `_credit_wallet_cents` is a temporary serializer bridge scheduled for explicit caller cleanup in Task 5.
+- No real InnoDB multi-session evidence exists for terminal job/refund locking.
+- Advisory decision: continue; migration tooling must prevent migrated legacy sources from being counted twice.

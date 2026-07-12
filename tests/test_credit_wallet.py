@@ -10,6 +10,7 @@ from app import main as main_module
 from app.main import _is_index_already_exists_error
 from app.credit_wallet import (
     CreditSourceConflictError,
+    CreditWalletError,
     InsufficientCreditError,
     debit_credit_batches,
     grant_permanent_credit,
@@ -385,6 +386,73 @@ class CreditWalletTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("FOR UPDATE", balance_lock_sql)
         self.assertIn("FOR UPDATE", replay_lock_sql)
+
+    async def test_strict_refund_rejects_refunded_or_mismatched_allocation_metadata_without_mutation(self):
+        scenarios = [
+            {
+                "name": "partially_refunded",
+                "actual_refunded_at": datetime(2026, 7, 4),
+                "expected_balance_id": "cb_1",
+                "expected_amount": 100,
+            },
+            {
+                "name": "amount_mismatch",
+                "actual_refunded_at": None,
+                "expected_balance_id": "cb_1",
+                "expected_amount": 99,
+            },
+            {
+                "name": "balance_id_mismatch",
+                "actual_refunded_at": None,
+                "expected_balance_id": "cb_other",
+                "expected_amount": 100,
+            },
+        ]
+        for scenario in scenarios:
+            with self.subTest(name=scenario["name"]):
+                balance = CreditBalance(
+                    id="cb_1",
+                    user_id="u_1",
+                    source_type="payment_order",
+                    source_id="order_1",
+                    product_id="credit_light",
+                    status="depleted",
+                    original_cents=100,
+                    remaining_cents=0,
+                    created_at=datetime(2026, 7, 1),
+                )
+                allocation = CreditAllocation(
+                    id="ca_1",
+                    user_id="u_1",
+                    credit_balance_id="cb_1",
+                    amount_cents=100,
+                    refunded_at=scenario["actual_refunded_at"],
+                    created_at=datetime(2026, 7, 3),
+                )
+                db = _FakeDB(
+                    execute_results=[
+                        _EntityResult([allocation]),
+                        _EntityResult([balance]),
+                    ]
+                )
+
+                with self.assertRaises(CreditWalletError):
+                    await refund_credit_allocations(
+                        db,
+                        user_id="u_1",
+                        allocation_ids=["ca_1"],
+                        expected_allocations=[
+                            {
+                                "allocation_id": "ca_1",
+                                "credit_balance_id": scenario["expected_balance_id"],
+                                "amount_cents": scenario["expected_amount"],
+                            }
+                        ],
+                    )
+
+                self.assertEqual(balance.remaining_cents, 0)
+                self.assertEqual(balance.status, "depleted")
+                self.assertEqual(allocation.refunded_at, scenario["actual_refunded_at"])
 
     async def test_startup_migrations_include_credit_tables_and_indexes(self):
         class _MigrationConn:

@@ -8,6 +8,7 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .credit_wallet import debit_credit_batches, list_spendable_credit_batches
 from .models import BillingLedgerEntry, TrafficPackBalance, User, UserSubscription
 from .security import generate_id
 
@@ -224,34 +225,92 @@ def _result_rows(result) -> list:
     return []
 
 
-def normalize_subscription_period(sub: UserSubscription | None, now: datetime | None = None) -> bool:
+@dataclass(frozen=True)
+class SubscriptionPeriodProjection:
+    status: str
+    period_start: datetime | None
+    period_end: datetime | None
+    paid_until: datetime | None
+    used_cents: int
+    changed: bool
+
+
+def project_subscription_period(
+    sub: UserSubscription | None,
+    now: datetime | None = None,
+) -> SubscriptionPeriodProjection | None:
+    """Project period normalization without mutating the locked ORM row."""
     if not sub:
-        return False
+        return None
     current = now or utcnow()
-    changed = False
+    original = (
+        str(getattr(sub, "status", "") or ""),
+        getattr(sub, "period_start", None),
+        getattr(sub, "period_end", None),
+        int(getattr(sub, "used_cents", 0) or 0),
+    )
     paid_until = getattr(sub, "paid_until", None)
+    status, period_start, period_end, used_cents = original
+
     if not paid_until or paid_until <= current:
-        if getattr(sub, "status", "") != "expired":
-            sub.status = "expired"
-            changed = True
-        return changed
+        status = "expired"
+    else:
+        status = "active"
+        if not period_start or not period_end:
+            period_start = current
+            period_end = _period_end_from(current, paid_until)
+            used_cents = 0
+        else:
+            while period_end <= current and period_end < paid_until:
+                period_start = period_end
+                period_end = _period_end_from(period_start, paid_until)
+                used_cents = 0
 
-    if getattr(sub, "status", "") != "active":
-        sub.status = "active"
-        changed = True
+    projected = (status, period_start, period_end, used_cents)
+    return SubscriptionPeriodProjection(
+        status=status,
+        period_start=period_start,
+        period_end=period_end,
+        paid_until=paid_until,
+        used_cents=used_cents,
+        changed=projected != original,
+    )
 
-    if not getattr(sub, "period_start", None) or not getattr(sub, "period_end", None):
-        sub.period_start = current
-        sub.period_end = _period_end_from(current, paid_until)
-        sub.used_cents = 0
-        return True
 
-    while getattr(sub, "period_end", None) and sub.period_end <= current and sub.period_end < paid_until:
-        sub.period_start = sub.period_end
-        sub.period_end = _period_end_from(sub.period_start, paid_until)
-        sub.used_cents = 0
-        changed = True
-    return changed
+def _apply_subscription_period_projection(
+    sub: UserSubscription,
+    projection: SubscriptionPeriodProjection,
+) -> bool:
+    if not projection.changed:
+        return False
+    sub.status = projection.status
+    sub.period_start = projection.period_start
+    sub.period_end = projection.period_end
+    sub.used_cents = projection.used_cents
+    return True
+
+
+def _projected_subscription_available_cents(
+    sub: UserSubscription | None,
+    projection: SubscriptionPeriodProjection | None,
+    now: datetime,
+) -> int:
+    if (
+        not sub
+        or not projection
+        or projection.status != "active"
+        or not projection.paid_until
+        or projection.paid_until <= now
+    ):
+        return 0
+    return max(0, int(getattr(sub, "quota_cents", 0) or 0) - projection.used_cents)
+
+
+def normalize_subscription_period(sub: UserSubscription | None, now: datetime | None = None) -> bool:
+    projection = project_subscription_period(sub, now)
+    if not sub or not projection:
+        return False
+    return _apply_subscription_period_projection(sub, projection)
 
 
 async def apply_payment_product(
@@ -415,7 +474,11 @@ async def active_traffic_packs_for_update(db: AsyncSession, user_id: str, now: d
             TrafficPackBalance.remaining_cents > 0,
             TrafficPackBalance.expires_at > current,
         )
-        .order_by(TrafficPackBalance.expires_at.asc(), TrafficPackBalance.created_at.asc())
+        .order_by(
+            TrafficPackBalance.expires_at.asc(),
+            TrafficPackBalance.created_at.asc(),
+            TrafficPackBalance.id.asc(),
+        )
         .with_for_update()
     )
     return _result_rows(result)
@@ -431,7 +494,11 @@ async def active_traffic_packs(db: AsyncSession, user_id: str, now: datetime | N
             TrafficPackBalance.remaining_cents > 0,
             TrafficPackBalance.expires_at > current,
         )
-        .order_by(TrafficPackBalance.expires_at.asc(), TrafficPackBalance.created_at.asc())
+        .order_by(
+            TrafficPackBalance.expires_at.asc(),
+            TrafficPackBalance.created_at.asc(),
+            TrafficPackBalance.id.asc(),
+        )
     )
     return _result_rows(result)
 
@@ -447,15 +514,28 @@ async def get_available_balance_cents(
     sub = await get_subscription(db, user.id)
     changed = normalize_subscription_period(sub, current)
     packs = await active_traffic_packs(db, user.id, current)
+    credit_batches = await list_spendable_credit_batches(db, user.id)
     subscription_remaining = available_subscription_cents(sub, current)
-    traffic_remaining = sum(max(0, int(pack.remaining_cents or 0)) for pack in packs) if active_subscription(sub, current) else 0
+    traffic_remaining = sum(max(0, int(pack.remaining_cents or 0)) for pack in packs)
+    credit_remaining = sum(max(0, int(batch.remaining_cents or 0)) for batch in credit_batches)
     legacy_balance = int(user.balance or 0)
-    available = subscription_remaining + traffic_remaining + legacy_balance - int(pending_cost_cents or 0)
+    available = (
+        subscription_remaining
+        + traffic_remaining
+        + credit_remaining
+        + legacy_balance
+        - int(pending_cost_cents or 0)
+    )
+    # Existing serialization callers receive this same ORM instance immediately
+    # after the snapshot. Keep their call contract compatible while exposing the
+    # permanent wallet total to serialize_billing_state.
+    setattr(user, "_credit_wallet_cents", credit_remaining)
     return {
         "subscription": sub,
         "traffic_packs": packs,
         "subscription_remaining_cents": subscription_remaining,
         "traffic_pack_remaining_cents": traffic_remaining,
+        "credit_cents": credit_remaining,
         "legacy_balance_cents": legacy_balance,
         "available_cents": available,
         "changed": changed,
@@ -482,31 +562,50 @@ async def debit_usage_cents(
             "subscription_plan_id": "",
             "traffic_pack_cents": 0,
             "traffic_pack_debits": [],
+            "credit_cents": 0,
+            "credit_allocations": [],
             "legacy_cents": 0,
         }
 
     remaining = amount
     subscription_debit = 0
     traffic_debit = 0
+    credit_debit = 0
     legacy_debit = 0
     subscription_id = ""
     subscription_plan_id = ""
     traffic_pack_debits = []
+    credit_allocations = []
 
     sub = await get_subscription_for_update(db, user.id)
-    if sub:
-        normalize_subscription_period(sub, current)
-    subscription_available = 0
-    packs: list[TrafficPackBalance] = []
-    if active_subscription(sub, current):
-        subscription_available = available_subscription_cents(sub, current)
-        packs = await active_traffic_packs_for_update(db, user.id, current)
+    subscription_projection = project_subscription_period(sub, current)
+    subscription_available = _projected_subscription_available_cents(
+        sub,
+        subscription_projection,
+        current,
+    )
+    packs = await active_traffic_packs_for_update(db, user.id, current)
+
+    # Callers lock User first. Lock the remaining sources in a stable order and
+    # precheck before mutating any debit source so insufficiency is functionally
+    # atomic even when the caller inspects the same ORM objects after the error.
+    credit_batches = await list_spendable_credit_batches(db, user.id, for_update=True)
+    traffic_available = sum(max(0, int(pack.remaining_cents or 0)) for pack in packs)
+    credit_available = sum(max(0, int(batch.remaining_cents or 0)) for batch in credit_batches)
 
     if not allow_negative_legacy:
-        traffic_available = sum(max(0, int(pack.remaining_cents or 0)) for pack in packs)
-        total_available = subscription_available + traffic_available + int(user.balance or 0) - int(reserved_cents or 0)
+        total_available = (
+            subscription_available
+            + traffic_available
+            + credit_available
+            + int(user.balance or 0)
+            - int(reserved_cents or 0)
+        )
         if total_available < amount:
             raise BillingError("insufficient balance", status_code=402)
+
+    if sub and subscription_projection:
+        _apply_subscription_period_projection(sub, subscription_projection)
 
     if active_subscription(sub, current):
         take = min(subscription_available, remaining)
@@ -526,31 +625,41 @@ async def debit_usage_cents(
                 balance_after_cents=available_subscription_cents(sub, current),
             ))
 
-        for pack in packs:
-            if remaining <= 0:
-                break
-            take = min(int(pack.remaining_cents or 0), remaining)
-            if take <= 0:
-                continue
-            pack.remaining_cents = int(pack.remaining_cents or 0) - take
-            if pack.remaining_cents <= 0:
-                pack.status = "depleted"
-            remaining -= take
-            traffic_debit += take
-            traffic_pack_debits.append({
-                "id": getattr(pack, "id", "") or "",
-                "product_id": getattr(pack, "product_id", "") or "",
-                "cents": take,
-            })
-            db.add(_ledger(
-                user_id=user.id,
-                entry_type="usage_traffic_pack_debit",
-                amount_cents=-take,
-                source_type=source_type,
-                source_id=source_id,
-                product_id=pack.product_id,
-                balance_after_cents=pack.remaining_cents,
-            ))
+    for pack in packs:
+        if remaining <= 0:
+            break
+        take = min(int(pack.remaining_cents or 0), remaining)
+        if take <= 0:
+            continue
+        pack.remaining_cents = int(pack.remaining_cents or 0) - take
+        if pack.remaining_cents <= 0:
+            pack.status = "depleted"
+        remaining -= take
+        traffic_debit += take
+        traffic_pack_debits.append({
+            "id": getattr(pack, "id", "") or "",
+            "product_id": getattr(pack, "product_id", "") or "",
+            "cents": take,
+        })
+        db.add(_ledger(
+            user_id=user.id,
+            entry_type="usage_traffic_pack_debit",
+            amount_cents=-take,
+            source_type=source_type,
+            source_id=source_id,
+            product_id=pack.product_id,
+            balance_after_cents=pack.remaining_cents,
+        ))
+
+    if remaining > 0 and credit_available > 0:
+        credit_debit = min(credit_available, remaining)
+        credit_result = await debit_credit_batches(
+            db,
+            user_id=user.id,
+            amount_cents=credit_debit,
+        )
+        credit_allocations = list(credit_result.get("allocations") or [])
+        remaining -= credit_debit
 
     if remaining > 0:
         user.balance = int(user.balance or 0) - remaining
@@ -570,11 +679,20 @@ async def debit_usage_cents(
         "subscription_plan_id": subscription_plan_id,
         "traffic_pack_cents": traffic_debit,
         "traffic_pack_debits": traffic_pack_debits,
+        "credit_cents": credit_debit,
+        "credit_allocations": credit_allocations,
         "legacy_cents": legacy_debit,
     }
 
 
-def serialize_billing_state(sub: UserSubscription | None, packs: list[TrafficPackBalance], user: User, now: datetime | None = None) -> dict:
+def serialize_billing_state(
+    sub: UserSubscription | None,
+    packs: list[TrafficPackBalance],
+    user: User,
+    now: datetime | None = None,
+    *,
+    credit_cents: int | None = None,
+) -> dict:
     current = now or utcnow()
     subscription_active = active_subscription(sub, current)
     subscription_remaining = available_subscription_cents(sub, current)
@@ -585,7 +703,12 @@ def serialize_billing_state(sub: UserSubscription | None, packs: list[TrafficPac
         and getattr(pack, "expires_at", None)
         and pack.expires_at > current
     ]
-    traffic_remaining = sum(int(getattr(pack, "remaining_cents", 0) or 0) for pack in active_packs) if subscription_active else 0
+    traffic_remaining = sum(int(getattr(pack, "remaining_cents", 0) or 0) for pack in active_packs)
+    credit_remaining = int(
+        getattr(user, "_credit_wallet_cents", 0)
+        if credit_cents is None
+        else credit_cents
+    )
     legacy_balance = int(user.balance or 0)
     current_plan = MONTHLY_BY_ID.get(getattr(sub, "plan_id", None)) if sub and getattr(sub, "plan_id", None) else None
     current_rank = current_plan.rank if current_plan and subscription_active else 0
@@ -635,9 +758,16 @@ def serialize_billing_state(sub: UserSubscription | None, packs: list[TrafficPac
             "remaining_cents": legacy_balance,
             "remaining_usd": cents_to_usd(legacy_balance),
         },
+        "credit_cents": credit_remaining,
+        "credit_balance": {
+            "remaining_cents": credit_remaining,
+            "remaining_usd": cents_to_usd(credit_remaining),
+        },
         "available": {
-            "remaining_cents": subscription_remaining + traffic_remaining + legacy_balance,
-            "remaining_usd": cents_to_usd(subscription_remaining + traffic_remaining + legacy_balance),
+            "remaining_cents": subscription_remaining + traffic_remaining + credit_remaining + legacy_balance,
+            "remaining_usd": cents_to_usd(
+                subscription_remaining + traffic_remaining + credit_remaining + legacy_balance
+            ),
         },
         "products": {
             "credits": [serialize_product(product) for product in CREDIT_PRODUCTS],

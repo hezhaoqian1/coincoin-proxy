@@ -231,7 +231,7 @@ class UserSubscription(Base):
 
 
 class TrafficPackBalance(Base):
-    """Purchased add-on balance. It can only be spent while a subscription is active."""
+    """Purchased legacy add-on balance with its own status and expiry."""
     __tablename__ = "coincoin_traffic_pack_balances"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
@@ -898,6 +898,7 @@ class VideoJob(Base):
     status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
     endpoint: Mapped[str] = mapped_column(String(32), default="videos/generations")
     public_model: Mapped[str] = mapped_column(String(128), default="")
+    billable_sku: Mapped[str] = mapped_column(String(128), default="")
     provider_model: Mapped[str] = mapped_column(String(128), default="")
     route_reason: Mapped[str] = mapped_column(String(128), default="")
     upstream_task_id: Mapped[str] = mapped_column(String(128), default="", index=True)
@@ -917,6 +918,8 @@ class VideoJob(Base):
     subscription_plan_id: Mapped[str] = mapped_column(String(64), default="")
     traffic_pack_debit_cents: Mapped[int] = mapped_column(BigInteger, default=0)
     traffic_pack_debits_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    credit_debit_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    credit_allocations_json: Mapped[Optional[str]] = mapped_column(LONGTEXT, nullable=True)
     legacy_debit_cents: Mapped[int] = mapped_column(BigInteger, default=0)
     attempt_count: Mapped[int] = mapped_column(BigInteger, default=0)
     duration_ms: Mapped[int] = mapped_column(BigInteger, default=0)

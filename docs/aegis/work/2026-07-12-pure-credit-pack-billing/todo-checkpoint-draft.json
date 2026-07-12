@@ -1,7 +1,7 @@
 {
   "schemaVersion": "aegis.schema.v0",
   "taskId": "2026-07-12-pure-credit-pack-billing",
-  "currentTodo": "Task 3: route availability, debit, and video refunds through the wallet.",
+  "currentTodo": "Task 4: add dry-run-first legacy credit migration tooling.",
   "completedTodos": [
     "Approved design captured and implementation plan saved.",
     "Isolated codex/credit-packs worktree created.",
@@ -10,9 +10,12 @@
     "Task 1 code-quality review approved.",
     "Task 2 public credit catalog and frozen payment-order semantics implemented.",
     "Task 2 specification review passed.",
-    "Task 2 code-quality review approved."
+    "Task 2 code-quality review approved.",
+    "Task 3 four-source availability/debit and exact video refunds implemented.",
+    "Task 3 specification review passed.",
+    "Task 3 code-quality review approved."
   ],
-  "activeSlice": "Billing source ordering, permanent-credit allocations, and async video refund persistence.",
+  "activeSlice": "Deterministic dry-run migration planning, zero-drift reporting, and guarded apply.",
   "evidenceRefs": [
     "docs/aegis/plans/2026-07-12-pure-credit-pack-billing.md",
     "Baseline: 426 passed, 3 unrelated video failures, 4 skipped.",
@@ -21,9 +24,11 @@
     "Task 1 specification and code-quality reviews approved.",
     "Task 2 core catalog/payment tests: 23 passed, 13 subtests passed.",
     "Task 2 full Python checkpoint: 450 passed, 4 skipped, only 3 known video baseline failures.",
-    "Task 2 specification and code-quality reviews approved."
+    "Task 2 specification and code-quality reviews approved.",
+    "Task 3 targeted suite: 52 passed, 3 known baseline failures, 16 subtests passed.",
+    "Task 3 specification and code-quality reviews approved."
   ],
-  "blockedOn": "No Task 3 blocker; real MySQL multi-connection integration remains unavailable with the supplied local test credentials.",
-  "nextStep": "Dispatch Task 3 implementer, then run specification and code-quality reviews.",
+  "blockedOn": "No Task 4 code blocker; real MySQL multi-connection integration remains unavailable with the supplied local test credentials.",
+  "nextStep": "Dispatch Task 4 implementer, then run specification and code-quality reviews without executing production apply.",
   "updatedAt": "2026-07-12"
 }
