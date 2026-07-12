@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "2026-07-12-pure-credit-pack-billing",
+  "taskIntentRef": "docs/aegis/work/2026-07-12-pure-credit-pack-billing/task-intent-draft.json",
+  "baselineRefs": [
+    "/Users/windupbird/.gstack/projects/hezhaoqian1-coincoin-proxy/windupbird-master-design-20260712-055650.md"
+  ],
+  "scopeStatus": "Inside approved billing/payment/migration/UI scope.",
+  "compatStatus": "Legacy monthly and unmigrated balances explicitly preserved.",
+  "retirementStatus": "Old sales retire immediately; data paths retire only after migration/final paid_until.",
+  "newRiskSignals": [
+    "Task 1 lacks real MySQL multi-connection evidence for savepoints, row locks, and CHECK enforcement because local test credentials are rejected."
+  ],
+  "decision": "continue"
+}

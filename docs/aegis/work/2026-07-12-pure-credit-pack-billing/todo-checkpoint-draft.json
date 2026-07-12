@@ -1,0 +1,23 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "2026-07-12-pure-credit-pack-billing",
+  "currentTodo": "Task 2: replace the public catalog and freeze new order semantics.",
+  "completedTodos": [
+    "Approved design captured and implementation plan saved.",
+    "Isolated codex/credit-packs worktree created.",
+    "Task 1 permanent-credit persistence and wallet owner implemented.",
+    "Task 1 specification review passed.",
+    "Task 1 code-quality review approved."
+  ],
+  "activeSlice": "Credit product catalog, frozen payment-order semantics, and one-batch confirmation.",
+  "evidenceRefs": [
+    "docs/aegis/plans/2026-07-12-pure-credit-pack-billing.md",
+    "Baseline: 426 passed, 3 unrelated video failures, 4 skipped.",
+    "Task 1 wallet tests: 17 passed, 7 subtests passed.",
+    "Task 1 wallet plus subscription regression: 26 passed, 7 subtests passed.",
+    "Task 1 specification and code-quality reviews approved."
+  ],
+  "blockedOn": "No Task 2 blocker; real MySQL multi-connection integration remains unavailable with the supplied local test credentials.",
+  "nextStep": "Dispatch Task 2 implementer, then run specification and code-quality reviews.",
+  "updatedAt": "2026-07-12"
+}
