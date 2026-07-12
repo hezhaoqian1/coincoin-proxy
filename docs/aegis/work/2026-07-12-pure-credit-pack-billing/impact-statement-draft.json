@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "affectedLayers": [
+    "billing persistence",
+    "payment confirmation",
+    "usage debit/refund",
+    "admin and customer UI"
+  ],
+  "owners": [
+    "app/billing.py and new credit wallet owner"
+  ],
+  "invariants": [
+    "Every confirmed payment grants exactly the frozen promised USD cents once.",
+    "Existing paid monthly entitlements and valid traffic-pack balances are never silently lost or duplicated."
+  ],
+  "compatBoundary": "Existing active monthly periods continue until paid_until; old product IDs are not offered for new sales.",
+  "nonGoals": [
+    "No live database migration, deployment, price profitability claim, or confirmation of pending legacy orders."
+  ]
+}

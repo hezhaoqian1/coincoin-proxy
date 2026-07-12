@@ -5081,6 +5081,14 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         ), patch.object(openai_module.usage_buffer, "get_pending_cost", AsyncMock(return_value=0)), patch(
             "app.stations.get_station_public_models_by_id",
             AsyncMock(return_value=station_models),
+        ), patch(
+            "app.billing.get_available_balance_cents",
+            AsyncMock(return_value={
+                "subscription": None,
+                "traffic_packs": [],
+                "credit_cents": 0,
+                "available_cents": 1234,
+            }),
         ):
             result = await openai_module.get_balance(request=SimpleNamespace(headers={}), db=fake_db)
 

@@ -3499,11 +3499,11 @@
       const plan = b.subscription_active
         ? `${escapeHtml(b.subscription_plan_name || b.subscription_plan_id || '有效月卡')}`
         : '无有效月卡';
-      const period = b.subscription_paid_until ? `到期 ${formatDate(b.subscription_paid_until)}` : '流量包暂停使用';
+      const period = b.subscription_paid_until ? `到期 ${formatDate(b.subscription_paid_until)}` : '历史流量包可独立使用';
       const rows = [
         `<div><strong>${formatMoney(b.available_cents || 0)}</strong><span class="text-sm text-muted"> 可用总额</span></div>`,
         `<div class="text-sm text-muted">套餐 ${formatMoney(b.subscription_remaining_cents || 0)} / ${formatMoney(b.subscription_quota_cents || 0)} · ${plan}</div>`,
-        `<div class="text-sm text-muted">流量包 ${formatMoney(b.traffic_pack_remaining_cents || 0)} · 历史余额 ${formatMoney(b.legacy_balance_cents || 0)}</div>`,
+        `<div class="text-sm text-muted">永久美金额度 ${formatMoney(b.credit_wallet_cents || 0)} · 流量包 ${formatMoney(b.traffic_pack_remaining_cents || 0)} · 历史余额 ${formatMoney(b.legacy_balance_cents || 0)}</div>`,
       ];
       if (!compact) rows.push(`<div class="text-sm text-muted">${period}</div>`);
       return rows.join('');
@@ -3513,6 +3513,7 @@
       const state = billing || {};
       const sub = state.subscription || {};
       const packs = state.traffic_packs || {};
+      const credit = state.credit_wallet || state.credit_balance || {};
       const legacy = state.legacy_balance || {};
       const available = state.available || {};
       const monthlyProducts = state.products?.monthly || ADMIN_MONTHLY_PRODUCTS;
@@ -3544,8 +3545,9 @@
         </div>`).join('') : '<div class="text-sm text-muted" style="margin-top:8px">暂无流量包</div>';
       return `
         <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px">
-          <div style="padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--bg-primary)"><div class="text-sm text-muted">可用总额</div><div style="font-weight:700">${formatMoney(available.remaining_cents || 0)}</div><div class="text-sm text-muted">套餐 -> 流量包 -> 历史余额</div></div>
-          <div style="padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--bg-primary)"><div class="text-sm text-muted">当前套餐</div><div style="font-weight:700">${sub.active ? escapeHtml(sub.plan_name || sub.plan_id || '-') : '无有效月卡'}</div><div class="text-sm text-muted">${sub.active ? '到期 ' + formatDateFull(sub.paid_until) : '流量包暂停使用'}</div></div>
+          <div style="padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--bg-primary)"><div class="text-sm text-muted">可用总额</div><div style="font-weight:700">${formatMoney(available.remaining_cents || 0)}</div><div class="text-sm text-muted">老月卡 -> 历史流量包 -> 永久美金额度 -> 历史余额</div></div>
+          <div style="padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--bg-primary)"><div class="text-sm text-muted">永久美金额度</div><div style="font-weight:700">${formatMoney(credit.remaining_cents || 0)}</div><div class="text-sm text-muted">永久有效，可叠加</div></div>
+          <div style="padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--bg-primary)"><div class="text-sm text-muted">当前套餐</div><div style="font-weight:700">${sub.active ? escapeHtml(sub.plan_name || sub.plan_id || '-') : '无有效月卡'}</div><div class="text-sm text-muted">${sub.active ? '到期 ' + formatDateFull(sub.paid_until) : '历史流量包可独立使用'}</div></div>
           <div style="padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--bg-primary)"><div class="text-sm text-muted">套餐额度</div><div style="font-weight:700">${formatMoney(sub.remaining_cents || 0)}</div><div class="text-sm text-muted">已用 ${formatMoney(sub.used_cents || 0)} / 总额 ${formatMoney(sub.quota_cents || 0)}</div></div>
           <div style="padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--bg-primary)"><div class="text-sm text-muted">流量包 / 历史余额</div><div style="font-weight:700">${formatMoney(packs.remaining_cents || 0)} / ${formatMoney(legacy.remaining_cents || 0)}</div><div class="text-sm text-muted">有效流量包 ${productItems.length} 个，180 天有效</div></div>
         </div>
@@ -5746,7 +5748,7 @@
 	        <div class="finance-kpi">
 	          <div class="finance-kpi-label">当前可用额度</div>
 	          <div class="finance-kpi-value">${formatMoney(totals.available_cents || 0)}</div>
-	          <div class="finance-kpi-note">历史余额 ${formatMoney(totals.legacy_balance_cents || 0)} · 套餐 ${formatMoney(totals.subscription_remaining_cents || 0)} · 流量包 ${formatMoney(totals.traffic_pack_remaining_cents || 0)}</div>
+	          <div class="finance-kpi-note">永久美金额度 ${formatMoney(totals.credit_wallet_cents || 0)} · 历史余额 ${formatMoney(totals.legacy_balance_cents || 0)} · 套餐 ${formatMoney(totals.subscription_remaining_cents || 0)} · 流量包 ${formatMoney(totals.traffic_pack_remaining_cents || 0)}</div>
 	        </div>
 	        <div class="finance-kpi">
 	          <div class="finance-kpi-label">累计后台加款</div>
@@ -5818,7 +5820,7 @@
 	          ].join(' · ');
 	          return `<tr>
 	            <td><div class="user-cell"><div class="user-avatar">${getInitials(displayName)}</div><div class="user-info"><strong>${escapeHtml(displayName)}</strong><span>${escapeHtml(row.email || row.user_id)}</span><span>${escapeHtml(row.user_id)}</span></div></div></td>
-	            <td><strong>${formatMoney(b.available_cents || 0)}</strong><div class="text-sm text-muted">套餐 ${formatMoney(b.subscription_remaining_cents || 0)} · 流量包 ${formatMoney(b.traffic_pack_remaining_cents || 0)} · 历史 ${formatMoney(b.legacy_balance_cents || 0)}</div></td>
+	            <td><strong>${formatMoney(b.available_cents || 0)}</strong><div class="text-sm text-muted">永久 ${formatMoney(b.credit_wallet_cents || 0)} · 套餐 ${formatMoney(b.subscription_remaining_cents || 0)} · 流量包 ${formatMoney(b.traffic_pack_remaining_cents || 0)} · 历史 ${formatMoney(b.legacy_balance_cents || 0)}</div></td>
 	            <td>${formatMoney(f.total_paid_balance_cents || 0)}<div class="text-sm text-muted">${paidMeta}</div></td>
 	            <td>${formatMoney(f.total_ops_credit_cents || 0)}<div class="text-sm text-muted">扣款 ${formatMoney(f.total_ops_debit_cents || 0)}</div></td>
 	            <td>${formatMoney(f.total_bonus_cents || 0)}</td>

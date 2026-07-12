@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "baselineRefs": [
+    "/Users/windupbird/.gstack/projects/hezhaoqian1-coincoin-proxy/windupbird-master-design-20260712-055650.md"
+  ],
+  "impactStatement": "docs/aegis/work/2026-07-12-pure-credit-pack-billing/impact-statement-draft.json",
+  "compatPlan": "Existing active monthly periods continue until paid_until; old product IDs are not offered for new sales.",
+  "retirementPlan": "Public monthly/add-on sales, proration, renew/reset/upgrade execution, monthly pack gate, and stale UI paths are retired; data owners retire only after migration/final paid_until.",
+  "evidenceBundle": [
+    "docs/aegis/work/2026-07-12-pure-credit-pack-billing/evidence-bundle-draft-baseline-plan.json",
+    "docs/aegis/work/2026-07-12-pure-credit-pack-billing/evidence-bundle-draft-baseline-python.json"
+  ]
+}

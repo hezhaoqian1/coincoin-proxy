@@ -1,0 +1,26 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "2026-07-12-pure-credit-pack-billing",
+  "lastCheckpointRef": "docs/aegis/work/2026-07-12-pure-credit-pack-billing/todo-checkpoint-draft.json",
+  "resumeInstruction": "Read plan, 10-intent.md, and this checkpoint; verify branch codex/credit-packs before edits.",
+  "knownPartialWork": [
+    "Approved design captured and implementation plan saved.",
+    "Isolated codex/credit-packs worktree created.",
+    "Task 1 wallet persistence is implemented, specification-compliant, and code-quality approved.",
+    "Task 2 public credit catalog and frozen payment confirmation are implemented and approved.",
+    "Task 3 wallet-aware availability/debit and exact video refunds are implemented and approved.",
+    "Task 4 dry-run-first legacy migration tooling is implemented and approved; no live apply was run."
+  ],
+  "mustReadBeforeContinuing": [
+    "docs/aegis/work/2026-07-12-pure-credit-pack-billing/10-intent.md",
+    "docs/aegis/work/2026-07-12-pure-credit-pack-billing/20-checkpoint.md",
+    "docs/aegis/work/2026-07-12-pure-credit-pack-billing/todo-checkpoint-draft.json"
+  ],
+  "unsafeToAssume": [
+    "Do not assume production legacy balances are already migrated or that old pending orders have frozen purchase semantics.",
+    "Do not claim real MySQL concurrency verification; local test credentials are rejected.",
+    "Do not delete a registered credit catalog version while pending orders may still reference it.",
+    "Do not count migrated legacy sources and their new CreditBalance batches simultaneously.",
+    "Do not run migration --apply without separate authorization, dry-run evidence, explicit safety limits, and a maintenance plan."
+  ]
+}

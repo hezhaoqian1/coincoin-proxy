@@ -617,10 +617,14 @@ class StationCenterTests(unittest.IsolatedAsyncioTestCase):
                 status="confirmed",
             )
             fake_db = _FakeDB(execute_results=[_ScalarOneOrNoneResult(None)])
-            entry = await station_settlement_module.create_station_commission_entry_for_confirmed_order(fake_db, order)
+            result = await station_settlement_module.create_station_commission_entry_for_confirmed_order(fake_db, order)
         finally:
             station_settlement_module.settings.station_payout_hold_days = original_hold
 
+        self.assertTrue(hasattr(result, "entry"))
+        self.assertTrue(hasattr(result, "created"))
+        entry = result.entry
+        self.assertTrue(result.created)
         self.assertIsNotNone(entry)
         self.assertEqual(entry.station_id, "st_1")
         self.assertEqual(entry.commission_rmb_cents, 198)

@@ -1,7 +1,7 @@
 import json
 import tempfile
 import unittest
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -11,6 +11,7 @@ import httpx
 from app.main import app
 import app.main as main_module
 import app.admin as admin_module
+import app.billing as billing_module
 import app.epay as epay_module
 import app.payment as payment_module
 import app.proxy as proxy_module
@@ -1459,7 +1460,11 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         )
         fake_db = _FakeDB(execute_results=[_FakeAllResult([(user, None, None, 12, 1000, 3, 0, 456)])])
 
-        with patch.object(admin_module, "_admin_billing_state", AsyncMock(return_value={})):
+        with patch.object(
+            admin_module,
+            "_admin_billing_states_batch",
+            AsyncMock(return_value={"u_hot": {}}),
+        ):
             result = await admin_module.list_users(usage_sort="7d", db=fake_db)
 
         self.assertEqual(result[0]["id"], "u_hot")
@@ -1474,6 +1479,48 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("coincoin_request_logs", query_text)
         self.assertIn("created_at >=", query_text)
         self.assertIn("period_cost_cents", query_text)
+
+    async def test_admin_users_batch_billing_for_multiple_users_with_constant_queries(self) -> None:
+        def make_user(user_id: str, username: str):
+            return SimpleNamespace(
+                id=user_id,
+                username=username,
+                email=f"{username}@example.com",
+                email_verified_at=None,
+                external_id=None,
+                status="active",
+                balance=0,
+                token_limit=None,
+                token_used=0,
+                input_tokens_used=0,
+                output_tokens_used=0,
+                request_limit_per_minute=None,
+                request_limit_per_day=None,
+                referral_code=None,
+                referred_by=None,
+                created_at=datetime(2026, 6, 1, 10, 0, 0),
+                updated_at=datetime(2026, 6, 1, 10, 0, 0),
+            )
+
+        users = [make_user("u_1", "alice"), make_user("u_2", "bob")]
+        fake_db = _FakeDB(execute_results=[
+            _FakeAllResult([(users[0], None, None), (users[1], None, None)]),
+            _FakeScalarsResult([]),
+            _FakeScalarsResult([]),
+            _FakeScalarsResult([]),
+            _FakeScalarsResult([]),
+        ])
+
+        with patch.object(
+            admin_module,
+            "_admin_billing_state",
+            AsyncMock(side_effect=AssertionError("list_users must not query billing per user")),
+        ) as per_user_billing:
+            result = await admin_module.list_users(db=fake_db)
+
+        self.assertEqual([item["id"] for item in result], ["u_1", "u_2"])
+        self.assertEqual(len(fake_db.queries), 5)
+        per_user_billing.assert_not_awaited()
 
     async def test_admin_revenue_margin_today_keeps_previous_day_rows_inside_24h_window(self) -> None:
         fake_db = _FakeDB(
@@ -1717,7 +1764,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["slow_requests"][0]["upstream_request_id"], "req_slow")
         self.assertEqual(payload["slow_requests"][0]["fallback_from_channel_id"], "ch_primary")
 
-    async def test_manual_payment_confirm_credits_pending_order_from_proof_url(self) -> None:
+    async def test_manual_payment_confirm_rejects_pending_order_without_frozen_credit(self) -> None:
         admin_module._settings.epay_api_url = "https://code.nxslq.top/"
         admin_module._settings.epay_pid = "177938431"
         admin_module._settings.epay_key = "j9J4loEx5Qy"
@@ -1769,16 +1816,13 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                 },
             )
 
-        self.assertEqual(response.status_code, 200, response.text)
-        payload = response.json()
-        self.assertEqual(payload["status"], "confirmed")
-        self.assertEqual(payload["trade_no"], "2026032622080275954")
-        self.assertEqual(payload["added_cents"], 4999)
-        self.assertEqual(user.balance, 5499)
-        self.assertEqual(order.status, "confirmed")
-        self.assertEqual(order.trade_no, "2026032622080275954")
-        self.assertEqual(fake_db.commits, 1)
-        self.assertIsNotNone(order.confirmed_at)
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertIn("frozen credit commitment", response.text)
+        self.assertEqual(user.balance, 500)
+        self.assertEqual(order.status, "pending")
+        self.assertIsNone(order.trade_no)
+        self.assertEqual(fake_db.commits, 0)
+        self.assertIsNone(order.confirmed_at)
 
     async def test_manual_payment_confirm_rejects_proof_for_another_order(self) -> None:
         admin_module._settings.epay_api_url = "https://code.nxslq.top/"
@@ -1848,10 +1892,10 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                 response = await client.post(
                     "/v1/orders/create",
                     json={
-                        "name": "基础月卡 套餐",
+                        "name": "标准美金额度 $400",
                         "money": "199.00",
                         "pay_type": "alipay",
-                        "product_id": "monthly_basic",
+                        "product_id": "credit_standard",
                     },
                     headers={"Authorization": "Bearer sk_cc_test"},
                 )
@@ -1867,12 +1911,16 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("sign=", payload["pay_url"])
         self.assertEqual(payload["expected_cents"], 40000)
         self.assertEqual(fake_db.commits, 1)
+        created_order = fake_db.added[-1]
+        self.assertEqual(created_order.product_id, "credit_standard")
+        self.assertEqual(created_order.catalog_version, "credit-v1")
+        self.assertEqual(created_order.purchase_action, "credit_purchase")
+        self.assertEqual(created_order.promised_credit_cents, 40000)
 
     def test_product_quote_uses_selected_product_id(self) -> None:
-        self.assertEqual(quote_payment_cents("49.90", "monthly_light"), 8000)
-        self.assertEqual(quote_payment_cents("399.00", "monthly_flagship"), 100000)
-        self.assertEqual(quote_payment_cents("399.00", "addon_project"), 100000)
-        self.assertEqual(quote_payment_cents("699.00", "addon_ultra"), 200000)
+        self.assertEqual(quote_payment_cents("59.90", "credit_light"), 10000)
+        self.assertEqual(quote_payment_cents("199.00", "credit_standard"), 40000)
+        self.assertEqual(quote_payment_cents("399.00", "credit_pro"), 100000)
 
     def test_product_quote_rejects_unknown_or_mismatched_product(self) -> None:
         with self.assertRaises(payment_module.PaymentConfirmError):
@@ -1889,6 +1937,9 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                 amount_rmb="199.00",
                 add_balance_cents=40000,
                 product_id="monthly_basic",
+                catalog_version="legacy-monthly-v1",
+                purchase_action="subscription_purchase",
+                promised_credit_cents=None,
                 status="confirmed",
                 trade_no="trade_1",
                 pay_url="https://code.nxslq.top/submit.php?...",
@@ -1902,6 +1953,9 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                 amount_rmb="699.00",
                 add_balance_cents=200000,
                 product_id="addon_ultra",
+                catalog_version=None,
+                purchase_action=None,
+                promised_credit_cents=None,
                 status="pending",
                 trade_no=None,
                 pay_url="https://code.nxslq.top/submit.php?...",
@@ -1928,6 +1982,9 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload[0]["product_name"], "基础月卡")
         self.assertEqual(payload[0]["product_kind"], "monthly")
         self.assertEqual(payload[0]["product_balance_cents"], 40000)
+        self.assertEqual(payload[0]["catalog_version"], "legacy-monthly-v1")
+        self.assertEqual(payload[0]["purchase_action"], "subscription_purchase")
+        self.assertIsNone(payload[0]["promised_credit_cents"])
         self.assertEqual(payload[0]["username"], "alice")
         self.assertEqual(payload[0]["email"], "alice@example.com")
         self.assertEqual(payload[0]["external_id"], "ext_alice")
@@ -1990,7 +2047,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload[0]["add_balance_usd"], 49.99)
         self.assertEqual(payload[1]["status"], "pending")
 
-    async def test_confirm_order_accepts_signed_proof_url(self) -> None:
+    async def test_confirm_order_rejects_signed_proof_for_order_without_frozen_credit(self) -> None:
         payment_module.settings.epay_api_url = "https://code.nxslq.top/"
         payment_module.settings.epay_pid = "177938431"
         payment_module.settings.epay_key = "j9J4loEx5Qy"
@@ -2053,15 +2110,14 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             payment_module.authenticate_user = original_authenticate_user
             payment_module.rate_limiter.allow = original_allow
 
-        self.assertEqual(response.status_code, 200, response.text)
-        payload = response.json()
-        self.assertTrue(payload["success"])
-        self.assertEqual(payload["added_cents"], 4999)
-        self.assertEqual(user.balance, 5499)
-        self.assertEqual(order.trade_no, "2026032622080275954")
-        self.assertEqual(fake_db.commits, 1)
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertIn("frozen credit commitment", response.text)
+        self.assertEqual(user.balance, 500)
+        self.assertIsNone(order.trade_no)
+        self.assertEqual(order.status, "pending")
+        self.assertEqual(fake_db.commits, 0)
 
-    async def test_confirm_order_reports_available_balance_for_monthly_product(self) -> None:
+    async def test_confirm_order_rejects_pending_monthly_product_without_frozen_credit(self) -> None:
         payment_module.settings.epay_api_url = "https://code.nxslq.top/"
         payment_module.settings.epay_pid = "177938431"
         payment_module.settings.epay_key = "j9J4loEx5Qy"
@@ -2132,16 +2188,13 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             payment_module.authenticate_user = original_authenticate_user
             payment_module.rate_limiter.allow = original_allow
 
-        self.assertEqual(response.status_code, 200, response.text)
-        payload = response.json()
-        self.assertEqual(payload["billing_action"], "subscription_start")
-        self.assertEqual(payload["new_balance"], 500)
-        self.assertEqual(payload["available_cents"], 40500)
-        self.assertEqual(payload["available_usd"], 405.0)
-        self.assertEqual(payload["added_cents"], 40000)
-        self.assertEqual(fake_db.commits, 1)
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertIn("frozen credit commitment", response.text)
+        self.assertEqual(user.balance, 500)
+        self.assertEqual(order.status, "pending")
+        self.assertEqual(fake_db.commits, 0)
 
-    async def test_confirm_order_keeps_stored_pending_balance_quote(self) -> None:
+    async def test_confirm_order_rejects_legacy_stored_pending_balance_quote(self) -> None:
         payment_module.settings.epay_api_url = "https://code.nxslq.top/"
         payment_module.settings.epay_pid = "177938431"
         payment_module.settings.epay_key = "j9J4loEx5Qy"
@@ -2204,14 +2257,14 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             payment_module.authenticate_user = original_authenticate_user
             payment_module.rate_limiter.allow = original_allow
 
-        self.assertEqual(response.status_code, 200, response.text)
-        payload = response.json()
-        self.assertEqual(payload["added_cents"], 4321)
-        self.assertEqual(user.balance, 4821)
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertIn("frozen credit commitment", response.text)
+        self.assertEqual(user.balance, 500)
         self.assertEqual(order.add_balance_cents, 4321)
-        self.assertEqual(fake_db.commits, 1)
+        self.assertEqual(order.status, "pending")
+        self.assertEqual(fake_db.commits, 0)
 
-    async def test_pay_notify_confirms_order_from_signed_callback(self) -> None:
+    async def test_pay_notify_rejects_order_without_frozen_credit(self) -> None:
         webhook_module.settings.epay_api_url = "https://code.nxslq.top/"
         webhook_module.settings.epay_pid = "177938431"
         webhook_module.settings.epay_key = "j9J4loEx5Qy"
@@ -2267,11 +2320,11 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                 },
             )
 
-        self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.text, "success")
-        self.assertEqual(order.status, "confirmed")
-        self.assertEqual(user.balance, 5499)
-        self.assertEqual(fake_db.commits, 1)
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(response.text, "fail")
+        self.assertEqual(order.status, "pending")
+        self.assertEqual(user.balance, 500)
+        self.assertEqual(fake_db.commits, 0)
 
     async def test_user_detail_exposes_finance_summary(self) -> None:
         user = SimpleNamespace(
@@ -2319,6 +2372,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                 _FakeAllResult([(user, station_link, station)]),
                 _FakeScalarsResult([]),
                 _FakeEntityResult(None),
+                _FakeScalarsResult([]),
                 _FakeScalarsResult([]),
                 _FakeScalarsResult([]),
                 _FakeScalarsResult([]),
@@ -2452,6 +2506,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                 _FakeScalarsResult([]),
                 _FakeScalarsResult([]),
                 _FakeScalarsResult([]),
+                _FakeScalarsResult([]),
                 _FakeEntityResult(finance_summary),
             ],
             scalar_results=[0, 0],
@@ -2534,6 +2589,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                 _FakeAllResult([(user, None, None)]),
                 _FakeScalarsResult([]),
                 _FakeEntityResult(None),
+                _FakeScalarsResult([]),
                 _FakeScalarsResult([]),
                 _FakeScalarsResult([]),
                 _FakeScalarsResult([routing_override]),
@@ -2800,7 +2856,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                 _FakeEntityResult(sub),
                 _FakeScalarsResult([]),
                 _FakeScalarsResult([]),
-                _FakeEntityResult(finance_summary),
+                _FakeScalarsResult([]),
             ],
             scalar_results=[0, 0],
         )
@@ -2857,7 +2913,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                 _FakeEntityResult(None),
                 _FakeScalarsResult([]),
                 _FakeScalarsResult([]),
-                _FakeEntityResult(finance_summary),
+                _FakeScalarsResult([]),
             ],
             scalar_results=[0, 0],
         )
@@ -2921,7 +2977,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                 _FakeEntityResult(None),
                 _FakeScalarsResult([pack]),
                 _FakeScalarsResult([]),
-                _FakeEntityResult(finance_summary),
+                _FakeScalarsResult([]),
             ],
             scalar_results=[0, 0],
         )
@@ -3360,6 +3416,408 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             model_registry.clear_runtime_system_settings()
             model_registry._initialized = False
             app.dependency_overrides.pop(admin_module.get_db, None)
+
+    async def test_admin_billing_state_passes_wallet_snapshot_explicitly(self) -> None:
+        user = SimpleNamespace(id="u_1", balance=-50)
+        snapshot = {
+            "subscription": None,
+            "traffic_packs": [],
+            "credit_cents": 300,
+            "available_cents": 250,
+        }
+        fake_db = _FakeDB(execute_results=[_FakeScalarsResult([])])
+
+        with patch.object(
+            admin_module,
+            "get_available_balance_cents",
+            AsyncMock(return_value=snapshot),
+        ), patch.object(
+            admin_module,
+            "serialize_billing_state",
+            return_value={"ok": True},
+        ) as serialize:
+            result = await admin_module._admin_billing_state(fake_db, user)
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(serialize.call_args.kwargs["credit_cents"], 300)
+
+    async def test_customer_billing_state_passes_wallet_snapshot_explicitly(self) -> None:
+        user = SimpleNamespace(id="u_1", balance=-50)
+        snapshot = {
+            "subscription": None,
+            "traffic_packs": [],
+            "credit_cents": 300,
+            "available_cents": 250,
+        }
+
+        with patch.object(
+            payment_module,
+            "authenticate_user",
+            AsyncMock(return_value=user),
+        ), patch.object(
+            payment_module,
+            "get_available_balance_cents",
+            AsyncMock(return_value=snapshot),
+        ), patch.object(
+            payment_module,
+            "serialize_billing_state",
+            return_value={"ok": True},
+        ) as serialize:
+            result = await payment_module.billing_state(
+                request=SimpleNamespace(headers={}),
+                db=SimpleNamespace(),
+            )
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(serialize.call_args.kwargs["credit_cents"], 300)
+
+    async def test_balance_payload_passes_wallet_snapshot_explicitly(self) -> None:
+        cached_user = SimpleNamespace(id="u_1", _station_context={})
+        user = SimpleNamespace(
+            id="u_1",
+            balance=-50,
+            token_used=0,
+            input_tokens_used=0,
+            output_tokens_used=0,
+            token_limit=None,
+        )
+        snapshot = {
+            "subscription": None,
+            "traffic_packs": [],
+            "credit_cents": 300,
+            "available_cents": 250,
+        }
+        fake_db = SimpleNamespace(
+            execute=AsyncMock(return_value=_FakeEntityResult(user)),
+        )
+
+        with patch.object(
+            openai_module,
+            "authenticate_user",
+            AsyncMock(return_value=cached_user),
+        ), patch.object(
+            openai_module.usage_buffer,
+            "get_pending_tokens",
+            AsyncMock(return_value=0),
+        ), patch.object(
+            openai_module.usage_buffer,
+            "get_pending_cost",
+            AsyncMock(return_value=0),
+        ), patch.object(
+            billing_module,
+            "get_available_balance_cents",
+            AsyncMock(return_value=snapshot),
+        ), patch.object(
+            billing_module,
+            "serialize_billing_state",
+            return_value={"ok": True},
+        ) as serialize:
+            result = await openai_module.get_balance(
+                request=SimpleNamespace(headers={}),
+                db=fake_db,
+            )
+
+        self.assertEqual(result.billing, {"ok": True})
+        self.assertEqual(result.credit_wallet_cents, 300)
+        self.assertEqual(result.credit_wallet_usd, 3.0)
+        self.assertEqual(result.available_cents, 250)
+        self.assertEqual(result.available_usd, 2.5)
+        self.assertEqual(serialize.call_args.kwargs["credit_cents"], 300)
+
+    async def test_payment_confirmation_available_uses_full_wallet_snapshot(self) -> None:
+        user = SimpleNamespace(id="u_1", balance=-50)
+        subscription = SimpleNamespace(
+            status="active",
+            paid_until=datetime(2026, 8, 1),
+            quota_cents=100,
+            used_cents=0,
+        )
+        result = {"user": user, "subscription": subscription}
+        snapshot = {"available_cents": 350, "credit_cents": 300}
+
+        with patch.object(
+            payment_module,
+            "get_available_balance_cents",
+            AsyncMock(return_value=snapshot),
+        ) as get_available:
+            attached = await payment_module._attach_available_balance(result, SimpleNamespace())
+
+        self.assertEqual(attached["available_cents"], 350)
+        get_available.assert_awaited_once()
+
+    def test_billing_payload_exposes_canonical_wallet_and_only_credit_products(self) -> None:
+        now = datetime(2026, 7, 12, 12, 0, 0)
+        subscription = SimpleNamespace(
+            plan_id="monthly_basic",
+            status="active",
+            period_start=datetime(2026, 7, 1),
+            period_end=datetime(2026, 7, 31),
+            paid_until=datetime(2026, 7, 31),
+            quota_cents=40000,
+            used_cents=35000,
+        )
+        pack = SimpleNamespace(
+            id="tp_1",
+            product_id="addon_boost",
+            status="active",
+            original_cents=1000,
+            remaining_cents=700,
+            expires_at=datetime(2026, 8, 1),
+            created_at=datetime(2026, 7, 2),
+        )
+        user = SimpleNamespace(id="u_1", balance=-50)
+
+        payload = billing_module.serialize_billing_state(
+            subscription,
+            [pack],
+            user,
+            now=now,
+            credit_cents=300,
+        )
+
+        self.assertEqual(payload["credit_wallet"]["remaining_cents"], 300)
+        self.assertEqual(payload["credit_wallet"]["remaining_usd"], 3.0)
+        self.assertEqual(payload["credit_balance"], payload["credit_wallet"])
+        self.assertEqual(payload["available"]["remaining_cents"], 5950)
+        self.assertEqual(set(payload["products"]), {"credits"})
+        self.assertEqual(len(payload["products"]["credits"]), 3)
+        self.assertNotIn("monthly", payload["products"])
+        self.assertNotIn("addons", payload["products"])
+
+    async def test_admin_user_payload_projects_wallet_and_total_available_into_finance(self) -> None:
+        user = SimpleNamespace(
+            id="u_1",
+            username="alice",
+            email="alice@example.com",
+            email_verified_at=None,
+            external_id="ext_alice",
+            status="active",
+            balance=-50,
+            token_limit=None,
+            token_used=0,
+            input_tokens_used=0,
+            output_tokens_used=0,
+            request_limit_per_minute=None,
+            request_limit_per_day=None,
+            created_at=datetime(2026, 7, 1),
+            updated_at=datetime(2026, 7, 12),
+        )
+        billing = {
+            "subscription": {"active": False},
+            "traffic_packs": {"remaining_cents": 0, "items": []},
+            "legacy_balance": {"remaining_cents": -50, "remaining_usd": -0.5},
+            "credit_wallet": {"remaining_cents": 300, "remaining_usd": 3.0},
+            "available": {"remaining_cents": 250, "remaining_usd": 2.5},
+        }
+        finance = {"current_balance_cents": -50, "current_balance_usd": -0.5}
+        fake_db = _FakeDB(
+            execute_results=[
+                _FakeAllResult([(user, None, None)]),
+                _FakeScalarsResult([]),
+                _FakeScalarsResult([]),
+                _FakeScalarsResult([]),
+            ]
+        )
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+        with patch.object(
+            admin_module,
+            "_admin_billing_state",
+            AsyncMock(return_value=billing),
+        ), patch.object(
+            admin_module,
+            "build_user_finance_snapshot",
+            AsyncMock(return_value=finance),
+        ):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                response = await client.get("/admin/users/u_1")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["credit_wallet_cents"], 300)
+        self.assertEqual(payload["credit_wallet_usd"], 3.0)
+        self.assertEqual(payload["available_cents"], 250)
+        self.assertEqual(payload["available_usd"], 2.5)
+        self.assertEqual(payload["billing_summary"]["credit_wallet_cents"], 300)
+        self.assertEqual(payload["finance_summary"]["current_credit_wallet_cents"], 300)
+        self.assertEqual(payload["finance_summary"]["current_available_cents"], 250)
+
+    async def test_finance_overview_aggregates_all_balance_sources_without_per_user_queries(self) -> None:
+        user = SimpleNamespace(id="u_1", balance=0)
+        fake_db = _FakeDB(
+            execute_results=[
+                _FakeScalarsResult([]),
+                _FakeScalarsResult([user]),
+            ],
+            scalar_results=[0, 0, 0, 0, 0, 0, -50, 100, 0, 300],
+        )
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+        with patch.object(
+            admin_module,
+            "get_available_balance_cents",
+            AsyncMock(return_value={"available_cents": 350}),
+        ) as get_available:
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                response = await client.get("/admin/finance/overview")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        totals = response.json()["totals"]
+        self.assertEqual(totals["available_cents"], 350)
+        self.assertEqual(totals["credit_wallet_cents"], 300)
+        self.assertEqual(totals["legacy_balance_cents"], -50)
+        subscription_query = str(fake_db.queries[8])
+        self.assertIn("CASE", subscription_query)
+        self.assertIn("period_start IS NULL", subscription_query)
+        self.assertIn("period_end IS NULL", subscription_query)
+        self.assertIn("period_end <=", subscription_query)
+        self.assertIn("greatest", subscription_query.lower())
+        self.assertNotIn("status =", subscription_query)
+        get_available.assert_not_awaited()
+
+    async def test_finance_summary_batches_billing_queries_for_multiple_users(self) -> None:
+        user_1 = SimpleNamespace(
+            id="u_1",
+            username="alice",
+            email="alice@example.com",
+            email_verified_at=None,
+            external_id="ext_alice",
+            created_at=datetime(2026, 7, 1),
+            status="active",
+            balance=-50,
+        )
+        user_2 = SimpleNamespace(
+            id="u_2",
+            username="bob",
+            email="bob@example.com",
+            email_verified_at=None,
+            external_id="ext_bob",
+            created_at=datetime(2026, 7, 2),
+            status="active",
+            balance=0,
+        )
+        subscription = SimpleNamespace(
+            user_id="u_1",
+            plan_id="monthly_light",
+            status="active",
+            period_start=datetime(2025, 12, 1),
+            period_end=datetime(2026, 1, 1),
+            paid_until=datetime(2099, 7, 31),
+            quota_cents=100,
+            used_cents=80,
+        )
+        active_pack = SimpleNamespace(
+            id="tp_1",
+            user_id="u_1",
+            product_id="addon_boost",
+            status="active",
+            original_cents=50,
+            remaining_cents=50,
+            expires_at=datetime(2099, 8, 1),
+            created_at=datetime(2026, 7, 2),
+        )
+        expired_pack = SimpleNamespace(
+            id="tp_2",
+            user_id="u_2",
+            product_id="addon_boost",
+            status="active",
+            original_cents=90,
+            remaining_cents=90,
+            expires_at=datetime(2026, 1, 1),
+            created_at=datetime(2026, 1, 1),
+        )
+        credit_1 = SimpleNamespace(user_id="u_1", remaining_cents=300)
+        credit_2 = SimpleNamespace(user_id="u_2", remaining_cents=200)
+        fake_db = _FakeDB(execute_results=[
+            _FakeScalarsResult([user_1, user_2]),
+            _FakeScalarsResult([]),
+            _FakeAllResult([]),
+            _FakeScalarsResult([subscription]),
+            _FakeScalarsResult([active_pack]),
+            _FakeScalarsResult([active_pack, expired_pack]),
+            _FakeScalarsResult([credit_1, credit_2]),
+        ])
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+        with patch.object(
+            admin_module,
+            "_admin_billing_state",
+            AsyncMock(side_effect=AssertionError("finance summary must not query billing per user")),
+        ) as per_user_billing:
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                response = await client.get("/admin/finance/summary")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        rows = {row["user_id"]: row for row in response.json()}
+        self.assertEqual(rows["u_1"]["credit_wallet_cents"], 300)
+        self.assertEqual(rows["u_1"]["available_cents"], 400)
+        self.assertEqual(rows["u_1"]["billing"]["subscription"]["remaining_cents"], 100)
+        self.assertEqual(subscription.used_cents, 0)
+        self.assertEqual(rows["u_2"]["credit_wallet_cents"], 200)
+        self.assertEqual(rows["u_2"]["available_cents"], 200)
+        self.assertEqual(rows["u_2"]["billing"]["traffic_packs"]["remaining_cents"], 0)
+        self.assertEqual(len(fake_db.queries), 7)
+        per_user_billing.assert_not_awaited()
+
+    async def test_batch_billing_limits_recent_pack_history_per_user_with_window_query(self) -> None:
+        user = SimpleNamespace(id="u_1", balance=0)
+        active_pack = SimpleNamespace(
+            id="tp_active",
+            user_id="u_1",
+            product_id="addon_boost",
+            status="active",
+            original_cents=100,
+            remaining_cents=100,
+            expires_at=datetime(2099, 8, 1),
+            created_at=datetime(2020, 1, 1),
+        )
+        recent_history = [
+            SimpleNamespace(
+                id=f"tp_history_{index:02d}",
+                user_id="u_1",
+                product_id="addon_boost",
+                status="depleted",
+                original_cents=100,
+                remaining_cents=0,
+                expires_at=datetime(2026, 1, 1),
+                created_at=datetime(2026, 6, 1) - timedelta(minutes=index),
+            )
+            for index in range(50)
+        ]
+        fake_db = _FakeDB(execute_results=[
+            _FakeScalarsResult([]),
+            _FakeScalarsResult([active_pack]),
+            _FakeScalarsResult(recent_history),
+            _FakeScalarsResult([]),
+        ])
+
+        billing_by_user = await admin_module._admin_billing_states_batch(fake_db, [user])
+
+        all_items = billing_by_user["u_1"]["traffic_packs"]["all_items"]
+        self.assertEqual(len(all_items), 51)
+        self.assertEqual(all_items[0]["id"], "tp_active")
+        recent_query = fake_db.queries[2].compile()
+        recent_query_text = str(recent_query)
+        self.assertIn("row_number() OVER", recent_query_text)
+        self.assertIn("PARTITION BY coincoin_traffic_pack_balances.user_id", recent_query_text)
+        self.assertIn("created_at DESC", recent_query_text)
+        self.assertIn("id DESC", recent_query_text)
+        self.assertIn(50, recent_query.params.values())
 
 
 if __name__ == "__main__":

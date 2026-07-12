@@ -59,6 +59,35 @@ ADMIN_UI_PATH = Path(__file__).parent / "static" / "admin.html"
 ADMIN_UPLOAD_DIR = Path(settings.admin_upload_dir)
 
 
+def _mysql_error_number(exc: Exception) -> int | None:
+    for candidate in (getattr(exc, "orig", None), exc):
+        args = getattr(candidate, "args", ())
+        if not args:
+            continue
+        value = args[0]
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str) and value.isdigit():
+            return int(value)
+    return None
+
+
+def _is_index_already_exists_error(exc: Exception) -> bool:
+    error_number = _mysql_error_number(exc)
+    if error_number is not None:
+        return error_number == 1061
+    message = f"{exc} {getattr(exc, 'orig', '')}".lower()
+    return "duplicate key name" in message or "already exists" in message
+
+
+def _index_migration_must_abort(exc: Exception, ddl: str) -> bool:
+    if _is_index_already_exists_error(exc):
+        return False
+    return _mysql_error_number(exc) == 1062 or ddl.lstrip().upper().startswith(
+        "CREATE UNIQUE INDEX"
+    )
+
+
 async def _run_migrations(conn):
     """Add columns introduced after initial create_all (safe to re-run)."""
     from sqlalchemy import text
@@ -66,6 +95,9 @@ async def _run_migrations(conn):
         ("coincoin_payment_orders", "trade_no", "VARCHAR(128) NULL"),
         ("coincoin_payment_orders", "pay_url", "VARCHAR(512) NULL"),
         ("coincoin_payment_orders", "product_id", "VARCHAR(64) DEFAULT ''"),
+        ("coincoin_payment_orders", "catalog_version", "VARCHAR(32) NULL"),
+        ("coincoin_payment_orders", "purchase_action", "VARCHAR(32) NULL"),
+        ("coincoin_payment_orders", "promised_credit_cents", "BIGINT NULL"),
         ("coincoin_payment_orders", "station_id", "VARCHAR(32) NULL"),
         ("coincoin_payment_orders", "station_owner_user_id", "VARCHAR(32) NULL"),
         ("coincoin_payment_orders", "station_commission_rate", "DOUBLE DEFAULT 0"),
@@ -137,11 +169,14 @@ async def _run_migrations(conn):
         ("coincoin_image_jobs", "completed_at", "DATETIME NULL"),
         ("coincoin_image_jobs", "updated_at", "DATETIME DEFAULT CURRENT_TIMESTAMP"),
         ("coincoin_video_jobs", "api_key_id", "VARCHAR(32) NULL"),
+        ("coincoin_video_jobs", "billable_sku", "VARCHAR(128) DEFAULT ''"),
         ("coincoin_video_jobs", "subscription_debit_cents", "BIGINT DEFAULT 0"),
         ("coincoin_video_jobs", "subscription_id", "VARCHAR(32) DEFAULT ''"),
         ("coincoin_video_jobs", "subscription_plan_id", "VARCHAR(64) DEFAULT ''"),
         ("coincoin_video_jobs", "traffic_pack_debit_cents", "BIGINT DEFAULT 0"),
         ("coincoin_video_jobs", "traffic_pack_debits_json", "TEXT NULL"),
+        ("coincoin_video_jobs", "credit_debit_cents", "BIGINT NOT NULL DEFAULT 0"),
+        ("coincoin_video_jobs", "credit_allocations_json", "LONGTEXT NULL"),
         ("coincoin_video_jobs", "legacy_debit_cents", "BIGINT DEFAULT 0"),
         ("coincoin_stations", "commission_rate", "DOUBLE DEFAULT 0.15"),
         ("coincoin_stations", "mode", "VARCHAR(32) DEFAULT 'commission_station'"),
@@ -204,6 +239,7 @@ async def _run_migrations(conn):
         "ALTER TABLE coincoin_media_artifacts MODIFY COLUMN route_reason VARCHAR(128) DEFAULT ''",
         "ALTER TABLE coincoin_image_jobs MODIFY COLUMN route_reason VARCHAR(128) DEFAULT ''",
         "ALTER TABLE coincoin_video_jobs MODIFY COLUMN route_reason VARCHAR(128) DEFAULT ''",
+        "ALTER TABLE coincoin_video_jobs MODIFY COLUMN credit_allocations_json LONGTEXT NULL",
     ]
     for sql in ddl_migrations:
         try:
@@ -229,13 +265,44 @@ async def _run_migrations(conn):
             await conn.execute(text(ddl))
             logger.info("index migration OK: %s.%s", table, index_name)
         except Exception as exc:
-            exc_msg = str(exc).lower()
-            if "duplicate" in exc_msg or "already exists" in exc_msg:
+            if _is_index_already_exists_error(exc):
                 logger.debug("index %s.%s already exists, skipping", table, index_name)
+            elif _index_migration_must_abort(exc, ddl):
+                logger.error("required index migration failed for %s.%s: %s", table, index_name, exc)
+                raise
             else:
                 logger.warning("index migration failed for %s.%s: %s", table, index_name, exc)
 
     table_migrations = [
+        """
+        CREATE TABLE coincoin_credit_balances (
+            id VARCHAR(32) PRIMARY KEY,
+            user_id VARCHAR(32) NOT NULL,
+            source_type VARCHAR(32) NOT NULL DEFAULT '',
+            source_id VARCHAR(128) NOT NULL DEFAULT '',
+            product_id VARCHAR(64) NOT NULL DEFAULT '',
+            status VARCHAR(16) NOT NULL DEFAULT 'active',
+            original_cents BIGINT NOT NULL,
+            remaining_cents BIGINT NOT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_credit_balances_source (source_type, source_id),
+            CONSTRAINT ck_credit_balances_original_positive CHECK (original_cents > 0),
+            CONSTRAINT ck_credit_balances_remaining_range CHECK (remaining_cents >= 0 AND remaining_cents <= original_cents),
+            CONSTRAINT ck_credit_balances_status CHECK (status IN ('active', 'depleted'))
+        )
+        """,
+        """
+        CREATE TABLE coincoin_credit_allocations (
+            id VARCHAR(32) PRIMARY KEY,
+            user_id VARCHAR(32) NOT NULL,
+            credit_balance_id VARCHAR(32) NOT NULL,
+            amount_cents BIGINT NOT NULL,
+            refunded_at DATETIME NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT ck_credit_allocations_amount_positive CHECK (amount_cents > 0)
+        )
+        """,
         """
         CREATE TABLE coincoin_user_subscriptions (
             id VARCHAR(32) PRIMARY KEY,
@@ -498,6 +565,7 @@ async def _run_migrations(conn):
             status VARCHAR(16) DEFAULT 'queued',
             endpoint VARCHAR(32) DEFAULT 'videos/generations',
             public_model VARCHAR(128) DEFAULT '',
+            billable_sku VARCHAR(128) DEFAULT '',
             provider_model VARCHAR(128) DEFAULT '',
             route_reason VARCHAR(128) DEFAULT '',
             upstream_task_id VARCHAR(128) DEFAULT '',
@@ -517,6 +585,8 @@ async def _run_migrations(conn):
             subscription_plan_id VARCHAR(64) DEFAULT '',
             traffic_pack_debit_cents BIGINT DEFAULT 0,
             traffic_pack_debits_json TEXT NULL,
+            credit_debit_cents BIGINT NOT NULL DEFAULT 0,
+            credit_allocations_json LONGTEXT NULL,
             legacy_debit_cents BIGINT DEFAULT 0,
             attempt_count BIGINT DEFAULT 0,
             duration_ms BIGINT DEFAULT 0,
@@ -801,6 +871,16 @@ async def _run_migrations(conn):
                 logger.warning("table migration failed: %s", exc)
 
     index_migrations = [
+        "CREATE UNIQUE INDEX uq_credit_balances_source ON coincoin_credit_balances (source_type, source_id)",
+        "CREATE INDEX ix_credit_balances_user_id ON coincoin_credit_balances (user_id)",
+        "CREATE INDEX ix_credit_balances_product_id ON coincoin_credit_balances (product_id)",
+        "CREATE INDEX ix_credit_balances_status ON coincoin_credit_balances (status)",
+        "CREATE INDEX ix_credit_balances_user_spendable ON coincoin_credit_balances (user_id, status, created_at, id)",
+        "CREATE INDEX ix_credit_allocations_user_id ON coincoin_credit_allocations (user_id)",
+        "CREATE INDEX ix_credit_allocations_credit_balance_id ON coincoin_credit_allocations (credit_balance_id)",
+        "CREATE INDEX ix_credit_allocations_refunded_at ON coincoin_credit_allocations (refunded_at)",
+        "CREATE INDEX ix_credit_allocations_user_created ON coincoin_credit_allocations (user_id, created_at)",
+        "CREATE INDEX ix_credit_allocations_balance_created ON coincoin_credit_allocations (credit_balance_id, created_at)",
         "CREATE INDEX ix_request_logs_user_key_created ON coincoin_request_logs (user_id, api_key_id, created_at)",
         "CREATE INDEX ix_request_logs_station_created ON coincoin_request_logs (station_id, created_at)",
         "CREATE INDEX ix_request_logs_channel_created ON coincoin_request_logs (channel_id, created_at)",
@@ -815,9 +895,11 @@ async def _run_migrations(conn):
             await conn.execute(text(sql))
             logger.info("index migration OK: %s", sql)
         except Exception as exc:
-            exc_msg = str(exc).lower()
-            if "duplicate" in exc_msg or "already exists" in exc_msg:
+            if _is_index_already_exists_error(exc):
                 logger.debug("index already exists, skipping: %s", sql)
+            elif _index_migration_must_abort(exc, sql):
+                logger.error("required index migration failed for [%s]: %s", sql, exc)
+                raise
             else:
                 logger.warning("index migration failed for [%s]: %s", sql, exc)
 

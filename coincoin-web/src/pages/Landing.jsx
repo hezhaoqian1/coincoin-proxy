@@ -145,10 +145,10 @@ export default function Landing() {
                 </div>
             </section>
 
-            <section className="landing-plans-section" aria-label="套餐">
+            <section className="landing-plans-section" aria-label="永久美金额度">
                 <div className="container">
                     <div className="landing-plans-head">
-                        <h2>套餐</h2>
+                        <h2>永久美金额度</h2>
                     </div>
                     <div className="landing-plans-grid">
                         {PRICING_PLANS.map((plan) => (

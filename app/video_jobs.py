@@ -5,7 +5,7 @@ import logging
 import secrets
 import time
 from copy import deepcopy
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Dict, Optional
 from urllib.parse import urlsplit, urlunsplit
 
@@ -45,6 +45,7 @@ from .proxy import (
 from .router import ModelConfig, registry as model_registry
 from .security import generate_id
 from .config import settings
+from .credit_wallet import grant_permanent_credit, refund_credit_allocations
 from .station_runtime import public_model_pricing_kwargs, resolve_station_model_for_user
 from .user_model_overrides import apply_user_overrides_to_resolution
 from .usage_buffer import china_today, usage_buffer
@@ -61,6 +62,8 @@ JOB_STATUS_RUNNING = "running"
 JOB_STATUS_COMPLETED = "completed"
 JOB_STATUS_FAILED = "failed"
 TERMINAL_STATUSES = {JOB_STATUS_COMPLETED, JOB_STATUS_FAILED}
+VIDEO_SUBSCRIPTION_REFUND_SOURCE_TYPE = "video_subscription_refund"
+VIDEO_SUBSCRIPTION_REFUND_PRODUCT = "legacy_subscription_refund"
 SEEDANCE_RATIOS = {"16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "adaptive"}
 SEEDANCE_VIDEO_MODELS = {
     "seedance-v2-720p-video",
@@ -370,32 +373,100 @@ def _backend_for_job(job: VideoJob) -> Optional[ModelConfig]:
     return resolved.backend
 
 
-def _video_job_debit_total(job: VideoJob) -> int:
-    return (
-        int(getattr(job, "subscription_debit_cents", 0) or 0)
-        + int(getattr(job, "traffic_pack_debit_cents", 0) or 0)
-        + int(getattr(job, "legacy_debit_cents", 0) or 0)
-    )
-
-
 def _traffic_pack_debits_for_job(job: VideoJob) -> list[dict[str, Any]]:
-    raw = _json_loads(getattr(job, "traffic_pack_debits_json", None))
-    if not isinstance(raw, list):
+    saved_total = int(getattr(job, "traffic_pack_debit_cents", 0) or 0)
+    if saved_total < 0:
+        raise BillingError("video job traffic pack debit total is invalid", status_code=500)
+    if saved_total == 0:
         return []
+    raw = _json_loads(getattr(job, "traffic_pack_debits_json", None))
+    if not isinstance(raw, list) or not raw:
+        raise BillingError("video job traffic pack debit payload is missing", status_code=500)
     debits: list[dict[str, Any]] = []
+    seen_ids = set()
     for item in raw:
         if not isinstance(item, dict):
-            continue
-        cents = max(0, int(item.get("cents") or 0))
+            raise BillingError("video job traffic pack debit payload is invalid", status_code=500)
+        cents = item.get("cents")
         pack_id = str(item.get("id") or "").strip()
-        if cents <= 0 or not pack_id:
-            continue
+        if (
+            not pack_id
+            or pack_id in seen_ids
+            or isinstance(cents, bool)
+            or not isinstance(cents, int)
+            or cents <= 0
+        ):
+            raise BillingError("video job traffic pack debit payload is invalid", status_code=500)
+        seen_ids.add(pack_id)
         debits.append({
             "id": pack_id,
             "product_id": str(item.get("product_id") or "").strip(),
             "cents": cents,
         })
+    if sum(item["cents"] for item in debits) != saved_total:
+        raise BillingError("video job traffic pack debit amount mismatch", status_code=500)
     return debits
+
+
+def _credit_allocations_for_job(job: VideoJob) -> list[dict[str, Any]]:
+    raw = _json_loads(getattr(job, "credit_allocations_json", None))
+    if not isinstance(raw, list) or not raw:
+        raise BillingError("video job credit allocation payload is missing", status_code=500)
+    allocations = []
+    seen_ids = set()
+    for item in raw:
+        if not isinstance(item, dict):
+            raise BillingError("video job credit allocation payload is invalid", status_code=500)
+        allocation_id = str(item.get("allocation_id") or "").strip()
+        credit_balance_id = str(item.get("credit_balance_id") or "").strip()
+        amount_cents = item.get("amount_cents")
+        if (
+            not allocation_id
+            or allocation_id in seen_ids
+            or not credit_balance_id
+            or isinstance(amount_cents, bool)
+            or not isinstance(amount_cents, int)
+            or amount_cents <= 0
+        ):
+            raise BillingError("video job credit allocation payload is invalid", status_code=500)
+        seen_ids.add(allocation_id)
+        allocations.append(
+            {
+                "allocation_id": allocation_id,
+                "credit_balance_id": credit_balance_id,
+                "amount_cents": amount_cents,
+            }
+        )
+    return allocations
+
+
+def _video_job_billable_sku(job: VideoJob) -> str:
+    return str(getattr(job, "billable_sku", "") or getattr(job, "public_model", "") or "")
+
+
+def _utc_naive_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value.replace(tzinfo=None)
+    return value.astimezone(UTC).replace(tzinfo=None)
+
+
+def _subscription_pool_unavailable_for_refund(job: VideoJob, sub: UserSubscription) -> bool:
+    charged_at = _utc_naive_datetime(
+        getattr(job, "started_at", None) or getattr(job, "created_at", None)
+    )
+    current_period_start = _utc_naive_datetime(getattr(sub, "period_start", None))
+    current_period_end = _utc_naive_datetime(getattr(sub, "period_end", None))
+    paid_until = _utc_naive_datetime(getattr(sub, "paid_until", None))
+    now = datetime.now(UTC).replace(tzinfo=None)
+    return bool(
+        str(getattr(sub, "status", "") or "") != "active"
+        or not paid_until
+        or paid_until <= now
+        or (charged_at and current_period_start and current_period_start > charged_at)
+        or (current_period_end and current_period_end <= now)
+    )
 
 
 async def _record_video_usage_daily(
@@ -438,6 +509,7 @@ def _create_video_request_log(
     status_code: int,
     upstream_request_id: str,
     cost_cents: int,
+    billable_sku: str | None = None,
 ) -> RequestLog:
     pricing = public_model_pricing_kwargs(public_model)
     channel = _channel_usage_kwargs(used_cfg)
@@ -452,7 +524,7 @@ def _create_video_request_log(
         usage_unit_type="videos",
         usage_unit_count=1,
         video_count=1,
-        billable_sku=public_model.billable_sku or public_model.public_id,
+        billable_sku=billable_sku or public_model.billable_sku or public_model.public_id,
         upstream_request_id=upstream_request_id,
         channel_id=channel.get("channel_id", ""),
         channel_type=channel.get("channel_type", ""),
@@ -482,6 +554,7 @@ async def _record_video_creation_usage(
     status_code: int,
     upstream_request_id: str,
     cost_cents: int,
+    billable_sku: str,
 ) -> None:
     db.add(
         _create_video_request_log(
@@ -494,6 +567,7 @@ async def _record_video_creation_usage(
             status_code=status_code,
             upstream_request_id=upstream_request_id,
             cost_cents=cost_cents,
+            billable_sku=billable_sku,
         )
     )
     await _record_video_usage_daily(
@@ -547,6 +621,8 @@ async def _charge_video_job_once(
             "subscription_plan_id": "",
             "traffic_pack_cents": 0,
             "traffic_pack_debits": [],
+            "credit_cents": 0,
+            "credit_allocations": [],
             "legacy_cents": 0,
         }
     locked_user = (
@@ -565,47 +641,141 @@ async def _charge_video_job_once(
     )
 
 
-async def _refund_failed_job_once(job: VideoJob, db: AsyncSession) -> None:
-    if int(job.refunded_cents or 0) > 0:
-        return
-    amount = _video_job_debit_total(job)
+async def _lock_video_job_for_update(db: AsyncSession, job_id: str) -> VideoJob | None:
+    query = (
+        select(VideoJob)
+        .where(VideoJob.id == job_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    return (await db.execute(query)).scalar_one_or_none()
+
+
+async def _refund_failed_job_once(
+    job: VideoJob,
+    db: AsyncSession,
+    *,
+    job_locked: bool = False,
+) -> VideoJob:
+    locked_job = job if job_locked else await _lock_video_job_for_update(db, job.id)
+    if not locked_job:
+        raise BillingError("video job not found for refund", status_code=500)
+    if int(locked_job.refunded_cents or 0) > 0:
+        return locked_job
+    job = locked_job
+    subscription_cents = int(getattr(job, "subscription_debit_cents", 0) or 0)
+    traffic_pack_cents = int(getattr(job, "traffic_pack_debit_cents", 0) or 0)
+    credit_cents = int(getattr(job, "credit_debit_cents", 0) or 0)
+    legacy_cents = int(getattr(job, "legacy_debit_cents", 0) or 0)
+    if min(subscription_cents, traffic_pack_cents, credit_cents, legacy_cents) < 0:
+        raise BillingError("video job debit totals must be non-negative", status_code=500)
+    amount = subscription_cents + traffic_pack_cents + credit_cents + legacy_cents
+    charged_cents = int(getattr(job, "charged_cents", 0) or 0)
+    if charged_cents < 0 or (amount > 0 and amount != charged_cents):
+        raise BillingError("video job charged and debit totals do not reconcile", status_code=500)
     if amount <= 0:
-        return
+        return job
+    subscription_id = str(getattr(job, "subscription_id", "") or "").strip()
+    if subscription_cents > 0 and not subscription_id:
+        raise BillingError("video job subscription debit reference is invalid", status_code=500)
+    traffic_pack_debits = _traffic_pack_debits_for_job(job)
+    credit_allocations = []
+    if credit_cents > 0:
+        credit_allocations = _credit_allocations_for_job(job)
+        if sum(item["amount_cents"] for item in credit_allocations) != credit_cents:
+            raise BillingError("video job credit allocation amount mismatch", status_code=500)
+
     user = (
         await db.execute(select(User).where(User.id == job.user_id).with_for_update())
     ).scalar_one_or_none()
     if not user:
-        return
+        raise BillingError("video job refund user not found", status_code=500)
 
-    refunded = 0
-    subscription_cents = int(getattr(job, "subscription_debit_cents", 0) or 0)
-    if subscription_cents > 0 and str(getattr(job, "subscription_id", "") or "").strip():
+    sub = None
+    subscription_refund_to_credit = False
+    if subscription_cents > 0:
         sub = (
             await db.execute(
                 select(UserSubscription)
-                .where(UserSubscription.id == job.subscription_id)
+                .where(UserSubscription.id == subscription_id)
                 .with_for_update()
             )
         ).scalar_one_or_none()
-        if sub:
-            sub.used_cents = max(0, int(sub.used_cents or 0) - subscription_cents)
-            refunded += subscription_cents
-            add_billing_ledger(
-                db,
-                user_id=job.user_id,
-                entry_type="usage_subscription_refund",
-                amount_cents=subscription_cents,
-                source_type="video_job",
-                source_id=job.id,
-                product_id=job.subscription_plan_id,
-                balance_after_cents=available_subscription_cents(sub),
-                note=f"Seedance task failed: {job.upstream_task_id or job.id}",
-            )
+        if not sub or str(getattr(sub, "user_id", "") or "") != str(job.user_id):
+            raise BillingError("video job subscription debit reference mismatch", status_code=500)
+        subscription_refund_to_credit = _subscription_pool_unavailable_for_refund(job, sub)
+        if (
+            not subscription_refund_to_credit
+            and int(getattr(sub, "used_cents", 0) or 0) < subscription_cents
+        ):
+            raise BillingError("video job subscription debit reference mismatch", status_code=500)
 
-    for debit in _traffic_pack_debits_for_job(job):
+    locked_pack_debits = []
+    for debit in sorted(traffic_pack_debits, key=lambda item: item["id"]):
         pack = await get_traffic_pack_for_update(db, debit["id"])
-        if not pack:
-            continue
+        if (
+            not pack
+            or str(getattr(pack, "user_id", "") or "") != str(job.user_id)
+            or int(getattr(pack, "remaining_cents", 0) or 0) + debit["cents"]
+            > int(getattr(pack, "original_cents", 0) or 0)
+        ):
+            raise BillingError("video job traffic pack debit reference mismatch", status_code=500)
+        locked_pack_debits.append((pack, debit))
+
+    refunded = 0
+    if credit_cents > 0:
+        credit_refund = await refund_credit_allocations(
+            db,
+            user_id=job.user_id,
+            allocation_ids=[item["allocation_id"] for item in credit_allocations],
+            expected_allocations=credit_allocations,
+        )
+        credit_refunded = int(credit_refund.get("refunded_cents", 0) or 0)
+        if credit_refunded != credit_cents:
+            raise BillingError("video job credit refund amount mismatch", status_code=500)
+        refunded += credit_refunded
+
+    if sub and subscription_refund_to_credit:
+        fallback_product_id = (
+            str(getattr(job, "subscription_plan_id", "") or "").strip()
+            or VIDEO_SUBSCRIPTION_REFUND_PRODUCT
+        )
+        fallback_balance = await grant_permanent_credit(
+            db,
+            user_id=job.user_id,
+            source_type=VIDEO_SUBSCRIPTION_REFUND_SOURCE_TYPE,
+            source_id=job.id,
+            amount_cents=subscription_cents,
+            product_id=fallback_product_id,
+        )
+        refunded += subscription_cents
+        add_billing_ledger(
+            db,
+            user_id=job.user_id,
+            entry_type="usage_subscription_refund_credit",
+            amount_cents=subscription_cents,
+            source_type="video_job",
+            source_id=job.id,
+            product_id=fallback_product_id,
+            balance_after_cents=int(getattr(fallback_balance, "remaining_cents", 0) or 0),
+            note=f"Subscription period rolled over before Seedance refund: {job.upstream_task_id or job.id}",
+        )
+    elif sub:
+        sub.used_cents = max(0, int(sub.used_cents or 0) - subscription_cents)
+        refunded += subscription_cents
+        add_billing_ledger(
+            db,
+            user_id=job.user_id,
+            entry_type="usage_subscription_refund",
+            amount_cents=subscription_cents,
+            source_type="video_job",
+            source_id=job.id,
+            product_id=job.subscription_plan_id,
+            balance_after_cents=available_subscription_cents(sub),
+            note=f"Seedance task failed: {job.upstream_task_id or job.id}",
+        )
+
+    for pack, debit in locked_pack_debits:
         cents = int(debit["cents"] or 0)
         pack.remaining_cents = int(pack.remaining_cents or 0) + cents
         if str(getattr(pack, "status", "") or "").strip() == "depleted" and pack.remaining_cents > 0:
@@ -623,7 +793,6 @@ async def _refund_failed_job_once(job: VideoJob, db: AsyncSession) -> None:
             note=f"Seedance task failed: {job.upstream_task_id or job.id}",
         )
 
-    legacy_cents = int(getattr(job, "legacy_debit_cents", 0) or 0)
     if legacy_cents > 0:
         user.balance = int(user.balance or 0) + legacy_cents
         refunded += legacy_cents
@@ -638,8 +807,8 @@ async def _refund_failed_job_once(job: VideoJob, db: AsyncSession) -> None:
             note=f"Seedance task failed: {job.upstream_task_id or job.id}",
         )
 
-    if refunded <= 0:
-        return
+    if refunded != amount:
+        raise BillingError("video job refund total mismatch", status_code=500)
     job.refunded_cents = refunded
     db.add(
         RequestLog(
@@ -653,7 +822,7 @@ async def _refund_failed_job_once(job: VideoJob, db: AsyncSession) -> None:
             usage_unit_type="videos",
             usage_unit_count=-1,
             video_count=-1,
-            billable_sku=job.public_model,
+            billable_sku=_video_job_billable_sku(job),
             upstream_request_id=job.upstream_request_id,
             channel_id=job.channel_id,
             channel_type=job.channel_type,
@@ -674,6 +843,7 @@ async def _refund_failed_job_once(job: VideoJob, db: AsyncSession) -> None:
         cost_cents=-refunded,
     )
     await increment_finance_summary(db, job.user_id, consumed_cents=-refunded)
+    return job
 
 
 async def _create_video_generation(request: Request, db: AsyncSession) -> JSONResponse:
@@ -707,6 +877,7 @@ async def _create_video_generation(request: Request, db: AsyncSession) -> JSONRe
 
     public_model = resolved.public_model
     used_cfg = resolved.backend
+    frozen_billable_sku = public_model.billable_sku or public_model.public_id
     charged_cents = round(float(public_model.price_per_video_cents or 0.0))
     pending_cost = 0
     if settings.billing_mode == "balance" and charged_cents > 0:
@@ -798,6 +969,7 @@ async def _create_video_generation(request: Request, db: AsyncSession) -> JSONRe
         status=status,
         endpoint="videos/generations",
         public_model=public_model.public_id,
+        billable_sku=frozen_billable_sku,
         provider_model=used_cfg.model_id or _effective_provider_model,
         route_reason=resolved.route_reason,
         upstream_task_id=upstream_task_id,
@@ -816,6 +988,8 @@ async def _create_video_generation(request: Request, db: AsyncSession) -> JSONRe
         subscription_plan_id=str(debit_result.get("subscription_plan_id", "") or ""),
         traffic_pack_debit_cents=int(debit_result.get("traffic_pack_cents", 0) or 0),
         traffic_pack_debits_json=json.dumps(debit_result.get("traffic_pack_debits") or [], ensure_ascii=False),
+        credit_debit_cents=int(debit_result.get("credit_cents", 0) or 0),
+        credit_allocations_json=json.dumps(debit_result.get("credit_allocations") or [], ensure_ascii=False),
         legacy_debit_cents=int(debit_result.get("legacy_cents", 0) or 0),
         duration_ms=duration_ms,
         started_at=datetime.utcnow(),
@@ -833,6 +1007,7 @@ async def _create_video_generation(request: Request, db: AsyncSession) -> JSONRe
         status_code=upstream.status_code,
         upstream_request_id=upstream_request_id,
         cost_cents=charged_cents,
+        billable_sku=job.billable_sku,
     )
 
     if job.status == JOB_STATUS_FAILED:
@@ -844,20 +1019,23 @@ async def _create_video_generation(request: Request, db: AsyncSession) -> JSONRe
     return JSONResponse(status_code=202, content=_video_job_response(job))
 
 
-async def _refresh_video_job(job: VideoJob, db: AsyncSession) -> None:
+async def _refresh_video_job(job: VideoJob, db: AsyncSession) -> VideoJob:
     if job.status in TERMINAL_STATUSES:
-        return
+        return job
     used_cfg = _backend_for_job(job)
     if used_cfg is None:
-        job.status = JOB_STATUS_FAILED
-        job.error_code = "model_resolution_failed"
-        job.error_message = "Unable to resolve the original video generation model."
-        job.completed_at = datetime.utcnow()
-        await _refund_failed_job_once(job, db)
-        return
+        locked_job = await _lock_video_job_for_update(db, job.id)
+        if not locked_job:
+            raise BillingError("video job not found for terminal update", status_code=500)
+        if locked_job.status in TERMINAL_STATUSES or int(locked_job.refunded_cents or 0) > 0:
+            return locked_job
+        locked_job.status = JOB_STATUS_FAILED
+        locked_job.error_code = "model_resolution_failed"
+        locked_job.error_message = "Unable to resolve the original video generation model."
+        locked_job.completed_at = datetime.utcnow()
+        return await _refund_failed_job_once(locked_job, db, job_locked=True)
 
     started = time.monotonic()
-    job.attempt_count = int(job.attempt_count or 0) + 1
     try:
         client = await get_http_client()
         upstream = await client.post(
@@ -867,41 +1045,57 @@ async def _refresh_video_job(job: VideoJob, db: AsyncSession) -> None:
         )
     except Exception as exc:
         _record_channel_failure(used_cfg, error_code="upstream_transport_error")
-        job.error_code = "upstream_transport_error"
-        job.error_message = str(exc)
-        return
+        locked_job = await _lock_video_job_for_update(db, job.id)
+        if not locked_job:
+            raise BillingError("video job not found after upstream query", status_code=500)
+        if locked_job.status in TERMINAL_STATUSES or int(locked_job.refunded_cents or 0) > 0:
+            return locked_job
+        locked_job.attempt_count = int(locked_job.attempt_count or 0) + 1
+        locked_job.duration_ms = int((time.monotonic() - started) * 1000)
+        locked_job.error_code = "upstream_transport_error"
+        locked_job.error_message = str(exc)
+        return locked_job
 
-    job.duration_ms = int((time.monotonic() - started) * 1000)
-    if extract_upstream_request_id(upstream.headers):
-        job.upstream_request_id = extract_upstream_request_id(upstream.headers)
+    duration_ms = int((time.monotonic() - started) * 1000)
+    upstream_request_id = extract_upstream_request_id(upstream.headers)
     payload = await _read_json_response(upstream)
+    locked_job = await _lock_video_job_for_update(db, job.id)
+    if not locked_job:
+        raise BillingError("video job not found after upstream query", status_code=500)
+    if locked_job.status in TERMINAL_STATUSES or int(locked_job.refunded_cents or 0) > 0:
+        return locked_job
+    locked_job.attempt_count = int(locked_job.attempt_count or 0) + 1
+    locked_job.duration_ms = duration_ms
+    if upstream_request_id:
+        locked_job.upstream_request_id = upstream_request_id
+
     if upstream.status_code >= 400:
         _record_channel_failure(used_cfg, status_code=upstream.status_code)
-        job.error_code, job.error_message = _extract_error(payload)
-        return
+        locked_job.error_code, locked_job.error_message = _extract_error(payload)
+        return locked_job
 
     upstream_code = payload.get("code")
     if upstream_code not in (None, 0, "0"):
         _record_channel_failure(used_cfg, error_code=str(upstream_code or "upstream_error"))
-        job.status = JOB_STATUS_FAILED
-        job.error_code, job.error_message = _extract_error(payload)
-        job.completed_at = datetime.utcnow()
-        job.result_payload_json = json.dumps(payload, ensure_ascii=False)
-        await _refund_failed_job_once(job, db)
-        return
+        locked_job.status = JOB_STATUS_FAILED
+        locked_job.error_code, locked_job.error_message = _extract_error(payload)
+        locked_job.completed_at = datetime.utcnow()
+        locked_job.result_payload_json = json.dumps(payload, ensure_ascii=False)
+        return await _refund_failed_job_once(locked_job, db, job_locked=True)
 
-    _record_channel_success(used_cfg, duration_ms=job.duration_ms)
-    job.status = _extract_status(payload)
-    job.result_payload_json = json.dumps(payload, ensure_ascii=False)
-    if job.status == JOB_STATUS_FAILED:
-        job.error_code, job.error_message = _extract_error(payload)
-        job.completed_at = datetime.utcnow()
-        await _refund_failed_job_once(job, db)
-    elif job.status == JOB_STATUS_COMPLETED:
-        job.error_code = ""
-        job.error_message = ""
-        job.completed_at = datetime.utcnow()
-        await _record_completed_video_artifact(db, job, payload)
+    _record_channel_success(used_cfg, duration_ms=duration_ms)
+    locked_job.status = _extract_status(payload)
+    locked_job.result_payload_json = json.dumps(payload, ensure_ascii=False)
+    if locked_job.status == JOB_STATUS_FAILED:
+        locked_job.error_code, locked_job.error_message = _extract_error(payload)
+        locked_job.completed_at = datetime.utcnow()
+        return await _refund_failed_job_once(locked_job, db, job_locked=True)
+    if locked_job.status == JOB_STATUS_COMPLETED:
+        locked_job.error_code = ""
+        locked_job.error_message = ""
+        locked_job.completed_at = datetime.utcnow()
+        await _record_completed_video_artifact(db, locked_job, payload)
+    return locked_job
 
 
 async def _get_video_generation(job_id: str, request: Request, db: AsyncSession) -> JSONResponse:
@@ -915,7 +1109,7 @@ async def _get_video_generation(job_id: str, request: Request, db: AsyncSession)
     job = result.scalar_one_or_none()
     if not job:
         return _openai_error_response("Video job not found.", code="video_job_not_found", status_code=404)
-    await _refresh_video_job(job, db)
+    job = await _refresh_video_job(job, db)
     await db.commit()
     await db.refresh(job)
     return JSONResponse(content=_video_job_response(job))

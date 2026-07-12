@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, CheckConstraint, Date, DateTime, Float, ForeignKey, Index, String, Text
+from sqlalchemy import BigInteger, CheckConstraint, Date, DateTime, FetchedValue, Float, ForeignKey, Index, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
@@ -198,6 +198,9 @@ class PaymentOrder(Base):
     amount_rmb: Mapped[str] = mapped_column(String(16), default="0")
     add_balance_cents: Mapped[int] = mapped_column(BigInteger, default=0)
     product_id: Mapped[str] = mapped_column(String(64), default="")
+    catalog_version: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    purchase_action: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    promised_credit_cents: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     station_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True)
     station_owner_user_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True)
     station_commission_rate: Mapped[float] = mapped_column(Float, default=0.0)
@@ -228,7 +231,7 @@ class UserSubscription(Base):
 
 
 class TrafficPackBalance(Base):
-    """Purchased add-on balance. It can only be spent while a subscription is active."""
+    """Purchased legacy add-on balance with its own status and expiry."""
     __tablename__ = "coincoin_traffic_pack_balances"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
@@ -240,6 +243,75 @@ class TrafficPackBalance(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class CreditBalance(Base):
+    """Permanent USD credit batch with source provenance."""
+    __tablename__ = "coincoin_credit_balances"
+    __table_args__ = (
+        UniqueConstraint("source_type", "source_id", name="uq_credit_balances_source"),
+        CheckConstraint(
+            "original_cents > 0",
+            name="ck_credit_balances_original_positive",
+        ),
+        CheckConstraint(
+            "remaining_cents >= 0 AND remaining_cents <= original_cents",
+            name="ck_credit_balances_remaining_range",
+        ),
+        CheckConstraint(
+            "status IN ('active', 'depleted')",
+            name="ck_credit_balances_status",
+        ),
+        Index("ix_credit_balances_user_id", "user_id"),
+        Index("ix_credit_balances_product_id", "product_id"),
+        Index("ix_credit_balances_status", "status"),
+        Index("ix_credit_balances_user_spendable", "user_id", "status", "created_at", "id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(32))
+    source_type: Mapped[str] = mapped_column(String(32), default="", server_default=text("''"))
+    source_id: Mapped[str] = mapped_column(String(128), default="", server_default=text("''"))
+    product_id: Mapped[str] = mapped_column(String(64), default="", server_default=text("''"))
+    status: Mapped[str] = mapped_column(String(16), default="active", server_default=text("'active'"))
+    original_cents: Mapped[int] = mapped_column(BigInteger)
+    remaining_cents: Mapped[int] = mapped_column(BigInteger)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=text("CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"),
+        server_onupdate=FetchedValue(),
+        onupdate=func.now(),
+    )
+
+
+class CreditAllocation(Base):
+    """Exact credit-batch portion consumed by one wallet debit."""
+    __tablename__ = "coincoin_credit_allocations"
+    __table_args__ = (
+        CheckConstraint(
+            "amount_cents > 0",
+            name="ck_credit_allocations_amount_positive",
+        ),
+        Index("ix_credit_allocations_user_id", "user_id"),
+        Index("ix_credit_allocations_credit_balance_id", "credit_balance_id"),
+        Index("ix_credit_allocations_refunded_at", "refunded_at"),
+        Index("ix_credit_allocations_user_created", "user_id", "created_at"),
+        Index("ix_credit_allocations_balance_created", "credit_balance_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(32))
+    credit_balance_id: Mapped[str] = mapped_column(String(32))
+    amount_cents: Mapped[int] = mapped_column(BigInteger)
+    refunded_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
 
 
 class BillingLedgerEntry(Base):
@@ -826,6 +898,7 @@ class VideoJob(Base):
     status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
     endpoint: Mapped[str] = mapped_column(String(32), default="videos/generations")
     public_model: Mapped[str] = mapped_column(String(128), default="")
+    billable_sku: Mapped[str] = mapped_column(String(128), default="")
     provider_model: Mapped[str] = mapped_column(String(128), default="")
     route_reason: Mapped[str] = mapped_column(String(128), default="")
     upstream_task_id: Mapped[str] = mapped_column(String(128), default="", index=True)
@@ -845,6 +918,8 @@ class VideoJob(Base):
     subscription_plan_id: Mapped[str] = mapped_column(String(64), default="")
     traffic_pack_debit_cents: Mapped[int] = mapped_column(BigInteger, default=0)
     traffic_pack_debits_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    credit_debit_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    credit_allocations_json: Mapped[Optional[str]] = mapped_column(LONGTEXT, nullable=True)
     legacy_debit_cents: Mapped[int] = mapped_column(BigInteger, default=0)
     attempt_count: Mapped[int] = mapped_column(BigInteger, default=0)
     duration_ms: Mapped[int] = mapped_column(BigInteger, default=0)

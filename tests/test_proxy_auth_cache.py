@@ -80,6 +80,9 @@ class ProxyAuthCacheTests(unittest.IsolatedAsyncioTestCase):
             proxy_module.usage_buffer, "get_pending_cost_for_api_key", AsyncMock(return_value=0)
         ), patch.object(
             proxy_module.usage_buffer, "get_pending_cost", AsyncMock(return_value=0)
+        ), patch(
+            "app.billing.get_available_balance_cents",
+            AsyncMock(return_value={"available_cents": 100}),
         ):
             user = await proxy_module.authorize_request(request, db)
 
