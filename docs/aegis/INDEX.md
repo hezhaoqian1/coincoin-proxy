@@ -32,3 +32,7 @@ Entries are workspace records, not authoritative runtime decisions.
 | 2026-07-12 | artifact | docs/aegis/work/2026-07-12-pure-credit-pack-billing/resume-state-hint.json | 2026-07-12-pure-credit-pack-billing resume state hint |
 | 2026-07-12 | artifact | docs/aegis/work/2026-07-12-pure-credit-pack-billing/evidence-bundle-draft-baseline-python.json | 2026-07-12-pure-credit-pack-billing evidence baseline-python |
 | 2026-07-12 | artifact | docs/aegis/work/2026-07-12-pure-credit-pack-billing/evidence-bundle-draft-baseline-plan.json | 2026-07-12-pure-credit-pack-billing evidence baseline-plan |
+| 2026-07-12 | adr | docs/aegis/adr/ADR-0001-permanent-credit-wallet.md | ADR-0001 - Use permanent credit batches for all new paid value |
+| 2026-07-12 | baseline | docs/aegis/baseline/pure-credit-pack-billing.md | Pure credit pack billing baseline |
+| 2026-07-12 | artifact | docs/aegis/work/2026-07-12-pure-credit-pack-billing/gate-input-pack.json | 2026-07-12-pure-credit-pack-billing gate input pack |
+| 2026-07-12 | work | docs/aegis/work/2026-07-12-pure-credit-pack-billing/proof-bundle.md | 2026-07-12-pure-credit-pack-billing proof bundle |

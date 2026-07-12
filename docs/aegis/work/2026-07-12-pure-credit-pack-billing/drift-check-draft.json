@@ -5,15 +5,16 @@
   "baselineRefs": [
     "/Users/windupbird/.gstack/projects/hezhaoqian1-coincoin-proxy/windupbird-master-design-20260712-055650.md"
   ],
-  "scopeStatus": "Inside approved billing/payment/migration/UI scope.",
-  "compatStatus": "Legacy monthly and unmigrated balances explicitly preserved.",
-  "retirementStatus": "Old sales retire immediately; data paths retire only after migration/final paid_until.",
+  "scopeStatus": "Inside approved billing/payment/migration/UI/documentation and retirement scope.",
+  "compatStatus": "Legacy monthly, valid historical traffic packs, historical product metadata, and unmigrated scalar balances remain explicitly preserved.",
+  "retirementStatus": "Public monthly/add-on sales, proration, renew/reset/upgrade execution, monthly pack gate, and stale UI paths are retired; data owners retire only after migration/final paid_until.",
   "newRiskSignals": [
     "Task 1 lacks real MySQL multi-connection evidence for savepoints, row locks, and CHECK enforcement because local test credentials are rejected.",
     "Registered payment catalog versions must remain readable until no pending order references them.",
-    "Task 3 uses a temporary `_credit_wallet_cents` serializer bridge until Task 5 updates callers explicitly.",
     "Task 3 terminal job/refund locking lacks real InnoDB multi-session evidence.",
-    "Task 4 full-batch apply requires explicit row/item limits and still lacks real production sizing or InnoDB evidence."
+    "Task 4 full-batch apply requires explicit row/item limits and still lacks real production sizing or InnoDB evidence.",
+    "Admin batch history limiting relies on MySQL 8 window functions without live database verification.",
+    "Three unrelated video tests remain on the pre-existing RequestLog cache-pricing constructor mismatch."
   ],
   "decision": "continue"
 }

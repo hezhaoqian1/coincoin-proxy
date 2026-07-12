@@ -131,3 +131,58 @@
 - New risk signals:
 - The full-batch apply locks every scanned legacy row; explicit operator limits are mandatory but real production sizing is unknown.
 - Advisory decision: continue to UI/payload work; production migration remains a separate approval and evidence gate.
+
+## Task 5 Completion Update
+
+- Current todo: Task 6: retire stale sales logic and run final regression.
+- Active slice: Customer/admin payloads, permanent-credit Recharge UI, and fixed-query finance projection.
+- Completed todos:
+- Removed the `_credit_wallet_cents` serializer bridge; every production caller passes wallet cents explicitly.
+- Added canonical `credit_wallet`, total available fields, and bounded `credit_balance` compatibility aliases.
+- Recharge and the landing page expose only the three permanent-credit products.
+- Existing active monthly and usable historical traffic-pack entitlements are read-only on the customer page.
+- Admin user and finance lists use fixed-count batch queries, reproduce monthly rollover semantics, and retain active packs plus at most 50 recent historical packs per user.
+- Task 5 specification and code-quality reviews approved after rollover, N+1, bounded-history, and radio-keyboard fixes.
+- Evidence refs:
+- `tests/test_admin_usage_fields.py tests/test_credit_payments.py tests/test_subscription_billing.py`: 108 passed, 13 subtests passed before Task 6 retirement deletion.
+- Node 20 production build: 85 modules transformed; only the existing chunk-size advisory.
+- Blocked on: No Task 6 code blocker. Real MySQL window-query and multi-connection behavior remain unverified locally.
+- Next step: Delete unreachable monthly/add-on purchase helpers, update documentation/admin copy, and run full regression.
+
+## Task 5 Drift Check
+
+- Scope status: Inside approved admin/customer payload and UI boundary.
+- Compatibility status: Active old monthly and usable historical packs remain visible and spendable; no old product becomes purchasable.
+- Retirement status: Public monthly/add-on UI and serializer sales actions are gone; permanent wallet is canonical for new purchases.
+- New risk signals:
+- Admin batch history limiting relies on the project's MySQL 8 window-function baseline.
+- Advisory decision: continue to final retirement and regression.
+
+## Task 6 Completion Candidate
+
+- Current todo: Final verification, workspace proof bundle, architecture decision check, and branch handoff.
+- Active slice: Retirement evidence and final regression.
+- Completed todos:
+- Deleted unreachable monthly start/renew/reset/upgrade and traffic-pack purchase execution helpers.
+- Deleted legacy proration quote and generic legacy sales serialization branches.
+- Removed stale customer CSS and changed public landing/documentation language to permanent 美金额度.
+- Updated admin displays to include permanent wallet totals and to state that historical packs are usable without a monthly gate.
+- Classified remaining legacy product IDs as required active-record metadata and admin compatibility controls.
+- Updated stale test fakes to model the billing snapshot boundary explicitly instead of returning User rows for every query.
+- Evidence refs:
+- Full Python: 518 passed, 4 skipped, exactly 3 recorded baseline video failures; 162 subtests passed.
+- Frontend Node 20 build: 85 modules transformed and built successfully.
+- `usage-quota-service`: `go test ./...` passed.
+- Admin inline JavaScript syntax check and Python compilation passed.
+- Blocked on: No code blocker. Production migration apply, live deployment, real MySQL concurrency/window integration, and the unrelated video baseline defect remain outside this completion candidate.
+- Next step: Independent final review, Aegis workspace/ADR checks, then commit documentation and retirement changes.
+
+## Task 6 Drift Check
+
+- Scope status: Inside approved retirement, documentation, and regression boundary.
+- Compatibility status: Paid monthly periods, valid historical packs, historical product metadata, and admin correction controls remain.
+- Retirement status: Old public sales, proration, renew/reset/upgrade execution, and monthly-gated add-on purchase logic are deleted.
+- New risk signals:
+- Live migration has not run, so positive scalar balance and traffic-pack compatibility owners remain active.
+- Real MySQL/InnoDB and assistive-technology browser integration are not covered by local evidence.
+- Advisory decision: needs final review and proof-bundle checks; no scope drift detected.

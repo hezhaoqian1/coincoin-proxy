@@ -86,14 +86,6 @@ def cents_to_usd(cents: int) -> float:
     return int(cents or 0) / 100
 
 
-def money_to_rmb_cents(money: str) -> int:
-    return int((Decimal(str(money)).quantize(Decimal("0.01")) * 100).to_integral_value())
-
-
-def rmb_cents_to_money(cents: int) -> str:
-    return f"{max(1, int(cents or 0)) / 100:.2f}"
-
-
 def normalize_money(money: str) -> str:
     try:
         value = Decimal(str(money))
@@ -311,151 +303,6 @@ def normalize_subscription_period(sub: UserSubscription | None, now: datetime | 
     if not sub or not projection:
         return False
     return _apply_subscription_period_projection(sub, projection)
-
-
-async def apply_payment_product(
-    *,
-    user: User,
-    product: PaymentProduct,
-    order_no: str,
-    db: AsyncSession,
-    now: datetime | None = None,
-) -> dict:
-    current = now or utcnow()
-    if product.kind == "monthly":
-        return await _apply_monthly_product(user=user, product=product, order_no=order_no, db=db, now=current)
-    if product.kind == "addon":
-        return await _apply_addon_product(user=user, product=product, order_no=order_no, db=db, now=current)
-    raise BillingError("unsupported payment product", status_code=400)
-
-
-async def _apply_monthly_product(
-    *,
-    user: User,
-    product: PaymentProduct,
-    order_no: str,
-    db: AsyncSession,
-    now: datetime,
-) -> dict:
-    sub = await get_subscription_for_update(db, user.id)
-    if sub:
-        normalize_subscription_period(sub, now)
-
-    if not active_subscription(sub, now):
-        if not sub:
-            sub = UserSubscription(id=generate_id("sub_"), user_id=user.id)
-            db.add(sub)
-        sub.plan_id = product.id
-        sub.status = "active"
-        sub.period_start = now
-        sub.paid_until = now + timedelta(days=BILLING_PERIOD_DAYS)
-        sub.period_end = _period_end_from(now, sub.paid_until)
-        sub.quota_cents = product.balance_cents
-        sub.used_cents = 0
-        db.add(_ledger(
-            user_id=user.id,
-            entry_type="subscription_start",
-            amount_cents=product.balance_cents,
-            source_type="payment_order",
-            source_id=order_no,
-            product_id=product.id,
-            balance_after_cents=available_subscription_cents(sub, now),
-        ))
-        return {"billing_action": "subscription_start", "added_cents": product.balance_cents, "subscription": sub}
-
-    current_product = MONTHLY_BY_ID.get(sub.plan_id)
-    current_rank = current_product.rank if current_product else 0
-    if product.rank < current_rank:
-        raise BillingError("cannot purchase a lower tier while a higher subscription is active", status_code=409)
-
-    if product.rank == current_rank:
-        if available_subscription_cents(sub, now) <= 0:
-            sub.plan_id = product.id
-            sub.status = "active"
-            sub.period_start = now
-            sub.paid_until = now + timedelta(days=BILLING_PERIOD_DAYS)
-            sub.period_end = _period_end_from(now, sub.paid_until)
-            sub.quota_cents = product.balance_cents
-            sub.used_cents = 0
-            db.add(_ledger(
-                user_id=user.id,
-                entry_type="subscription_reset",
-                amount_cents=product.balance_cents,
-                source_type="payment_order",
-                source_id=order_no,
-                product_id=product.id,
-                balance_after_cents=available_subscription_cents(sub, now),
-            ))
-            return {"billing_action": "subscription_reset", "added_cents": product.balance_cents, "subscription": sub}
-
-        sub.paid_until = (sub.paid_until or now) + timedelta(days=BILLING_PERIOD_DAYS)
-        if sub.period_end:
-            sub.period_end = _period_end_from(sub.period_start or now, sub.paid_until)
-        db.add(_ledger(
-            user_id=user.id,
-            entry_type="subscription_renew",
-            amount_cents=0,
-            source_type="payment_order",
-            source_id=order_no,
-            product_id=product.id,
-            balance_after_cents=available_subscription_cents(sub, now),
-        ))
-        return {"billing_action": "subscription_renew", "added_cents": 0, "subscription": sub}
-
-    sub.plan_id = product.id
-    sub.quota_cents = product.balance_cents
-    if sub.period_start:
-        sub.period_end = _period_end_from(sub.period_start, sub.paid_until or now)
-    db.add(_ledger(
-        user_id=user.id,
-        entry_type="subscription_upgrade",
-        amount_cents=max(0, available_subscription_cents(sub, now)),
-        source_type="payment_order",
-        source_id=order_no,
-        product_id=product.id,
-        balance_after_cents=available_subscription_cents(sub, now),
-    ))
-    return {"billing_action": "subscription_upgrade", "added_cents": max(0, available_subscription_cents(sub, now)), "subscription": sub}
-
-
-async def _apply_addon_product(
-    *,
-    user: User,
-    product: PaymentProduct,
-    order_no: str,
-    db: AsyncSession,
-    now: datetime,
-) -> dict:
-    sub = await get_subscription_for_update(db, user.id)
-    if sub:
-        normalize_subscription_period(sub, now)
-    if not active_subscription(sub, now):
-        raise BillingError("traffic packs require an active monthly subscription", status_code=409)
-    monthly = MONTHLY_BY_ID.get(sub.plan_id)
-    current_rank = monthly.rank if monthly else 0
-    if current_rank < product.min_plan_rank:
-        raise BillingError("traffic pack is not available for the current subscription tier", status_code=409)
-
-    pack = TrafficPackBalance(
-        id=generate_id("tp_"),
-        user_id=user.id,
-        product_id=product.id,
-        status="active",
-        original_cents=product.balance_cents,
-        remaining_cents=product.balance_cents,
-        expires_at=now + timedelta(days=TRAFFIC_PACK_VALID_DAYS),
-    )
-    db.add(pack)
-    db.add(_ledger(
-        user_id=user.id,
-        entry_type="traffic_pack_grant",
-        amount_cents=product.balance_cents,
-        source_type="payment_order",
-        source_id=order_no,
-        product_id=product.id,
-        balance_after_cents=product.balance_cents,
-    ))
-    return {"billing_action": "traffic_pack_grant", "added_cents": product.balance_cents, "subscription": sub, "traffic_pack": pack}
 
 
 def available_subscription_cents(sub: UserSubscription | None, now: datetime | None = None) -> int:
@@ -768,99 +615,24 @@ def serialize_billing_state(
             ),
         },
         "products": {
-            "credits": [serialize_product(product) for product in CREDIT_PRODUCTS],
+            "credits": [serialize_credit_product(product) for product in CREDIT_PRODUCTS],
         },
     }
 
 
-def serialize_product(
-    product: PaymentProduct,
-    *,
-    sub: UserSubscription | None = None,
-    current_rank: int = 0,
-    now: datetime | None = None,
-) -> dict:
-    if product.kind == "credit":
-        return {
-            "id": product.id,
-            "kind": product.kind,
-            "name": product.name,
-            "money": product.money,
-            "price": f"¥{product.money}",
-            "amount_fen": product.amount_fen,
-            "promised_credit_cents": product.promised_credit_cents,
-            "promised_credit_usd": cents_to_usd(product.promised_credit_cents),
-            "purchase_action": CREDIT_PURCHASE_ACTION,
-            "catalog_version": CREDIT_CATALOG_VERSION,
-        }
-
-    current = now or utcnow()
-    allowed = True
-    reason = ""
-    if product.kind == "monthly" and current_rank and product.rank < current_rank:
-        allowed = False
-        reason = "当前套餐高于此档，到期后可重新选择"
-    if product.kind == "addon" and current_rank < product.min_plan_rank:
-        allowed = False
-        reason = "当前套餐暂不可购买此流量包" if current_rank else "流量包仅限有效月卡用户购买"
-    pay_money = product.money
-    purchase_action = "purchase"
-    if product.kind == "monthly" and active_subscription(sub, current):
-        current_product = MONTHLY_BY_ID.get(getattr(sub, "plan_id", None))
-        current_product_rank = current_product.rank if current_product else 0
-        if product.rank == current_product_rank:
-            purchase_action = "reset" if available_subscription_cents(sub, current) <= 0 else "renew"
-        elif product.rank > current_product_rank:
-            purchase_action = "upgrade"
-        elif product.rank < current_product_rank:
-            purchase_action = "downgrade_blocked"
-        if allowed:
-            pay_money = quote_product_money(product, sub, current)
-    if product.kind == "addon":
-        purchase_action = "addon"
+def serialize_credit_product(product: PaymentProduct) -> dict:
     return {
         "id": product.id,
         "kind": product.kind,
         "name": product.name,
         "money": product.money,
-        "pay_money": pay_money,
-        "price": f"¥{Decimal(pay_money).normalize():f}",
-        "balance_cents": product.balance_cents,
-        "balance_usd": cents_to_usd(product.balance_cents),
-        "rank": product.rank,
-        "min_plan_rank": product.min_plan_rank,
-        "allowed": allowed,
-        "unavailable_reason": reason,
-        "purchase_action": purchase_action,
+        "price": f"¥{product.money}",
+        "amount_fen": product.amount_fen,
+        "promised_credit_cents": product.promised_credit_cents,
+        "promised_credit_usd": cents_to_usd(product.promised_credit_cents),
+        "purchase_action": CREDIT_PURCHASE_ACTION,
+        "catalog_version": CREDIT_CATALOG_VERSION,
     }
-
-
-def quote_product_money(product: PaymentProduct, sub: UserSubscription | None, now: datetime | None = None) -> str:
-    current = now or utcnow()
-    if product.kind == "addon":
-        return product.money
-    if product.kind != "monthly":
-        return product.money
-
-    if not active_subscription(sub, current):
-        return product.money
-
-    current_product = MONTHLY_BY_ID.get(getattr(sub, "plan_id", None))
-    current_rank = current_product.rank if current_product else 0
-    if product.rank < current_rank:
-        raise BillingError("cannot purchase a lower tier while a higher subscription is active", status_code=409)
-    if product.rank == current_rank:
-        return product.money
-
-    period_start = getattr(sub, "period_start", None) or current
-    period_end = getattr(sub, "period_end", None) or getattr(sub, "paid_until", None) or (current + timedelta(days=BILLING_PERIOD_DAYS))
-    total_seconds = max(1, int((period_end - period_start).total_seconds()))
-    remaining_seconds = max(0, int((period_end - current).total_seconds()))
-    current_money_cents = money_to_rmb_cents(current_product.money) if current_product else 0
-    diff_cents = max(0, money_to_rmb_cents(product.money) - current_money_cents)
-    due = (Decimal(diff_cents) * Decimal(remaining_seconds)) / Decimal(total_seconds)
-    due_cents = max(1, int(due.quantize(Decimal("1"))))
-    return rmb_cents_to_money(due_cents)
 
 
 async def validate_product_purchase(

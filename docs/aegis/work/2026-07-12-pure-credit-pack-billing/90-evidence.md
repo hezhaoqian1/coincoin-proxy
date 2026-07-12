@@ -1,6 +1,6 @@
 # Pure credit pack billing implementation - Evidence
 
-No evidence has been recorded yet.
+Evidence is recorded below.
 
 ## EvidenceBundleDraft
 
@@ -9,6 +9,44 @@ No evidence has been recorded yet.
 - Source: python -m pytest -q
 - Summary: 426 passed, 3 failed, 4 skipped; failures are pre-existing video RequestLog constructor mismatch.
 - Verifier: Codex root agent
+
+## EvidenceBundleDraft
+
+- Artifact key: task-5-credit-ui-admin
+- Type: test-and-review
+- Source: focused admin/payment/subscription suites, Node 20 Vite build, independent specification and code-quality reviews
+- Summary: 108 focused Python tests and 13 subtests passed; the three-product permanent-credit UI, explicit wallet payloads, monthly rollover projection, fixed query counts, bounded recent-pack history, and radio keyboard behavior were approved with no remaining findings.
+- Verifier: Codex root agent and independent reviewers
+
+## EvidenceBundleDraft
+
+- Artifact key: task-6-retirement-scan
+- Type: source-scan
+- Source: `rg` scan for proration, upgrade, monthly/add-on IDs, and removed helper names
+- Summary: Monthly/add-on purchase execution, proration quote, and sales serializer actions have no remaining references. Remaining product IDs are limited to historical metadata and admin correction controls for active legacy records.
+- Verifier: Codex root agent
+
+## EvidenceBundleDraft
+
+- Artifact key: final-python-regression
+- Type: test
+- Source: `python -m pytest -q`
+- Summary: 518 passed, 4 skipped, 162 subtests passed; exactly three failures remain, all the recorded `RequestLog.effective_cache_creation_input_per_million` video baseline mismatch.
+- Verifier: Codex root agent
+
+## EvidenceBundleDraft
+
+- Artifact key: final-frontend-go-static
+- Type: build-and-test
+- Source: Node 20 Vite production build, `go test ./...`, admin inline JavaScript `node --check`, and Python `py_compile`
+- Summary: All commands passed. Frontend transformed 85 modules; only the existing >500 kB chunk advisory remains.
+- Verifier: Codex root agent
+
+## Final Evidence Limitations
+
+- No production migration `--apply`, deployment, pending-order confirmation, or live database mutation was executed.
+- Real MySQL/InnoDB savepoint, lock, window-query, and multi-connection behavior remains unverified locally.
+- The three unrelated video RequestLog constructor failures remain an explicit baseline defect.
 
 ## EvidenceBundleDraft
 
