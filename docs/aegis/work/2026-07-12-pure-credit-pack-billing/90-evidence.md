@@ -32,6 +32,34 @@ No evidence has been recorded yet.
 
 ## EvidenceBundleDraft
 
+- Artifact key: task-4-migration
+- Type: test
+- Source: `pytest tests/test_credit_migration.py tests/test_credit_wallet.py -q`
+- Summary: 51 passed, 2 warnings, 10 subtests passed; covers deterministic planning, independent accounting buckets, conflicts, dirty-session refusal, locked fingerprint recheck, structured apply failure, post-commit reconciliation, explicit safety limits, and CLI output.
+- Verifier: Codex root agent
+
+## EvidenceBundleDraft
+
+- Artifact key: task-4-cli
+- Type: command
+- Source: `scripts/migrate_legacy_credits.py --help` and no-database `--apply --json` safety refusal
+- Summary: Help works without database configuration; apply without explicit limits refuses before opening the database and exits nonzero with structured JSON.
+- Verifier: implementer and independent reviewer
+
+## EvidenceBundleDraft
+
+- Artifact key: task-4-review
+- Type: review
+- Source: independent specification and code-quality reviewer agents
+- Summary: Specification compliant and code-quality approved after real SQLAlchemy identity/no-autoflush tests, independent zero-drift accounting, orphan/migrated-source integrity checks, explicit lock limits, and empty-plan transaction release.
+- Verifier: Codex root agent
+
+## Task 4 Evidence Limitation
+
+- No migration `--apply` was run against production or a real MySQL replica. InnoDB lock scope, savepoints, commit-unknown behavior, and production row counts remain an operator release gate.
+
+## EvidenceBundleDraft
+
 - Artifact key: baseline-plan
 - Type: plan
 - Source: docs/aegis/plans/2026-07-12-pure-credit-pack-billing.md

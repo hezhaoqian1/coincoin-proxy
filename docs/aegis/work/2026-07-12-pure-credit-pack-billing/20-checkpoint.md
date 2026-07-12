@@ -105,3 +105,29 @@
 - `_credit_wallet_cents` is a temporary serializer bridge scheduled for explicit caller cleanup in Task 5.
 - No real InnoDB multi-session evidence exists for terminal job/refund locking.
 - Advisory decision: continue; migration tooling must prevent migrated legacy sources from being counted twice.
+
+## Task 4 Completion Update
+
+- Current todo: Task 5: update admin/customer payloads and recharge UI.
+- Active slice: Explicit wallet totals, three-product purchase experience, and removal of the serializer compatibility bridge.
+- Completed todos:
+- Added a default dry-run legacy credit migration CLI with integer-cent accounting and stable JSON/human reports.
+- Positive scalar balance and valid traffic packs have deterministic permanent-credit plans; negative debt is retained and reported.
+- Apply is guarded by explicit scan/plan limits, locked fingerprint recheck, all-or-nothing retirement/grant, structured failure states, and post-commit reconciliation.
+- No production apply, live mutation, or pending-order action was executed.
+- Task 4 specification review passed after independent accounting, orphan/migrated-source checks, no-autoflush and identity refresh fixes.
+- Task 4 code-quality review approved after empty-plan lock release and explicit full-batch safety limits.
+- Evidence refs:
+- `tests/test_credit_migration.py tests/test_credit_wallet.py`: 51 passed, 10 subtests passed.
+- `scripts/migrate_legacy_credits.py --help`: passed without database configuration.
+- Blocked on: No Task 5 blocker. Real MySQL/InnoDB migration behavior remains unverified and production apply is still unauthorized.
+- Next step: Remove `_credit_wallet_cents` bridge by passing explicit snapshot totals, update payloads, and replace Recharge UI with three permanent-credit cards.
+
+## Task 4 Drift Check
+
+- Scope status: Inside approved migration script/test boundary; no runtime schema or billing path changed.
+- Compatibility status: Migration apply would retire only the exact migrated source in the same transaction; dry-run leaves all state untouched.
+- Retirement status: Tooling is ready, but traffic-pack/scalar owners remain active because no live apply was run.
+- New risk signals:
+- The full-batch apply locks every scanned legacy row; explicit operator limits are mandatory but real production sizing is unknown.
+- Advisory decision: continue to UI/payload work; production migration remains a separate approval and evidence gate.
