@@ -656,10 +656,15 @@ async def get_balance(request: Request, db: AsyncSession = Depends(get_db)):
         station_slug=station_slug,
         station_display_name=station_display_name,
         station_pricing_models=station_models if station_models else None,
+        credit_wallet_cents=int(billing_snapshot.get("credit_cents", 0)),
+        credit_wallet_usd=int(billing_snapshot.get("credit_cents", 0)) / 100,
+        available_cents=balance,
+        available_usd=balance / 100,
         billing=serialize_billing_state(
             billing_snapshot.get("subscription"),
             billing_snapshot.get("traffic_packs") or [],
             user,
+            credit_cents=billing_snapshot.get("credit_cents", 0),
         ),
     )
 

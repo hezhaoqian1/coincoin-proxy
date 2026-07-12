@@ -28,7 +28,7 @@ from .billing import (
     credit_product_by_id,
     validate_product_purchase,
 )
-from .billing import available_subscription_cents, get_available_balance_cents, serialize_billing_state
+from .billing import get_available_balance_cents, serialize_billing_state
 from .models import PaymentOrder
 from .payment_common import PaymentConfirmError, confirm_paid_order, quote_payment_cents
 from .proxy import authenticate_user
@@ -132,15 +132,8 @@ async def _attach_available_balance(result: dict, db: AsyncSession) -> dict:
         return result
     if result.get("available_cents") is not None:
         return result
-    legacy_balance = int(getattr(user, "balance", 0) or 0)
-    subscription_remaining = available_subscription_cents(result.get("subscription"))
-    traffic_pack = result.get("traffic_pack")
-    traffic_remaining = int(getattr(traffic_pack, "remaining_cents", 0) or 0) if traffic_pack else 0
-    if subscription_remaining or traffic_remaining:
-        result["available_cents"] = subscription_remaining + traffic_remaining + legacy_balance
-        return result
     snapshot = await get_available_balance_cents(db, user)
-    result["available_cents"] = int(snapshot.get("available_cents", legacy_balance))
+    result["available_cents"] = int(snapshot.get("available_cents", int(getattr(user, "balance", 0) or 0)))
     return result
 
 
@@ -189,6 +182,7 @@ async def billing_state(
         snapshot.get("subscription"),
         snapshot.get("traffic_packs") or [],
         cached,
+        credit_cents=snapshot.get("credit_cents", 0),
     )
 
 

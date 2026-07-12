@@ -352,6 +352,10 @@ class BalanceResponse(BaseModel):
     station_slug: Optional[str] = None
     station_display_name: Optional[str] = None
     station_pricing_models: Optional[List[dict]] = None
+    credit_wallet_cents: int = Field(default=0, description="永久美金额度余额（分）")
+    credit_wallet_usd: float = Field(default=0, description="永久美金额度余额（美元）")
+    available_cents: int = Field(default=0, description="当前可用总额（分）")
+    available_usd: float = Field(default=0, description="当前可用总额（美元）")
     billing: Optional[dict] = None
 
 

@@ -922,92 +922,51 @@ export const MOCK_USAGE = {
     ]
 }
 
-export const PRICING_PLANS = [
+export const CREDIT_PRODUCTS = [
     {
-        id: 'monthly_light',
-        name: '轻量月卡',
-        kind: 'monthly',
-        price: '¥49.9',
-        priceNote: '/ 月',
-        money: '49.90',
-        balanceCents: 8000,
-        balanceLabel: '$80 / 30 天套餐额度',
-        unitLabel: '约 ¥0.62 / $1',
-        features: ['$80 套餐额度', '每 30 天重置一次', '同档续费不重置本期用量', '用完后可买流量包或提前重置'],
+        id: 'credit_light',
+        name: '轻量美金额度',
+        kind: 'credit',
+        price: '¥59.90',
+        priceNote: '',
+        money: '59.90',
+        creditCents: 10000,
+        balanceLabel: '$100 美金额度',
+        unitLabel: '一次购买 · 永久有效',
+        features: ['$100 美金额度', '永久有效，不过期', '可与已有美金额度叠加'],
         badge: null,
         highlight: false
     },
     {
-        id: 'monthly_basic',
-        name: '基础月卡',
-        kind: 'monthly',
+        id: 'credit_standard',
+        name: '标准美金额度',
+        kind: 'credit',
         price: '¥199',
-        priceNote: '/ 月',
+        priceNote: '',
         money: '199.00',
-        balanceCents: 40000,
-        balanceLabel: '$400 / 30 天套餐额度',
-        unitLabel: '约 ¥0.50 / $1',
-        features: ['$400 套餐额度', '适合稳定主力使用', '高档升级按剩余天数补差', '比轻量档单价更低'],
+        creditCents: 40000,
+        balanceLabel: '$400 美金额度',
+        unitLabel: '一次购买 · 永久有效',
+        features: ['$400 美金额度', '永久有效，不过期', '可与已有美金额度叠加'],
         badge: '推荐',
         highlight: true
     },
     {
-        id: 'monthly_flagship',
-        name: '旗舰月卡',
-        kind: 'monthly',
+        id: 'credit_pro',
+        name: '专业美金额度',
+        kind: 'credit',
         price: '¥399',
-        priceNote: '/ 月',
+        priceNote: '',
         money: '399.00',
-        balanceCents: 100000,
-        balanceLabel: '$1000 / 30 天套餐额度',
-        unitLabel: '约 ¥0.40 / $1',
-        features: ['$1,000 套餐额度', '适合高频调用和多工具工作流', '解锁全部流量包', '套餐内最低单价'],
+        creditCents: 100000,
+        balanceLabel: '$1,000 美金额度',
+        unitLabel: '一次购买 · 永久有效',
+        features: ['$1,000 美金额度', '永久有效，不过期', '可与已有美金额度叠加'],
         badge: null,
         highlight: false
     }
 ]
 
-export const TRAFFIC_PACKS = [
-    {
-        id: 'addon_boost',
-        name: '补量包',
-        kind: 'addon',
-        price: '¥149',
-        priceNote: '',
-        money: '149.00',
-        balanceCents: 30000,
-        balanceLabel: '$300 额外额度',
-        unitLabel: '约 ¥0.50 / $1',
-        features: ['$300 流量包额度', '有效期 180 天', '需要有效月卡', '轻量套餐起可买'],
-        badge: null,
-        highlight: false
-    },
-    {
-        id: 'addon_project',
-        name: '项目包',
-        kind: 'addon',
-        price: '¥399',
-        priceNote: '',
-        money: '399.00',
-        balanceCents: 100000,
-        balanceLabel: '$1000 额外额度',
-        unitLabel: '约 ¥0.40 / $1',
-        features: ['$1,000 流量包额度', '有效期 180 天', '基础套餐起可买', '适合一次项目或批量任务'],
-        badge: '补量推荐',
-        highlight: true
-    },
-    {
-        id: 'addon_ultra',
-        name: '超大包',
-        kind: 'addon',
-        price: '¥699',
-        priceNote: '',
-        money: '699.00',
-        balanceCents: 200000,
-        balanceLabel: '$2000 额外额度',
-        unitLabel: '约 ¥0.35 / $1',
-        features: ['$2,000 流量包额度', '有效期 180 天', '旗舰套餐可买', '最低补量单价'],
-        badge: '最划算',
-        highlight: false
-    }
-]
+// Compatibility export for the public landing page; the values are permanent
+// credit products, not subscription plans.
+export const PRICING_PLANS = CREDIT_PRODUCTS

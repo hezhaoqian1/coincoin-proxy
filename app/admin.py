@@ -26,6 +26,7 @@ from .models import (
     Announcement,
     ApiKey,
     BillingLedgerEntry,
+    CreditBalance,
     ModelAliasOverride,
     ModelChannelRoute,
     ModelPricingOverride,
@@ -206,13 +207,110 @@ async def _admin_billing_state(db: AsyncSession, user: User) -> dict:
         snapshot.get("subscription"),
         merged_packs,
         user,
+        credit_cents=snapshot.get("credit_cents", 0),
     )
+
+
+async def _admin_billing_states_batch(db: AsyncSession, users: list[User]) -> dict[str, dict]:
+    if not users:
+        return {}
+
+    user_ids = [user.id for user in users]
+    current = utcnow()
+    subscriptions = (
+        await db.execute(
+            select(UserSubscription).where(UserSubscription.user_id.in_(user_ids))
+        )
+    ).scalars().all()
+    active_packs = (
+        await db.execute(
+            select(TrafficPackBalance)
+            .where(
+                TrafficPackBalance.user_id.in_(user_ids),
+                TrafficPackBalance.status == "active",
+                TrafficPackBalance.remaining_cents > 0,
+                TrafficPackBalance.expires_at > current,
+            )
+            .order_by(
+                TrafficPackBalance.user_id.asc(),
+                TrafficPackBalance.expires_at.asc(),
+                TrafficPackBalance.created_at.asc(),
+                TrafficPackBalance.id.asc(),
+            )
+        )
+    ).scalars().all()
+    ranked_pack_ids = (
+        select(
+            TrafficPackBalance.id.label("pack_id"),
+            func.row_number().over(
+                partition_by=TrafficPackBalance.user_id,
+                order_by=(
+                    TrafficPackBalance.created_at.desc(),
+                    TrafficPackBalance.id.desc(),
+                ),
+            ).label("pack_rank"),
+        )
+        .where(TrafficPackBalance.user_id.in_(user_ids))
+        .subquery()
+    )
+    recent_packs = (
+        await db.execute(
+            select(TrafficPackBalance)
+            .join(ranked_pack_ids, TrafficPackBalance.id == ranked_pack_ids.c.pack_id)
+            .where(ranked_pack_ids.c.pack_rank <= 50)
+            .order_by(
+                TrafficPackBalance.user_id.asc(),
+                TrafficPackBalance.created_at.desc(),
+                TrafficPackBalance.id.desc(),
+            )
+        )
+    ).scalars().all()
+    credit_batches = (
+        await db.execute(
+            select(CreditBalance).where(
+                CreditBalance.user_id.in_(user_ids),
+                CreditBalance.status == "active",
+                CreditBalance.remaining_cents > 0,
+            )
+        )
+    ).scalars().all()
+
+    for subscription in subscriptions:
+        normalize_subscription_period(subscription, current)
+
+    subscriptions_by_user = {subscription.user_id: subscription for subscription in subscriptions}
+    packs_by_user: dict[str, list[TrafficPackBalance]] = {user_id: [] for user_id in user_ids}
+    active_pack_ids_by_user: dict[str, set[str]] = {user_id: set() for user_id in user_ids}
+    for pack in active_packs:
+        packs_by_user.setdefault(pack.user_id, []).append(pack)
+        active_pack_ids_by_user.setdefault(pack.user_id, set()).add(pack.id)
+    for pack in recent_packs:
+        if pack.id not in active_pack_ids_by_user.setdefault(pack.user_id, set()):
+            packs_by_user.setdefault(pack.user_id, []).append(pack)
+    credit_cents_by_user = {user_id: 0 for user_id in user_ids}
+    for batch in credit_batches:
+        credit_cents_by_user[batch.user_id] = (
+            credit_cents_by_user.get(batch.user_id, 0)
+            + max(0, int(batch.remaining_cents or 0))
+        )
+
+    return {
+        user.id: serialize_billing_state(
+            subscriptions_by_user.get(user.id),
+            packs_by_user.get(user.id, []),
+            user,
+            now=current,
+            credit_cents=credit_cents_by_user.get(user.id, 0),
+        )
+        for user in users
+    }
 
 
 def _billing_summary_for_admin(billing: dict) -> dict:
     subscription = billing.get("subscription") or {}
     traffic_packs = billing.get("traffic_packs") or {}
     legacy_balance = billing.get("legacy_balance") or {}
+    credit_wallet = billing.get("credit_wallet") or billing.get("credit_balance") or {}
     available = billing.get("available") or {}
     return {
         "available_cents": int(available.get("remaining_cents") or 0),
@@ -227,8 +325,33 @@ def _billing_summary_for_admin(billing: dict) -> dict:
         "subscription_paid_until": subscription.get("paid_until"),
         "traffic_pack_remaining_cents": int(traffic_packs.get("remaining_cents") or 0),
         "traffic_pack_count": len(traffic_packs.get("items") or []),
+        "credit_wallet_cents": int(credit_wallet.get("remaining_cents") or 0),
+        "credit_wallet_usd": float(credit_wallet.get("remaining_usd") or 0),
         "legacy_balance_cents": int(legacy_balance.get("remaining_cents") or 0),
     }
+
+
+def _admin_available_fields(billing: dict) -> dict:
+    credit_wallet = billing.get("credit_wallet") or billing.get("credit_balance") or {}
+    available = billing.get("available") or {}
+    return {
+        "credit_wallet_cents": int(credit_wallet.get("remaining_cents") or 0),
+        "credit_wallet_usd": float(credit_wallet.get("remaining_usd") or 0),
+        "available_cents": int(available.get("remaining_cents") or 0),
+        "available_usd": float(available.get("remaining_usd") or 0),
+    }
+
+
+def _admin_finance_summary(finance: dict, billing: dict) -> dict:
+    payload = dict(finance or {})
+    fields = _admin_available_fields(billing)
+    payload.update({
+        "current_credit_wallet_cents": fields["credit_wallet_cents"],
+        "current_credit_wallet_usd": fields["credit_wallet_usd"],
+        "current_available_cents": fields["available_cents"],
+        "current_available_usd": fields["available_usd"],
+    })
+    return payload
 
 
 def _alias_payload(alias_id: str):
@@ -2407,6 +2530,7 @@ async def list_users(
         query = query.order_by(User.created_at.desc())
     result = await db.execute(query.limit(200))
     rows = result.all()
+    billing_by_user = await _admin_billing_states_batch(db, [row[0] for row in rows])
     items = []
     for row in rows:
         u, link, station = row[:3]
@@ -2421,7 +2545,7 @@ async def list_users(
                 "videos_total": int((row[6] if len(row) > 6 else 0) or 0),
                 "cost_cents": int((row[7] if len(row) > 7 else 0) or 0),
             }
-        billing = await _admin_billing_state(db, u)
+        billing = billing_by_user.get(u.id, {})
         items.append({
             "id": u.id,
             "username": u.username,
@@ -2440,6 +2564,7 @@ async def list_users(
             "referred_by": u.referred_by,
             "created_at": u.created_at,
             "updated_at": u.updated_at,
+            **_admin_available_fields(billing),
             "billing": billing,
             "billing_summary": _billing_summary_for_admin(billing),
             "period_usage": period_usage,
@@ -2870,6 +2995,10 @@ async def get_user_detail(user_id: str, db: AsyncSession = Depends(get_db)):
             .order_by(UserModelPricingOverride.public_model_id.asc())
         )
     ).scalars().all()
+    finance = _admin_finance_summary(
+        await build_user_finance_snapshot(db, user.id, user.balance),
+        billing,
+    )
     
     return {
         "id": user.id,
@@ -2888,9 +3017,10 @@ async def get_user_detail(user_id: str, db: AsyncSession = Depends(get_db)):
         "request_limit_per_day": user.request_limit_per_day,
         "created_at": user.created_at,
         "updated_at": user.updated_at,
+        **_admin_available_fields(billing),
         "billing": billing,
         "billing_summary": _billing_summary_for_admin(billing),
-        "finance_summary": await build_user_finance_snapshot(db, user.id, user.balance),
+        "finance_summary": finance,
         "model_routing_overrides": [_serialize_user_routing_override(row) for row in routing_rows],
         "model_pricing_overrides": [_serialize_user_pricing_override(row) for row in pricing_rows],
         "user_model_override_options": _user_override_model_options(),
@@ -4416,9 +4546,11 @@ async def finance_summary(
         db,
         {user.id: int(user.balance or 0) for user in users},
     )
+    billing_by_user = await _admin_billing_states_batch(db, users)
     rows = []
     for user in users:
-        billing = await _admin_billing_state(db, user)
+        billing = billing_by_user.get(user.id, {})
+        finance = _admin_finance_summary(snapshots.get(user.id, {}), billing)
         rows.append({
             "user_id": user.id,
             "username": user.username,
@@ -4427,9 +4559,10 @@ async def finance_summary(
             "external_id": user.external_id,
             "created_at": user.created_at,
             "status": user.status,
+            **_admin_available_fields(billing),
             "billing": billing,
             "billing_summary": _billing_summary_for_admin(billing),
-            "finance_summary": snapshots.get(user.id, {}),
+            "finance_summary": finance,
         })
     return rows
 
@@ -4473,11 +4606,21 @@ async def finance_overview(db: AsyncSession = Depends(get_db)):
     ) or 0
 
     legacy_balance_cents = await db.scalar(select(func.coalesce(func.sum(User.balance), 0))) or 0
+    projected_subscription_remaining = case(
+        (
+            UserSubscription.period_start.is_(None)
+            | UserSubscription.period_end.is_(None)
+            | (UserSubscription.period_end <= now),
+            UserSubscription.quota_cents,
+        ),
+        else_=func.greatest(
+            UserSubscription.quota_cents - UserSubscription.used_cents,
+            0,
+        ),
+    )
     subscription_remaining_cents = await db.scalar(
-        select(func.coalesce(func.sum(UserSubscription.quota_cents - UserSubscription.used_cents), 0)).where(
-            UserSubscription.status == "active",
+        select(func.coalesce(func.sum(projected_subscription_remaining), 0)).where(
             UserSubscription.paid_until > now,
-            UserSubscription.quota_cents > UserSubscription.used_cents,
         )
     ) or 0
     traffic_pack_remaining_cents = await db.scalar(
@@ -4487,6 +4630,18 @@ async def finance_overview(db: AsyncSession = Depends(get_db)):
             TrafficPackBalance.remaining_cents > 0,
         )
     ) or 0
+    credit_wallet_cents = await db.scalar(
+        select(func.coalesce(func.sum(CreditBalance.remaining_cents), 0)).where(
+            CreditBalance.status == "active",
+            CreditBalance.remaining_cents > 0,
+        )
+    ) or 0
+    available_cents = (
+        int(legacy_balance_cents)
+        + int(subscription_remaining_cents)
+        + int(traffic_pack_remaining_cents)
+        + int(credit_wallet_cents)
+    )
 
     return {
         "generated_at": now,
@@ -4509,7 +4664,10 @@ async def finance_overview(db: AsyncSession = Depends(get_db)):
             "ops_debit_cents": int(total_ops_debit_cents),
             "bonus_cents": int(total_bonus_cents),
             "consumed_cents": int(total_consumed_cents),
-            "available_cents": int(legacy_balance_cents) + int(subscription_remaining_cents) + int(traffic_pack_remaining_cents),
+            "available_cents": int(available_cents),
+            "available_usd": int(available_cents) / 100,
+            "credit_wallet_cents": int(credit_wallet_cents),
+            "credit_wallet_usd": int(credit_wallet_cents) / 100,
             "legacy_balance_cents": int(legacy_balance_cents),
             "subscription_remaining_cents": int(subscription_remaining_cents),
             "traffic_pack_remaining_cents": int(traffic_pack_remaining_cents),

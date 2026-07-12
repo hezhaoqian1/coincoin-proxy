@@ -526,10 +526,6 @@ async def get_available_balance_cents(
         + legacy_balance
         - int(pending_cost_cents or 0)
     )
-    # Existing serialization callers receive this same ORM instance immediately
-    # after the snapshot. Keep their call contract compatible while exposing the
-    # permanent wallet total to serialize_billing_state.
-    setattr(user, "_credit_wallet_cents", credit_remaining)
     return {
         "subscription": sub,
         "traffic_packs": packs,
@@ -704,11 +700,7 @@ def serialize_billing_state(
         and pack.expires_at > current
     ]
     traffic_remaining = sum(int(getattr(pack, "remaining_cents", 0) or 0) for pack in active_packs)
-    credit_remaining = int(
-        getattr(user, "_credit_wallet_cents", 0)
-        if credit_cents is None
-        else credit_cents
-    )
+    credit_remaining = int(credit_cents or 0)
     legacy_balance = int(user.balance or 0)
     current_plan = MONTHLY_BY_ID.get(getattr(sub, "plan_id", None)) if sub and getattr(sub, "plan_id", None) else None
     current_rank = current_plan.rank if current_plan and subscription_active else 0
@@ -759,6 +751,12 @@ def serialize_billing_state(
             "remaining_usd": cents_to_usd(legacy_balance),
         },
         "credit_cents": credit_remaining,
+        "credit_wallet": {
+            "remaining_cents": credit_remaining,
+            "remaining_usd": cents_to_usd(credit_remaining),
+        },
+        # Compatibility alias for clients deployed before credit_wallet became
+        # the canonical permanent-credit field.
         "credit_balance": {
             "remaining_cents": credit_remaining,
             "remaining_usd": cents_to_usd(credit_remaining),

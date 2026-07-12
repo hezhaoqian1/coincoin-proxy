@@ -50,7 +50,7 @@
     margin-bottom: var(--space-lg);
 }
 
-.recharge-monthly-plans {
+.recharge-credit-plans {
     margin-bottom: var(--space-md);
 }
 
@@ -121,6 +121,10 @@
     gap: var(--space-sm);
 }
 
+.billing-primary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .billing-pool {
     min-width: 0;
     padding: 14px;
@@ -150,10 +154,91 @@
     background: rgba(99, 102, 241, 0.08);
 }
 
+.legacy-rights {
+    margin-top: var(--space-md);
+    padding-top: var(--space-md);
+    border-top: 1px solid var(--border-color);
+}
+
+.legacy-rights-head {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: var(--space-lg);
+    margin-bottom: var(--space-sm);
+}
+
+.legacy-rights-head h4 {
+    margin: 0;
+    font-size: 1rem;
+}
+
+.legacy-rights-head p {
+    max-width: 560px;
+    margin: 0;
+    color: var(--text-tertiary);
+    font-size: 0.8rem;
+    line-height: 1.55;
+}
+
+.legacy-rights-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-sm);
+}
+
+.legacy-right-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-md);
+    min-width: 0;
+    padding: 12px 14px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-glass);
+}
+
+.legacy-right-item > div {
+    min-width: 0;
+}
+
+.legacy-right-item strong,
+.legacy-right-item small {
+    display: block;
+}
+
+.legacy-right-item strong {
+    color: var(--text-primary);
+    font-size: 0.88rem;
+    overflow-wrap: anywhere;
+}
+
+.legacy-right-item small {
+    margin-top: 4px;
+    color: var(--text-tertiary);
+    font-size: 0.76rem;
+    line-height: 1.45;
+}
+
+.legacy-right-item > span {
+    flex-shrink: 0;
+    color: var(--accent-emerald);
+    font-weight: 750;
+}
+
 .recharge-plan {
     position: relative;
+    display: block;
+    width: 100%;
     cursor: pointer;
     padding: var(--space-lg);
+    appearance: none;
+    -webkit-appearance: none;
+    font: inherit;
+    text-align: left;
+    color: inherit;
+    background: var(--bg-glass);
     transition: all var(--transition-base);
     border: 2px solid transparent;
 }
@@ -436,6 +521,18 @@
     .billing-pool-grid {
         grid-template-columns: 1fr;
         gap: 10px;
+    }
+
+    .legacy-rights-head {
+        display: block;
+    }
+
+    .legacy-rights-head p {
+        margin-top: 6px;
+    }
+
+    .legacy-rights-list {
+        grid-template-columns: 1fr;
     }
 
     .billing-pool {

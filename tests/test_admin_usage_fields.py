@@ -1,7 +1,7 @@
 import json
 import tempfile
 import unittest
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -11,6 +11,7 @@ import httpx
 from app.main import app
 import app.main as main_module
 import app.admin as admin_module
+import app.billing as billing_module
 import app.epay as epay_module
 import app.payment as payment_module
 import app.proxy as proxy_module
@@ -1459,7 +1460,11 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         )
         fake_db = _FakeDB(execute_results=[_FakeAllResult([(user, None, None, 12, 1000, 3, 0, 456)])])
 
-        with patch.object(admin_module, "_admin_billing_state", AsyncMock(return_value={})):
+        with patch.object(
+            admin_module,
+            "_admin_billing_states_batch",
+            AsyncMock(return_value={"u_hot": {}}),
+        ):
             result = await admin_module.list_users(usage_sort="7d", db=fake_db)
 
         self.assertEqual(result[0]["id"], "u_hot")
@@ -1474,6 +1479,48 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("coincoin_request_logs", query_text)
         self.assertIn("created_at >=", query_text)
         self.assertIn("period_cost_cents", query_text)
+
+    async def test_admin_users_batch_billing_for_multiple_users_with_constant_queries(self) -> None:
+        def make_user(user_id: str, username: str):
+            return SimpleNamespace(
+                id=user_id,
+                username=username,
+                email=f"{username}@example.com",
+                email_verified_at=None,
+                external_id=None,
+                status="active",
+                balance=0,
+                token_limit=None,
+                token_used=0,
+                input_tokens_used=0,
+                output_tokens_used=0,
+                request_limit_per_minute=None,
+                request_limit_per_day=None,
+                referral_code=None,
+                referred_by=None,
+                created_at=datetime(2026, 6, 1, 10, 0, 0),
+                updated_at=datetime(2026, 6, 1, 10, 0, 0),
+            )
+
+        users = [make_user("u_1", "alice"), make_user("u_2", "bob")]
+        fake_db = _FakeDB(execute_results=[
+            _FakeAllResult([(users[0], None, None), (users[1], None, None)]),
+            _FakeScalarsResult([]),
+            _FakeScalarsResult([]),
+            _FakeScalarsResult([]),
+            _FakeScalarsResult([]),
+        ])
+
+        with patch.object(
+            admin_module,
+            "_admin_billing_state",
+            AsyncMock(side_effect=AssertionError("list_users must not query billing per user")),
+        ) as per_user_billing:
+            result = await admin_module.list_users(db=fake_db)
+
+        self.assertEqual([item["id"] for item in result], ["u_1", "u_2"])
+        self.assertEqual(len(fake_db.queries), 5)
+        per_user_billing.assert_not_awaited()
 
     async def test_admin_revenue_margin_today_keeps_previous_day_rows_inside_24h_window(self) -> None:
         fake_db = _FakeDB(
@@ -2329,6 +2376,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                 _FakeScalarsResult([]),
                 _FakeScalarsResult([]),
                 _FakeScalarsResult([]),
+                _FakeScalarsResult([]),
                 _FakeEntityResult(finance_summary),
             ],
             scalar_results=[120, 450],
@@ -2458,6 +2506,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                 _FakeScalarsResult([]),
                 _FakeScalarsResult([]),
                 _FakeScalarsResult([]),
+                _FakeScalarsResult([]),
                 _FakeEntityResult(finance_summary),
             ],
             scalar_results=[0, 0],
@@ -2540,6 +2589,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                 _FakeAllResult([(user, None, None)]),
                 _FakeScalarsResult([]),
                 _FakeEntityResult(None),
+                _FakeScalarsResult([]),
                 _FakeScalarsResult([]),
                 _FakeScalarsResult([]),
                 _FakeScalarsResult([routing_override]),
@@ -2806,7 +2856,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                 _FakeEntityResult(sub),
                 _FakeScalarsResult([]),
                 _FakeScalarsResult([]),
-                _FakeEntityResult(finance_summary),
+                _FakeScalarsResult([]),
             ],
             scalar_results=[0, 0],
         )
@@ -2863,7 +2913,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                 _FakeEntityResult(None),
                 _FakeScalarsResult([]),
                 _FakeScalarsResult([]),
-                _FakeEntityResult(finance_summary),
+                _FakeScalarsResult([]),
             ],
             scalar_results=[0, 0],
         )
@@ -2927,7 +2977,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                 _FakeEntityResult(None),
                 _FakeScalarsResult([pack]),
                 _FakeScalarsResult([]),
-                _FakeEntityResult(finance_summary),
+                _FakeScalarsResult([]),
             ],
             scalar_results=[0, 0],
         )
@@ -3366,6 +3416,408 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             model_registry.clear_runtime_system_settings()
             model_registry._initialized = False
             app.dependency_overrides.pop(admin_module.get_db, None)
+
+    async def test_admin_billing_state_passes_wallet_snapshot_explicitly(self) -> None:
+        user = SimpleNamespace(id="u_1", balance=-50)
+        snapshot = {
+            "subscription": None,
+            "traffic_packs": [],
+            "credit_cents": 300,
+            "available_cents": 250,
+        }
+        fake_db = _FakeDB(execute_results=[_FakeScalarsResult([])])
+
+        with patch.object(
+            admin_module,
+            "get_available_balance_cents",
+            AsyncMock(return_value=snapshot),
+        ), patch.object(
+            admin_module,
+            "serialize_billing_state",
+            return_value={"ok": True},
+        ) as serialize:
+            result = await admin_module._admin_billing_state(fake_db, user)
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(serialize.call_args.kwargs["credit_cents"], 300)
+
+    async def test_customer_billing_state_passes_wallet_snapshot_explicitly(self) -> None:
+        user = SimpleNamespace(id="u_1", balance=-50)
+        snapshot = {
+            "subscription": None,
+            "traffic_packs": [],
+            "credit_cents": 300,
+            "available_cents": 250,
+        }
+
+        with patch.object(
+            payment_module,
+            "authenticate_user",
+            AsyncMock(return_value=user),
+        ), patch.object(
+            payment_module,
+            "get_available_balance_cents",
+            AsyncMock(return_value=snapshot),
+        ), patch.object(
+            payment_module,
+            "serialize_billing_state",
+            return_value={"ok": True},
+        ) as serialize:
+            result = await payment_module.billing_state(
+                request=SimpleNamespace(headers={}),
+                db=SimpleNamespace(),
+            )
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(serialize.call_args.kwargs["credit_cents"], 300)
+
+    async def test_balance_payload_passes_wallet_snapshot_explicitly(self) -> None:
+        cached_user = SimpleNamespace(id="u_1", _station_context={})
+        user = SimpleNamespace(
+            id="u_1",
+            balance=-50,
+            token_used=0,
+            input_tokens_used=0,
+            output_tokens_used=0,
+            token_limit=None,
+        )
+        snapshot = {
+            "subscription": None,
+            "traffic_packs": [],
+            "credit_cents": 300,
+            "available_cents": 250,
+        }
+        fake_db = SimpleNamespace(
+            execute=AsyncMock(return_value=_FakeEntityResult(user)),
+        )
+
+        with patch.object(
+            openai_module,
+            "authenticate_user",
+            AsyncMock(return_value=cached_user),
+        ), patch.object(
+            openai_module.usage_buffer,
+            "get_pending_tokens",
+            AsyncMock(return_value=0),
+        ), patch.object(
+            openai_module.usage_buffer,
+            "get_pending_cost",
+            AsyncMock(return_value=0),
+        ), patch.object(
+            billing_module,
+            "get_available_balance_cents",
+            AsyncMock(return_value=snapshot),
+        ), patch.object(
+            billing_module,
+            "serialize_billing_state",
+            return_value={"ok": True},
+        ) as serialize:
+            result = await openai_module.get_balance(
+                request=SimpleNamespace(headers={}),
+                db=fake_db,
+            )
+
+        self.assertEqual(result.billing, {"ok": True})
+        self.assertEqual(result.credit_wallet_cents, 300)
+        self.assertEqual(result.credit_wallet_usd, 3.0)
+        self.assertEqual(result.available_cents, 250)
+        self.assertEqual(result.available_usd, 2.5)
+        self.assertEqual(serialize.call_args.kwargs["credit_cents"], 300)
+
+    async def test_payment_confirmation_available_uses_full_wallet_snapshot(self) -> None:
+        user = SimpleNamespace(id="u_1", balance=-50)
+        subscription = SimpleNamespace(
+            status="active",
+            paid_until=datetime(2026, 8, 1),
+            quota_cents=100,
+            used_cents=0,
+        )
+        result = {"user": user, "subscription": subscription}
+        snapshot = {"available_cents": 350, "credit_cents": 300}
+
+        with patch.object(
+            payment_module,
+            "get_available_balance_cents",
+            AsyncMock(return_value=snapshot),
+        ) as get_available:
+            attached = await payment_module._attach_available_balance(result, SimpleNamespace())
+
+        self.assertEqual(attached["available_cents"], 350)
+        get_available.assert_awaited_once()
+
+    def test_billing_payload_exposes_canonical_wallet_and_only_credit_products(self) -> None:
+        now = datetime(2026, 7, 12, 12, 0, 0)
+        subscription = SimpleNamespace(
+            plan_id="monthly_basic",
+            status="active",
+            period_start=datetime(2026, 7, 1),
+            period_end=datetime(2026, 7, 31),
+            paid_until=datetime(2026, 7, 31),
+            quota_cents=40000,
+            used_cents=35000,
+        )
+        pack = SimpleNamespace(
+            id="tp_1",
+            product_id="addon_boost",
+            status="active",
+            original_cents=1000,
+            remaining_cents=700,
+            expires_at=datetime(2026, 8, 1),
+            created_at=datetime(2026, 7, 2),
+        )
+        user = SimpleNamespace(id="u_1", balance=-50)
+
+        payload = billing_module.serialize_billing_state(
+            subscription,
+            [pack],
+            user,
+            now=now,
+            credit_cents=300,
+        )
+
+        self.assertEqual(payload["credit_wallet"]["remaining_cents"], 300)
+        self.assertEqual(payload["credit_wallet"]["remaining_usd"], 3.0)
+        self.assertEqual(payload["credit_balance"], payload["credit_wallet"])
+        self.assertEqual(payload["available"]["remaining_cents"], 5950)
+        self.assertEqual(set(payload["products"]), {"credits"})
+        self.assertEqual(len(payload["products"]["credits"]), 3)
+        self.assertNotIn("monthly", payload["products"])
+        self.assertNotIn("addons", payload["products"])
+
+    async def test_admin_user_payload_projects_wallet_and_total_available_into_finance(self) -> None:
+        user = SimpleNamespace(
+            id="u_1",
+            username="alice",
+            email="alice@example.com",
+            email_verified_at=None,
+            external_id="ext_alice",
+            status="active",
+            balance=-50,
+            token_limit=None,
+            token_used=0,
+            input_tokens_used=0,
+            output_tokens_used=0,
+            request_limit_per_minute=None,
+            request_limit_per_day=None,
+            created_at=datetime(2026, 7, 1),
+            updated_at=datetime(2026, 7, 12),
+        )
+        billing = {
+            "subscription": {"active": False},
+            "traffic_packs": {"remaining_cents": 0, "items": []},
+            "legacy_balance": {"remaining_cents": -50, "remaining_usd": -0.5},
+            "credit_wallet": {"remaining_cents": 300, "remaining_usd": 3.0},
+            "available": {"remaining_cents": 250, "remaining_usd": 2.5},
+        }
+        finance = {"current_balance_cents": -50, "current_balance_usd": -0.5}
+        fake_db = _FakeDB(
+            execute_results=[
+                _FakeAllResult([(user, None, None)]),
+                _FakeScalarsResult([]),
+                _FakeScalarsResult([]),
+                _FakeScalarsResult([]),
+            ]
+        )
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+        with patch.object(
+            admin_module,
+            "_admin_billing_state",
+            AsyncMock(return_value=billing),
+        ), patch.object(
+            admin_module,
+            "build_user_finance_snapshot",
+            AsyncMock(return_value=finance),
+        ):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                response = await client.get("/admin/users/u_1")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["credit_wallet_cents"], 300)
+        self.assertEqual(payload["credit_wallet_usd"], 3.0)
+        self.assertEqual(payload["available_cents"], 250)
+        self.assertEqual(payload["available_usd"], 2.5)
+        self.assertEqual(payload["billing_summary"]["credit_wallet_cents"], 300)
+        self.assertEqual(payload["finance_summary"]["current_credit_wallet_cents"], 300)
+        self.assertEqual(payload["finance_summary"]["current_available_cents"], 250)
+
+    async def test_finance_overview_aggregates_all_balance_sources_without_per_user_queries(self) -> None:
+        user = SimpleNamespace(id="u_1", balance=0)
+        fake_db = _FakeDB(
+            execute_results=[
+                _FakeScalarsResult([]),
+                _FakeScalarsResult([user]),
+            ],
+            scalar_results=[0, 0, 0, 0, 0, 0, -50, 100, 0, 300],
+        )
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+        with patch.object(
+            admin_module,
+            "get_available_balance_cents",
+            AsyncMock(return_value={"available_cents": 350}),
+        ) as get_available:
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                response = await client.get("/admin/finance/overview")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        totals = response.json()["totals"]
+        self.assertEqual(totals["available_cents"], 350)
+        self.assertEqual(totals["credit_wallet_cents"], 300)
+        self.assertEqual(totals["legacy_balance_cents"], -50)
+        subscription_query = str(fake_db.queries[8])
+        self.assertIn("CASE", subscription_query)
+        self.assertIn("period_start IS NULL", subscription_query)
+        self.assertIn("period_end IS NULL", subscription_query)
+        self.assertIn("period_end <=", subscription_query)
+        self.assertIn("greatest", subscription_query.lower())
+        self.assertNotIn("status =", subscription_query)
+        get_available.assert_not_awaited()
+
+    async def test_finance_summary_batches_billing_queries_for_multiple_users(self) -> None:
+        user_1 = SimpleNamespace(
+            id="u_1",
+            username="alice",
+            email="alice@example.com",
+            email_verified_at=None,
+            external_id="ext_alice",
+            created_at=datetime(2026, 7, 1),
+            status="active",
+            balance=-50,
+        )
+        user_2 = SimpleNamespace(
+            id="u_2",
+            username="bob",
+            email="bob@example.com",
+            email_verified_at=None,
+            external_id="ext_bob",
+            created_at=datetime(2026, 7, 2),
+            status="active",
+            balance=0,
+        )
+        subscription = SimpleNamespace(
+            user_id="u_1",
+            plan_id="monthly_light",
+            status="active",
+            period_start=datetime(2025, 12, 1),
+            period_end=datetime(2026, 1, 1),
+            paid_until=datetime(2099, 7, 31),
+            quota_cents=100,
+            used_cents=80,
+        )
+        active_pack = SimpleNamespace(
+            id="tp_1",
+            user_id="u_1",
+            product_id="addon_boost",
+            status="active",
+            original_cents=50,
+            remaining_cents=50,
+            expires_at=datetime(2099, 8, 1),
+            created_at=datetime(2026, 7, 2),
+        )
+        expired_pack = SimpleNamespace(
+            id="tp_2",
+            user_id="u_2",
+            product_id="addon_boost",
+            status="active",
+            original_cents=90,
+            remaining_cents=90,
+            expires_at=datetime(2026, 1, 1),
+            created_at=datetime(2026, 1, 1),
+        )
+        credit_1 = SimpleNamespace(user_id="u_1", remaining_cents=300)
+        credit_2 = SimpleNamespace(user_id="u_2", remaining_cents=200)
+        fake_db = _FakeDB(execute_results=[
+            _FakeScalarsResult([user_1, user_2]),
+            _FakeScalarsResult([]),
+            _FakeAllResult([]),
+            _FakeScalarsResult([subscription]),
+            _FakeScalarsResult([active_pack]),
+            _FakeScalarsResult([active_pack, expired_pack]),
+            _FakeScalarsResult([credit_1, credit_2]),
+        ])
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+        with patch.object(
+            admin_module,
+            "_admin_billing_state",
+            AsyncMock(side_effect=AssertionError("finance summary must not query billing per user")),
+        ) as per_user_billing:
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                response = await client.get("/admin/finance/summary")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        rows = {row["user_id"]: row for row in response.json()}
+        self.assertEqual(rows["u_1"]["credit_wallet_cents"], 300)
+        self.assertEqual(rows["u_1"]["available_cents"], 400)
+        self.assertEqual(rows["u_1"]["billing"]["subscription"]["remaining_cents"], 100)
+        self.assertEqual(subscription.used_cents, 0)
+        self.assertEqual(rows["u_2"]["credit_wallet_cents"], 200)
+        self.assertEqual(rows["u_2"]["available_cents"], 200)
+        self.assertEqual(rows["u_2"]["billing"]["traffic_packs"]["remaining_cents"], 0)
+        self.assertEqual(len(fake_db.queries), 7)
+        per_user_billing.assert_not_awaited()
+
+    async def test_batch_billing_limits_recent_pack_history_per_user_with_window_query(self) -> None:
+        user = SimpleNamespace(id="u_1", balance=0)
+        active_pack = SimpleNamespace(
+            id="tp_active",
+            user_id="u_1",
+            product_id="addon_boost",
+            status="active",
+            original_cents=100,
+            remaining_cents=100,
+            expires_at=datetime(2099, 8, 1),
+            created_at=datetime(2020, 1, 1),
+        )
+        recent_history = [
+            SimpleNamespace(
+                id=f"tp_history_{index:02d}",
+                user_id="u_1",
+                product_id="addon_boost",
+                status="depleted",
+                original_cents=100,
+                remaining_cents=0,
+                expires_at=datetime(2026, 1, 1),
+                created_at=datetime(2026, 6, 1) - timedelta(minutes=index),
+            )
+            for index in range(50)
+        ]
+        fake_db = _FakeDB(execute_results=[
+            _FakeScalarsResult([]),
+            _FakeScalarsResult([active_pack]),
+            _FakeScalarsResult(recent_history),
+            _FakeScalarsResult([]),
+        ])
+
+        billing_by_user = await admin_module._admin_billing_states_batch(fake_db, [user])
+
+        all_items = billing_by_user["u_1"]["traffic_packs"]["all_items"]
+        self.assertEqual(len(all_items), 51)
+        self.assertEqual(all_items[0]["id"], "tp_active")
+        recent_query = fake_db.queries[2].compile()
+        recent_query_text = str(recent_query)
+        self.assertIn("row_number() OVER", recent_query_text)
+        self.assertIn("PARTITION BY coincoin_traffic_pack_balances.user_id", recent_query_text)
+        self.assertIn("created_at DESC", recent_query_text)
+        self.assertIn("id DESC", recent_query_text)
+        self.assertIn(50, recent_query.params.values())
 
 
 if __name__ == "__main__":
