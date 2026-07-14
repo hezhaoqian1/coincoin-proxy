@@ -101,8 +101,7 @@ class _FakeClient:
         self.calls = []
 
     async def get(self, url, headers):
-        self.calls.append(("GET", url, dict(headers), None))
-        return httpx.Response(200, json={"data": [{"id": "gpt-5.3-codex"}]})
+        raise AssertionError(f"monitor should not probe /models: {url}")
 
     async def post(self, url, json, headers):
         self.calls.append(("POST", url, dict(headers), dict(json)))
@@ -113,6 +112,36 @@ class _FakeClient:
                 "output": [{"type": "message", "content": [{"type": "output_text", "text": "pong"}]}],
             },
         )
+
+
+class _FakeChatClient:
+    def __init__(self):
+        self.calls = []
+
+    async def get(self, url, headers):
+        raise AssertionError(f"monitor should not probe /models: {url}")
+
+    async def post(self, url, json, headers):
+        self.calls.append(("POST", url, dict(headers), dict(json)))
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl_monitor",
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": "pong"}}],
+            },
+        )
+
+
+class _FakeInvalidResponseClient:
+    def __init__(self):
+        self.calls = []
+
+    async def get(self, url, headers):
+        raise AssertionError(f"monitor should not probe /models: {url}")
+
+    async def post(self, url, json, headers):
+        self.calls.append(("POST", url, dict(headers), dict(json)))
+        return httpx.Response(200, json={"id": "resp_monitor", "output": []})
 
 
 class _FakeAnthropicClient:
@@ -139,17 +168,20 @@ class _FakeAnthropicClient:
 
 
 class ChannelMonitoringTests(unittest.IsolatedAsyncioTestCase):
-    def test_desired_route_monitor_specs_group_routes_and_cap_models(self) -> None:
+    def test_desired_route_monitor_specs_select_lowest_priority_highest_weight_then_id(self) -> None:
         channel = SimpleNamespace(
             id="ch_openai",
             name="OpenAI Relay",
             channel_type="openai_compatible",
             status="active",
-            priority=0,
+            priority=5,
+            weight=2,
         )
         routes = [
-            SimpleNamespace(id=f"route_{index}", channel_id=channel.id, public_model_id=f"gpt-{index}", upstream_model=f"up-{index}", endpoint="responses", status="active", priority_override=index)
-            for index in range(5)
+            SimpleNamespace(id="route_low_weight", channel_id=channel.id, public_model_id="gpt-low-weight", upstream_model="up-low-weight", endpoint="responses", status="active", priority_override=0, weight_override=4),
+            SimpleNamespace(id="route_b", channel_id=channel.id, public_model_id="gpt-b", upstream_model="up-b", endpoint="chat/completions", status="active", priority_override=0, weight_override=9),
+            SimpleNamespace(id="route_a", channel_id=channel.id, public_model_id="gpt-a", upstream_model="up-a", endpoint="responses", status="active", priority_override=0, weight_override=9),
+            SimpleNamespace(id="route_channel_defaults", channel_id=channel.id, public_model_id="gpt-default", upstream_model="up-default", endpoint="responses", status="active", priority_override=None, weight_override=None),
         ]
 
         specs = desired_route_monitor_specs([channel], routes)
@@ -157,7 +189,7 @@ class ChannelMonitoringTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(specs), 1)
         self.assertEqual(specs[0].channel_id, "ch_openai")
         self.assertEqual(specs[0].endpoint, "responses")
-        self.assertEqual(specs[0].models, ("up-0", "up-1", "up-2"))
+        self.assertEqual(specs[0].models, ("up-a",))
 
     def test_desired_route_monitor_specs_defaults_anthropic_routes_to_chat(self) -> None:
         channel = SimpleNamespace(
@@ -166,6 +198,7 @@ class ChannelMonitoringTests(unittest.IsolatedAsyncioTestCase):
             channel_type="anthropic_compatible",
             status="active",
             priority=0,
+            weight=1,
         )
         route = SimpleNamespace(
             id="route_claude",
@@ -175,6 +208,7 @@ class ChannelMonitoringTests(unittest.IsolatedAsyncioTestCase):
             endpoint="",
             status="active",
             priority_override=None,
+            weight_override=None,
         )
 
         specs = desired_route_monitor_specs([channel], [route])
@@ -188,6 +222,7 @@ class ChannelMonitoringTests(unittest.IsolatedAsyncioTestCase):
             channel_type="openai_compatible",
             status="active",
             priority=0,
+            weight=1,
         )
         route = SimpleNamespace(
             id="route_image",
@@ -197,13 +232,15 @@ class ChannelMonitoringTests(unittest.IsolatedAsyncioTestCase):
             endpoint="images/generations",
             status="active",
             priority_override=None,
+            weight_override=None,
         )
 
         self.assertEqual(desired_route_monitor_specs([channel], [route]), [])
 
     async def test_reconcile_creates_auto_monitor_for_uncovered_route(self) -> None:
         channel = SimpleNamespace(id="ch_new", name="New Relay", channel_type="openai_compatible", status="active", priority=0)
-        route = SimpleNamespace(id="route_new", channel_id=channel.id, public_model_id="gpt-5.6", upstream_model="gpt-5.6", endpoint="responses", status="active", priority_override=None)
+        channel.weight = 1
+        route = SimpleNamespace(id="route_new", channel_id=channel.id, public_model_id="gpt-5.6", upstream_model="gpt-5.6", endpoint="responses", status="active", priority_override=None, weight_override=None)
         db = _ReconcileDB(channels=[channel], routes=[route], monitors=[])
 
         result = await reconcile_provider_channel_monitors(db)
@@ -214,17 +251,21 @@ class ChannelMonitoringTests(unittest.IsolatedAsyncioTestCase):
         monitor = db.added[0]
         self.assertEqual(monitor.channel_id, "ch_new")
         self.assertEqual(monitor.primary_model, "gpt-5.6")
+        self.assertEqual(monitor.extra_models, "[]")
         self.assertEqual(monitor.created_by, AUTO_MONITOR_CREATED_BY)
 
-    async def test_reconcile_reuses_manual_coverage_and_disables_auto_monitor(self) -> None:
-        channel = SimpleNamespace(id="ch_existing", name="Existing Relay", channel_type="openai_compatible", status="active", priority=0)
-        route = SimpleNamespace(id="route_existing", channel_id=channel.id, public_model_id="gpt-5.6", upstream_model="gpt-5.6", endpoint="responses", status="active", priority_override=None)
+    async def test_reconcile_preserves_valid_manual_override_and_disables_auto_monitor(self) -> None:
+        channel = SimpleNamespace(id="ch_existing", name="Existing Relay", channel_type="openai_compatible", status="active", priority=0, weight=1)
+        routes = [
+            SimpleNamespace(id="route_auto", channel_id=channel.id, public_model_id="gpt-5.6", upstream_model="gpt-5.6", endpoint="responses", status="active", priority_override=0, weight_override=10),
+            SimpleNamespace(id="route_manual", channel_id=channel.id, public_model_id="gpt-5.5", upstream_model="gpt-5.5", endpoint="chat/completions", status="active", priority_override=5, weight_override=1),
+        ]
         manual = SimpleNamespace(
-            id="cmon_manual",
+            id="cma_manual_override",
             channel_id=channel.id,
-            endpoint="responses",
-            primary_model="gpt-5.6",
-            extra_models="[]",
+            endpoint="chat/completions",
+            primary_model="gpt-5.5",
+            extra_models=serialize_monitor_models(["legacy-extra"]),
             status="active",
             created_by="admin",
         )
@@ -240,16 +281,94 @@ class ChannelMonitoringTests(unittest.IsolatedAsyncioTestCase):
             timeout_seconds=30,
             created_by=AUTO_MONITOR_CREATED_BY,
         )
+        db = _ReconcileDB(channels=[channel], routes=routes, monitors=[manual, auto])
+
+        result = await reconcile_provider_channel_monitors(db)
+
+        self.assertEqual(result, {"created": 0, "updated": 1, "disabled": 1})
+        self.assertEqual(auto.status, "disabled")
+        self.assertEqual(manual.status, "active")
+        self.assertEqual(manual.endpoint, "chat/completions")
+        self.assertEqual(manual.primary_model, "gpt-5.5")
+        self.assertEqual(manual.extra_models, "[]")
+
+    async def test_reconcile_disables_invalid_manual_override_without_auto_replacement(self) -> None:
+        channel = SimpleNamespace(id="ch_invalid", name="Invalid Relay", channel_type="openai_compatible", status="active", priority=0, weight=1)
+        route = SimpleNamespace(id="route_valid", channel_id=channel.id, public_model_id="gpt-5.6", upstream_model="gpt-5.6", endpoint="responses", status="active", priority_override=None, weight_override=None)
+        manual = SimpleNamespace(
+            id="cmon_invalid",
+            channel_id=channel.id,
+            endpoint="chat/completions",
+            primary_model="removed-model",
+            extra_models="[]",
+            status="active",
+            created_by="admin",
+        )
+        auto = SimpleNamespace(
+            id="cma_invalid",
+            channel_id=channel.id,
+            name="Auto",
+            endpoint="responses",
+            primary_model="gpt-5.6",
+            extra_models="[]",
+            status="active",
+            interval_seconds=300,
+            timeout_seconds=30,
+            created_by=AUTO_MONITOR_CREATED_BY,
+        )
         db = _ReconcileDB(channels=[channel], routes=[route], monitors=[manual, auto])
 
         result = await reconcile_provider_channel_monitors(db)
 
-        self.assertEqual(result, {"created": 0, "updated": 0, "disabled": 1})
+        self.assertEqual(result, {"created": 0, "updated": 0, "disabled": 2})
+        self.assertEqual(manual.status, "disabled")
         self.assertEqual(auto.status, "disabled")
-        self.assertEqual(manual.status, "active")
+        self.assertEqual(db.added, [])
+
+    async def test_reconcile_collapses_legacy_auto_monitors_to_one_primary_model(self) -> None:
+        channel = SimpleNamespace(id="ch_legacy", name="Legacy Relay", channel_type="openai_compatible", status="active", priority=0, weight=1)
+        routes = [
+            SimpleNamespace(id="route_responses", channel_id=channel.id, public_model_id="gpt-5.6", upstream_model="gpt-5.6", endpoint="responses", status="active", priority_override=0, weight_override=10),
+            SimpleNamespace(id="route_chat", channel_id=channel.id, public_model_id="gpt-4.9", upstream_model="gpt-4.9", endpoint="chat/completions", status="active", priority_override=5, weight_override=1),
+        ]
+        matching_auto = SimpleNamespace(
+            id="cma_responses",
+            channel_id=channel.id,
+            name="Old Responses",
+            endpoint="responses",
+            primary_model="gpt-5.6",
+            extra_models=serialize_monitor_models(["gpt-5.5", "gpt-5.4"]),
+            status="active",
+            interval_seconds=120,
+            timeout_seconds=15,
+            created_by=AUTO_MONITOR_CREATED_BY,
+        )
+        redundant_auto = SimpleNamespace(
+            id="cma_chat",
+            channel_id=channel.id,
+            name="Old Chat",
+            endpoint="chat/completions",
+            primary_model="gpt-4.9",
+            extra_models=serialize_monitor_models(["legacy-chat-extra"]),
+            status="active",
+            interval_seconds=300,
+            timeout_seconds=30,
+            created_by=AUTO_MONITOR_CREATED_BY,
+        )
+        db = _ReconcileDB(channels=[channel], routes=routes, monitors=[redundant_auto, matching_auto])
+
+        result = await reconcile_provider_channel_monitors(db)
+
+        self.assertEqual(result, {"created": 0, "updated": 1, "disabled": 1})
+        self.assertEqual(matching_auto.status, "active")
+        self.assertEqual(matching_auto.primary_model, "gpt-5.6")
+        self.assertEqual(matching_auto.endpoint, "responses")
+        self.assertEqual(matching_auto.extra_models, "[]")
+        self.assertEqual(redundant_auto.status, "disabled")
+        self.assertEqual(redundant_auto.extra_models, "[]")
 
     async def test_reconcile_disables_auto_monitor_when_route_is_removed(self) -> None:
-        channel = SimpleNamespace(id="ch_removed", name="Removed Relay", channel_type="openai_compatible", status="active", priority=0)
+        channel = SimpleNamespace(id="ch_removed", name="Removed Relay", channel_type="openai_compatible", status="active", priority=0, weight=1)
         auto = SimpleNamespace(
             id="cma_removed",
             channel_id=channel.id,
@@ -313,7 +432,7 @@ class ChannelMonitoringTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(monitor_ids, [])
         db.commit.assert_awaited_once_with()
 
-    async def test_run_monitor_once_records_history_and_daily_rollup(self) -> None:
+    async def test_run_monitor_once_probes_only_primary_model_and_records_one_result(self) -> None:
         monitor = SimpleNamespace(
             id="cmon_test",
             channel_id="ch_test",
@@ -341,15 +460,17 @@ class ChannelMonitoringTests(unittest.IsolatedAsyncioTestCase):
 
         results = await run_provider_channel_monitor_once(db, monitor.id, client=client)
 
-        self.assertEqual([item.model for item in results], ["gpt-5.3-codex", "gpt-5.4"])
-        self.assertEqual([item.status for item in results], ["operational", "operational"])
-        self.assertEqual(client.calls[0][0], "GET")
-        self.assertEqual(client.calls[0][1], "https://sub2api.example/v1/models")
+        self.assertEqual([item.model for item in results], ["gpt-5.3-codex"])
+        self.assertEqual([item.status for item in results], ["operational"])
+        self.assertEqual(len(client.calls), 1)
+        self.assertEqual(client.calls[0][0], "POST")
+        self.assertEqual(client.calls[0][1], "https://sub2api.example/v1/responses")
         self.assertEqual(client.calls[0][2]["authorization"], "Bearer sk-test")
-        self.assertEqual(client.calls[1][0], "POST")
-        self.assertEqual(client.calls[1][1], "https://sub2api.example/v1/responses")
-        self.assertEqual(client.calls[1][3]["model"], "gpt-5.3-codex")
-        self.assertEqual(client.calls[2][3]["model"], "gpt-5.4")
+        self.assertEqual(client.calls[0][3]["model"], "gpt-5.3-codex")
+        self.assertEqual(client.calls[0][3]["input"], "Reply with OK.")
+        self.assertEqual(client.calls[0][3]["max_output_tokens"], 16)
+        self.assertFalse(client.calls[0][3]["store"])
+        self.assertFalse(client.calls[0][3]["stream"])
         self.assertEqual(db.commits, 1)
         self.assertEqual(monitor_model_list(monitor), ["gpt-5.3-codex", "gpt-5.4"])
         self.assertEqual(monitor.last_status, "operational")
@@ -357,10 +478,78 @@ class ChannelMonitoringTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(monitor.last_checked_at, datetime)
         histories = [obj for obj in db.added if isinstance(obj, ProviderChannelMonitorHistory)]
         daily_rows = [obj for obj in db.added if isinstance(obj, ProviderChannelMonitorDailyRollup)]
-        self.assertEqual(len(histories), 2)
-        self.assertEqual(len(daily_rows), 2)
+        self.assertEqual(len(histories), 1)
+        self.assertEqual(len(daily_rows), 1)
         self.assertEqual(daily_rows[0].total_checks, 1)
         self.assertEqual(daily_rows[0].operational_count, 1)
+
+    async def test_run_monitor_once_rejects_2xx_without_structured_model_output(self) -> None:
+        monitor = SimpleNamespace(
+            id="cmon_invalid_response",
+            channel_id="ch_invalid_response",
+            name="Invalid response",
+            endpoint="responses",
+            primary_model="gpt-5.6",
+            extra_models="[]",
+            status="active",
+            interval_seconds=60,
+            timeout_seconds=30,
+            last_checked_at=None,
+            last_status="",
+            last_latency_ms=0,
+            last_ping_latency_ms=0,
+            last_message="",
+        )
+        channel = SimpleNamespace(
+            id="ch_invalid_response",
+            base_url="https://invalid.example",
+            encrypted_api_key=encrypt_api_key("sk-test"),
+            auth_style="bearer",
+            channel_type="openai_compatible",
+        )
+        db = _FakeDB(monitor=monitor, channel=channel)
+
+        results = await run_provider_channel_monitor_once(db, monitor.id, client=_FakeInvalidResponseClient())
+
+        self.assertEqual(results[0].status, "failed")
+        self.assertIn("structured model output", results[0].message)
+        self.assertEqual(monitor.last_status, "failed")
+
+    async def test_chat_monitor_uses_minimal_generation_request(self) -> None:
+        monitor = SimpleNamespace(
+            id="cmon_chat",
+            channel_id="ch_chat",
+            name="Chat Relay",
+            endpoint="chat/completions",
+            primary_model="gpt-chat",
+            extra_models="[]",
+            status="active",
+            interval_seconds=60,
+            timeout_seconds=30,
+            last_checked_at=None,
+            last_status="",
+            last_latency_ms=0,
+            last_ping_latency_ms=0,
+            last_message="",
+        )
+        channel = SimpleNamespace(
+            id="ch_chat",
+            base_url="https://chat.example",
+            encrypted_api_key=encrypt_api_key("sk-chat"),
+            auth_style="bearer",
+            channel_type="openai_compatible",
+        )
+        db = _FakeDB(monitor=monitor, channel=channel)
+        client = _FakeChatClient()
+
+        results = await run_provider_channel_monitor_once(db, monitor.id, client=client)
+
+        self.assertEqual(results[0].status, "operational")
+        self.assertEqual(len(client.calls), 1)
+        self.assertEqual(client.calls[0][1], "https://chat.example/v1/chat/completions")
+        self.assertEqual(client.calls[0][3]["messages"], [{"role": "user", "content": "Reply with OK."}])
+        self.assertEqual(client.calls[0][3]["max_tokens"], 8)
+        self.assertFalse(client.calls[0][3]["stream"])
 
     async def test_anthropic_compatible_monitor_uses_messages_endpoint(self) -> None:
         monitor = SimpleNamespace(
@@ -399,7 +588,8 @@ class ChannelMonitoringTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client.calls[0][2]["anthropic-version"], "2023-06-01")
         self.assertNotIn("authorization", client.calls[0][2])
         self.assertEqual(client.calls[0][3]["model"], "claude-fable-5")
-        self.assertEqual(client.calls[0][3]["messages"], [{"role": "user", "content": "ping"}])
+        self.assertEqual(client.calls[0][3]["messages"], [{"role": "user", "content": "Reply with OK."}])
+        self.assertEqual(client.calls[0][3]["max_tokens"], 8)
         self.assertEqual(monitor.last_status, "operational")
 
     async def test_claude_code_monitor_uses_claude_code_headers(self) -> None:
