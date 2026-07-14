@@ -406,7 +406,7 @@ class UsageBuffer:
                 "channel_type": (channel_type or "")[:32],
                 "provider_platform": (provider_platform or "")[:64],
                 "provider_account_fingerprint": (provider_account_fingerprint or "")[:128],
-                "fallback_from_channel_id": (fallback_from_channel_id or "")[:32],
+                "fallback_from_channel_id": (fallback_from_channel_id or "")[:512],
                 "route_attempt": int(route_attempt or 0),
                 "station_id": (station_id or "")[:32],
                 "station_alias": (station_alias or "")[:128],

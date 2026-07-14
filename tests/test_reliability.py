@@ -11,13 +11,17 @@ os.environ.setdefault("COINCOIN_DATABASE_URL", "mysql://test@127.0.0.1:3306/test
 
 from app.main import app
 import app.admin as admin_module
+import app.main as main_module
 from app.config import settings
+from app.models import RequestLog
 from app.reliability import (
     assemble_reliability_overview,
     build_reliability_overview,
     get_cached_reliability_overview,
     invalidate_reliability_cache,
 )
+from app.security import generate_id
+from app.usage_buffer import UsageBuffer
 
 
 class ReliabilityOverviewTests(unittest.IsolatedAsyncioTestCase):
@@ -444,6 +448,87 @@ class ReliabilityOverviewTests(unittest.IsolatedAsyncioTestCase):
         routes_by_channel = {item["channel_id"]: item for item in model["routes"]}
         self.assertEqual(routes_by_channel["ch_primary"]["health_status"], "degraded")
         self.assertEqual(routes_by_channel["ch_backup"]["health_status"], "operational")
+
+    async def test_two_generated_source_channel_ids_survive_buffer_and_aggregation(self) -> None:
+        now = datetime(2026, 7, 15, 10, 0, 0)
+        source_channel_ids = [generate_id("ch_"), generate_id("ch_")]
+        backup_channel_id = generate_id("ch_")
+        fallback_chain = ",".join(source_channel_ids)
+        buffer = UsageBuffer()
+        await buffer.add(
+            "u_fallback_chain",
+            requests=1,
+            endpoint="responses",
+            model="gpt-chain",
+            customer_model_alias="gpt-chain",
+            resolved_public_model="gpt-chain",
+            channel_id=backup_channel_id,
+            fallback_from_channel_id=fallback_chain,
+            route_attempt=2,
+            duration_ms=900,
+            status_code=200,
+        )
+        _daily, _usage_by_user, request_logs = await buffer.snapshot_and_reset()
+
+        self.assertEqual(request_logs[0]["fallback_from_channel_id"], fallback_chain)
+        channels = [
+            SimpleNamespace(id=channel_id, name=channel_id, provider_platform="sub2api", channel_type="openai_compatible", status="active", priority=index, weight=1)
+            for index, channel_id in enumerate([*source_channel_ids, backup_channel_id])
+        ]
+        routes = [
+            SimpleNamespace(id=f"route_{index}", public_model_id="gpt-chain", endpoint="responses", channel_id=channel.id, upstream_model="gpt-chain", priority_override=None, weight_override=None, status="active")
+            for index, channel in enumerate(channels)
+        ]
+        traffic = SimpleNamespace(
+            public_model_id="gpt-chain",
+            channel_id=backup_channel_id,
+            endpoint=request_logs[0]["endpoint"],
+            fallback_from_channel_id=request_logs[0]["fallback_from_channel_id"],
+            requests=1,
+            success_requests=1,
+            failed_requests=0,
+            fallback_requests=1,
+            avg_latency_ms=900,
+            max_latency_ms=900,
+            last_seen_at=now,
+        )
+
+        payload = assemble_reliability_overview(
+            channels=channels,
+            routes=routes,
+            runtime_states=[],
+            monitors=[],
+            traffic_rows=[traffic],
+            recent_failures=[],
+            now=now,
+        )
+
+        by_channel = {item["id"]: item for item in payload["channels"]}
+        for source_channel_id in source_channel_ids:
+            self.assertEqual(by_channel[source_channel_id]["fallback_requests_5m"], 1)
+            self.assertEqual(by_channel[source_channel_id]["health_status"], "degraded")
+
+    async def test_fallback_source_persistence_contract_is_widened_to_512(self) -> None:
+        self.assertEqual(RequestLog.__table__.c.fallback_from_channel_id.type.length, 512)
+
+        class _MigrationConn:
+            def __init__(self) -> None:
+                self.statements: list[str] = []
+
+            async def execute(self, statement) -> None:
+                self.statements.append(str(statement))
+
+        conn = _MigrationConn()
+        await main_module._run_migrations(conn)
+
+        self.assertIn(
+            "ALTER TABLE coincoin_request_logs ADD COLUMN fallback_from_channel_id VARCHAR(512) DEFAULT ''",
+            conn.statements,
+        )
+        self.assertIn(
+            "ALTER TABLE coincoin_request_logs MODIFY COLUMN fallback_from_channel_id VARCHAR(512) DEFAULT ''",
+            conn.statements,
+        )
 
     def test_source_fallback_rate_uses_completed_plus_fallback_attempts_at_threshold(self) -> None:
         now = datetime(2026, 7, 15, 10, 0, 0)

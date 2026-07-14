@@ -142,7 +142,7 @@ async def _run_migrations(conn):
         ("coincoin_request_logs", "channel_type", "VARCHAR(32) DEFAULT ''"),
         ("coincoin_request_logs", "provider_platform", "VARCHAR(64) DEFAULT ''"),
         ("coincoin_request_logs", "provider_account_fingerprint", "VARCHAR(128) DEFAULT ''"),
-        ("coincoin_request_logs", "fallback_from_channel_id", "VARCHAR(32) DEFAULT ''"),
+        ("coincoin_request_logs", "fallback_from_channel_id", "VARCHAR(512) DEFAULT ''"),
         ("coincoin_request_logs", "route_attempt", "BIGINT DEFAULT 0"),
         ("coincoin_user_finance_summary", "initialized_from_history", "BIGINT DEFAULT 0"),
         ("coincoin_user_finance_summary", "total_paid_rmb_cents", "BIGINT DEFAULT 0"),
@@ -239,6 +239,7 @@ async def _run_migrations(conn):
 
     ddl_migrations = [
         "ALTER TABLE coincoin_request_logs MODIFY COLUMN route_reason VARCHAR(128) DEFAULT ''",
+        "ALTER TABLE coincoin_request_logs MODIFY COLUMN fallback_from_channel_id VARCHAR(512) DEFAULT ''",
         "ALTER TABLE coincoin_media_artifacts MODIFY COLUMN route_reason VARCHAR(128) DEFAULT ''",
         "ALTER TABLE coincoin_image_jobs MODIFY COLUMN route_reason VARCHAR(128) DEFAULT ''",
         "ALTER TABLE coincoin_video_jobs MODIFY COLUMN route_reason VARCHAR(128) DEFAULT ''",
