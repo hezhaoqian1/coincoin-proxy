@@ -139,11 +139,11 @@ Why: provide a single inexpensive API for the new console without changing reque
 
 Impact / Compatibility: read-only database queries; 10-second in-process cache; no probe execution.
 
-- [ ] Write tests proving all channels appear, route-less channels show `unconfigured`, routed but unchecked channels show `pending`, monitor failures and fallback traffic produce degraded/failed summaries, and repeated calls hit cache.
-- [ ] Run the tests and verify they fail because the endpoint does not exist.
-- [ ] Implement `/admin/reliability/overview` and cache reset helper.
-- [ ] Run the focused tests and verify they pass.
-- [ ] Commit the backend read-model slice.
+- [x] Write tests proving all channels appear, route-less channels show `unconfigured`, routed but unchecked channels show `pending`, monitor failures and fallback traffic produce degraded/failed summaries, and repeated calls hit cache.
+- [x] Run the tests and verify they fail because the endpoint does not exist.
+- [x] Implement `/admin/reliability/overview` and cache reset helper.
+- [x] Run the focused tests and verify they pass.
+- [x] Commit the backend read-model slice.
 
 ### Task 2: Route-derived monitor reconciliation
 
@@ -153,11 +153,11 @@ Why: adding a route should make monitoring automatic instead of requiring a seco
 
 Impact / Compatibility: reuse a covering active legacy monitor; otherwise create one deterministic auto monitor per channel and endpoint, capped to three distinct route models. Disable auto monitors when their routes disappear. Do not delete manual rows.
 
-- [ ] Write reconciliation tests for create, reuse, update, disable, and the three-model cap.
-- [ ] Verify RED.
-- [ ] Implement deterministic auto-monitor IDs and reconciliation.
-- [ ] Invoke reconciliation after route mutations and periodically in the monitor loop.
-- [ ] Verify GREEN and commit.
+- [x] Write reconciliation tests for create, reuse, update, disable, and the three-model cap.
+- [x] Verify RED.
+- [x] Implement deterministic auto-monitor IDs and reconciliation.
+- [x] Invoke reconciliation after route mutations and periodically in the monitor loop.
+- [x] Verify GREEN and commit.
 
 ### Task 3: Service reliability admin page
 
@@ -167,11 +167,11 @@ Why: administrators need one quiet operational console organized by public model
 
 Impact / Compatibility: retain provider-channel CRUD and route configuration; page polling reads only `/admin/reliability/overview` every 15 seconds and pauses while hidden.
 
-- [ ] Write static wiring tests for the new navigation/page and absence of old duplicate pages/manual monitor creation UI.
-- [ ] Verify RED.
-- [ ] Add the summary strip, incident band, model table, channel table, route detail drawer, and explicit Run now action.
-- [ ] Remove old realtime-monitoring, ops-health, and embedded manual-monitor markup/JavaScript while retaining shared helpers.
-- [ ] Verify GREEN and commit.
+- [x] Write static wiring tests for the new navigation/page and absence of old duplicate pages/manual monitor creation UI.
+- [x] Verify RED.
+- [x] Add the summary strip, incident band, model table, channel table, route detail drawer, and explicit Run now action.
+- [x] Remove old realtime-monitoring, ops-health, and embedded manual-monitor markup/JavaScript while retaining shared helpers.
+- [x] Verify GREEN and commit.
 
 ### Task 4: Compatibility and performance verification
 
@@ -181,11 +181,11 @@ Why: prove the consolidation does not affect channel creation or user request pe
 
 Impact / Compatibility: no production mutation.
 
-- [ ] Run provider-channel CRUD, connection, model-discovery, route, fallback, Anthropic, and OpenAI compatibility tests.
-- [ ] Inspect the diff to prove no reliability code is imported by the request hot path.
-- [ ] Verify dashboard JavaScript never calls `/ops/monitoring/probes/*` or `/admin/monitoring/snapshot` during load/refresh.
-- [ ] Run browser QA at desktop and mobile sizes and inspect console/network errors.
-- [ ] Record verification evidence and commit any test-only corrections.
+- [x] Run provider-channel CRUD, connection, model-discovery, route, fallback, Anthropic, and OpenAI compatibility tests.
+- [x] Inspect the diff to prove no reliability code is imported by the request hot path.
+- [x] Verify dashboard JavaScript never calls `/ops/monitoring/probes/*` or `/admin/monitoring/snapshot` during load/refresh.
+- [x] Run browser QA at desktop and mobile sizes and inspect console/network errors.
+- [x] Record verification evidence and commit any test-only corrections.
 
 ## Risks
 

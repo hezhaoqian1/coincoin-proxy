@@ -50,3 +50,7 @@ Entries are workspace records, not authoritative runtime decisions.
 | 2026-07-14 | artifact | docs/aegis/work/2026-07-14-service-reliability-center/evidence-bundle-draft-task1-focused-tests.json | 2026-07-14-service-reliability-center evidence task1-focused-tests |
 | 2026-07-14 | artifact | docs/aegis/work/2026-07-14-service-reliability-center/resume-state-hint.json | 2026-07-14-service-reliability-center resume state hint |
 | 2026-07-14 | artifact | docs/aegis/work/2026-07-14-service-reliability-center/evidence-bundle-draft-task2-reconcile-tests.json | 2026-07-14-service-reliability-center evidence task2-reconcile-tests |
+| 2026-07-14 | adr | docs/aegis/adr/ADR-0002-route-derived-reliability-observation.md | ADR-0002 - Use route-derived cached reliability observation |
+| 2026-07-14 | baseline | docs/aegis/baseline/service-reliability.md | Service reliability baseline |
+| 2026-07-14 | artifact | docs/aegis/work/2026-07-14-service-reliability-center/gate-input-pack.json | 2026-07-14-service-reliability-center gate input pack |
+| 2026-07-14 | work | docs/aegis/work/2026-07-14-service-reliability-center/proof-bundle.md | 2026-07-14-service-reliability-center proof bundle |

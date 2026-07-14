@@ -47,3 +47,42 @@
 - task2-reconcile-tests
 - Blocked on: none
 - Next step: Write static UI wiring tests, then replace duplicate pages with the reliability console.
+
+## Checkpoint Update
+
+- Current todo: Complete compatibility, performance, and review verification.
+- Active slice: Task 4 from the parent plan.
+- Completed todos:
+- Cached reliability API.
+- Route-derived monitor reconciliation with manual coverage reuse.
+- Service reliability admin page with retired duplicate monitoring surfaces.
+- Evidence refs:
+- task1-focused-tests
+- task2-reconcile-tests
+- task3-browser-ui
+- Blocked on: none
+- Next step: Run full compatibility tests, hot-path inspection, browser network checks, and pre-landing review.
+
+## Final Checkpoint
+
+- Current todo: None.
+- Active slice: Completion candidate.
+- Completed todos:
+- All four parent-plan tasks.
+- Review fixes for reconciliation rollback, unsupported probe endpoints, worst-monitor selection, and monitored-channel deletion.
+- Evidence refs:
+- task1-focused-tests
+- task2-reconcile-tests
+- task3-browser-ui
+- task4-compat-review
+- Blocked on: none
+- Next step: Commit the final slice and integrate the branch.
+
+## DriftCheckDraft
+
+- Scope status: The final slice stayed inside the admin reliability console, background reconciliation, and compatibility verification fence.
+- Compatibility status: Request routing and fallback remain unchanged; unreferenced channels still hard-delete, while channels with retained monitor history are disabled instead of failing an FK-constrained delete.
+- Retirement status: Duplicate UI and dead CSS are removed; manual monitor APIs and persistent monitor/history rows remain available.
+- New risk signals:
+- Active probes currently support text endpoints only, so unsupported image, video, and embedding routes are observed through request traffic but are not auto-probed.
+- Advisory decision: continue to integration.

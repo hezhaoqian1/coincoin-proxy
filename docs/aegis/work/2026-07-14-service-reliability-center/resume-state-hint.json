@@ -2,10 +2,9 @@
   "schemaVersion": "aegis.schema.v0",
   "taskId": "2026-07-14-service-reliability-center",
   "lastCheckpointRef": "docs/aegis/work/2026-07-14-service-reliability-center/todo-checkpoint-draft.json",
-  "resumeInstruction": "Continue with admin-reliability assets and admin.html retirement only; do not edit request routing.",
+  "resumeInstruction": "Implementation and verification are complete; integrate the reviewed branch without editing request routing.",
   "knownPartialWork": [
-    "Cached reliability API.",
-    "Route-derived monitor reconciliation with manual coverage reuse."
+    "None."
   ],
   "mustReadBeforeContinuing": [
     "docs/aegis/work/2026-07-14-service-reliability-center/10-intent.md",
@@ -13,6 +12,6 @@
     "docs/aegis/work/2026-07-14-service-reliability-center/todo-checkpoint-draft.json"
   ],
   "unsafeToAssume": [
-    "Do not remove protected ops probes or manual monitor backend APIs."
+    "Protected ops probes and manual monitor backend APIs remain compatibility boundaries."
   ]
 }

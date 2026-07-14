@@ -2,7 +2,12 @@
   "schemaVersion": "aegis.schema.v0",
   "requestedOutcome": "Ship a cached unified reliability console with route-derived monitoring and no provider-channel or request-path regression.",
   "goal": "Ship a cached unified reliability console with route-derived monitoring and no provider-channel or request-path regression.",
-  "successEvidence": [],
+  "successEvidence": [
+    "243 focused compatibility tests pass.",
+    "Desktop and mobile browser QA pass without console errors or probe-on-load requests.",
+    "No reliability code is imported by request hot-path modules.",
+    "Pre-landing review findings are fixed and regression-tested."
+  ],
   "stopCondition": "Stop when success evidence is satisfied or a blocker/risk requires pause.",
   "nonGoals": [
     "Automatic health-state enforcement in the request router.",
