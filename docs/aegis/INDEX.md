@@ -56,3 +56,16 @@ Entries are workspace records, not authoritative runtime decisions.
 | 2026-07-14 | work | docs/aegis/work/2026-07-14-service-reliability-center/proof-bundle.md | 2026-07-14-service-reliability-center proof bundle |
 | 2026-07-15 | spec | docs/aegis/specs/2026-07-15-channel-representative-probe-design.md | Channel Representative Probe Design |
 | 2026-07-15 | plan | docs/aegis/plans/2026-07-15-channel-representative-probe.md | Channel Representative Probe Implementation Plan |
+| 2026-07-15 | work | docs/aegis/work/2026-07-15-channel-representative-probe/10-intent.md | Channel Representative Probe intent |
+| 2026-07-15 | work | docs/aegis/work/2026-07-15-channel-representative-probe/20-checkpoint.md | Channel Representative Probe checkpoint |
+| 2026-07-15 | work | docs/aegis/work/2026-07-15-channel-representative-probe/90-evidence.md | Channel Representative Probe evidence |
+| 2026-07-15 | work | docs/aegis/work/2026-07-15-channel-representative-probe/99-reflection.md | Channel Representative Probe reflection |
+| 2026-07-15 | artifact | docs/aegis/work/2026-07-15-channel-representative-probe/task-intent-draft.json | Channel Representative Probe task intent draft |
+| 2026-07-15 | artifact | docs/aegis/work/2026-07-15-channel-representative-probe/baseline-read-set-hint.json | Channel Representative Probe baseline read-set hint |
+| 2026-07-15 | artifact | docs/aegis/work/2026-07-15-channel-representative-probe/baseline-usage-draft.json | Channel Representative Probe baseline usage draft |
+| 2026-07-15 | artifact | docs/aegis/work/2026-07-15-channel-representative-probe/impact-statement-draft.json | Channel Representative Probe impact statement draft |
+| 2026-07-15 | artifact | docs/aegis/work/2026-07-15-channel-representative-probe/todo-checkpoint-draft.json | Channel Representative Probe todo checkpoint draft |
+| 2026-07-15 | artifact | docs/aegis/work/2026-07-15-channel-representative-probe/drift-check-draft.json | Channel Representative Probe drift check draft |
+| 2026-07-15 | artifact | docs/aegis/work/2026-07-15-channel-representative-probe/evidence-bundle-draft-task4-compatibility.json | 2026-07-15-channel-representative-probe evidence task4-compatibility |
+| 2026-07-15 | artifact | docs/aegis/work/2026-07-15-channel-representative-probe/gate-input-pack.json | 2026-07-15-channel-representative-probe gate input pack |
+| 2026-07-15 | work | docs/aegis/work/2026-07-15-channel-representative-probe/proof-bundle.md | 2026-07-15-channel-representative-probe proof bundle |

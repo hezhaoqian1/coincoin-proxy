@@ -49,3 +49,48 @@ The realtime monitoring page, ops health page, embedded manual monitor manager, 
 ## Boundary
 
 This ADR is an advisory Aegis Method Pack record. It does not grant completion authority or replace project-authoritative architecture sources.
+
+## Amendment - 2026-07-15 - Adopt one representative real generation probe per provider channel and separate channel probe health from public-model routing and real-traffic health.
+
+- Status: amended
+
+### Source Evidence
+
+- Implemented by commits 3f2a8ee through f562b34 on codex/channel-probe-model.
+### Change Summary
+
+Adopt one representative real generation probe per provider channel and separate channel probe health from public-model routing and real-traffic health.
+
+### Amended Decision
+
+- Each active provider channel has at most one active representative monitor. Automatic selection is deterministic: lowest effective route priority, then highest effective route weight, then stable route ID.
+- An administrator may select an exact model and endpoint pair from the channel's active supported routes or reset the channel to automatic selection. The provider-channel modal owns this workflow.
+- Each probe sends one non-streaming real generation request with `Reply with OK.` to the selected route endpoint. It performs exactly one `POST`, performs no `/models` preflight, and records success only for a 2xx response with structurally valid model output.
+- Probe state contributes only to provider-channel health. Public-model health never inherits a channel probe result; it is derived from active route coverage, endpoint-isolated real request traffic, request failures, correctly source-attributed fallback, a 30-second average-latency threshold, and request-router cooldown.
+- Monitoring is observation-only. It never changes channel or route priority, weight, route status, cooldown, fallback behavior, or request routing. `app/channel_router.py` remains the sole request-selection and fallback authority.
+- The reliability console is channel-first. Channel summary, incidents, representative target, and explicit probe action precede public-model routing and real-traffic details.
+- `fallback_from_channel_id` is widened non-destructively to `VARCHAR(512)` so a request can retain multiple fallback source channel IDs for attribution.
+
+### Compatibility Boundary
+
+Provider channel and route CRUD, priority, weight, route status, router cooldown, fallback, request routing, streaming, billing, manual monitor APIs, extra_models persistence/API shape, and retained probe history remain compatible; fallback_from_channel_id is widened non-destructively to VARCHAR(512).
+
+### Retirement Impact
+
+Legacy multi-model execution and redundant automatic monitors are retired from execution. extra_models and history remain persisted for compatibility, while reconciliation clears executable extras and disables redundant automatic monitors without deleting history.
+
+### Baseline Sync
+
+- Needed: needed
+- Target: docs/aegis/baseline/service-reliability.md
+- Action: update baseline
+- Reason: The current snapshot must record channel-level representative selection, channel-only probe health, public-model real-traffic health, UI ownership, compatibility retention, and migration widening.
+
+### Evidence References
+
+- docs/aegis/work/2026-07-15-channel-representative-probe/90-evidence.md
+- docs/aegis/specs/2026-07-15-channel-representative-probe-design.md
+- docs/aegis/plans/2026-07-15-channel-representative-probe.md
+### Boundary
+
+This amendment is an advisory Aegis Method Pack record. It does not grant completion authority or replace project-authoritative architecture sources.

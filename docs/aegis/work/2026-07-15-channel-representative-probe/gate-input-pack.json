@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "baselineRefs": [
+    "docs/aegis/specs/2026-07-15-channel-representative-probe-design.md",
+    "docs/aegis/adr/ADR-0002-route-derived-reliability-observation.md",
+    "docs/aegis/baseline/service-reliability.md"
+  ],
+  "impactStatement": "docs/aegis/work/2026-07-15-channel-representative-probe/impact-statement-draft.json",
+  "compatPlan": "Provider channel and route CRUD, priority, weight, route status, cooldown, fallback, request routing, streaming, billing, manual monitor APIs, extra_models persistence/API compatibility, and retained history remain stable; fallback_from_channel_id is widened non-destructively to 512.",
+  "retirementPlan": "legacy-extra-model-execution-retired; redundant-automatic-monitors-disabled; persistence-api-shape-and-history-retained",
+  "evidenceBundle": [
+    "docs/aegis/work/2026-07-15-channel-representative-probe/evidence-bundle-draft-task4-compatibility.json"
+  ]
+}
