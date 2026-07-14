@@ -1,12 +1,13 @@
 {
   "schemaVersion": "aegis.schema.v0",
   "taskId": "2026-07-15-channel-representative-probe",
-  "currentTodo": "Run final review, ship, and complete production acceptance.",
+  "currentTodo": "Push, merge, deploy, and complete production acceptance.",
   "completedTodos": [
     "Representative selection and single-request probing passed focused tests and two-stage review.",
     "Channel monitor-selection API and payload passed focused tests and two-stage review.",
     "Channel-first reliability semantics and UI passed focused tests and two-stage review.",
-    "Architecture, baseline, and work records were synchronized; the 283-test compatibility suite and requested static checks passed."
+    "Architecture, baseline, and work records were synchronized; the 283-test compatibility suite and requested static checks passed.",
+    "Integrated pre-landing review is clean; fresh 303-test compatibility, credential, static, desktop, and mobile checks passed."
   ],
   "activeSlice": "Task 5 from the implementation plan.",
   "evidenceRefs": [
@@ -14,6 +15,6 @@
     "docs/aegis/work/2026-07-15-channel-representative-probe/evidence-bundle-draft-task4-compatibility.json"
   ],
   "blockedOn": null,
-  "nextStep": "Review the complete branch diff, resolve verified findings, merge and deploy, then verify the provider-channel selection workflow and one healthy representative probe without routing changes.",
+  "nextStep": "Push and merge the reviewed branch, confirm deployment, then verify the provider-channel selection workflow and one healthy representative probe without routing changes.",
   "updatedAt": "2026-07-15"
 }

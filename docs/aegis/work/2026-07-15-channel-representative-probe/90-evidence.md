@@ -50,3 +50,14 @@
 - Source: pytest six-module compatibility suite; node --check; Python py_compile; aegis-workspace.py check/bundle/check
 - Summary: 283 tests passed with 89 warnings; JavaScript and seven touched Python modules passed syntax checks; Aegis bundle generation and the final read-only workspace check passed after correcting the drift decision to the supported advisory enum.
 - Verifier: Codex local execution on codex/channel-probe-model
+
+## Task 5: Pre-ship Review and Local Acceptance
+
+- Hardening commits: `05260d9`, `ef81cc2`.
+- Integrated review: the first full-branch review found monitor ownership, control-plane locking, explicit lease, endpoint mapping, and required-width migration gaps; regression fixes were applied and the final independent result was `Pre-Landing Review: No issues found.`
+- Fresh compatibility suite: `303 passed, 89 warnings` across reliability, channel monitoring, monitor API, protected monitoring probes, admin usage, OpenAI compatibility, and Anthropic compatibility tests.
+- Static checks: service reliability JavaScript syntax, touched Python module compilation, `git diff --check`, and clean worktree checks passed.
+- Public-diff credential scan: zero high, medium, low, or warning findings.
+- Local browser acceptance: desktop and mobile layouts rendered; channel-first section order, stable horizontal table scrolling, representative model/endpoint/mode display, valid and invalid monitor-selection states, operator reset-to-auto, and explicit monitor-run POST behavior were exercised with mocked read-side payloads and no post-mock console errors.
+- Known baseline issue: the broader suite retains three pre-existing video-job failures unrelated to this branch; the focused compatibility and migration contracts pass.
+- Remaining boundary: push/merge, Railway deployment, production browser/API checks, one healthy production probe, and production routing non-mutation confirmation.
