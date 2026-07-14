@@ -179,6 +179,26 @@ class ChannelMonitoringTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(specs[0].endpoint, "chat/completions")
 
+    def test_desired_route_monitor_specs_skip_unsupported_probe_endpoints(self) -> None:
+        channel = SimpleNamespace(
+            id="ch_image",
+            name="Image Relay",
+            channel_type="openai_compatible",
+            status="active",
+            priority=0,
+        )
+        route = SimpleNamespace(
+            id="route_image",
+            channel_id=channel.id,
+            public_model_id="gpt-image-1",
+            upstream_model="gpt-image-1",
+            endpoint="images/generations",
+            status="active",
+            priority_override=None,
+        )
+
+        self.assertEqual(desired_route_monitor_specs([channel], [route]), [])
+
     async def test_reconcile_creates_auto_monitor_for_uncovered_route(self) -> None:
         channel = SimpleNamespace(id="ch_new", name="New Relay", channel_type="openai_compatible", status="active", priority=0)
         route = SimpleNamespace(id="route_new", channel_id=channel.id, public_model_id="gpt-5.6", upstream_model="gpt-5.6", endpoint="responses", status="active", priority_override=None)

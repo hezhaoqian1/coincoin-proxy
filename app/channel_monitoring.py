@@ -92,10 +92,12 @@ def monitor_model_list(monitor: ProviderChannelMonitor) -> list[str]:
     return list(dict.fromkeys(item for item in values if item))
 
 
-def _monitor_endpoint_for_route(route: ModelChannelRoute, channel: ProviderChannel) -> str:
+def _monitor_endpoint_for_route(route: ModelChannelRoute, channel: ProviderChannel) -> str | None:
     endpoint = str(getattr(route, "endpoint", "") or "").strip()
     if endpoint in {"responses", "chat/completions"}:
         return endpoint
+    if endpoint:
+        return None
     if _is_anthropic_compatible_channel(channel):
         return "chat/completions"
     return "responses"
@@ -123,6 +125,8 @@ def desired_route_monitor_specs(
         if channel is None:
             continue
         endpoint = _monitor_endpoint_for_route(route, channel)
+        if endpoint is None:
+            continue
         model = str(getattr(route, "upstream_model", "") or getattr(route, "public_model_id", "") or "").strip()
         if not model:
             continue

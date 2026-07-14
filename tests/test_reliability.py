@@ -9,6 +9,7 @@ import httpx
 os.environ.setdefault("COINCOIN_DATABASE_URL", "mysql://test:test@127.0.0.1:3306/test")
 
 from app.main import app
+import app.admin as admin_module
 from app.config import settings
 from app.reliability import (
     assemble_reliability_overview,
@@ -144,6 +145,27 @@ class ReliabilityOverviewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(second, expected)
         builder.assert_awaited_once()
 
+    async def test_manual_monitor_run_invalidates_reliability_cache(self) -> None:
+        db = SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(id="monitor-1")))
+        result = SimpleNamespace(
+            model="gpt-5.5",
+            status="operational",
+            latency_ms=1200,
+            ping_latency_ms=80,
+            status_code=200,
+            message="ok",
+            checked_at=datetime(2026, 7, 14, 10, 0, 0),
+        )
+
+        with (
+            patch.object(admin_module, "run_provider_channel_monitor_once", AsyncMock(return_value=[result])),
+            patch.object(admin_module, "invalidate_reliability_cache") as invalidate,
+        ):
+            response = await admin_module.run_provider_channel_monitor_now("monitor-1", db)
+
+        self.assertEqual(response.status_code, 200)
+        invalidate.assert_called_once_with()
+
     def test_assemble_overview_aggregates_same_model_across_channels(self) -> None:
         now = datetime(2026, 7, 14, 10, 0, 0)
         channels = [
@@ -176,6 +198,45 @@ class ReliabilityOverviewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(model["fallback_rate_5m"], 0.2)
         self.assertEqual(model["avg_latency_ms_5m"], 1400)
         self.assertEqual(model["max_latency_ms_5m"], 4000)
+
+    def test_channel_action_uses_worst_active_monitor(self) -> None:
+        now = datetime(2026, 7, 14, 10, 0, 0)
+        channel = SimpleNamespace(
+            id="ch_multi",
+            name="Multi Endpoint",
+            provider_platform="sub2api",
+            channel_type="openai_compatible",
+            status="active",
+            priority=0,
+            weight=1,
+        )
+        route = SimpleNamespace(
+            id="route_multi",
+            public_model_id="gpt-5.6",
+            endpoint="responses",
+            channel_id=channel.id,
+            upstream_model="gpt-5.6",
+            priority_override=None,
+            weight_override=None,
+            status="active",
+        )
+        monitors = [
+            SimpleNamespace(id="monitor-ok", channel_id=channel.id, status="active", last_status="operational", last_message="ok", last_checked_at=now),
+            SimpleNamespace(id="monitor-failed", channel_id=channel.id, status="active", last_status="failed", last_message="HTTP 503", last_checked_at=now),
+        ]
+
+        payload = assemble_reliability_overview(
+            channels=[channel],
+            routes=[route],
+            runtime_states=[],
+            monitors=monitors,
+            traffic_rows=[],
+            recent_failures=[],
+            now=now,
+        )
+
+        self.assertEqual(payload["channels"][0]["monitor_id"], "monitor-failed")
+        self.assertEqual(payload["channels"][0]["monitor_message"], "HTTP 503")
 
     async def test_admin_reliability_overview_requires_admin_token(self) -> None:
         settings.admin_token = "admin-secret"

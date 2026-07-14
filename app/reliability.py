@@ -192,7 +192,11 @@ def assemble_reliability_overview(
         else:
             health_status = "operational"
 
-        primary_monitor = channel_monitors[0] if channel_monitors else None
+        primary_monitor = max(
+            channel_monitors,
+            key=lambda row: _status_rank(_monitor_status(row)),
+            default=None,
+        )
         channel_payloads.append(
             {
                 "id": channel_id,

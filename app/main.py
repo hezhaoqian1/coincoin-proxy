@@ -57,6 +57,7 @@ logging.basicConfig(
 
 WEB_DIR = Path(__file__).parent.parent / "static" / "web"
 ADMIN_UI_PATH = Path(__file__).parent / "static" / "admin.html"
+ADMIN_ASSETS_DIR = Path(__file__).parent / "static" / "admin_assets"
 ADMIN_UPLOAD_DIR = Path(settings.admin_upload_dir)
 
 
@@ -1138,6 +1139,7 @@ app.add_api_route("/openai/v1/embeddings", openai_embeddings, methods=["POST"], 
 if not ADMIN_UPLOAD_DIR.exists():
     ADMIN_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/admin-uploads", StaticFiles(directory=ADMIN_UPLOAD_DIR), name="admin-uploads")
+app.mount("/admin-assets", StaticFiles(directory=ADMIN_ASSETS_DIR), name="admin-assets")
 
 
 @app.get("/health")

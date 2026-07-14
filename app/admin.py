@@ -1105,6 +1105,10 @@ async def _refresh_reliability_after_control_plane_change(
             await reconcile_provider_channel_monitors(db)
         except Exception as exc:
             logger.warning("provider monitor reconcile after admin change failed: %s", exc)
+            try:
+                await db.rollback()
+            except Exception as rollback_exc:
+                logger.warning("provider monitor reconcile rollback failed: %s", rollback_exc)
     invalidate_reliability_cache()
 
 
@@ -2151,6 +2155,7 @@ async def run_provider_channel_monitor_now(monitor_id: str, db: AsyncSession = D
     if monitor is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel monitor not found")
     results = await run_provider_channel_monitor_once(db, monitor_id)
+    invalidate_reliability_cache()
     return JSONResponse(content=jsonable_encoder({
         "monitor_id": monitor_id,
         "results": [
@@ -2326,7 +2331,10 @@ async def delete_provider_channel(channel_id: str, db: AsyncSession = Depends(ge
     if channel is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="provider channel not found")
     route_count = await db.scalar(select(func.count(ModelChannelRoute.id)).where(ModelChannelRoute.channel_id == channel_id)) or 0
-    if int(route_count or 0) > 0:
+    monitor_count = await db.scalar(
+        select(func.count(ProviderChannelMonitor.id)).where(ProviderChannelMonitor.channel_id == channel_id)
+    ) or 0
+    if int(route_count or 0) > 0 or int(monitor_count or 0) > 0:
         channel.status = "disabled"
         channel.updated_by = "admin"
         await db.commit()
@@ -2335,7 +2343,11 @@ async def delete_provider_channel(channel_id: str, db: AsyncSession = Depends(ge
         return {
             "deleted": False,
             "disabled": True,
-            "reason": "channel still has model routes",
+            "reason": (
+                "channel still has model routes"
+                if int(route_count or 0) > 0
+                else "channel has monitoring history"
+            ),
             "channel": _provider_channel_payload(channel, route_count=int(route_count or 0)),
         }
 
