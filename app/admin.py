@@ -1,3 +1,4 @@
+import logging
 import os
 import secrets
 import time
@@ -74,9 +75,11 @@ from .channel_monitoring import (
     monitor_availability_rows,
     monitor_model_list,
     parse_monitor_models,
+    reconcile_provider_channel_monitors,
     run_provider_channel_monitor_once,
     serialize_monitor_models,
 )
+from .reliability import invalidate_reliability_cache
 from .model_pricing_overrides import refresh_model_pricing_registry_from_db
 from .system_settings import (
     CLAUDE_COMPAT_PROVIDER_KEY,
@@ -110,6 +113,7 @@ from .security import decrypt_api_key, encrypt_api_key, generate_api_key, genera
 
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+logger = logging.getLogger("coincoin.admin")
 ADMIN_UPLOAD_ROOT = Path(_settings.admin_upload_dir)
 ANALYTICS_BALANCE_CACHE_TTL_SECONDS = 60
 _analytics_balance_cache: dict[str, tuple[float, int]] = {}
@@ -1089,6 +1093,23 @@ def _system_default_channel_payloads() -> list[dict]:
 
 def admin_guard(request: Request):
     require_admin(request)
+
+
+async def _refresh_reliability_after_control_plane_change(
+    db: AsyncSession,
+    *,
+    reconcile_monitors: bool = False,
+) -> None:
+    if reconcile_monitors:
+        try:
+            await reconcile_provider_channel_monitors(db)
+        except Exception as exc:
+            logger.warning("provider monitor reconcile after admin change failed: %s", exc)
+            try:
+                await db.rollback()
+            except Exception as rollback_exc:
+                logger.warning("provider monitor reconcile rollback failed: %s", rollback_exc)
+    invalidate_reliability_cache()
 
 
 def _analytics_period(period: str) -> Tuple[str, int, date, datetime]:
@@ -2134,6 +2155,7 @@ async def run_provider_channel_monitor_now(monitor_id: str, db: AsyncSession = D
     if monitor is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel monitor not found")
     results = await run_provider_channel_monitor_once(db, monitor_id)
+    invalidate_reliability_cache()
     return JSONResponse(content=jsonable_encoder({
         "monitor_id": monitor_id,
         "results": [
@@ -2211,6 +2233,7 @@ async def create_provider_channel(payload: AdminProviderChannelCreate, db: Async
     )
     db.add(channel)
     await db.commit()
+    await _refresh_reliability_after_control_plane_change(db)
     await refresh_provider_channel_router_from_db(db)
     return _provider_channel_payload(channel)
 
@@ -2295,6 +2318,7 @@ async def update_provider_channel(channel_id: str, payload: AdminProviderChannel
         channel.notes = payload.notes
     channel.updated_by = "admin"
     await db.commit()
+    await _refresh_reliability_after_control_plane_change(db, reconcile_monitors=True)
     await refresh_provider_channel_router_from_db(db)
     route_count = await db.scalar(select(func.count(ModelChannelRoute.id)).where(ModelChannelRoute.channel_id == channel_id)) or 0
     runtime_state = await db.get(ProviderChannelRuntimeState, channel_id)
@@ -2307,24 +2331,44 @@ async def delete_provider_channel(channel_id: str, db: AsyncSession = Depends(ge
     if channel is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="provider channel not found")
     route_count = await db.scalar(select(func.count(ModelChannelRoute.id)).where(ModelChannelRoute.channel_id == channel_id)) or 0
-    if int(route_count or 0) > 0:
+    monitor_history_count = await db.scalar(
+        select(func.count(ProviderChannelMonitorHistory.id)).where(
+            ProviderChannelMonitorHistory.channel_id == channel_id
+        )
+    ) or 0
+    monitor_rollup_count = await db.scalar(
+        select(func.count(ProviderChannelMonitorDailyRollup.id)).where(
+            ProviderChannelMonitorDailyRollup.channel_id == channel_id
+        )
+    ) or 0
+    has_monitor_history = int(monitor_history_count or 0) > 0 or int(monitor_rollup_count or 0) > 0
+    if int(route_count or 0) > 0 or has_monitor_history:
         channel.status = "disabled"
         channel.updated_by = "admin"
         await db.commit()
+        await _refresh_reliability_after_control_plane_change(db, reconcile_monitors=True)
         await refresh_provider_channel_router_from_db(db)
         return {
             "deleted": False,
             "disabled": True,
-            "reason": "channel still has model routes",
+            "reason": (
+                "channel still has model routes"
+                if int(route_count or 0) > 0
+                else "channel has monitoring history"
+            ),
             "channel": _provider_channel_payload(channel, route_count=int(route_count or 0)),
         }
 
+    await db.execute(
+        delete(ProviderChannelMonitor).where(ProviderChannelMonitor.channel_id == channel_id)
+    )
     runtime_state = await db.get(ProviderChannelRuntimeState, channel_id)
     if runtime_state is not None:
         await db.delete(runtime_state)
     await db.delete(channel)
     await db.commit()
     channel_router.reset_channel_state(channel_id)
+    await _refresh_reliability_after_control_plane_change(db, reconcile_monitors=True)
     await refresh_provider_channel_router_from_db(db)
     return {"deleted": True, "channel_id": channel_id}
 
@@ -2342,6 +2386,7 @@ async def clear_provider_channel_cooldown(channel_id: str, db: AsyncSession = De
         runtime_state.last_error_code = ""
         runtime_state.last_error_message = ""
         await db.commit()
+    await _refresh_reliability_after_control_plane_change(db)
     return _provider_channel_payload(channel, runtime_state=runtime_state)
 
 
@@ -2385,6 +2430,7 @@ async def create_model_channel_route(payload: AdminModelChannelRouteCreate, db: 
     )
     db.add(route)
     await db.commit()
+    await _refresh_reliability_after_control_plane_change(db, reconcile_monitors=True)
     await refresh_provider_channel_router_from_db(db)
     return _model_channel_route_payload(route, channel)
 
@@ -2426,6 +2472,7 @@ async def update_model_channel_route(route_id: str, payload: AdminModelChannelRo
         route.notes = payload.notes
     route.updated_by = "admin"
     await db.commit()
+    await _refresh_reliability_after_control_plane_change(db, reconcile_monitors=True)
     await refresh_provider_channel_router_from_db(db)
     return _model_channel_route_payload(route, channel)
 
@@ -2437,6 +2484,7 @@ async def delete_model_channel_route(route_id: str, db: AsyncSession = Depends(g
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="model channel route not found")
     await db.delete(route)
     await db.commit()
+    await _refresh_reliability_after_control_plane_change(db, reconcile_monitors=True)
     await refresh_provider_channel_router_from_db(db)
     return {"deleted": True, "route_id": route_id}
 

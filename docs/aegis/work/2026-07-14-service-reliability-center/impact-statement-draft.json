@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "affectedLayers": [
+    "admin control plane"
+  ],
+  "owners": [
+    "app/reliability.py and app/channel_monitoring.py"
+  ],
+  "invariants": [
+    "No request-path database, Redis, webhook, or probe I/O is added."
+  ],
+  "compatBoundary": "Provider channel CRUD, connection test, upstream model discovery, route CRUD, fallback, priority, weight, cooldown, and protected ops probes remain stable.",
+  "nonGoals": [
+    "Automatic health-state enforcement in the request router.",
+    "Dropping monitor tables or deleting persistent rows."
+  ]
+}

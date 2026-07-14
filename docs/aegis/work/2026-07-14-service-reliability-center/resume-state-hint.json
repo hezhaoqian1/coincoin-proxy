@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "2026-07-14-service-reliability-center",
+  "lastCheckpointRef": "docs/aegis/work/2026-07-14-service-reliability-center/todo-checkpoint-draft.json",
+  "resumeInstruction": "Implementation and verification are complete; integrate the reviewed branch without editing request routing.",
+  "knownPartialWork": [
+    "None."
+  ],
+  "mustReadBeforeContinuing": [
+    "docs/aegis/work/2026-07-14-service-reliability-center/10-intent.md",
+    "docs/aegis/work/2026-07-14-service-reliability-center/20-checkpoint.md",
+    "docs/aegis/work/2026-07-14-service-reliability-center/todo-checkpoint-draft.json"
+  ],
+  "unsafeToAssume": [
+    "Protected ops probes and manual monitor backend APIs remain compatibility boundaries."
+  ]
+}

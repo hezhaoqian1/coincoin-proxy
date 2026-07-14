@@ -230,9 +230,9 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("collapsible-card", admin_html)
         self.assertIn("card-collapse-btn", admin_html)
-        self.assertIn("toggleCollapsibleCard('provider-channel-monitor')", admin_html)
         self.assertIn("toggleCollapsibleCard('provider-channels')", admin_html)
         self.assertIn("toggleCollapsibleCard('model-channel-routes')", admin_html)
+        self.assertNotIn("toggleCollapsibleCard('provider-channel-monitor')", admin_html)
         self.assertNotIn("toggleCollapsibleCard('provider-channel-stability')", admin_html)
         self.assertNotIn("toggleCollapsibleCard('default-provider-channels')", admin_html)
         self.assertIn("cc_admin_card_collapsed:", admin_html)
@@ -320,25 +320,155 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("deleteUserPricingOverride", admin_html)
 
     def test_admin_ui_surfaces_provider_fallback_observability(self) -> None:
-        admin_html = (Path(admin_module.__file__).parent / "static" / "admin.html").read_text()
+        static_dir = Path(admin_module.__file__).parent / "static"
+        admin_html = (static_dir / "admin.html").read_text()
+        reliability_js = (static_dir / "admin_assets" / "service-reliability.js").read_text()
 
-        self.assertIn("24h Fallback", admin_html)
+        self.assertIn("Fallback", reliability_js)
+        self.assertIn("fallback_rate_5m", reliability_js)
         self.assertIn("Route / Channel", admin_html)
         self.assertIn("fallback_from_channel_id", admin_html)
         self.assertIn("route_attempt", admin_html)
         self.assertNotIn("渠道稳定性", admin_html)
         self.assertNotIn("系统默认渠道", admin_html)
         self.assertNotIn("/admin/provider-channels/stability", admin_html)
-        self.assertIn("主动监控", admin_html)
-        self.assertIn("/admin/provider-channel-monitors", admin_html)
-        self.assertIn("data-monitor-period", admin_html)
-        self.assertIn("providerChannelMonitorSearch", admin_html)
-        self.assertIn("providerChannelMonitorStatusFilter", admin_html)
-        self.assertIn("providerChannelMonitorRunModal", admin_html)
-        self.assertIn("providerChannelMonitorHistoryModal", admin_html)
-        self.assertIn("setProviderChannelMonitorStatus", admin_html)
-        self.assertIn("openProviderChannelMonitorHistory", admin_html)
-        self.assertIn("createMonitorFromDiscoveredModel", admin_html)
+        self.assertNotIn("主动监控", admin_html)
+        self.assertNotIn("新增监控", admin_html)
+        self.assertNotIn("data-monitor-period", admin_html)
+        self.assertNotIn("providerChannelMonitorSearch", admin_html)
+        self.assertNotIn("providerChannelMonitorStatusFilter", admin_html)
+        self.assertNotIn("providerChannelMonitorRunModal", admin_html)
+        self.assertNotIn("providerChannelMonitorHistoryModal", admin_html)
+        self.assertNotIn("setProviderChannelMonitorStatus", admin_html)
+        self.assertNotIn("openProviderChannelMonitorHistory", admin_html)
+        self.assertNotIn("createMonitorFromDiscoveredModel", admin_html)
+
+    def test_admin_ui_wires_service_reliability_page(self) -> None:
+        static_dir = Path(admin_module.__file__).parent / "static"
+        admin_html = (static_dir / "admin.html").read_text()
+        reliability_css = (static_dir / "admin_assets" / "service-reliability.css").read_text()
+        reliability_js = (static_dir / "admin_assets" / "service-reliability.js").read_text()
+        main_source = (Path(admin_module.__file__).parent / "main.py").read_text()
+
+        self.assertIn('href="/admin-assets/service-reliability.css"', admin_html)
+        self.assertIn('src="/admin-assets/service-reliability.js"', admin_html)
+        self.assertIn('data-page="service-reliability"', admin_html)
+        self.assertIn('id="page-service-reliability"', admin_html)
+        self.assertIn("'service-reliability': loadServiceReliability", admin_html)
+        self.assertIn("服务可靠性", admin_html)
+        self.assertIn("/admin/reliability/overview", reliability_js)
+        self.assertIn("visibilitychange", reliability_js)
+        self.assertIn("15000", reliability_js)
+        self.assertIn("service-reliability", reliability_css)
+        self.assertIn('app.mount("/admin-assets"', main_source)
+
+        self.assertNotIn('data-page="monitoring"', admin_html)
+        self.assertNotIn('data-page="ops-health"', admin_html)
+        self.assertNotIn('id="page-monitoring"', admin_html)
+        self.assertNotIn('id="page-ops-health"', admin_html)
+        self.assertNotIn("/admin/monitoring/snapshot", admin_html)
+        self.assertNotIn("loadMonitoringSummary", admin_html)
+        self.assertNotIn("loadOpsHealth", admin_html)
+
+    async def test_reliability_reconcile_failure_rolls_back_without_escaping(self) -> None:
+        db = _FakeDB()
+
+        with (
+            patch.object(
+                admin_module,
+                "reconcile_provider_channel_monitors",
+                AsyncMock(side_effect=RuntimeError("monitor reconcile failed")),
+            ),
+            patch.object(admin_module, "invalidate_reliability_cache") as invalidate,
+        ):
+            await admin_module._refresh_reliability_after_control_plane_change(
+                db,
+                reconcile_monitors=True,
+            )
+
+        self.assertEqual(db.rollbacks, 1)
+        invalidate.assert_called_once_with()
+
+    async def test_delete_provider_channel_with_monitor_history_disables_instead(self) -> None:
+        now = datetime(2026, 7, 14, 10, 0, 0)
+        channel = SimpleNamespace(
+            id="channel-monitored",
+            name="Monitored Channel",
+            provider_platform="sub2api",
+            channel_type="openai_compatible",
+            base_url="https://relay.example/v1",
+            auth_style="bearer",
+            status="active",
+            priority=0,
+            weight=1,
+            allowed_fails=3,
+            cooldown_seconds=30,
+            capabilities="responses",
+            provider_account_fingerprint="",
+            encrypted_api_key=None,
+            cost_tier="",
+            notes="",
+            updated_by="admin",
+            created_at=now,
+            updated_at=now,
+        )
+        db = SimpleNamespace(
+            get=AsyncMock(return_value=channel),
+            scalar=AsyncMock(side_effect=[0, 1, 0]),
+            commit=AsyncMock(),
+            delete=AsyncMock(),
+            execute=AsyncMock(),
+        )
+
+        with (
+            patch.object(
+                admin_module,
+                "_refresh_reliability_after_control_plane_change",
+                AsyncMock(),
+            ),
+            patch.object(
+                admin_module,
+                "refresh_provider_channel_router_from_db",
+                AsyncMock(),
+            ),
+        ):
+            result = await admin_module.delete_provider_channel(channel.id, db)
+
+        self.assertEqual(result["deleted"], False)
+        self.assertEqual(result["disabled"], True)
+        self.assertEqual(result["reason"], "channel has monitoring history")
+        self.assertEqual(channel.status, "disabled")
+        db.delete.assert_not_awaited()
+
+    async def test_delete_unreferenced_provider_channel_still_hard_deletes(self) -> None:
+        channel = SimpleNamespace(id="channel-empty")
+        db = SimpleNamespace(
+            get=AsyncMock(side_effect=[channel, None]),
+            scalar=AsyncMock(side_effect=[0, 0, 0]),
+            commit=AsyncMock(),
+            delete=AsyncMock(),
+            execute=AsyncMock(),
+        )
+
+        with (
+            patch.object(
+                admin_module,
+                "_refresh_reliability_after_control_plane_change",
+                AsyncMock(),
+            ),
+            patch.object(
+                admin_module,
+                "refresh_provider_channel_router_from_db",
+                AsyncMock(),
+            ),
+            patch.object(admin_module.channel_router, "reset_channel_state") as reset_state,
+        ):
+            result = await admin_module.delete_provider_channel(channel.id, db)
+
+        self.assertEqual(result, {"deleted": True, "channel_id": channel.id})
+        db.delete.assert_awaited_once_with(channel)
+        db.execute.assert_awaited_once()
+        reset_state.assert_called_once_with(channel.id)
 
     async def test_provider_channels_includes_system_default_channels(self) -> None:
         catalog = {

@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "candidateDocs": [
+    "docs/aegis/plans/2026-07-14-service-reliability-center.md",
+    "app/channel_monitoring.py",
+    "app/admin.py",
+    "app/static/admin.html"
+  ],
+  "whyRelevant": "These define the approved plan, monitoring owner, provider contracts, and retiring UI.",
+  "missingAuthority": []
+}

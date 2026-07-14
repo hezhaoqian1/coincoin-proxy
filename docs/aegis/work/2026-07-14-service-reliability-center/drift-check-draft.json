@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "2026-07-14-service-reliability-center",
+  "taskIntentRef": "docs/aegis/work/2026-07-14-service-reliability-center/task-intent-draft.json",
+  "baselineRefs": [
+    "docs/aegis/plans/2026-07-14-service-reliability-center.md"
+  ],
+  "scopeStatus": "All slices stayed inside the admin reliability console, background control-plane reconciliation, duplicate UI retirement, and verification fence.",
+  "compatStatus": "Request routing is unchanged; reconciliation failures roll back before later admin work, and monitored channels disable instead of violating retained-history foreign keys.",
+  "retirementStatus": "Duplicate admin UI and dead styles are removed; manual monitor APIs and persistent monitor/history rows remain intact.",
+  "newRiskSignals": [
+    "Active probes support text endpoints only; unsupported endpoint routes are skipped by auto-probe reconciliation and remain traffic-observed."
+  ],
+  "decision": "continue"
+}

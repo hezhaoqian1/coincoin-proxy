@@ -1,0 +1,21 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "2026-07-14-service-reliability-center",
+  "currentTodo": "None; completion candidate.",
+  "completedTodos": [
+    "Cached reliability API.",
+    "Route-derived monitor reconciliation with manual coverage reuse.",
+    "Service reliability admin page and duplicate UI retirement.",
+    "Compatibility, browser, performance-path, and pre-landing review verification."
+  ],
+  "activeSlice": "Completion candidate.",
+  "evidenceRefs": [
+    "task1-focused-tests",
+    "task2-reconcile-tests",
+    "task3-browser-ui",
+    "task4-compat-review"
+  ],
+  "blockedOn": null,
+  "nextStep": "Commit and integrate the reviewed branch.",
+  "updatedAt": "2026-07-14"
+}
