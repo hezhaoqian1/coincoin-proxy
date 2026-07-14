@@ -24,9 +24,9 @@
 ## Task 3: Channel-first reliability semantics and UI
 
 - Commits: `b93e7fe`, `db2a4fb`, `a9e4034`, `9a925de`, `d86e747`, `f562b34`.
-- Focused verification: reliability/admin/channel suites passed throughout; latest persistence-focused slice reported `36 passed` and the full reliability module reported `22 passed` before widening.
+- Focused verification: reliability/admin/channel suites passed throughout; the persistence-focused slice reported `36 passed` and the full reliability module reported `22 passed` during feature verification.
 - Spec compliance: approved after real-latency health and invalid-manual reset-to-auto UI support, which requires operator action and does not automatically replace an invalid manual selection.
-- Code quality: approved after fallback-source attribution, endpoint isolation/normalization, bounded fallback-rate math, image alias mapping, and compatibility-preserving fallback source persistence widening.
+- Code quality: approved after fallback-source attribution, endpoint isolation/normalization, bounded fallback-rate math, image alias mapping, and bounded fallback source persistence.
 - Observed boundary: representative probe status affects channel health only; public-model health uses route coverage, real traffic, fallback source attribution, latency, and router cooldown.
 
 ## Task 4: Migration compatibility and architecture sync
@@ -37,7 +37,7 @@
 - JavaScript syntax: `node --check app/static/admin_assets/service-reliability.js` passed.
 - Python syntax: `py_compile` passed for `app/admin.py`, `app/channel_monitoring.py`, `app/main.py`, `app/models.py`, `app/reliability.py`, `app/schemas.py`, and `app/usage_buffer.py`.
 - Aegis workspace: helper help was inspected; the first read-only check rejected the unsupported `continue-task-5` drift enum, the record was corrected to advisory `continue`, `bundle` generated `gate-input-pack.json` and `proof-bundle.md`, and the final workspace check passed.
-- Migration compatibility: `fallback_from_channel_id` is widened to 512 in the ORM model, create-table DDL, startup migration, and buffered persistence truncation. The application performs no data `UPDATE` or `DELETE` and preserves existing values; this evidence makes no claim that MySQL avoids an internal table rebuild or row rewrite while applying the DDL.
+- Migration compatibility: `fallback_from_channel_id` retains its legacy 32-character contract in the ORM model, create-table DDL, and buffered writer. The first complete fallback source is guaranteed; persisted multi-hop attribution is best-effort. No startup path widens the production request-log table.
 - Retirement outcome: `extra_models` remains persisted and exposed for compatibility but representative probes execute only `primary_model`; reconciliation disables redundant automatic monitors, clears executable extras, and retains monitor history.
 - Review outcome: Tasks 1-3 received recorded spec-compliance and code-quality approvals; Task 4 records were checked against the implemented branch and fresh local compatibility/static evidence.
 - Additional docs-validator gap: the repository guidance names `tests.test_docs_check` and `scripts/check_docs.py`, but neither file exists in this checkout; the unittest command therefore failed at import and no script command was available.
@@ -54,10 +54,18 @@
 ## Task 5: Pre-ship Review and Local Acceptance
 
 - Hardening commits: `05260d9`, `ef81cc2`.
-- Integrated review: the first full-branch review found monitor ownership, control-plane locking, explicit lease, endpoint mapping, and required-width migration gaps; regression fixes were applied and the final independent result was `Pre-Landing Review: No issues found.`
+- Integrated review: the first full-branch review found monitor ownership, control-plane locking, explicit lease, endpoint mapping, and fallback-attribution contract gaps; regression fixes were applied and the final independent result was `Pre-Landing Review: No issues found.`
 - Fresh compatibility suite: `303 passed, 89 warnings` across reliability, channel monitoring, monitor API, protected monitoring probes, admin usage, OpenAI compatibility, and Anthropic compatibility tests.
 - Static checks: service reliability JavaScript syntax, touched Python module compilation, `git diff --check`, and clean worktree checks passed.
 - Public-diff credential scan: zero high, medium, low, or warning findings.
 - Local browser acceptance: desktop and mobile layouts rendered; channel-first section order, stable horizontal table scrolling, representative model/endpoint/mode display, valid and invalid monitor-selection states, operator reset-to-auto, and explicit monitor-run POST behavior were exercised with mocked read-side payloads and no post-mock console errors.
 - Known baseline issue: the broader suite retains three pre-existing video-job failures unrelated to this branch; the focused compatibility and migration contracts pass.
 - Remaining boundary: push/merge, Railway deployment, production browser/API checks, one healthy production probe, and production routing non-mutation confirmation.
+
+## Production Deployment Hotfix
+
+- The first backend Railway deployment reached application startup but failed its 60-second health check while startup attempted `ALTER TABLE coincoin_request_logs MODIFY COLUMN fallback_from_channel_id VARCHAR(512)` on the production request-log table.
+- The prior deployment remained active, so production traffic continued on the old version while the failed deployment was isolated.
+- Hotfix decision: remove the startup width migration, restore the ORM/create-column/writer contract to 32 characters, and keep first-source fallback attribution as the guaranteed persistence behavior.
+- Hotfix verification: `299 passed, 89 warnings` across reliability, admin, channel monitoring, monitor API/probes, OpenAI compatibility, and Anthropic compatibility tests. Python compilation, JavaScript syntax, JSON parsing, `git diff --check`, and the public-diff credential scan passed with zero findings.
+- Operational boundary: any future widening of fallback audit storage must use a separately operated migration with explicit production lock/rebuild planning; it must not run in the web service health-check path.

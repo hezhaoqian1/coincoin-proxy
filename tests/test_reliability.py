@@ -452,7 +452,7 @@ class ReliabilityOverviewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(routes_by_channel["ch_primary"]["health_status"], "degraded")
         self.assertEqual(routes_by_channel["ch_backup"]["health_status"], "operational")
 
-    async def test_two_generated_source_channel_ids_survive_buffer_and_aggregation(self) -> None:
+    async def test_persisted_fallback_chain_keeps_first_source_with_legacy_column_bound(self) -> None:
         now = datetime(2026, 7, 15, 10, 0, 0)
         source_channel_ids = [generate_id("ch_"), generate_id("ch_")]
         backup_channel_id = generate_id("ch_")
@@ -473,7 +473,9 @@ class ReliabilityOverviewTests(unittest.IsolatedAsyncioTestCase):
         )
         _daily, _usage_by_user, request_logs = await buffer.snapshot_and_reset()
 
-        self.assertEqual(request_logs[0]["fallback_from_channel_id"], fallback_chain)
+        persisted_chain = request_logs[0]["fallback_from_channel_id"]
+        self.assertEqual(len(persisted_chain), 32)
+        self.assertTrue(persisted_chain.startswith(source_channel_ids[0]))
         channels = [
             SimpleNamespace(id=channel_id, name=channel_id, provider_platform="sub2api", channel_type="openai_compatible", status="active", priority=index, weight=1)
             for index, channel_id in enumerate([*source_channel_ids, backup_channel_id])
@@ -507,19 +509,13 @@ class ReliabilityOverviewTests(unittest.IsolatedAsyncioTestCase):
         )
 
         by_channel = {item["id"]: item for item in payload["channels"]}
-        for source_channel_id in source_channel_ids:
-            self.assertEqual(by_channel[source_channel_id]["fallback_requests_5m"], 1)
-            self.assertEqual(by_channel[source_channel_id]["health_status"], "degraded")
+        self.assertEqual(by_channel[source_channel_ids[0]]["fallback_requests_5m"], 1)
+        self.assertEqual(by_channel[source_channel_ids[0]]["health_status"], "degraded")
+        self.assertEqual(by_channel[source_channel_ids[1]]["fallback_requests_5m"], 0)
+        self.assertNotEqual(by_channel[source_channel_ids[1]]["health_status"], "degraded")
 
-    async def test_fallback_source_persistence_contract_is_widened_to_512(self) -> None:
-        self.assertEqual(RequestLog.__table__.c.fallback_from_channel_id.type.length, 512)
-
-        class _WidthResult:
-            def __init__(self, value) -> None:
-                self.value = value
-
-            def scalar_one_or_none(self):
-                return self.value
+    async def test_fallback_source_persistence_keeps_legacy_width_without_hot_table_alter(self) -> None:
+        self.assertEqual(RequestLog.__table__.c.fallback_from_channel_id.type.length, 32)
 
         class _MigrationConn:
             def __init__(self) -> None:
@@ -528,22 +524,16 @@ class ReliabilityOverviewTests(unittest.IsolatedAsyncioTestCase):
             async def execute(self, statement, parameters=None):
                 sql = str(statement)
                 self.statements.append(sql)
-                if "information_schema.COLUMNS" in sql:
-                    return _WidthResult(512)
-                return _WidthResult(None)
 
         conn = _MigrationConn()
         await main_module._run_migrations(conn)
 
         self.assertIn(
-            "ALTER TABLE coincoin_request_logs ADD COLUMN fallback_from_channel_id VARCHAR(512) DEFAULT ''",
+            "ALTER TABLE coincoin_request_logs ADD COLUMN fallback_from_channel_id VARCHAR(32) DEFAULT ''",
             conn.statements,
         )
-        self.assertTrue(any("information_schema.COLUMNS" in sql for sql in conn.statements))
-        self.assertNotIn(
-            "ALTER TABLE coincoin_request_logs MODIFY COLUMN fallback_from_channel_id VARCHAR(512) DEFAULT ''",
-            conn.statements,
-        )
+        self.assertFalse(any("information_schema.COLUMNS" in sql for sql in conn.statements))
+        self.assertFalse(any("fallback_from_channel_id VARCHAR(512)" in sql for sql in conn.statements))
 
     def test_source_fallback_rate_uses_completed_plus_fallback_attempts_at_threshold(self) -> None:
         now = datetime(2026, 7, 15, 10, 0, 0)
