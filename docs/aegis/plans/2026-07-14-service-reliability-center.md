@@ -40,8 +40,8 @@ Replace the three overlapping admin monitoring surfaces with one cached service-
 ## Verification
 
 ```bash
-COINCOIN_DATABASE_URL='mysql://test:test@127.0.0.1:3306/test' \
-  /Users/windupbird/Documents/Coincoin中转站/coincoin-proxy/.venv/bin/python -m pytest -q \
+COINCOIN_DATABASE_URL="${COINCOIN_TEST_DATABASE_URL:?set COINCOIN_TEST_DATABASE_URL}" \
+  .venv/bin/python -m pytest -q \
   tests/test_reliability.py \
   tests/test_channel_monitoring.py \
   tests/test_monitoring_probes.py \
@@ -49,7 +49,7 @@ COINCOIN_DATABASE_URL='mysql://test:test@127.0.0.1:3306/test' \
   tests/test_openai_compat_defaults.py \
   tests/test_anthropic_compat.py
 
-/Users/windupbird/Documents/Coincoin中转站/coincoin-proxy/.venv/bin/python -m py_compile \
+.venv/bin/python -m py_compile \
   app/reliability.py app/channel_monitoring.py app/main.py
 ```
 

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 
-os.environ.setdefault("COINCOIN_DATABASE_URL", "mysql://test:test@127.0.0.1:3306/test")
+os.environ.setdefault("COINCOIN_DATABASE_URL", "mysql://test@127.0.0.1:3306/test")
 
 from app.main import app
 import app.admin as admin_module
