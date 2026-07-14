@@ -350,7 +350,7 @@ class ReliabilityOverviewTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_manual_monitor_run_invalidates_reliability_cache(self) -> None:
         db = SimpleNamespace()
-        monitor = SimpleNamespace(id="monitor-1")
+        monitor = SimpleNamespace(id="monitor-1", timeout_seconds=30)
         result = SimpleNamespace(
             model="gpt-5.5",
             status="operational",

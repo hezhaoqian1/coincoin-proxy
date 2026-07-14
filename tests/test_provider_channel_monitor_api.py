@@ -214,7 +214,128 @@ class ProviderChannelMonitorApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(db.commits, 1)
         self.assertEqual(db.rollbacks, 0)
         self.assertTrue(all("FOR UPDATE" in str(query).upper() for query in db.queries))
+        self.assertIn("coincoin_provider_channels", str(db.queries[0]))
+        self.assertIn("coincoin_provider_channel_monitors", str(db.queries[1]))
         invalidate.assert_called_once_with()
+
+    async def test_patch_returns_conflict_when_monitor_channel_changes_after_channel_lock(self) -> None:
+        old_channel = _channel("ch_patch_old")
+        target_channel = _channel("ch_patch_target")
+        changed_channel = _channel("ch_patch_changed")
+        optimistic = _monitor("cmon_patch_race", old_channel.id, created_by="admin")
+        changed = _monitor(optimistic.id, changed_channel.id, created_by="admin")
+        db = _MonitorCrudDB(
+            channels=[old_channel, target_channel, changed_channel],
+            monitors=[optimistic],
+            scalar_results=[changed],
+            execute_results=[_ScalarsResult([old_channel, target_channel])],
+        )
+        payload = AdminProviderChannelMonitorUpdate(channel_id=target_channel.id)
+
+        with patch.object(admin_module, "invalidate_reliability_cache") as invalidate:
+            with self.assertRaises(HTTPException) as raised:
+                await admin_module.update_provider_channel_monitor(optimistic.id, payload, db)
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertIn("changed channels", raised.exception.detail)
+        self.assertEqual(db.commits, 0)
+        self.assertEqual(db.rollbacks, 1)
+        invalidate.assert_not_called()
+
+    async def test_delete_locks_channel_then_monitor_reconciles_and_invalidates_after_commit(self) -> None:
+        channel = _channel("ch_delete")
+        monitor = _monitor("cmon_delete", channel.id, created_by="admin-override")
+        replacement = _monitor("cma_delete", channel.id, status="disabled")
+        db = _MonitorCrudDB(
+            channels=[channel],
+            monitors=[monitor, replacement],
+            scalar_results=[monitor],
+            execute_results=[
+                _ScalarsResult([channel]),
+                SimpleNamespace(),
+                SimpleNamespace(),
+                SimpleNamespace(),
+            ],
+        )
+
+        async def reconcile(candidate_db, *, commit=True):
+            self.assertIs(candidate_db, db)
+            self.assertFalse(commit)
+            self.assertEqual(db.flushes, 1)
+            self.assertEqual(db.commits, 0)
+            replacement.status = "active"
+            return {"created": 0, "updated": 1, "disabled": 0}
+
+        with (
+            patch.object(admin_module, "reconcile_provider_channel_monitors", side_effect=reconcile) as reconcile_mock,
+            patch.object(admin_module, "invalidate_reliability_cache") as invalidate,
+        ):
+            response = await admin_module.delete_provider_channel_monitor(monitor.id, db)
+
+        self.assertEqual(response, {"deleted": True, "id": monitor.id})
+        self.assertEqual(replacement.status, "active")
+        self.assertEqual(db.flushes, 1)
+        self.assertEqual(db.commits, 1)
+        self.assertEqual(db.rollbacks, 0)
+        self.assertIn("coincoin_provider_channels", str(db.queries[0]))
+        self.assertIn("coincoin_provider_channel_monitors", str(db.queries[1]))
+        reconcile_mock.assert_awaited_once_with(db, commit=False)
+        invalidate.assert_called_once_with()
+
+    async def test_delete_rejects_active_claim_without_mutation_or_cache_invalidation(self) -> None:
+        channel = _channel("ch_delete_claimed")
+        monitor = _monitor("cmon_delete_claimed", channel.id)
+        monitor.claimed_until = datetime.now(UTC).replace(tzinfo=None) + timedelta(minutes=2)
+        db = _MonitorCrudDB(
+            channels=[channel],
+            monitors=[monitor],
+            scalar_results=[monitor],
+            execute_results=[_ScalarsResult([channel])],
+        )
+
+        with (
+            patch.object(admin_module, "reconcile_provider_channel_monitors", AsyncMock()) as reconcile,
+            patch.object(admin_module, "invalidate_reliability_cache") as invalidate,
+        ):
+            with self.assertRaises(HTTPException) as raised:
+                await admin_module.delete_provider_channel_monitor(monitor.id, db)
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertEqual(db.commits, 0)
+        self.assertEqual(db.rollbacks, 1)
+        self.assertEqual(len(db.queries), 2)
+        reconcile.assert_not_awaited()
+        invalidate.assert_not_called()
+
+    async def test_delete_rolls_back_and_does_not_invalidate_when_reconcile_fails(self) -> None:
+        channel = _channel("ch_delete_failure")
+        monitor = _monitor("cmon_delete_failure", channel.id)
+        db = _MonitorCrudDB(
+            channels=[channel],
+            monitors=[monitor],
+            scalar_results=[monitor],
+            execute_results=[
+                _ScalarsResult([channel]),
+                SimpleNamespace(),
+                SimpleNamespace(),
+                SimpleNamespace(),
+            ],
+        )
+
+        with (
+            patch.object(
+                admin_module,
+                "reconcile_provider_channel_monitors",
+                AsyncMock(side_effect=RuntimeError("delete reconcile failed")),
+            ),
+            patch.object(admin_module, "invalidate_reliability_cache") as invalidate,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "delete reconcile failed"):
+                await admin_module.delete_provider_channel_monitor(monitor.id, db)
+
+        self.assertEqual(db.commits, 0)
+        self.assertEqual(db.rollbacks, 1)
+        invalidate.assert_not_called()
 
     async def test_explicit_run_rejects_current_claim_without_upstream_or_cache_invalidation(self) -> None:
         channel = _channel("ch_claimed")
@@ -301,4 +422,37 @@ class ProviderChannelMonitorApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(db.commits, 1)
         self.assertEqual(db.rollbacks, 1)
         self.assertGreater(monitor.claimed_until, datetime.now(UTC).replace(tzinfo=None))
+        invalidate.assert_not_called()
+
+    async def test_explicit_run_times_out_before_committed_lease_expires(self) -> None:
+        channel = _channel("ch_run_timeout")
+        monitor = _monitor("cmon_run_timeout", channel.id)
+        db = _MonitorCrudDB(
+            channels=[channel],
+            monitors=[monitor],
+            scalar_results=[monitor],
+        )
+
+        async def force_timeout(awaitable, timeout):
+            remaining = (
+                monitor.claimed_until - datetime.now(UTC).replace(tzinfo=None)
+            ).total_seconds()
+            self.assertGreater(remaining, timeout)
+            awaitable.close()
+            raise TimeoutError("probe exceeded hard timeout")
+
+        with (
+            patch.object(admin_module, "run_provider_channel_monitor_once", AsyncMock()) as run_once,
+            patch("asyncio.wait_for", side_effect=force_timeout) as wait_for,
+            patch.object(admin_module, "invalidate_reliability_cache") as invalidate,
+        ):
+            with self.assertRaises(HTTPException) as raised:
+                await admin_module.run_provider_channel_monitor_now(monitor.id, db)
+
+        self.assertEqual(raised.exception.status_code, 504)
+        self.assertEqual(db.commits, 1)
+        self.assertEqual(db.rollbacks, 1)
+        self.assertGreater(monitor.claimed_until, datetime.now(UTC).replace(tzinfo=None))
+        run_once.assert_called_once_with(db, monitor.id)
+        wait_for.assert_awaited_once()
         invalidate.assert_not_called()

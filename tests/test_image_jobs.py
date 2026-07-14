@@ -142,6 +142,8 @@ class ImageJobMigrationTests(unittest.IsolatedAsyncioTestCase):
 
             async def execute(self, statement) -> None:
                 self.statements.append(str(statement))
+                if "information_schema.COLUMNS" in str(statement):
+                    return _FakeExecuteResult(scalar=512)
 
         conn = _FakeMigrationConn()
 

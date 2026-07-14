@@ -3926,6 +3926,35 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("information_schema.COLUMNS", conn.statements[0][0])
         self.assertNotIn("ALTER TABLE", conn.statements[0][0])
 
+    async def test_required_varchar_width_binds_metadata_parameters_on_single_statement_argument(self) -> None:
+        class _OneArgumentMigrationConn:
+            def __init__(self) -> None:
+                self.statement = None
+
+            async def execute(self, statement):
+                self.statement = statement
+                return _FakeScalarOneResult(512)
+
+        conn = _OneArgumentMigrationConn()
+
+        await main_module._ensure_required_varchar_width(
+            conn,
+            table_name="coincoin_request_logs",
+            column_name="fallback_from_channel_id",
+            required_width=512,
+        )
+
+        self.assertIsNotNone(conn.statement)
+        self.assertEqual(
+            conn.statement.compile().params,
+            {
+                "table_name": "coincoin_request_logs",
+                "column_name": "fallback_from_channel_id",
+            },
+        )
+        self.assertIn(":table_name", str(conn.statement))
+        self.assertIn(":column_name", str(conn.statement))
+
     async def test_required_varchar_width_alters_narrow_column_then_verifies(self) -> None:
         class _MigrationConn:
             def __init__(self) -> None:

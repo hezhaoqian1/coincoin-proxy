@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import secrets
@@ -86,6 +87,8 @@ from .channel_monitoring import (
 from .channel_monitor_leases import (
     ProviderChannelMonitorClaimedError,
     claim_provider_channel_monitor_for_run,
+    monitor_claim_lease_seconds,
+    monitor_has_active_claim,
 )
 from .reliability import invalidate_reliability_cache
 from .model_pricing_overrides import refresh_model_pricing_registry_from_db
@@ -764,6 +767,36 @@ async def _lock_provider_channels_for_monitor_change(
         )
     ).scalars().all()
     return {str(channel.id): channel for channel in rows}
+
+
+async def _lock_monitor_channel_first(
+    db: AsyncSession,
+    monitor_id: str,
+    *,
+    additional_channel_ids: set[str] | None = None,
+) -> tuple[ProviderChannelMonitor, dict[str, ProviderChannel]]:
+    optimistic = await db.get(ProviderChannelMonitor, monitor_id)
+    if optimistic is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel monitor not found")
+    optimistic_channel_id = str(optimistic.channel_id)
+    channels = await _lock_provider_channels_for_monitor_change(
+        db,
+        {optimistic_channel_id, *(additional_channel_ids or set())},
+    )
+    monitor = await db.scalar(
+        select(ProviderChannelMonitor)
+        .where(ProviderChannelMonitor.id == monitor_id)
+        .execution_options(populate_existing=True)
+        .with_for_update()
+    )
+    if monitor is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel monitor not found")
+    if str(monitor.channel_id) != optimistic_channel_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="channel monitor changed channels; retry the request",
+        )
+    return monitor, channels
 
 
 def _model_channel_route_payload(row: ModelChannelRoute, channel: Optional[ProviderChannel] = None) -> dict:
@@ -2248,24 +2281,23 @@ async def update_provider_channel_monitor(
     if not payload.model_fields_set:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="no monitor fields provided")
     try:
-        monitor = await db.scalar(
-            select(ProviderChannelMonitor)
-            .where(ProviderChannelMonitor.id == monitor_id)
-            .with_for_update()
-        )
-        if monitor is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel monitor not found")
         fields = payload.model_fields_set
-        target_channel_id = (
-            payload.channel_id
+        requested_channel_ids = (
+            {str(payload.channel_id)}
             if "channel_id" in fields and payload.channel_id is not None
-            else monitor.channel_id
+            else set()
         )
-        channels = await _lock_provider_channels_for_monitor_change(
+        monitor, channels = await _lock_monitor_channel_first(
             db,
-            {str(monitor.channel_id), str(target_channel_id)},
+            monitor_id,
+            additional_channel_ids=requested_channel_ids,
         )
-        if str(target_channel_id) not in channels:
+        target_channel_id = (
+            str(payload.channel_id)
+            if "channel_id" in fields and payload.channel_id is not None
+            else str(monitor.channel_id)
+        )
+        if target_channel_id not in channels:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="provider channel not found")
         if "channel_id" in fields and payload.channel_id is not None:
             monitor.channel_id = payload.channel_id
@@ -2297,13 +2329,23 @@ async def update_provider_channel_monitor(
 
 @router.delete("/provider-channel-monitors/{monitor_id}", dependencies=[Depends(admin_guard)])
 async def delete_provider_channel_monitor(monitor_id: str, db: AsyncSession = Depends(get_db)):
-    monitor = await db.get(ProviderChannelMonitor, monitor_id)
-    if monitor is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel monitor not found")
-    await db.execute(delete(ProviderChannelMonitorHistory).where(ProviderChannelMonitorHistory.monitor_id == monitor_id))
-    await db.execute(delete(ProviderChannelMonitorDailyRollup).where(ProviderChannelMonitorDailyRollup.monitor_id == monitor_id))
-    await db.execute(delete(ProviderChannelMonitor).where(ProviderChannelMonitor.id == monitor_id))
-    await db.commit()
+    try:
+        monitor, _channels = await _lock_monitor_channel_first(db, monitor_id)
+        if monitor_has_active_claim(monitor):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="channel monitor is currently running",
+            )
+        await db.execute(delete(ProviderChannelMonitorHistory).where(ProviderChannelMonitorHistory.monitor_id == monitor_id))
+        await db.execute(delete(ProviderChannelMonitorDailyRollup).where(ProviderChannelMonitorDailyRollup.monitor_id == monitor_id))
+        await db.execute(delete(ProviderChannelMonitor).where(ProviderChannelMonitor.id == monitor_id))
+        await db.flush()
+        await reconcile_provider_channel_monitors(db, commit=False)
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
+    invalidate_reliability_cache()
     return {"deleted": True, "id": monitor_id}
 
 
@@ -2317,8 +2359,18 @@ async def run_provider_channel_monitor_now(monitor_id: str, db: AsyncSession = D
     if monitor is None:
         await db.rollback()
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel monitor not found")
+    hard_timeout = max(5, monitor_claim_lease_seconds(monitor) - 5)
     try:
-        results = await run_provider_channel_monitor_once(db, monitor_id)
+        results = await asyncio.wait_for(
+            run_provider_channel_monitor_once(db, monitor_id),
+            timeout=hard_timeout,
+        )
+    except TimeoutError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="channel monitor run timed out",
+        )
     except Exception:
         await db.rollback()
         raise

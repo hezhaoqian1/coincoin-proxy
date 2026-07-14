@@ -110,11 +110,10 @@ async def _ensure_required_varchar_width(
           AND TABLE_NAME = :table_name
           AND COLUMN_NAME = :column_name
         """
-    )
-    parameters = {"table_name": table_name, "column_name": column_name}
+    ).bindparams(table_name=table_name, column_name=column_name)
 
     async def current_width() -> int:
-        result = await conn.execute(width_query, parameters)
+        result = await conn.execute(width_query)
         width = result.scalar_one_or_none()
         if width is None:
             raise RuntimeError(f"required column {table_name}.{column_name} was not found")

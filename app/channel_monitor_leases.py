@@ -18,6 +18,20 @@ def monitor_claim_lease_seconds(monitor: ProviderChannelMonitor) -> int:
     return max(60, timeout + 30)
 
 
+def monitor_has_active_claim(
+    monitor: ProviderChannelMonitor,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    claimed_until = getattr(monitor, "claimed_until", None)
+    if claimed_until is None:
+        return False
+    now = now or datetime.now(UTC).replace(tzinfo=None)
+    if claimed_until.tzinfo is not None:
+        claimed_until = claimed_until.astimezone(UTC).replace(tzinfo=None)
+    return claimed_until > now
+
+
 async def claim_provider_channel_monitor_for_run(
     db: AsyncSession,
     monitor_id: str,
@@ -30,8 +44,7 @@ async def claim_provider_channel_monitor_for_run(
     if monitor is None:
         return None
     now = datetime.now(UTC).replace(tzinfo=None)
-    claimed_until = getattr(monitor, "claimed_until", None)
-    if claimed_until is not None and claimed_until > now:
+    if monitor_has_active_claim(monitor, now=now):
         raise ProviderChannelMonitorClaimedError(f"channel monitor {monitor_id} is already claimed")
     monitor.claimed_until = now + timedelta(seconds=monitor_claim_lease_seconds(monitor))
     await db.commit()
