@@ -74,6 +74,7 @@ from .schemas import (
 )
 from .channel_monitoring import (
     AUTO_MONITOR_CREATED_BY,
+    MANUAL_MONITOR_CREATED_BY,
     desired_route_monitor_specs,
     monitor_availability_rows,
     monitor_model_list,
@@ -81,6 +82,10 @@ from .channel_monitoring import (
     reconcile_provider_channel_monitors,
     run_provider_channel_monitor_once,
     serialize_monitor_models,
+)
+from .channel_monitor_leases import (
+    ProviderChannelMonitorClaimedError,
+    claim_provider_channel_monitor_for_run,
 )
 from .reliability import invalidate_reliability_cache
 from .model_pricing_overrides import refresh_model_pricing_registry_from_db
@@ -741,6 +746,24 @@ def _provider_channel_monitor_action_payload(monitor: ProviderChannelMonitor) ->
         "interval_seconds": int(monitor.interval_seconds or 0),
         "timeout_seconds": int(monitor.timeout_seconds or 0),
     }
+
+
+async def _lock_provider_channels_for_monitor_change(
+    db: AsyncSession,
+    channel_ids: set[str],
+) -> dict[str, ProviderChannel]:
+    ids = sorted({str(channel_id or "") for channel_id in channel_ids if str(channel_id or "")})
+    if not ids:
+        return {}
+    rows = (
+        await db.execute(
+            select(ProviderChannel)
+            .where(ProviderChannel.id.in_(ids))
+            .order_by(ProviderChannel.id.asc())
+            .with_for_update()
+        )
+    ).scalars().all()
+    return {str(channel.id): channel for channel in rows}
 
 
 def _model_channel_route_payload(row: ModelChannelRoute, channel: Optional[ProviderChannel] = None) -> dict:
@@ -2188,23 +2211,31 @@ async def list_provider_channel_monitors(
 
 @router.post("/provider-channel-monitors", dependencies=[Depends(admin_guard)])
 async def create_provider_channel_monitor(payload: AdminProviderChannelMonitorCreate, db: AsyncSession = Depends(get_db)):
-    channel = await db.get(ProviderChannel, payload.channel_id)
-    if channel is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="provider channel not found")
-    monitor = ProviderChannelMonitor(
-        id=generate_id("cmon_"),
-        channel_id=payload.channel_id,
-        name=(payload.name or channel.name or payload.primary_model).strip(),
-        endpoint=payload.endpoint,
-        primary_model=payload.primary_model.strip(),
-        extra_models=serialize_monitor_models(payload.extra_models),
-        status=payload.status,
-        interval_seconds=int(payload.interval_seconds or _settings.provider_channel_monitor_default_interval),
-        timeout_seconds=int(payload.timeout_seconds or _settings.provider_channel_monitor_default_timeout),
-        created_by="admin",
-    )
-    db.add(monitor)
-    await db.commit()
+    try:
+        channels = await _lock_provider_channels_for_monitor_change(db, {payload.channel_id})
+        channel = channels.get(payload.channel_id)
+        if channel is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="provider channel not found")
+        monitor = ProviderChannelMonitor(
+            id=generate_id("cmon_"),
+            channel_id=payload.channel_id,
+            name=(payload.name or channel.name or payload.primary_model).strip(),
+            endpoint=payload.endpoint,
+            primary_model=payload.primary_model.strip(),
+            extra_models=serialize_monitor_models(payload.extra_models),
+            status=payload.status,
+            interval_seconds=int(payload.interval_seconds or _settings.provider_channel_monitor_default_interval),
+            timeout_seconds=int(payload.timeout_seconds or _settings.provider_channel_monitor_default_timeout),
+            created_by=MANUAL_MONITOR_CREATED_BY if payload.status == "active" else "admin",
+        )
+        db.add(monitor)
+        await db.flush()
+        await reconcile_provider_channel_monitors(db, commit=False)
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
+    invalidate_reliability_cache()
     return JSONResponse(content=jsonable_encoder(_provider_channel_monitor_action_payload(monitor)))
 
 
@@ -2216,30 +2247,51 @@ async def update_provider_channel_monitor(
 ):
     if not payload.model_fields_set:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="no monitor fields provided")
-    monitor = await db.get(ProviderChannelMonitor, monitor_id)
-    if monitor is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel monitor not found")
-    fields = payload.model_fields_set
-    if "channel_id" in fields and payload.channel_id is not None:
-        channel = await db.get(ProviderChannel, payload.channel_id)
-        if channel is None:
+    try:
+        monitor = await db.scalar(
+            select(ProviderChannelMonitor)
+            .where(ProviderChannelMonitor.id == monitor_id)
+            .with_for_update()
+        )
+        if monitor is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel monitor not found")
+        fields = payload.model_fields_set
+        target_channel_id = (
+            payload.channel_id
+            if "channel_id" in fields and payload.channel_id is not None
+            else monitor.channel_id
+        )
+        channels = await _lock_provider_channels_for_monitor_change(
+            db,
+            {str(monitor.channel_id), str(target_channel_id)},
+        )
+        if str(target_channel_id) not in channels:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="provider channel not found")
-        monitor.channel_id = payload.channel_id
-    if "name" in fields and payload.name is not None:
-        monitor.name = payload.name.strip()
-    if "endpoint" in fields and payload.endpoint is not None:
-        monitor.endpoint = payload.endpoint
-    if "primary_model" in fields and payload.primary_model is not None:
-        monitor.primary_model = payload.primary_model.strip()
-    if "extra_models" in fields:
-        monitor.extra_models = serialize_monitor_models(payload.extra_models or [])
-    if "status" in fields and payload.status is not None:
-        monitor.status = payload.status
-    if "interval_seconds" in fields and payload.interval_seconds is not None:
-        monitor.interval_seconds = int(payload.interval_seconds)
-    if "timeout_seconds" in fields and payload.timeout_seconds is not None:
-        monitor.timeout_seconds = int(payload.timeout_seconds)
-    await db.commit()
+        if "channel_id" in fields and payload.channel_id is not None:
+            monitor.channel_id = payload.channel_id
+        if "name" in fields and payload.name is not None:
+            monitor.name = payload.name.strip()
+        if "endpoint" in fields and payload.endpoint is not None:
+            monitor.endpoint = payload.endpoint
+        if "primary_model" in fields and payload.primary_model is not None:
+            monitor.primary_model = payload.primary_model.strip()
+        if "extra_models" in fields:
+            monitor.extra_models = serialize_monitor_models(payload.extra_models or [])
+        if "status" in fields and payload.status is not None:
+            monitor.status = payload.status
+        if "interval_seconds" in fields and payload.interval_seconds is not None:
+            monitor.interval_seconds = int(payload.interval_seconds)
+        if "timeout_seconds" in fields and payload.timeout_seconds is not None:
+            monitor.timeout_seconds = int(payload.timeout_seconds)
+        if str(monitor.status or "").strip().lower() == "active":
+            monitor.created_by = MANUAL_MONITOR_CREATED_BY
+        await db.flush()
+        await reconcile_provider_channel_monitors(db, commit=False)
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
+    invalidate_reliability_cache()
     return JSONResponse(content=jsonable_encoder(_provider_channel_monitor_action_payload(monitor)))
 
 
@@ -2257,10 +2309,19 @@ async def delete_provider_channel_monitor(monitor_id: str, db: AsyncSession = De
 
 @router.post("/provider-channel-monitors/{monitor_id}/run", dependencies=[Depends(admin_guard)])
 async def run_provider_channel_monitor_now(monitor_id: str, db: AsyncSession = Depends(get_db)):
-    monitor = await db.get(ProviderChannelMonitor, monitor_id)
+    try:
+        monitor = await claim_provider_channel_monitor_for_run(db, monitor_id)
+    except ProviderChannelMonitorClaimedError:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="channel monitor is already running")
     if monitor is None:
+        await db.rollback()
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel monitor not found")
-    results = await run_provider_channel_monitor_once(db, monitor_id)
+    try:
+        results = await run_provider_channel_monitor_once(db, monitor_id)
+    except Exception:
+        await db.rollback()
+        raise
     invalidate_reliability_cache()
     return JSONResponse(content=jsonable_encoder({
         "monitor_id": monitor_id,
@@ -2420,14 +2481,14 @@ async def update_provider_channel_monitor_selection(
                     status="active",
                     interval_seconds=int(_settings.provider_channel_monitor_default_interval),
                     timeout_seconds=int(_settings.provider_channel_monitor_default_timeout),
-                    created_by="admin",
+                    created_by=MANUAL_MONITOR_CREATED_BY,
                 )
                 db.add(selected_monitor)
                 monitors.append(selected_monitor)
             selected_monitor.name = f"Manual · {channel.name} · {target[0]}"[:128]
             selected_monitor.extra_models = serialize_monitor_models([])
             selected_monitor.status = "active"
-            selected_monitor.created_by = "admin"
+            selected_monitor.created_by = MANUAL_MONITOR_CREATED_BY
             for monitor in monitors:
                 if monitor is not selected_monitor:
                     monitor.status = "disabled"

@@ -880,7 +880,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(manual_monitor.primary_model, "gpt-manual")
             self.assertEqual(manual_monitor.endpoint, "chat/completions")
             self.assertEqual(manual_monitor.status, "active")
-            self.assertEqual(manual_monitor.created_by, "admin")
+            self.assertEqual(manual_monitor.created_by, admin_module.MANUAL_MONITOR_CREATED_BY)
             self.assertEqual(fake_db.commits, 1)
             reconcile.assert_awaited_once_with(fake_db, commit=False)
             invalidate.assert_called_once_with()
@@ -3889,8 +3889,12 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             def __init__(self) -> None:
                 self.statements = []
 
-            async def execute(self, statement):
-                self.statements.append(str(statement))
+            async def execute(self, statement, parameters=None):
+                sql = str(statement)
+                self.statements.append(sql)
+                if "information_schema.COLUMNS" in sql:
+                    return _FakeScalarOneResult(512)
+                return _FakeScalarOneResult(None)
 
         conn = _MigrationConn()
         await main_module._run_migrations(conn)
@@ -3899,6 +3903,101 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             "ALTER TABLE coincoin_model_pricing_overrides ADD COLUMN video_multiplier DOUBLE DEFAULT 1",
             conn.statements,
         )
+
+    async def test_required_varchar_width_is_noop_when_column_is_already_wide(self) -> None:
+        class _MigrationConn:
+            def __init__(self) -> None:
+                self.statements = []
+
+            async def execute(self, statement, parameters=None):
+                self.statements.append((str(statement), parameters or {}))
+                return _FakeScalarOneResult(512)
+
+        conn = _MigrationConn()
+
+        await main_module._ensure_required_varchar_width(
+            conn,
+            table_name="coincoin_request_logs",
+            column_name="fallback_from_channel_id",
+            required_width=512,
+        )
+
+        self.assertEqual(len(conn.statements), 1)
+        self.assertIn("information_schema.COLUMNS", conn.statements[0][0])
+        self.assertNotIn("ALTER TABLE", conn.statements[0][0])
+
+    async def test_required_varchar_width_alters_narrow_column_then_verifies(self) -> None:
+        class _MigrationConn:
+            def __init__(self) -> None:
+                self.widths = [32, 512]
+                self.statements = []
+
+            async def execute(self, statement, parameters=None):
+                sql = str(statement)
+                self.statements.append((sql, parameters or {}))
+                if "information_schema.COLUMNS" in sql:
+                    return _FakeScalarOneResult(self.widths.pop(0))
+                return _FakeScalarOneResult(None)
+
+        conn = _MigrationConn()
+
+        await main_module._ensure_required_varchar_width(
+            conn,
+            table_name="coincoin_request_logs",
+            column_name="fallback_from_channel_id",
+            required_width=512,
+        )
+
+        self.assertEqual(len(conn.statements), 3)
+        self.assertEqual(
+            conn.statements[1][0],
+            "ALTER TABLE coincoin_request_logs MODIFY COLUMN fallback_from_channel_id VARCHAR(512) DEFAULT ''",
+        )
+        self.assertIn("information_schema.COLUMNS", conn.statements[2][0])
+
+    async def test_required_varchar_width_propagates_alter_failure_and_rejects_failed_postcondition(self) -> None:
+        class _QueryFailureConn:
+            async def execute(self, statement, parameters=None):
+                raise RuntimeError("information schema unavailable")
+
+        with self.assertRaisesRegex(RuntimeError, "information schema unavailable"):
+            await main_module._ensure_required_varchar_width(
+                _QueryFailureConn(),
+                table_name="coincoin_request_logs",
+                column_name="fallback_from_channel_id",
+                required_width=512,
+            )
+
+        class _AlterFailureConn:
+            async def execute(self, statement, parameters=None):
+                if "information_schema.COLUMNS" in str(statement):
+                    return _FakeScalarOneResult(32)
+                raise RuntimeError("alter denied")
+
+        with self.assertRaisesRegex(RuntimeError, "alter denied"):
+            await main_module._ensure_required_varchar_width(
+                _AlterFailureConn(),
+                table_name="coincoin_request_logs",
+                column_name="fallback_from_channel_id",
+                required_width=512,
+            )
+
+        class _FailedPostconditionConn:
+            def __init__(self) -> None:
+                self.widths = [32, 64]
+
+            async def execute(self, statement, parameters=None):
+                if "information_schema.COLUMNS" in str(statement):
+                    return _FakeScalarOneResult(self.widths.pop(0))
+                return _FakeScalarOneResult(None)
+
+        with self.assertRaisesRegex(RuntimeError, "required width 512"):
+            await main_module._ensure_required_varchar_width(
+                _FailedPostconditionConn(),
+                table_name="coincoin_request_logs",
+                column_name="fallback_from_channel_id",
+                required_width=512,
+            )
 
     def test_pricing_payload_tolerates_legacy_model_without_video_fields(self) -> None:
         legacy_model = SimpleNamespace(

@@ -65,6 +65,8 @@ def _normalize_endpoint(value: Any) -> str:
         endpoint = endpoint[:-7]
     if endpoint == "responses:image_generation":
         return "images/generations"
+    if endpoint == "messages":
+        return "chat/completions"
     for known_endpoint in ("chat/completions", "responses"):
         if endpoint.endswith(known_endpoint):
             return known_endpoint

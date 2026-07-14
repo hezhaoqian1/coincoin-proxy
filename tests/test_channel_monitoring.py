@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 
 import httpx
 
+import app.channel_monitor_leases as channel_monitor_leases_module
 from app.channel_monitoring import (
     AUTO_MONITOR_CREATED_BY,
     claim_due_provider_channel_monitor_ids,
@@ -310,7 +311,16 @@ class ChannelMonitoringTests(unittest.IsolatedAsyncioTestCase):
             timeout_seconds=30,
             created_by=AUTO_MONITOR_CREATED_BY,
         )
-        db = _ReconcileDB(channels=[channel], routes=routes, monitors=[manual, auto])
+        unrelated_legacy = SimpleNamespace(
+            id="cmon_unrelated_legacy",
+            channel_id=channel.id,
+            endpoint="responses",
+            primary_model="gpt-retired",
+            extra_models="[]",
+            status="disabled",
+            created_by="admin",
+        )
+        db = _ReconcileDB(channels=[channel], routes=routes, monitors=[manual, auto, unrelated_legacy])
 
         result = await reconcile_provider_channel_monitors(db)
 
@@ -320,6 +330,40 @@ class ChannelMonitoringTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(manual.endpoint, "chat/completions")
         self.assertEqual(manual.primary_model, "gpt-5.5")
         self.assertEqual(manual.extra_models, "[]")
+        self.assertEqual(manual.created_by, "admin-override")
+        self.assertEqual(unrelated_legacy.created_by, "admin")
+
+    async def test_reconcile_ignores_disabled_legacy_manual_row_and_keeps_valid_auto_monitor(self) -> None:
+        channel = SimpleNamespace(id="ch_legacy_disabled", name="Legacy Disabled", channel_type="openai_compatible", status="active", priority=0, weight=1)
+        route = SimpleNamespace(id="route_valid", channel_id=channel.id, public_model_id="gpt-valid", upstream_model="gpt-valid", endpoint="responses", status="active", priority_override=None, weight_override=None)
+        legacy_manual = SimpleNamespace(
+            id="cmon_legacy_disabled",
+            channel_id=channel.id,
+            endpoint="chat/completions",
+            primary_model="gpt-old",
+            extra_models="[]",
+            status="disabled",
+            created_by="admin",
+        )
+        auto = SimpleNamespace(
+            id="cma_legacy_disabled",
+            channel_id=channel.id,
+            name="Auto · Legacy Disabled · responses",
+            endpoint="responses",
+            primary_model="gpt-valid",
+            extra_models="[]",
+            status="active",
+            interval_seconds=300,
+            timeout_seconds=30,
+            created_by=AUTO_MONITOR_CREATED_BY,
+        )
+        db = _ReconcileDB(channels=[channel], routes=[route], monitors=[legacy_manual, auto])
+
+        result = await reconcile_provider_channel_monitors(db)
+
+        self.assertEqual(result, {"created": 0, "updated": 0, "disabled": 0})
+        self.assertEqual(legacy_manual.status, "disabled")
+        self.assertEqual(auto.status, "active")
 
     async def test_reconcile_disables_invalid_manual_override_without_auto_replacement(self) -> None:
         channel = SimpleNamespace(id="ch_invalid", name="Invalid Relay", channel_type="openai_compatible", status="active", priority=0, weight=1)
@@ -349,10 +393,20 @@ class ChannelMonitoringTests(unittest.IsolatedAsyncioTestCase):
 
         result = await reconcile_provider_channel_monitors(db)
 
-        self.assertEqual(result, {"created": 0, "updated": 0, "disabled": 2})
+        self.assertEqual(result, {"created": 0, "updated": 1, "disabled": 2})
         self.assertEqual(manual.status, "disabled")
+        self.assertEqual(manual.created_by, "admin-override-invalid")
         self.assertEqual(auto.status, "disabled")
         self.assertEqual(db.added, [])
+
+        repeated_db = _ReconcileDB(channels=[channel], routes=[route], monitors=[manual, auto])
+        repeated = await reconcile_provider_channel_monitors(repeated_db)
+
+        self.assertEqual(repeated, {"created": 0, "updated": 0, "disabled": 0})
+        self.assertEqual(manual.created_by, "admin-override-invalid")
+        self.assertEqual(manual.status, "disabled")
+        self.assertEqual(auto.status, "disabled")
+        self.assertEqual(repeated_db.added, [])
 
     async def test_reconcile_collapses_legacy_auto_monitors_to_one_primary_model(self) -> None:
         channel = SimpleNamespace(id="ch_legacy", name="Legacy Relay", channel_type="openai_compatible", status="active", priority=0, weight=1)
@@ -460,6 +514,46 @@ class ChannelMonitoringTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(monitor_ids, [])
         db.commit.assert_awaited_once_with()
+
+    async def test_claim_monitor_for_explicit_run_locks_and_commits_lease(self) -> None:
+        monitor = SimpleNamespace(
+            id="cmon_explicit",
+            claimed_until=None,
+            timeout_seconds=30,
+        )
+        db = SimpleNamespace(
+            scalar=AsyncMock(return_value=monitor),
+            commit=AsyncMock(),
+        )
+
+        claimed = await channel_monitor_leases_module.claim_provider_channel_monitor_for_run(
+            db,
+            monitor.id,
+        )
+
+        self.assertIs(claimed, monitor)
+        self.assertGreater(monitor.claimed_until, datetime.now(UTC).replace(tzinfo=None))
+        statement = db.scalar.await_args.args[0]
+        self.assertIsNotNone(statement._for_update_arg)
+        db.commit.assert_awaited_once_with()
+
+    async def test_claim_monitor_for_explicit_run_rejects_unexpired_lease_without_commit(self) -> None:
+        claimed_until = datetime.now(UTC).replace(tzinfo=None) + timedelta(minutes=2)
+        monitor = SimpleNamespace(
+            id="cmon_explicit_claimed",
+            claimed_until=claimed_until,
+            timeout_seconds=30,
+        )
+        db = SimpleNamespace(
+            scalar=AsyncMock(return_value=monitor),
+            commit=AsyncMock(),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "already claimed"):
+            await channel_monitor_leases_module.claim_provider_channel_monitor_for_run(db, monitor.id)
+
+        self.assertEqual(monitor.claimed_until, claimed_until)
+        db.commit.assert_not_awaited()
 
     async def test_run_monitor_once_probes_only_primary_model_and_records_one_result(self) -> None:
         monitor = SimpleNamespace(

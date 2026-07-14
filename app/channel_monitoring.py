@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import settings
 from .db import SessionLocal
+from .channel_monitor_leases import monitor_claim_lease_seconds
 from .anthropic_adapter import (
     DEFAULT_ANTHROPIC_VERSION,
     build_anthropic_messages_url,
@@ -36,6 +37,8 @@ logger = logging.getLogger("coincoin.channel_monitoring")
 MONITOR_OK_STATUSES = {"operational", "degraded"}
 MONITOR_FAILURE_STATUSES = {"failed", "error"}
 AUTO_MONITOR_CREATED_BY = "route-reconciler"
+MANUAL_MONITOR_CREATED_BY = "admin-override"
+INVALID_MANUAL_MONITOR_CREATED_BY = "admin-override-invalid"
 
 
 @dataclass(frozen=True)
@@ -89,11 +92,6 @@ def monitor_model_list(monitor: ProviderChannelMonitor) -> list[str]:
     values = [primary] if primary else []
     values.extend(parse_monitor_models(getattr(monitor, "extra_models", "")))
     return list(dict.fromkeys(item for item in values if item))
-
-
-def _monitor_claim_lease_seconds(monitor: ProviderChannelMonitor) -> int:
-    timeout = max(5, int(monitor.timeout_seconds or settings.provider_channel_monitor_default_timeout))
-    return max(60, timeout + 30)
 
 
 def _monitor_endpoint_for_route(route: ModelChannelRoute, channel: ProviderChannel) -> str | None:
@@ -170,6 +168,10 @@ def _is_auto_monitor(monitor: ProviderChannelMonitor) -> bool:
     return str(getattr(monitor, "created_by", "") or "") == AUTO_MONITOR_CREATED_BY
 
 
+def _is_invalid_manual_override(monitor: ProviderChannelMonitor) -> bool:
+    return str(getattr(monitor, "created_by", "") or "") == INVALID_MANUAL_MONITOR_CREATED_BY
+
+
 async def reconcile_provider_channel_monitors(db: AsyncSession, *, commit: bool = True) -> dict[str, int]:
     channels = (await db.execute(select(ProviderChannel))).scalars().all()
     routes = (await db.execute(select(ModelChannelRoute))).scalars().all()
@@ -199,23 +201,44 @@ async def reconcile_provider_channel_monitors(db: AsyncSession, *, commit: bool 
             key=lambda monitor: str(getattr(monitor, "id", "") or ""),
         )
 
-        if manual_monitors:
-            valid_targets = active_targets.get(channel_id, set())
-            valid_active = [
-                monitor
-                for monitor in manual_monitors
-                if str(getattr(monitor, "status", "") or "").strip().lower() == "active"
-                and (
-                    str(getattr(monitor, "endpoint", "") or "responses").strip(),
-                    str(getattr(monitor, "primary_model", "") or "").strip(),
-                )
-                in valid_targets
-            ]
-            keep_manual = valid_active[0] if valid_active else None
+        valid_targets = active_targets.get(channel_id, set())
+        active_manual = [
+            monitor
+            for monitor in manual_monitors
+            if str(getattr(monitor, "status", "") or "").strip().lower() == "active"
+        ]
+        valid_active = [
+            monitor
+            for monitor in active_manual
+            if (
+                str(getattr(monitor, "endpoint", "") or "responses").strip(),
+                str(getattr(monitor, "primary_model", "") or "").strip(),
+            )
+            in valid_targets
+        ]
+        keep_manual = valid_active[0] if valid_active else None
+        current_invalid = active_manual[0] if active_manual and keep_manual is None else None
+        retained_invalid = any(_is_invalid_manual_override(monitor) for monitor in manual_monitors)
+        manual_controls_channel = keep_manual is not None or current_invalid is not None or retained_invalid
+
+        if manual_controls_channel:
             for monitor in manual_monitors:
                 changed = False
                 if getattr(monitor, "extra_models", None) != serialize_monitor_models([]):
                     monitor.extra_models = serialize_monitor_models([])
+                    changed = True
+                if monitor is keep_manual:
+                    desired_owner = MANUAL_MONITOR_CREATED_BY
+                elif keep_manual is not None and _is_invalid_manual_override(monitor):
+                    desired_owner = MANUAL_MONITOR_CREATED_BY
+                elif monitor is current_invalid:
+                    desired_owner = INVALID_MANUAL_MONITOR_CREATED_BY
+                elif _is_invalid_manual_override(monitor):
+                    desired_owner = INVALID_MANUAL_MONITOR_CREATED_BY
+                else:
+                    desired_owner = str(getattr(monitor, "created_by", "") or "")
+                if str(getattr(monitor, "created_by", "") or "") != desired_owner:
+                    monitor.created_by = desired_owner
                     changed = True
                 if monitor is not keep_manual and str(getattr(monitor, "status", "") or "").lower() != "disabled":
                     monitor.status = "disabled"
@@ -662,7 +685,7 @@ async def claim_due_provider_channel_monitor_ids(db: AsyncSession, *, limit: int
         last_checked = row.last_checked_at
         interval = max(15, int(row.interval_seconds or settings.provider_channel_monitor_default_interval))
         if last_checked is None or last_checked <= now - timedelta(seconds=interval):
-            row.claimed_until = now + timedelta(seconds=_monitor_claim_lease_seconds(row))
+            row.claimed_until = now + timedelta(seconds=monitor_claim_lease_seconds(row))
             due.append(row.id)
     await db.commit()
     return due
@@ -693,7 +716,7 @@ async def provider_channel_monitor_loop(poll_interval_seconds: int) -> None:
                         monitor = await db.get(ProviderChannelMonitor, monitor_id)
                         if monitor is None:
                             continue
-                        hard_timeout = max(5, _monitor_claim_lease_seconds(monitor) - 5)
+                        hard_timeout = max(5, monitor_claim_lease_seconds(monitor) - 5)
                         await asyncio.wait_for(
                             run_provider_channel_monitor_once(db, monitor_id),
                             timeout=hard_timeout,

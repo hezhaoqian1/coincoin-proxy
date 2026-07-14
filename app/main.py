@@ -90,6 +90,51 @@ def _index_migration_must_abort(exc: Exception, ddl: str) -> bool:
     )
 
 
+async def _ensure_required_varchar_width(
+    conn,
+    *,
+    table_name: str,
+    column_name: str,
+    required_width: int,
+) -> None:
+    from sqlalchemy import text
+
+    if not table_name.replace("_", "").isalnum() or not column_name.replace("_", "").isalnum():
+        raise ValueError("migration identifiers must be alphanumeric")
+    required_width = int(required_width)
+    width_query = text(
+        """
+        SELECT CHARACTER_MAXIMUM_LENGTH
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = :table_name
+          AND COLUMN_NAME = :column_name
+        """
+    )
+    parameters = {"table_name": table_name, "column_name": column_name}
+
+    async def current_width() -> int:
+        result = await conn.execute(width_query, parameters)
+        width = result.scalar_one_or_none()
+        if width is None:
+            raise RuntimeError(f"required column {table_name}.{column_name} was not found")
+        return int(width)
+
+    width = await current_width()
+    if width < required_width:
+        await conn.execute(
+            text(
+                f"ALTER TABLE {table_name} MODIFY COLUMN {column_name} "
+                f"VARCHAR({required_width}) DEFAULT ''"
+            )
+        )
+        width = await current_width()
+    if width < required_width:
+        raise RuntimeError(
+            f"required width {required_width} not met for {table_name}.{column_name}: {width}"
+        )
+
+
 async def _run_migrations(conn):
     """Add columns introduced after initial create_all (safe to re-run)."""
     from sqlalchemy import text
@@ -237,9 +282,15 @@ async def _run_migrations(conn):
             else:
                 logger.warning("migration failed for %s.%s: %s", table, col, exc)
 
+    await _ensure_required_varchar_width(
+        conn,
+        table_name="coincoin_request_logs",
+        column_name="fallback_from_channel_id",
+        required_width=512,
+    )
+
     ddl_migrations = [
         "ALTER TABLE coincoin_request_logs MODIFY COLUMN route_reason VARCHAR(128) DEFAULT ''",
-        "ALTER TABLE coincoin_request_logs MODIFY COLUMN fallback_from_channel_id VARCHAR(512) DEFAULT ''",
         "ALTER TABLE coincoin_media_artifacts MODIFY COLUMN route_reason VARCHAR(128) DEFAULT ''",
         "ALTER TABLE coincoin_image_jobs MODIFY COLUMN route_reason VARCHAR(128) DEFAULT ''",
         "ALTER TABLE coincoin_video_jobs MODIFY COLUMN route_reason VARCHAR(128) DEFAULT ''",
