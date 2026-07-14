@@ -5,9 +5,9 @@
   "baselineRefs": [
     "docs/aegis/plans/2026-07-14-service-reliability-center.md"
   ],
-  "scopeStatus": "Task 1 stayed within cached admin read-model scope.",
-  "compatStatus": "Provider-channel and request-path code remained unchanged; 99 focused tests passed.",
-  "retirementStatus": "No old UI or persistent monitor data retired in this slice.",
+  "scopeStatus": "Task 2 stayed inside background control-plane reconciliation.",
+  "compatStatus": "Channel operations keep their original contracts; reconciliation is best-effort and cannot fail a successful admin mutation.",
+  "retirementStatus": "Manual monitor rows and APIs remain untouched; only derived monitors are created or disabled.",
   "newRiskSignals": [],
   "decision": "continue"
 }

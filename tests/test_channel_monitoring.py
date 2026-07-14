@@ -5,11 +5,15 @@ from types import SimpleNamespace
 import httpx
 
 from app.channel_monitoring import (
+    AUTO_MONITOR_CREATED_BY,
+    desired_route_monitor_specs,
     monitor_model_list,
+    reconcile_provider_channel_monitors,
     run_provider_channel_monitor_once,
     serialize_monitor_models,
 )
 from app.models import (
+    ModelChannelRoute,
     ProviderChannel,
     ProviderChannelMonitor,
     ProviderChannelMonitorDailyRollup,
@@ -24,6 +28,42 @@ class _FakeScalarOneResult:
 
     def scalar_one_or_none(self):
         return self._value
+
+
+class _FakeScalars:
+    def __init__(self, values):
+        self._values = list(values)
+
+    def all(self):
+        return list(self._values)
+
+
+class _FakeScalarsResult:
+    def __init__(self, values):
+        self._values = list(values)
+
+    def scalars(self):
+        return _FakeScalars(self._values)
+
+
+class _ReconcileDB:
+    def __init__(self, *, channels, routes, monitors):
+        self.results = [
+            _FakeScalarsResult(channels),
+            _FakeScalarsResult(routes),
+            _FakeScalarsResult(monitors),
+        ]
+        self.added = []
+        self.commits = 0
+
+    async def execute(self, _query):
+        return self.results.pop(0)
+
+    def add(self, value):
+        self.added.append(value)
+
+    async def commit(self):
+        self.commits += 1
 
 
 class _FakeDB:
@@ -97,6 +137,116 @@ class _FakeAnthropicClient:
 
 
 class ChannelMonitoringTests(unittest.IsolatedAsyncioTestCase):
+    def test_desired_route_monitor_specs_group_routes_and_cap_models(self) -> None:
+        channel = SimpleNamespace(
+            id="ch_openai",
+            name="OpenAI Relay",
+            channel_type="openai_compatible",
+            status="active",
+            priority=0,
+        )
+        routes = [
+            SimpleNamespace(id=f"route_{index}", channel_id=channel.id, public_model_id=f"gpt-{index}", upstream_model=f"up-{index}", endpoint="responses", status="active", priority_override=index)
+            for index in range(5)
+        ]
+
+        specs = desired_route_monitor_specs([channel], routes)
+
+        self.assertEqual(len(specs), 1)
+        self.assertEqual(specs[0].channel_id, "ch_openai")
+        self.assertEqual(specs[0].endpoint, "responses")
+        self.assertEqual(specs[0].models, ("up-0", "up-1", "up-2"))
+
+    def test_desired_route_monitor_specs_defaults_anthropic_routes_to_chat(self) -> None:
+        channel = SimpleNamespace(
+            id="ch_claude",
+            name="Claude Relay",
+            channel_type="anthropic_compatible",
+            status="active",
+            priority=0,
+        )
+        route = SimpleNamespace(
+            id="route_claude",
+            channel_id=channel.id,
+            public_model_id="claude-sonnet-5",
+            upstream_model="claude-sonnet-5",
+            endpoint="",
+            status="active",
+            priority_override=None,
+        )
+
+        specs = desired_route_monitor_specs([channel], [route])
+
+        self.assertEqual(specs[0].endpoint, "chat/completions")
+
+    async def test_reconcile_creates_auto_monitor_for_uncovered_route(self) -> None:
+        channel = SimpleNamespace(id="ch_new", name="New Relay", channel_type="openai_compatible", status="active", priority=0)
+        route = SimpleNamespace(id="route_new", channel_id=channel.id, public_model_id="gpt-5.6", upstream_model="gpt-5.6", endpoint="responses", status="active", priority_override=None)
+        db = _ReconcileDB(channels=[channel], routes=[route], monitors=[])
+
+        result = await reconcile_provider_channel_monitors(db)
+
+        self.assertEqual(result, {"created": 1, "updated": 0, "disabled": 0})
+        self.assertEqual(db.commits, 1)
+        self.assertEqual(len(db.added), 1)
+        monitor = db.added[0]
+        self.assertEqual(monitor.channel_id, "ch_new")
+        self.assertEqual(monitor.primary_model, "gpt-5.6")
+        self.assertEqual(monitor.created_by, AUTO_MONITOR_CREATED_BY)
+
+    async def test_reconcile_reuses_manual_coverage_and_disables_auto_monitor(self) -> None:
+        channel = SimpleNamespace(id="ch_existing", name="Existing Relay", channel_type="openai_compatible", status="active", priority=0)
+        route = SimpleNamespace(id="route_existing", channel_id=channel.id, public_model_id="gpt-5.6", upstream_model="gpt-5.6", endpoint="responses", status="active", priority_override=None)
+        manual = SimpleNamespace(
+            id="cmon_manual",
+            channel_id=channel.id,
+            endpoint="responses",
+            primary_model="gpt-5.6",
+            extra_models="[]",
+            status="active",
+            created_by="admin",
+        )
+        auto = SimpleNamespace(
+            id="cma_existing",
+            channel_id=channel.id,
+            name="Auto",
+            endpoint="responses",
+            primary_model="gpt-5.6",
+            extra_models="[]",
+            status="active",
+            interval_seconds=300,
+            timeout_seconds=30,
+            created_by=AUTO_MONITOR_CREATED_BY,
+        )
+        db = _ReconcileDB(channels=[channel], routes=[route], monitors=[manual, auto])
+
+        result = await reconcile_provider_channel_monitors(db)
+
+        self.assertEqual(result, {"created": 0, "updated": 0, "disabled": 1})
+        self.assertEqual(auto.status, "disabled")
+        self.assertEqual(manual.status, "active")
+
+    async def test_reconcile_disables_auto_monitor_when_route_is_removed(self) -> None:
+        channel = SimpleNamespace(id="ch_removed", name="Removed Relay", channel_type="openai_compatible", status="active", priority=0)
+        auto = SimpleNamespace(
+            id="cma_removed",
+            channel_id=channel.id,
+            name="Auto",
+            endpoint="responses",
+            primary_model="gpt-5.6",
+            extra_models="[]",
+            status="active",
+            interval_seconds=300,
+            timeout_seconds=30,
+            created_by=AUTO_MONITOR_CREATED_BY,
+        )
+        db = _ReconcileDB(channels=[channel], routes=[], monitors=[auto])
+
+        result = await reconcile_provider_channel_monitors(db)
+
+        self.assertEqual(result, {"created": 0, "updated": 0, "disabled": 1})
+        self.assertEqual(auto.status, "disabled")
+
     async def test_run_monitor_once_records_history_and_daily_rollup(self) -> None:
         monitor = SimpleNamespace(
             id="cmon_test",

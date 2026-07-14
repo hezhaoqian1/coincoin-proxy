@@ -49,3 +49,4 @@ Entries are workspace records, not authoritative runtime decisions.
 | 2026-07-14 | artifact | docs/aegis/work/2026-07-14-service-reliability-center/drift-check-draft.json | Service Reliability Center drift check draft |
 | 2026-07-14 | artifact | docs/aegis/work/2026-07-14-service-reliability-center/evidence-bundle-draft-task1-focused-tests.json | 2026-07-14-service-reliability-center evidence task1-focused-tests |
 | 2026-07-14 | artifact | docs/aegis/work/2026-07-14-service-reliability-center/resume-state-hint.json | 2026-07-14-service-reliability-center resume state hint |
+| 2026-07-14 | artifact | docs/aegis/work/2026-07-14-service-reliability-center/evidence-bundle-draft-task2-reconcile-tests.json | 2026-07-14-service-reliability-center evidence task2-reconcile-tests |

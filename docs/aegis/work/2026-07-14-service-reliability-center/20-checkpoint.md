@@ -25,3 +25,25 @@
 - task1-focused-tests
 - Blocked on: none
 - Next step: Write failing reconciliation tests for create, reuse, update, disable, and model cap.
+
+## DriftCheckDraft
+
+- Scope status: Task 2 stayed inside background control-plane reconciliation.
+- Compatibility status: Channel operations keep their original contracts; reconciliation is best-effort and cannot fail a successful admin mutation.
+- Retirement status: Manual monitor rows and APIs remain untouched; only derived monitors are created or disabled.
+- New risk signals:
+- none
+- Advisory decision: continue
+
+## Checkpoint Update
+
+- Current todo: Build and wire the service reliability admin page.
+- Active slice: Task 3 from the parent plan.
+- Completed todos:
+- Cached reliability API.
+- Route-derived monitor reconciliation with manual coverage reuse.
+- Evidence refs:
+- task1-focused-tests
+- task2-reconcile-tests
+- Blocked on: none
+- Next step: Write static UI wiring tests, then replace duplicate pages with the reliability console.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import time
@@ -21,6 +22,7 @@ from .anthropic_adapter import (
 )
 from .gemini_cpa import normalize_openai_base_url
 from .models import (
+    ModelChannelRoute,
     ProviderChannel,
     ProviderChannelMonitor,
     ProviderChannelMonitorDailyRollup,
@@ -33,6 +35,8 @@ logger = logging.getLogger("coincoin.channel_monitoring")
 
 MONITOR_OK_STATUSES = {"operational", "degraded"}
 MONITOR_FAILURE_STATUSES = {"failed", "error"}
+AUTO_MONITOR_CREATED_BY = "route-reconciler"
+AUTO_MONITOR_MODEL_LIMIT = 3
 
 
 @dataclass(frozen=True)
@@ -44,6 +48,14 @@ class ProbeResult:
     status_code: int
     message: str
     checked_at: datetime
+
+
+@dataclass(frozen=True)
+class RouteMonitorSpec:
+    channel_id: str
+    channel_name: str
+    endpoint: str
+    models: tuple[str, ...]
 
 
 def _utcnow() -> datetime:
@@ -78,6 +90,159 @@ def monitor_model_list(monitor: ProviderChannelMonitor) -> list[str]:
     values = [primary] if primary else []
     values.extend(parse_monitor_models(getattr(monitor, "extra_models", "")))
     return list(dict.fromkeys(item for item in values if item))
+
+
+def _monitor_endpoint_for_route(route: ModelChannelRoute, channel: ProviderChannel) -> str:
+    endpoint = str(getattr(route, "endpoint", "") or "").strip()
+    if endpoint in {"responses", "chat/completions"}:
+        return endpoint
+    if _is_anthropic_compatible_channel(channel):
+        return "chat/completions"
+    return "responses"
+
+
+def _route_priority(route: ModelChannelRoute, channel: ProviderChannel) -> int:
+    override = getattr(route, "priority_override", None)
+    return int(override if override is not None else getattr(channel, "priority", 0) or 0)
+
+
+def desired_route_monitor_specs(
+    channels: Iterable[ProviderChannel],
+    routes: Iterable[ModelChannelRoute],
+) -> list[RouteMonitorSpec]:
+    channel_by_id = {
+        str(channel.id): channel
+        for channel in channels
+        if str(getattr(channel, "status", "") or "").strip().lower() == "active"
+    }
+    grouped: dict[tuple[str, str], list[tuple[int, str, str]]] = {}
+    for route in routes:
+        if str(getattr(route, "status", "") or "").strip().lower() != "active":
+            continue
+        channel = channel_by_id.get(str(getattr(route, "channel_id", "") or ""))
+        if channel is None:
+            continue
+        endpoint = _monitor_endpoint_for_route(route, channel)
+        model = str(getattr(route, "upstream_model", "") or getattr(route, "public_model_id", "") or "").strip()
+        if not model:
+            continue
+        grouped.setdefault((str(channel.id), endpoint), []).append(
+            (_route_priority(route, channel), str(getattr(route, "public_model_id", "") or ""), model)
+        )
+
+    specs: list[RouteMonitorSpec] = []
+    for (channel_id, endpoint), values in sorted(grouped.items()):
+        channel = channel_by_id[channel_id]
+        models: list[str] = []
+        for _priority, _public_model_id, model in sorted(values):
+            if model not in models:
+                models.append(model)
+            if len(models) >= AUTO_MONITOR_MODEL_LIMIT:
+                break
+        specs.append(
+            RouteMonitorSpec(
+                channel_id=channel_id,
+                channel_name=str(getattr(channel, "name", "") or channel_id),
+                endpoint=endpoint,
+                models=tuple(models),
+            )
+        )
+    return specs
+
+
+def _auto_monitor_id(channel_id: str, endpoint: str) -> str:
+    digest = hashlib.sha256(f"{channel_id}:{endpoint}".encode("utf-8")).hexdigest()[:24]
+    return f"cma_{digest}"
+
+
+def _is_auto_monitor(monitor: ProviderChannelMonitor) -> bool:
+    return (
+        str(getattr(monitor, "created_by", "") or "") == AUTO_MONITOR_CREATED_BY
+        or str(getattr(monitor, "id", "") or "").startswith("cma_")
+    )
+
+
+async def reconcile_provider_channel_monitors(db: AsyncSession) -> dict[str, int]:
+    channels = (await db.execute(select(ProviderChannel))).scalars().all()
+    routes = (await db.execute(select(ModelChannelRoute))).scalars().all()
+    monitors = (await db.execute(select(ProviderChannelMonitor))).scalars().all()
+    specs = desired_route_monitor_specs(channels, routes)
+
+    manual_coverage: dict[tuple[str, str], set[str]] = {}
+    auto_by_key: dict[tuple[str, str], ProviderChannelMonitor] = {}
+    for monitor in monitors:
+        key = (str(monitor.channel_id), str(monitor.endpoint or "responses"))
+        if _is_auto_monitor(monitor):
+            auto_by_key.setdefault(key, monitor)
+        elif str(getattr(monitor, "status", "") or "").strip().lower() == "active":
+            manual_coverage.setdefault(key, set()).update(monitor_model_list(monitor))
+
+    created = 0
+    updated = 0
+    disabled = 0
+    desired_keys: set[tuple[str, str]] = set()
+    for spec in specs:
+        key = (spec.channel_id, spec.endpoint)
+        desired_keys.add(key)
+        covered = manual_coverage.get(key, set())
+        uncovered = [model for model in spec.models if model not in covered]
+        monitor = auto_by_key.get(key)
+        if not uncovered:
+            if monitor is not None and str(monitor.status or "").lower() != "disabled":
+                monitor.status = "disabled"
+                disabled += 1
+            continue
+
+        primary_model = uncovered[0]
+        extra_models = serialize_monitor_models(uncovered[1:])
+        name = f"Auto · {spec.channel_name} · {spec.endpoint}"[:128]
+        if monitor is None:
+            monitor = ProviderChannelMonitor(
+                id=_auto_monitor_id(spec.channel_id, spec.endpoint),
+                channel_id=spec.channel_id,
+                name=name,
+                endpoint=spec.endpoint,
+                primary_model=primary_model,
+                extra_models=extra_models,
+                status="active",
+                interval_seconds=int(settings.provider_channel_monitor_default_interval),
+                timeout_seconds=int(settings.provider_channel_monitor_default_timeout),
+                created_by=AUTO_MONITOR_CREATED_BY,
+            )
+            db.add(monitor)
+            auto_by_key[key] = monitor
+            created += 1
+            continue
+
+        changed = False
+        desired_values = {
+            "channel_id": spec.channel_id,
+            "name": name,
+            "endpoint": spec.endpoint,
+            "primary_model": primary_model,
+            "extra_models": extra_models,
+            "status": "active",
+            "interval_seconds": int(settings.provider_channel_monitor_default_interval),
+            "timeout_seconds": int(settings.provider_channel_monitor_default_timeout),
+            "created_by": AUTO_MONITOR_CREATED_BY,
+        }
+        for field, value in desired_values.items():
+            if getattr(monitor, field, None) != value:
+                setattr(monitor, field, value)
+                changed = True
+        if changed:
+            updated += 1
+
+    for key, monitor in auto_by_key.items():
+        if key in desired_keys:
+            continue
+        if str(getattr(monitor, "status", "") or "").strip().lower() != "disabled":
+            monitor.status = "disabled"
+            disabled += 1
+
+    if created or updated or disabled:
+        await db.commit()
+    return {"created": created, "updated": updated, "disabled": disabled}
 
 
 def _mask_message(message: str) -> str:
@@ -393,9 +558,16 @@ async def provider_channel_monitor_loop(poll_interval_seconds: int) -> None:
         return
     await asyncio.sleep(2)
     last_cleanup_at = 0.0
+    last_reconcile_at = 0.0
     while True:
         try:
             async with SessionLocal() as db:
+                now_monotonic = time.monotonic()
+                if now_monotonic - last_reconcile_at >= 60:
+                    changes = await reconcile_provider_channel_monitors(db)
+                    if any(changes.values()):
+                        logger.info("provider channel monitor reconcile changes=%s", changes)
+                    last_reconcile_at = now_monotonic
                 monitor_ids = await due_provider_channel_monitor_ids(db, limit=10)
                 for monitor_id in monitor_ids:
                     try:
