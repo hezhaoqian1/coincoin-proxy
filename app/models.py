@@ -115,7 +115,7 @@ class RequestLog(Base):
     channel_type: Mapped[str] = mapped_column(String(32), default="", index=True)
     provider_platform: Mapped[str] = mapped_column(String(64), default="", index=True)
     provider_account_fingerprint: Mapped[str] = mapped_column(String(128), default="")
-    fallback_from_channel_id: Mapped[str] = mapped_column(String(512), default="")
+    fallback_from_channel_id: Mapped[str] = mapped_column(String(32), default="")
     route_attempt: Mapped[int] = mapped_column(BigInteger, default=0)
     station_id: Mapped[str] = mapped_column(String(32), default="", index=True)
     station_alias: Mapped[str] = mapped_column(String(128), default="")

@@ -36,7 +36,7 @@ Decision: `docs/aegis/adr/ADR-0002-route-derived-reliability-observation.md`
 - Representative probe status affects provider-channel health only. It never marks every public model on that channel failed.
 - Channel health combines configured/route coverage, representative probe state, real request failures, correctly source-attributed fallback-out traffic, average latency, and router cooldown.
 - Public-model health uses active route coverage and route health derived from endpoint-isolated real traffic, correctly source-attributed fallback, the 30-second average-latency degradation threshold, and router cooldown.
-- Fallback source attribution uses every channel ID retained in `fallback_from_channel_id`; the destination channel is not blamed for the source channel's fallback-out event.
+- Fallback source attribution uses each complete channel ID retained in `fallback_from_channel_id`; the destination channel is not blamed for the source channel's fallback-out event. The persisted field remains the legacy 32-character contract, so multi-hop attribution is best-effort and guarantees the first complete source ID only.
 - Endpoint normalization keeps `responses`, `chat/completions`, image-generation aliases, and other route traffic isolated before route health is computed.
 - Monitoring never mutates priority, weight, route status, channel status, cooldown, fallback, or request routing.
 
@@ -62,7 +62,7 @@ Decision: `docs/aegis/adr/ADR-0002-route-derived-reliability-observation.md`
 - Protected `/ops/monitoring/*` probes and manual monitor backend APIs remain available.
 - Existing manual monitor APIs, the `extra_models` persistence/API field, and persistent probe history are retained. `extra_models` is not executed by representative probes and is normalized empty when a monitor is reconciled or selected.
 - Redundant automatic monitors are disabled rather than deleted, preserving their history.
-- `fallback_from_channel_id` is declared as `VARCHAR(512)` in the SQLAlchemy model and create-table DDL, and the idempotent startup migration widens the existing column with `ALTER TABLE ... MODIFY COLUMN`. The application performs no data `UPDATE` or `DELETE` and preserves existing values; MySQL may internally rebuild storage while applying the DDL.
+- `fallback_from_channel_id` remains `VARCHAR(32)` in the SQLAlchemy model, create-table DDL, and buffered writer. No hot-table width migration runs during application startup; a wider multi-hop audit contract requires a separately operated migration outside the service health-check path.
 - A channel with routes or monitor history is disabled instead of hard-deleted; an unreferenced channel still hard-deletes.
 - Monitor configurations without probe history are deleted with an otherwise unreferenced channel.
 
