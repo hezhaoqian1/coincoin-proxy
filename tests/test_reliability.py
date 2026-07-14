@@ -565,6 +565,27 @@ class ReliabilityOverviewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(routes_by_endpoint["chat/completions"]["requests_5m"], 4)
         self.assertEqual(routes_by_endpoint["chat/completions"]["health_status"], "operational")
 
+    def test_image_generation_usage_label_maps_to_image_route_endpoint(self) -> None:
+        now = datetime(2026, 7, 15, 10, 0, 0)
+        channel = SimpleNamespace(id="ch_image", name="Image", provider_platform="sub2api", channel_type="openai_compatible", status="active", priority=0, weight=1)
+        route = SimpleNamespace(id="route_image", public_model_id="gpt-image", endpoint="images/generations", channel_id=channel.id, upstream_model="gpt-image", priority_override=None, weight_override=None, status="active")
+        traffic = SimpleNamespace(public_model_id="gpt-image", channel_id=channel.id, endpoint="responses:image_generation", fallback_from_channel_id="", requests=1, success_requests=0, failed_requests=1, fallback_requests=0, avg_latency_ms=1200, max_latency_ms=1200, last_seen_at=now)
+
+        payload = assemble_reliability_overview(
+            channels=[channel],
+            routes=[route],
+            runtime_states=[],
+            monitors=[],
+            traffic_rows=[traffic],
+            recent_failures=[],
+            now=now,
+        )
+
+        image_route = payload["models"][0]["routes"][0]
+        self.assertEqual(image_route["requests_5m"], 1)
+        self.assertEqual(image_route["failed_requests_5m"], 1)
+        self.assertEqual(image_route["health_status"], "degraded")
+
     def test_wildcard_route_aggregates_traffic_across_endpoints(self) -> None:
         now = datetime(2026, 7, 15, 10, 0, 0)
         channel = SimpleNamespace(id="ch_wildcard", name="Wildcard", provider_platform="sub2api", channel_type="openai_compatible", status="active", priority=0, weight=1)
