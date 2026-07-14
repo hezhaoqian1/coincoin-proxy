@@ -25,7 +25,7 @@
 
 - Commits: `b93e7fe`, `db2a4fb`, `a9e4034`, `9a925de`, `d86e747`, `f562b34`.
 - Focused verification: reliability/admin/channel suites passed throughout; latest persistence-focused slice reported `36 passed` and the full reliability module reported `22 passed` before widening.
-- Spec compliance: approved after real-latency health and invalid-manual auto-reset fixes.
+- Spec compliance: approved after real-latency health and invalid-manual reset-to-auto UI support, which requires operator action and does not automatically replace an invalid manual selection.
 - Code quality: approved after fallback-source attribution, endpoint isolation/normalization, bounded fallback-rate math, image alias mapping, and compatibility-preserving fallback source persistence widening.
 - Observed boundary: representative probe status affects channel health only; public-model health uses route coverage, real traffic, fallback source attribution, latency, and router cooldown.
 
