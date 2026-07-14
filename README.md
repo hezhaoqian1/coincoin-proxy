@@ -280,7 +280,8 @@ Common admin workflows:
 - inspect usage and balances
 - add provider channels
 - create model routes
-- inspect channel health and fallback activity
+- choose one representative probe target per provider channel automatically or from its active routes
+- inspect channel probe health separately from public-model route coverage, real traffic, and fallback activity
 - review recharge records
 - run protected monitoring probes
 

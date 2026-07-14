@@ -231,10 +231,10 @@ uvicorn app.main:app --reload --port 8000
 ### 页面区块
 
 - `系统默认渠道`：只读展示当前 catalog/env 产生的默认路径，包括 Gemini CPA、legacy GPT/Codex CPA、OpenAI/Azure 直连和其它 catalog direct route。这些路径保留为默认和系统 fallback，不会因为新增 provider channel 而退役。
-- `Provider Channels`：新增或编辑外部上游 URL/Key，例如 Sub2API、New API、其它 OpenAI-compatible 网关。
+- `Provider Channels`：新增或编辑外部上游 URL/Key，例如 Sub2API、New API、其它 OpenAI-compatible 网关；已有渠道还可以从活跃 route 中自动或手动选择一个代表监测模型。
 - `Model Routes`：把一个 CoinCoin 公开模型映射到某个 provider channel 的上游模型。只有建了 route 的公开模型才会被后台渠道覆盖。
-- `渠道稳定性`：按真实请求聚合 7/15/30 天可用率、失败数、平均延迟、fallback in/out 和最近请求条。
-- `主动渠道监控`：管理员可以为指定渠道和模型配置定时探针，支持搜索、筛选、启停、立即运行和查看历史。
+- `服务可靠性`：先展示渠道的代表探测、真实流量、fallback 和路由冷却，再单独展示公开模型的 route 覆盖与真实流量；公开模型状态不会继承代表探测结果。
+- `代表探测`：每个 provider channel 最多执行一个代表模型探测。自动模式按有效 priority、weight 和 route 顺序选取目标；管理员也可以在渠道编辑弹窗中选择精确的模型和 endpoint，或重置为自动。
 
 ### 接入一个新 URL/Key
 
@@ -245,6 +245,7 @@ uvicorn app.main:app --reload --port 8000
 5. `失败阈值 allowed_fails` 达到后进入冷却；`冷却秒数 cooldown_seconds` 控制暂时跳过这个渠道多久。
 6. 保存后点 `测试` 或 `模型`，确认 `/v1/models` 能返回模型列表。
 7. 在模型列表里对目标模型点 `建 route`，选择要覆盖的 CoinCoin 公开模型。
+8. route 生效后重新编辑渠道；`监测模型` 默认使用自动选择，也可以固定到该渠道的一条活跃文本 route。探测会发送一次最小非流式生成请求，只更新渠道监测结果，不修改 route、priority、weight、fallback 或冷却状态。
 
 ### Route 语义
 
