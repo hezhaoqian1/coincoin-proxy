@@ -2410,7 +2410,10 @@ async def update_provider_channel_monitor_selection(
     await db.commit()
     await reconcile_provider_channel_monitors(db)
     invalidate_reliability_cache()
-    selection = _provider_channel_monitor_selection_payload(channel, routes, monitors)
+    reconciled_monitors = (
+        await db.execute(select(ProviderChannelMonitor).where(ProviderChannelMonitor.channel_id == channel_id))
+    ).scalars().all()
+    selection = _provider_channel_monitor_selection_payload(channel, routes, reconciled_monitors)
     return {"channel_id": channel_id, "monitor_selection": selection}
 
 
