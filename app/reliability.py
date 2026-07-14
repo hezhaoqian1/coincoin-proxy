@@ -24,6 +24,7 @@ from .security import require_admin
 router = APIRouter(prefix="/admin/reliability", tags=["admin-reliability"])
 
 RELIABILITY_CACHE_TTL_SECONDS = 10
+REAL_TRAFFIC_DEGRADED_AVG_LATENCY_MS = 30_000
 _CACHE_VALUE: dict[str, Any] | None = None
 _CACHE_EXPIRES_AT = 0.0
 _CACHE_LOCK = asyncio.Lock()
@@ -92,6 +93,17 @@ def _traffic_payload(row: Any) -> dict[str, Any]:
 
 def _empty_traffic() -> dict[str, Any]:
     return _traffic_payload(SimpleTrafficRow())
+
+
+def _traffic_is_degraded(traffic: dict[str, Any]) -> bool:
+    return bool(
+        traffic["failed_requests"] > 0
+        or traffic["fallback_rate"] >= 0.05
+        or (
+            traffic["requests"] > 0
+            and traffic["avg_latency_ms"] >= REAL_TRAFFIC_DEGRADED_AVG_LATENCY_MS
+        )
+    )
 
 
 def _merge_traffic(current: dict[str, Any] | None, incoming: dict[str, Any]) -> dict[str, Any]:
@@ -188,7 +200,7 @@ def assemble_reliability_overview(
             health_status = "cooling"
         elif monitor_status == "failed":
             health_status = "failed"
-        elif monitor_status == "degraded" or traffic["failed_requests"] > 0 or traffic["fallback_rate"] >= 0.05:
+        elif monitor_status == "degraded" or _traffic_is_degraded(traffic):
             health_status = "degraded"
         elif monitor_status == "pending" and traffic["requests"] == 0:
             health_status = "pending"
@@ -264,7 +276,7 @@ def assemble_reliability_overview(
             )
             if _runtime_cooling(runtime_by_channel.get(str(route.channel_id)), now):
                 route_status = "cooling"
-            elif route_traffic["failed_requests"] > 0 or route_traffic["fallback_rate"] >= 0.05:
+            elif _traffic_is_degraded(route_traffic):
                 route_status = "degraded"
             else:
                 route_status = "operational"
@@ -292,7 +304,7 @@ def assemble_reliability_overview(
             health_status = "cooling"
         elif any(status in {"cooling", "degraded"} for status in route_statuses):
             health_status = "degraded"
-        elif traffic["failed_requests"] > 0 or traffic["fallback_rate"] >= 0.05:
+        elif _traffic_is_degraded(traffic):
             health_status = "degraded"
         else:
             health_status = "operational"

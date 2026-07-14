@@ -4701,6 +4701,7 @@
       const monitor_selection = channel.monitor_selection || {};
       const choices = monitor_selection.choices || [];
       const recommended = monitor_selection.recommended;
+      const invalidManualSelection = monitor_selection.mode === 'manual' && monitor_selection.state === 'invalid';
       const autoLabel = recommended
         ? `自动（当前默认 ${recommended.model} · ${recommended.endpoint}）`
         : '自动（当前无可用 route）';
@@ -4721,13 +4722,13 @@
 
       select.innerHTML = options.join('');
       if (monitor_selection.mode !== 'manual') select.value = 'auto';
-      select.disabled = !channelId || choices.length === 0;
+      select.disabled = !channelId || (choices.length === 0 && !invalidManualSelection);
       stateNode.classList.remove('is-error');
       if (!channelId) {
         stateNode.textContent = '未配置：先保存渠道并创建活跃 route。';
       } else if (!choices.length) {
         stateNode.textContent = monitor_selection.state === 'invalid'
-          ? '当前手动监测项已失效；添加活跃 route 后请重置为自动。'
+          ? '当前手动监测项已失效；可选择自动清除覆盖，添加活跃 route 后会自动配置。'
           : '未配置：当前没有可用于代表探测的活跃 route。';
       } else if (monitor_selection.state === 'invalid') {
         stateNode.textContent = '当前手动监测项已失效，请选择自动或一个有效 route。';

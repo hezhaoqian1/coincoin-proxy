@@ -436,6 +436,20 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("await saveProviderChannelMonitorSelection(channelId)", admin_html)
         self.assertIn("渠道字段已保存，但监测模型", admin_html)
 
+    def test_invalid_manual_monitor_without_choices_can_reset_to_auto(self) -> None:
+        admin_html = (Path(admin_module.__file__).parent / "static" / "admin.html").read_text()
+
+        self.assertIn(
+            "const invalidManualSelection = monitor_selection.mode === 'manual' && monitor_selection.state === 'invalid';",
+            admin_html,
+        )
+        self.assertIn(
+            "select.disabled = !channelId || (choices.length === 0 && !invalidManualSelection);",
+            admin_html,
+        )
+        self.assertIn('<option value="auto">', admin_html)
+        self.assertIn("if (select.disabled || select.value === 'auto') return { mode: 'auto' };", admin_html)
+
     def test_service_reliability_channel_table_keeps_explicit_probe_action(self) -> None:
         reliability_js = (
             Path(admin_module.__file__).parent / "static" / "admin_assets" / "service-reliability.js"
