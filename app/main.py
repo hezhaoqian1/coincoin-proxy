@@ -24,6 +24,7 @@ from .video_jobs import (
 )
 from .keys import router as keys_router
 from .monitoring import admin_router as admin_monitoring_router, ops_router as monitoring_ops_router
+from .reliability import router as reliability_router
 from .proxy import router as proxy_router, close_http_client
 from .openai_compat import (
     chat_completions as openai_chat_completions,
@@ -1119,6 +1120,7 @@ app.include_router(media_artifacts_router)
 app.include_router(keys_router)
 app.include_router(admin_router)
 app.include_router(admin_monitoring_router)
+app.include_router(reliability_router)
 app.include_router(webhook_router)
 app.include_router(payment_router)
 app.include_router(auth_router)

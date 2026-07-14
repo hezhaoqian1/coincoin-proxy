@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "2026-07-14-service-reliability-center",
+  "currentTodo": "Implement route-derived monitor reconciliation.",
+  "completedTodos": [
+    "Cached reliability overview API with 10-second cache and multi-route aggregation."
+  ],
+  "activeSlice": "Task 2 from the parent plan.",
+  "evidenceRefs": [
+    "task1-focused-tests"
+  ],
+  "blockedOn": null,
+  "nextStep": "Write failing reconciliation tests for create, reuse, update, disable, and model cap.",
+  "updatedAt": "2026-07-14"
+}

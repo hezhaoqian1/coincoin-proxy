@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "2026-07-14-service-reliability-center",
+  "lastCheckpointRef": "docs/aegis/work/2026-07-14-service-reliability-center/todo-checkpoint-draft.json",
+  "resumeInstruction": "Read the plan and checkpoint, then continue in app/channel_monitoring.py without changing request routing.",
+  "knownPartialWork": [
+    "Cached reliability overview API with 10-second cache and multi-route aggregation."
+  ],
+  "mustReadBeforeContinuing": [
+    "docs/aegis/work/2026-07-14-service-reliability-center/10-intent.md",
+    "docs/aegis/work/2026-07-14-service-reliability-center/20-checkpoint.md",
+    "docs/aegis/work/2026-07-14-service-reliability-center/todo-checkpoint-draft.json"
+  ],
+  "unsafeToAssume": [
+    "Do not assume existing manual monitors can be deleted or disabled."
+  ]
+}

@@ -36,3 +36,16 @@ Entries are workspace records, not authoritative runtime decisions.
 | 2026-07-12 | baseline | docs/aegis/baseline/pure-credit-pack-billing.md | Pure credit pack billing baseline |
 | 2026-07-12 | artifact | docs/aegis/work/2026-07-12-pure-credit-pack-billing/gate-input-pack.json | 2026-07-12-pure-credit-pack-billing gate input pack |
 | 2026-07-12 | work | docs/aegis/work/2026-07-12-pure-credit-pack-billing/proof-bundle.md | 2026-07-12-pure-credit-pack-billing proof bundle |
+| 2026-07-14 | plan | docs/aegis/plans/2026-07-14-service-reliability-center.md | Service Reliability Center |
+| 2026-07-14 | work | docs/aegis/work/2026-07-14-service-reliability-center/10-intent.md | Service Reliability Center intent |
+| 2026-07-14 | work | docs/aegis/work/2026-07-14-service-reliability-center/20-checkpoint.md | Service Reliability Center checkpoint |
+| 2026-07-14 | work | docs/aegis/work/2026-07-14-service-reliability-center/90-evidence.md | Service Reliability Center evidence |
+| 2026-07-14 | work | docs/aegis/work/2026-07-14-service-reliability-center/99-reflection.md | Service Reliability Center reflection |
+| 2026-07-14 | artifact | docs/aegis/work/2026-07-14-service-reliability-center/task-intent-draft.json | Service Reliability Center task intent draft |
+| 2026-07-14 | artifact | docs/aegis/work/2026-07-14-service-reliability-center/baseline-read-set-hint.json | Service Reliability Center baseline read-set hint |
+| 2026-07-14 | artifact | docs/aegis/work/2026-07-14-service-reliability-center/baseline-usage-draft.json | Service Reliability Center baseline usage draft |
+| 2026-07-14 | artifact | docs/aegis/work/2026-07-14-service-reliability-center/impact-statement-draft.json | Service Reliability Center impact statement draft |
+| 2026-07-14 | artifact | docs/aegis/work/2026-07-14-service-reliability-center/todo-checkpoint-draft.json | Service Reliability Center todo checkpoint draft |
+| 2026-07-14 | artifact | docs/aegis/work/2026-07-14-service-reliability-center/drift-check-draft.json | Service Reliability Center drift check draft |
+| 2026-07-14 | artifact | docs/aegis/work/2026-07-14-service-reliability-center/evidence-bundle-draft-task1-focused-tests.json | 2026-07-14-service-reliability-center evidence task1-focused-tests |
+| 2026-07-14 | artifact | docs/aegis/work/2026-07-14-service-reliability-center/resume-state-hint.json | 2026-07-14-service-reliability-center resume state hint |

@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "2026-07-14-service-reliability-center",
+  "requiredBaselineRefs": [
+    "docs/aegis/plans/2026-07-14-service-reliability-center.md",
+    "app/channel_monitoring.py",
+    "app/admin.py",
+    "app/static/admin.html"
+  ],
+  "deliveredContextRefs": [],
+  "acknowledgedBeforePlanRefs": [],
+  "citedInPlanRefs": [],
+  "missingRefs": [
+    "docs/aegis/plans/2026-07-14-service-reliability-center.md",
+    "app/channel_monitoring.py",
+    "app/admin.py",
+    "app/static/admin.html"
+  ],
+  "decision": "needs-baseline-readback"
+}

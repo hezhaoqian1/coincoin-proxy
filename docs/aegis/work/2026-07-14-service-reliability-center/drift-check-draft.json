@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "2026-07-14-service-reliability-center",
+  "taskIntentRef": "docs/aegis/work/2026-07-14-service-reliability-center/task-intent-draft.json",
+  "baselineRefs": [
+    "docs/aegis/plans/2026-07-14-service-reliability-center.md"
+  ],
+  "scopeStatus": "Task 1 stayed within cached admin read-model scope.",
+  "compatStatus": "Provider-channel and request-path code remained unchanged; 99 focused tests passed.",
+  "retirementStatus": "No old UI or persistent monitor data retired in this slice.",
+  "newRiskSignals": [],
+  "decision": "continue"
+}
