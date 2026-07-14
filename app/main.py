@@ -223,6 +223,7 @@ async def _run_migrations(conn):
         ("coincoin_redemption_codes", "per_user_limit", "BIGINT DEFAULT 1"),
         ("coincoin_redemption_codes", "redemption_count", "BIGINT DEFAULT 0"),
         ("coincoin_redemption_codes", "note", "VARCHAR(256) DEFAULT ''"),
+        ("coincoin_provider_channel_monitors", "claimed_until", "DATETIME NULL"),
     ]
     logger = logging.getLogger("coincoin.migrations")
     for table, col, ddl in migrations:
@@ -261,6 +262,7 @@ async def _run_migrations(conn):
         ("coincoin_api_keys", "ix_api_keys_created_at", "CREATE INDEX ix_api_keys_created_at ON coincoin_api_keys (created_at)"),
         ("coincoin_image_jobs", "ix_image_jobs_status_created", "CREATE INDEX ix_image_jobs_status_created ON coincoin_image_jobs (status, created_at)"),
         ("coincoin_image_jobs", "ix_image_jobs_channel_id", "CREATE INDEX ix_image_jobs_channel_id ON coincoin_image_jobs (channel_id)"),
+        ("coincoin_provider_channel_monitors", "ix_channel_monitors_claim_due", "CREATE INDEX ix_channel_monitors_claim_due ON coincoin_provider_channel_monitors (status, claimed_until, last_checked_at)"),
     ]
     for table, index_name, ddl in index_migrations:
         try:
@@ -800,6 +802,7 @@ async def _run_migrations(conn):
             status VARCHAR(16) DEFAULT 'active',
             interval_seconds BIGINT DEFAULT 300,
             timeout_seconds BIGINT DEFAULT 30,
+            claimed_until DATETIME NULL,
             last_checked_at DATETIME NULL,
             last_status VARCHAR(16) DEFAULT '',
             last_latency_ms BIGINT DEFAULT 0,
@@ -811,6 +814,7 @@ async def _run_migrations(conn):
             INDEX ix_channel_monitors_channel_id (channel_id),
             INDEX ix_channel_monitors_endpoint (endpoint),
             INDEX ix_channel_monitors_status (status),
+            INDEX ix_channel_monitors_claim_due (status, claimed_until, last_checked_at),
             INDEX ix_channel_monitors_last_checked_at (last_checked_at),
             INDEX ix_channel_monitors_created_at (created_at),
             INDEX ix_channel_monitors_updated_at (updated_at)

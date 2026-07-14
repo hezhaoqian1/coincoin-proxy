@@ -414,9 +414,10 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         )
         db = SimpleNamespace(
             get=AsyncMock(return_value=channel),
-            scalar=AsyncMock(side_effect=[0, 1]),
+            scalar=AsyncMock(side_effect=[0, 1, 0]),
             commit=AsyncMock(),
             delete=AsyncMock(),
+            execute=AsyncMock(),
         )
 
         with (
@@ -443,9 +444,10 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         channel = SimpleNamespace(id="channel-empty")
         db = SimpleNamespace(
             get=AsyncMock(side_effect=[channel, None]),
-            scalar=AsyncMock(side_effect=[0, 0]),
+            scalar=AsyncMock(side_effect=[0, 0, 0]),
             commit=AsyncMock(),
             delete=AsyncMock(),
+            execute=AsyncMock(),
         )
 
         with (
@@ -465,6 +467,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, {"deleted": True, "channel_id": channel.id})
         db.delete.assert_awaited_once_with(channel)
+        db.execute.assert_awaited_once()
         reset_state.assert_called_once_with(channel.id)
 
     async def test_provider_channels_includes_system_default_channels(self) -> None:

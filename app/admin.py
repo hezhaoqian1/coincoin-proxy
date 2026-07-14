@@ -2331,10 +2331,18 @@ async def delete_provider_channel(channel_id: str, db: AsyncSession = Depends(ge
     if channel is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="provider channel not found")
     route_count = await db.scalar(select(func.count(ModelChannelRoute.id)).where(ModelChannelRoute.channel_id == channel_id)) or 0
-    monitor_count = await db.scalar(
-        select(func.count(ProviderChannelMonitor.id)).where(ProviderChannelMonitor.channel_id == channel_id)
+    monitor_history_count = await db.scalar(
+        select(func.count(ProviderChannelMonitorHistory.id)).where(
+            ProviderChannelMonitorHistory.channel_id == channel_id
+        )
     ) or 0
-    if int(route_count or 0) > 0 or int(monitor_count or 0) > 0:
+    monitor_rollup_count = await db.scalar(
+        select(func.count(ProviderChannelMonitorDailyRollup.id)).where(
+            ProviderChannelMonitorDailyRollup.channel_id == channel_id
+        )
+    ) or 0
+    has_monitor_history = int(monitor_history_count or 0) > 0 or int(monitor_rollup_count or 0) > 0
+    if int(route_count or 0) > 0 or has_monitor_history:
         channel.status = "disabled"
         channel.updated_by = "admin"
         await db.commit()
@@ -2351,6 +2359,9 @@ async def delete_provider_channel(channel_id: str, db: AsyncSession = Depends(ge
             "channel": _provider_channel_payload(channel, route_count=int(route_count or 0)),
         }
 
+    await db.execute(
+        delete(ProviderChannelMonitor).where(ProviderChannelMonitor.channel_id == channel_id)
+    )
     runtime_state = await db.get(ProviderChannelRuntimeState, channel_id)
     if runtime_state is not None:
         await db.delete(runtime_state)

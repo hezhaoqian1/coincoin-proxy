@@ -1,11 +1,13 @@
 import unittest
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import httpx
 
 from app.channel_monitoring import (
     AUTO_MONITOR_CREATED_BY,
+    claim_due_provider_channel_monitor_ids,
     desired_route_monitor_specs,
     monitor_model_list,
     reconcile_provider_channel_monitors,
@@ -266,6 +268,50 @@ class ChannelMonitoringTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, {"created": 0, "updated": 0, "disabled": 1})
         self.assertEqual(auto.status, "disabled")
+
+    async def test_claim_due_monitors_locks_and_advances_schedule(self) -> None:
+        monitor = SimpleNamespace(
+            id="cmon_due",
+            primary_model="gpt-5.6",
+            extra_models="[]",
+            claimed_until=None,
+            last_checked_at=None,
+            interval_seconds=60,
+            timeout_seconds=30,
+        )
+        db = SimpleNamespace(
+            execute=AsyncMock(return_value=_FakeScalarsResult([monitor])),
+            commit=AsyncMock(),
+        )
+
+        monitor_ids = await claim_due_provider_channel_monitor_ids(db, limit=10)
+
+        self.assertEqual(monitor_ids, [monitor.id])
+        self.assertIsNone(monitor.last_checked_at)
+        self.assertGreater(monitor.claimed_until, datetime.now(UTC).replace(tzinfo=None))
+        statement = db.execute.await_args.args[0]
+        self.assertTrue(statement._for_update_arg.skip_locked)
+        db.commit.assert_awaited_once_with()
+
+    async def test_claim_due_monitors_skips_recent_claim(self) -> None:
+        monitor = SimpleNamespace(
+            id="cmon_claimed",
+            primary_model="gpt-5.6",
+            extra_models="[]",
+            claimed_until=datetime.now(UTC).replace(tzinfo=None) + timedelta(minutes=2),
+            last_checked_at=None,
+            interval_seconds=60,
+            timeout_seconds=30,
+        )
+        db = SimpleNamespace(
+            execute=AsyncMock(return_value=_FakeScalarsResult([monitor])),
+            commit=AsyncMock(),
+        )
+
+        monitor_ids = await claim_due_provider_channel_monitor_ids(db, limit=10)
+
+        self.assertEqual(monitor_ids, [])
+        db.commit.assert_awaited_once_with()
 
     async def test_run_monitor_once_records_history_and_daily_rollup(self) -> None:
         monitor = SimpleNamespace(

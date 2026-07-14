@@ -10,7 +10,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any, Iterable
 
 import httpx
-from sqlalchemy import case, func, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import settings
@@ -90,6 +90,12 @@ def monitor_model_list(monitor: ProviderChannelMonitor) -> list[str]:
     values = [primary] if primary else []
     values.extend(parse_monitor_models(getattr(monitor, "extra_models", "")))
     return list(dict.fromkeys(item for item in values if item))
+
+
+def _monitor_claim_lease_seconds(monitor: ProviderChannelMonitor) -> int:
+    timeout = max(5, int(monitor.timeout_seconds or settings.provider_channel_monitor_default_timeout))
+    request_count = max(1, len(monitor_model_list(monitor))) + 1
+    return max(60, timeout * request_count + 30)
 
 
 def _monitor_endpoint_for_route(route: ModelChannelRoute, channel: ProviderChannel) -> str | None:
@@ -493,6 +499,7 @@ async def _record_monitor_results(
     monitor.last_latency_ms = max(0, int(primary_result.latency_ms or 0))
     monitor.last_ping_latency_ms = max(0, int(primary_result.ping_latency_ms or 0))
     monitor.last_message = _mask_message(primary_result.message)
+    monitor.claimed_until = None
 
 
 async def _upsert_daily_rollup(db: AsyncSession, monitor: ProviderChannelMonitor, result: ProbeResult) -> None:
@@ -533,26 +540,38 @@ async def _upsert_daily_rollup(db: AsyncSession, monitor: ProviderChannelMonitor
         row.count_ping_latency = int(row.count_ping_latency or 0) + 1
 
 
-async def due_provider_channel_monitor_ids(db: AsyncSession, *, limit: int = 10) -> list[str]:
+async def claim_due_provider_channel_monitor_ids(db: AsyncSession, *, limit: int = 10) -> list[str]:
     now = _utcnow()
     rows = (
         await db.execute(
             select(ProviderChannelMonitor)
-            .where(ProviderChannelMonitor.status == "active")
+            .where(
+                ProviderChannelMonitor.status == "active",
+                or_(
+                    ProviderChannelMonitor.claimed_until.is_(None),
+                    ProviderChannelMonitor.claimed_until <= now,
+                ),
+            )
             .order_by(
                 case((ProviderChannelMonitor.last_checked_at.is_(None), 0), else_=1).asc(),
                 ProviderChannelMonitor.last_checked_at.asc(),
                 ProviderChannelMonitor.created_at.asc(),
             )
+            .with_for_update(skip_locked=True)
             .limit(max(1, int(limit or 10)))
         )
     ).scalars().all()
     due: list[str] = []
     for row in rows:
+        claimed_until = getattr(row, "claimed_until", None)
+        if claimed_until is not None and claimed_until > now:
+            continue
         last_checked = row.last_checked_at
         interval = max(15, int(row.interval_seconds or settings.provider_channel_monitor_default_interval))
         if last_checked is None or last_checked <= now - timedelta(seconds=interval):
+            row.claimed_until = now + timedelta(seconds=_monitor_claim_lease_seconds(row))
             due.append(row.id)
+    await db.commit()
     return due
 
 
@@ -572,11 +591,22 @@ async def provider_channel_monitor_loop(poll_interval_seconds: int) -> None:
                     if any(changes.values()):
                         logger.info("provider channel monitor reconcile changes=%s", changes)
                     last_reconcile_at = now_monotonic
-                monitor_ids = await due_provider_channel_monitor_ids(db, limit=10)
-                for monitor_id in monitor_ids:
+                for _ in range(10):
+                    monitor_ids = await claim_due_provider_channel_monitor_ids(db, limit=1)
+                    if not monitor_ids:
+                        break
+                    monitor_id = monitor_ids[0]
                     try:
-                        await run_provider_channel_monitor_once(db, monitor_id)
+                        monitor = await db.get(ProviderChannelMonitor, monitor_id)
+                        if monitor is None:
+                            continue
+                        hard_timeout = max(5, _monitor_claim_lease_seconds(monitor) - 5)
+                        await asyncio.wait_for(
+                            run_provider_channel_monitor_once(db, monitor_id),
+                            timeout=hard_timeout,
+                        )
                     except Exception as exc:
+                        await db.rollback()
                         logger.warning("provider channel monitor failed monitor_id=%s error=%s", monitor_id, exc)
                 now_monotonic = time.monotonic()
                 if now_monotonic - last_cleanup_at >= 3600:

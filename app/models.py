@@ -525,6 +525,9 @@ class ProviderChannelRuntimeState(Base):
 class ProviderChannelMonitor(Base):
     """Active probe configuration for a provider channel."""
     __tablename__ = "coincoin_provider_channel_monitors"
+    __table_args__ = (
+        Index("ix_channel_monitors_claim_due", "status", "claimed_until", "last_checked_at"),
+    )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     channel_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_provider_channels.id"), index=True)
@@ -535,6 +538,7 @@ class ProviderChannelMonitor(Base):
     status: Mapped[str] = mapped_column(String(16), default="active", index=True)
     interval_seconds: Mapped[int] = mapped_column(BigInteger, default=300)
     timeout_seconds: Mapped[int] = mapped_column(BigInteger, default=30)
+    claimed_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     last_checked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     last_status: Mapped[str] = mapped_column(String(16), default="")
     last_latency_ms: Mapped[int] = mapped_column(BigInteger, default=0)
