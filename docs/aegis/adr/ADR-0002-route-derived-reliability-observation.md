@@ -69,11 +69,11 @@ Adopt one representative real generation probe per provider channel and separate
 - Probe state contributes only to provider-channel health. Public-model health never inherits a channel probe result; it is derived from active route coverage, endpoint-isolated real request traffic, request failures, correctly source-attributed fallback, a 30-second average-latency threshold, and request-router cooldown.
 - Monitoring is observation-only. It never changes channel or route priority, weight, route status, cooldown, fallback behavior, or request routing. `app/channel_router.py` remains the sole request-selection and fallback authority.
 - The reliability console is channel-first. Channel summary, incidents, representative target, and explicit probe action precede public-model routing and real-traffic details.
-- `fallback_from_channel_id` is widened non-destructively to `VARCHAR(512)` so a request can retain multiple fallback source channel IDs for attribution.
+- `fallback_from_channel_id` is widened to `VARCHAR(512)` so a request can retain multiple fallback source channel IDs for attribution. The application performs no data `UPDATE` or `DELETE` and preserves existing values; this record makes no claim about MySQL's internal DDL rebuild behavior.
 
 ### Compatibility Boundary
 
-Provider channel and route CRUD, priority, weight, route status, router cooldown, fallback, request routing, streaming, billing, manual monitor APIs, extra_models persistence/API shape, and retained probe history remain compatible; fallback_from_channel_id is widened non-destructively to VARCHAR(512).
+Provider channel and route CRUD, priority, weight, route status, router cooldown, fallback, request routing, streaming, billing, manual monitor APIs, extra_models persistence/API shape, and retained probe history remain compatible. `fallback_from_channel_id` is widened to `VARCHAR(512)` without application-level data `UPDATE` or `DELETE`, and existing values are preserved; MySQL may internally rebuild storage while applying the DDL.
 
 ### Retirement Impact
 

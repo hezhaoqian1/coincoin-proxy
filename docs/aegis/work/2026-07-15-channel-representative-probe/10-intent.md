@@ -42,7 +42,7 @@
 
 ## ImpactStatementDraft
 
-- Compatibility boundary: Provider channel and route CRUD, priority, weight, route status, cooldown, fallback, request routing, streaming, billing, manual monitor APIs, `extra_models` persistence/API compatibility, and retained history remain stable; `fallback_from_channel_id` is widened non-destructively to 512.
+- Compatibility boundary: Provider channel and route CRUD, priority, weight, route status, cooldown, fallback, request routing, streaming, billing, manual monitor APIs, `extra_models` persistence/API compatibility, and retained history remain stable. `fallback_from_channel_id` is widened to 512 without application-level data `UPDATE` or `DELETE`, and existing values are preserved; MySQL may internally rebuild storage while applying the DDL.
 - Affected layers:
 - monitor control plane
 - admin UI

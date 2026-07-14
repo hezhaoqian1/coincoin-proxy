@@ -26,7 +26,7 @@
 - Commits: `b93e7fe`, `db2a4fb`, `a9e4034`, `9a925de`, `d86e747`, `f562b34`.
 - Focused verification: reliability/admin/channel suites passed throughout; latest persistence-focused slice reported `36 passed` and the full reliability module reported `22 passed` before widening.
 - Spec compliance: approved after real-latency health and invalid-manual auto-reset fixes.
-- Code quality: approved after fallback-source attribution, endpoint isolation/normalization, bounded fallback-rate math, image alias mapping, and non-destructive fallback source persistence widening.
+- Code quality: approved after fallback-source attribution, endpoint isolation/normalization, bounded fallback-rate math, image alias mapping, and compatibility-preserving fallback source persistence widening.
 - Observed boundary: representative probe status affects channel health only; public-model health uses route coverage, real traffic, fallback source attribution, latency, and router cooldown.
 
 ## Task 4: Migration compatibility and architecture sync
@@ -37,7 +37,7 @@
 - JavaScript syntax: `node --check app/static/admin_assets/service-reliability.js` passed.
 - Python syntax: `py_compile` passed for `app/admin.py`, `app/channel_monitoring.py`, `app/main.py`, `app/models.py`, `app/reliability.py`, `app/schemas.py`, and `app/usage_buffer.py`.
 - Aegis workspace: helper help was inspected; the first read-only check rejected the unsupported `continue-task-5` drift enum, the record was corrected to advisory `continue`, `bundle` generated `gate-input-pack.json` and `proof-bundle.md`, and the final workspace check passed.
-- Migration compatibility: `fallback_from_channel_id` is widened non-destructively to 512 in the ORM model, create-table DDL, startup migration, and buffered persistence truncation; existing rows are not deleted or rewritten.
+- Migration compatibility: `fallback_from_channel_id` is widened to 512 in the ORM model, create-table DDL, startup migration, and buffered persistence truncation. The application performs no data `UPDATE` or `DELETE` and preserves existing values; this evidence makes no claim that MySQL avoids an internal table rebuild or row rewrite while applying the DDL.
 - Retirement outcome: `extra_models` remains persisted and exposed for compatibility but representative probes execute only `primary_model`; reconciliation disables redundant automatic monitors, clears executable extras, and retains monitor history.
 - Review outcome: Tasks 1-3 received recorded spec-compliance and code-quality approvals; Task 4 records were checked against the implemented branch and fresh local compatibility/static evidence.
 - Additional docs-validator gap: the repository guidance names `tests.test_docs_check` and `scripts/check_docs.py`, but neither file exists in this checkout; the unittest command therefore failed at import and no script command was available.

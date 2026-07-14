@@ -62,7 +62,7 @@ Decision: `docs/aegis/adr/ADR-0002-route-derived-reliability-observation.md`
 - Protected `/ops/monitoring/*` probes and manual monitor backend APIs remain available.
 - Existing manual monitor APIs, the `extra_models` persistence/API field, and persistent probe history are retained. `extra_models` is not executed by representative probes and is normalized empty when a monitor is reconciled or selected.
 - Redundant automatic monitors are disabled rather than deleted, preserving their history.
-- `fallback_from_channel_id` is widened in place from its prior size to `VARCHAR(512)` in the SQLAlchemy model, create-table DDL, and idempotent startup migration. Existing values are retained.
+- `fallback_from_channel_id` is declared as `VARCHAR(512)` in the SQLAlchemy model and create-table DDL, and the idempotent startup migration widens the existing column with `ALTER TABLE ... MODIFY COLUMN`. The application performs no data `UPDATE` or `DELETE` and preserves existing values; MySQL may internally rebuild storage while applying the DDL.
 - A channel with routes or monitor history is disabled instead of hard-deleted; an unreferenced channel still hard-deletes.
 - Monitor configurations without probe history are deleted with an otherwise unreferenced channel.
 
