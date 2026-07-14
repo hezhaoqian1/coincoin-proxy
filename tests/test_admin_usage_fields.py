@@ -127,7 +127,7 @@ class _FakeDB:
 
 class _MonitorSelectionDB(_FakeDB):
     def __init__(self, *, channel, routes, monitors):
-        super().__init__(get_values={})
+        super().__init__(scalar_results=[channel])
         self.channel = channel
         self.routes = routes
         self.monitors = monitors
@@ -795,7 +795,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                 _FakeScalarsResult([monitor, manual_monitor]),
                 _FakeScalarsResult([monitor, manual_monitor]),
             ],
-            get_values={(ProviderChannel, channel.id): channel},
+            scalar_results=[channel],
         )
 
         async def fake_get_db():
@@ -824,9 +824,10 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(manual_monitor.status, "active")
             self.assertEqual(manual_monitor.created_by, "admin")
             self.assertEqual(fake_db.commits, 1)
-            reconcile.assert_awaited_once_with(fake_db)
+            reconcile.assert_awaited_once_with(fake_db, commit=False)
             invalidate.assert_called_once_with()
             refresh_router.assert_not_awaited()
+            self.assertIn("FOR UPDATE", str(fake_db.queries[0]).upper())
 
         fake_db._execute_results.extend(
             [
@@ -835,6 +836,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                 _FakeScalarsResult([monitor, manual_monitor]),
             ]
         )
+        fake_db._scalar_results.append(channel)
         with (
             patch.object(admin_module, "reconcile_provider_channel_monitors", AsyncMock(return_value={})) as reconcile,
             patch.object(admin_module, "invalidate_reliability_cache") as invalidate,
@@ -848,7 +850,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(response.status_code, 200, response.text)
             self.assertEqual(monitor.created_by, admin_module.AUTO_MONITOR_CREATED_BY)
-            reconcile.assert_awaited_once_with(fake_db)
+            reconcile.assert_awaited_once_with(fake_db, commit=False)
             invalidate.assert_called_once_with()
 
     async def test_provider_channel_monitor_selection_rejects_inactive_route(self) -> None:
@@ -858,7 +860,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         inactive = SimpleNamespace(id="route_inactive", channel_id=channel.id, upstream_model="gpt-old", endpoint="responses", status="disabled", priority_override=None, weight_override=None)
         fake_db = _FakeDB(
             execute_results=[_FakeScalarsResult([inactive]), _FakeScalarsResult([])],
-            get_values={(ProviderChannel, channel.id): channel},
+            scalar_results=[channel],
         )
 
         async def fake_get_db():
@@ -932,7 +934,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
     async def test_provider_channel_monitor_selection_returns_404_for_missing_channel(self) -> None:
         from app.models import ProviderChannel
 
-        fake_db = _FakeDB(get_values={(ProviderChannel, "ch_missing"): None})
+        fake_db = _FakeDB(scalar_results=[None])
 
         async def fake_get_db():
             yield fake_db
@@ -947,7 +949,8 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(response.status_code, 404, response.text)
-        self.assertEqual(fake_db.queries, [])
+        self.assertEqual(len(fake_db.queries), 1)
+        self.assertIn("FOR UPDATE", str(fake_db.queries[0]).upper())
 
     async def test_provider_channel_monitor_selection_rejects_active_mismatched_pair(self) -> None:
         from app.models import ProviderChannel
@@ -959,7 +962,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         ]
         fake_db = _FakeDB(
             execute_results=[_FakeScalarsResult(routes), _FakeScalarsResult([])],
-            get_values={(ProviderChannel, channel.id): channel},
+            scalar_results=[channel],
         )
 
         async def fake_get_db():
@@ -984,14 +987,15 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         route = SimpleNamespace(id="route_tx", channel_id=channel.id, upstream_model="gpt-tx", endpoint="responses", status="active", priority_override=None, weight_override=None)
         fake_db = _FakeDB(
             execute_results=[_FakeScalarsResult([route]), _FakeScalarsResult([])],
-            get_values={(ProviderChannel, channel.id): channel},
+            scalar_results=[channel],
         )
 
         async def fake_get_db():
             yield fake_db
 
-        async def fail_reconcile(db):
+        async def fail_reconcile(db, *, commit=True):
             self.assertIs(db, fake_db)
+            self.assertFalse(commit)
             self.assertEqual(fake_db.flushes, 1)
             self.assertEqual(fake_db.commits, 0)
             raise RuntimeError("reconcile failed")

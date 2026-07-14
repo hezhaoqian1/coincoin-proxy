@@ -2371,7 +2371,9 @@ async def update_provider_channel_monitor_selection(
     payload: AdminProviderChannelMonitorSelectionUpdate,
     db: AsyncSession = Depends(get_db),
 ):
-    channel = await db.get(ProviderChannel, channel_id)
+    channel = await db.scalar(
+        select(ProviderChannel).where(ProviderChannel.id == channel_id).with_for_update()
+    )
     if channel is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="provider channel not found")
     routes = (
@@ -2470,7 +2472,7 @@ async def update_provider_channel_monitor_selection(
                 monitor.extra_models = serialize_monitor_models([])
 
         await db.flush()
-        await reconcile_provider_channel_monitors(db)
+        await reconcile_provider_channel_monitors(db, commit=False)
         await db.commit()
         reconciled_monitors = (
             await db.execute(select(ProviderChannelMonitor).where(ProviderChannelMonitor.channel_id == channel_id))

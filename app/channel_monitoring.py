@@ -170,7 +170,7 @@ def _is_auto_monitor(monitor: ProviderChannelMonitor) -> bool:
     return str(getattr(monitor, "created_by", "") or "") == AUTO_MONITOR_CREATED_BY
 
 
-async def reconcile_provider_channel_monitors(db: AsyncSession) -> dict[str, int]:
+async def reconcile_provider_channel_monitors(db: AsyncSession, *, commit: bool = True) -> dict[str, int]:
     channels = (await db.execute(select(ProviderChannel))).scalars().all()
     routes = (await db.execute(select(ModelChannelRoute))).scalars().all()
     monitors = (await db.execute(select(ProviderChannelMonitor))).scalars().all()
@@ -302,7 +302,7 @@ async def reconcile_provider_channel_monitors(db: AsyncSession) -> dict[str, int
             elif extra_changed:
                 updated += 1
 
-    if created or updated or disabled:
+    if commit and (created or updated or disabled):
         await db.commit()
     return {"created": created, "updated": updated, "disabled": disabled}
 

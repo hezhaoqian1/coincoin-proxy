@@ -272,6 +272,17 @@ class ChannelMonitoringTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(monitor.extra_models, "[]")
         self.assertEqual(monitor.created_by, AUTO_MONITOR_CREATED_BY)
 
+    async def test_reconcile_can_leave_commit_to_caller(self) -> None:
+        channel = SimpleNamespace(id="ch_transaction", name="Transactional", channel_type="openai_compatible", status="active", priority=0, weight=1)
+        route = SimpleNamespace(id="route_transaction", channel_id=channel.id, public_model_id="gpt-5.6", upstream_model="gpt-5.6", endpoint="responses", status="active", priority_override=None, weight_override=None)
+        db = _ReconcileDB(channels=[channel], routes=[route], monitors=[])
+
+        result = await reconcile_provider_channel_monitors(db, commit=False)
+
+        self.assertEqual(result, {"created": 1, "updated": 0, "disabled": 0})
+        self.assertEqual(db.commits, 0)
+        self.assertEqual(len(db.added), 1)
+
     async def test_reconcile_preserves_valid_manual_override_and_disables_auto_monitor(self) -> None:
         channel = SimpleNamespace(id="ch_existing", name="Existing Relay", channel_type="openai_compatible", status="active", priority=0, weight=1)
         routes = [
