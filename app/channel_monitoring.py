@@ -368,7 +368,7 @@ def _status_for_response(
 ) -> tuple[str, str]:
     if response.status_code in {408, 409, 429} or response.status_code >= 500:
         return "failed", f"HTTP {response.status_code}"
-    if response.status_code >= 400:
+    if response.status_code < 200 or response.status_code >= 300:
         return "error", f"HTTP {response.status_code}"
     if isinstance(payload, dict) and payload.get("error"):
         error = payload["error"]

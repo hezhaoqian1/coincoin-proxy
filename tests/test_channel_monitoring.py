@@ -144,6 +144,24 @@ class _FakeInvalidResponseClient:
         return httpx.Response(200, json={"id": "resp_monitor", "output": []})
 
 
+class _FakeRedirectResponseClient:
+    def __init__(self):
+        self.calls = []
+
+    async def get(self, url, headers):
+        raise AssertionError(f"monitor should not probe /models: {url}")
+
+    async def post(self, url, json, headers):
+        self.calls.append(("POST", url, dict(headers), dict(json)))
+        return httpx.Response(
+            302,
+            json={
+                "id": "resp_redirect",
+                "output": [{"type": "message", "content": [{"type": "output_text", "text": "OK"}]}],
+            },
+        )
+
+
 class _FakeAnthropicClient:
     def __init__(self):
         self.calls = []
@@ -514,6 +532,38 @@ class ChannelMonitoringTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(results[0].status, "failed")
         self.assertIn("structured model output", results[0].message)
         self.assertEqual(monitor.last_status, "failed")
+
+    async def test_run_monitor_once_rejects_3xx_with_structured_model_output(self) -> None:
+        monitor = SimpleNamespace(
+            id="cmon_redirect",
+            channel_id="ch_redirect",
+            name="Redirect response",
+            endpoint="responses",
+            primary_model="gpt-5.6",
+            extra_models="[]",
+            status="active",
+            interval_seconds=60,
+            timeout_seconds=30,
+            last_checked_at=None,
+            last_status="",
+            last_latency_ms=0,
+            last_ping_latency_ms=0,
+            last_message="",
+        )
+        channel = SimpleNamespace(
+            id="ch_redirect",
+            base_url="https://redirect.example",
+            encrypted_api_key=encrypt_api_key("sk-test"),
+            auth_style="bearer",
+            channel_type="openai_compatible",
+        )
+        db = _FakeDB(monitor=monitor, channel=channel)
+
+        results = await run_provider_channel_monitor_once(db, monitor.id, client=_FakeRedirectResponseClient())
+
+        self.assertEqual(results[0].status, "error")
+        self.assertEqual(results[0].message, "HTTP 302")
+        self.assertEqual(monitor.last_status, "error")
 
     async def test_chat_monitor_uses_minimal_generation_request(self) -> None:
         monitor = SimpleNamespace(
