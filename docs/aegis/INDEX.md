@@ -54,3 +54,5 @@ Entries are workspace records, not authoritative runtime decisions.
 | 2026-07-14 | baseline | docs/aegis/baseline/service-reliability.md | Service reliability baseline |
 | 2026-07-14 | artifact | docs/aegis/work/2026-07-14-service-reliability-center/gate-input-pack.json | 2026-07-14-service-reliability-center gate input pack |
 | 2026-07-14 | work | docs/aegis/work/2026-07-14-service-reliability-center/proof-bundle.md | 2026-07-14-service-reliability-center proof bundle |
+| 2026-07-15 | spec | docs/aegis/specs/2026-07-15-channel-representative-probe-design.md | Channel Representative Probe Design |
+| 2026-07-15 | plan | docs/aegis/plans/2026-07-15-channel-representative-probe.md | Channel Representative Probe Implementation Plan |
