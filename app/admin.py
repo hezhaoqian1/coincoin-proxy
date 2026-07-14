@@ -556,7 +556,7 @@ def _provider_channel_payload(
     monitor_selection: Optional[dict[str, Any]] = None,
 ) -> dict:
     billing_stats = billing_stats or {}
-    return {
+    payload = {
         "id": row.id,
         "name": row.name,
         "provider_platform": row.provider_platform,
@@ -582,19 +582,13 @@ def _provider_channel_payload(
             "today_cents": int(billing_stats.get("today_cents", 0) or 0),
             "total_cents": int(billing_stats.get("total_cents", 0) or 0),
         },
-        "monitor_selection": monitor_selection or {
-            "mode": "auto",
-            "selected_model": None,
-            "selected_endpoint": None,
-            "state": "unconfigured",
-            "is_valid": False,
-            "recommended": None,
-            "choices": [],
-        },
         "updated_by": row.updated_by,
         "created_at": row.created_at,
         "updated_at": row.updated_at,
     }
+    if monitor_selection is not None:
+        payload["monitor_selection"] = monitor_selection
+    return payload
 
 
 def _provider_channel_route_choices(
@@ -641,6 +635,7 @@ def _provider_channel_monitor_selection_payload(
         (monitor for monitor in monitors if str(getattr(monitor, "channel_id", "") or "") == str(channel.id)),
         key=lambda monitor: str(getattr(monitor, "id", "") or ""),
     )
+    valid_targets = {(item["endpoint"], item["model"]) for item in choices}
     manual = [monitor for monitor in channel_monitors if getattr(monitor, "created_by", "") != AUTO_MONITOR_CREATED_BY]
     active_manual = [
         monitor for monitor in manual if str(getattr(monitor, "status", "") or "").lower() == "active"
@@ -651,11 +646,30 @@ def _provider_channel_monitor_selection_payload(
         if getattr(monitor, "created_by", "") == AUTO_MONITOR_CREATED_BY
         and str(getattr(monitor, "status", "") or "").lower() == "active"
     ]
-    selected = (active_manual or manual or active_auto or channel_monitors or [None])[0]
+    valid_active_manual = [
+        monitor
+        for monitor in active_manual
+        if (
+            str(getattr(monitor, "endpoint", "") or "").strip(),
+            str(getattr(monitor, "primary_model", "") or "").strip(),
+        )
+        in valid_targets
+    ]
+    valid_active_auto = [
+        monitor
+        for monitor in active_auto
+        if (
+            str(getattr(monitor, "endpoint", "") or "").strip(),
+            str(getattr(monitor, "primary_model", "") or "").strip(),
+        )
+        in valid_targets
+    ]
+    selected = (
+        valid_active_manual or valid_active_auto or active_manual or manual or active_auto or channel_monitors or [None]
+    )[0]
     mode = "manual" if selected is not None and getattr(selected, "created_by", "") != AUTO_MONITOR_CREATED_BY else "auto"
     selected_model = str(getattr(selected, "primary_model", "") or "").strip() or None
     selected_endpoint = str(getattr(selected, "endpoint", "") or "").strip() or None
-    valid_targets = {(item["endpoint"], item["model"]) for item in choices}
     is_valid = bool(
         selected is not None
         and str(getattr(selected, "status", "") or "").lower() == "active"
@@ -2368,52 +2382,104 @@ async def update_provider_channel_monitor_selection(
     ).scalars().all()
     choices = _provider_channel_route_choices(channel, routes)
 
-    if payload.mode == "manual":
-        if not payload.model or not payload.endpoint:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="manual selection requires model and endpoint")
-        target = (payload.endpoint.strip(), payload.model.strip())
-        valid_targets = {(item["endpoint"], item["model"]) for item in choices}
-        if target not in valid_targets:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="monitor selection is not an active channel route")
-        manual = sorted(
-            (monitor for monitor in monitors if getattr(monitor, "created_by", "") != AUTO_MONITOR_CREATED_BY),
-            key=lambda monitor: str(getattr(monitor, "id", "") or ""),
-        )
-        active = sorted(
-            (monitor for monitor in monitors if str(getattr(monitor, "status", "") or "").lower() == "active"),
-            key=lambda monitor: str(getattr(monitor, "id", "") or ""),
-        )
-        monitor = (manual or active or monitors or [None])[0]
-        if monitor is None:
-            monitor = ProviderChannelMonitor(
-                id=generate_id("cma_"),
-                channel_id=channel_id,
-                name=f"Manual · {channel.name}"[:128],
-                interval_seconds=int(_settings.provider_channel_monitor_default_interval),
-                timeout_seconds=int(_settings.provider_channel_monitor_default_timeout),
+    try:
+        selected_monitor: ProviderChannelMonitor | None = None
+        if payload.mode == "manual":
+            if not payload.model or not payload.endpoint:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="manual selection requires model and endpoint")
+            target = (payload.endpoint.strip(), payload.model.strip())
+            valid_targets = {(item["endpoint"], item["model"]) for item in choices}
+            if target not in valid_targets:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="monitor selection is not an active channel route")
+            matching = sorted(
+                (
+                    monitor
+                    for monitor in monitors
+                    if (
+                        str(getattr(monitor, "endpoint", "") or "").strip(),
+                        str(getattr(monitor, "primary_model", "") or "").strip(),
+                    )
+                    == target
+                ),
+                key=lambda monitor: (
+                    getattr(monitor, "created_by", "") == AUTO_MONITOR_CREATED_BY,
+                    str(getattr(monitor, "id", "") or ""),
+                ),
             )
-            db.add(monitor)
-            monitors.append(monitor)
-        monitor.channel_id = channel_id
-        monitor.name = f"Manual · {channel.name} · {target[0]}"[:128]
-        monitor.endpoint = target[0]
-        monitor.primary_model = target[1]
-        monitor.extra_models = serialize_monitor_models([])
-        monitor.status = "active"
-        monitor.created_by = "admin"
-    else:
-        for monitor in monitors:
-            monitor.created_by = AUTO_MONITOR_CREATED_BY
-            monitor.status = "disabled"
-            monitor.extra_models = serialize_monitor_models([])
+            selected_monitor = matching[0] if matching else None
+            if selected_monitor is None:
+                selected_monitor = ProviderChannelMonitor(
+                    id=generate_id("cma_"),
+                    channel_id=channel_id,
+                    name=f"Manual · {channel.name} · {target[0]}"[:128],
+                    endpoint=target[0],
+                    primary_model=target[1],
+                    extra_models=serialize_monitor_models([]),
+                    status="active",
+                    interval_seconds=int(_settings.provider_channel_monitor_default_interval),
+                    timeout_seconds=int(_settings.provider_channel_monitor_default_timeout),
+                    created_by="admin",
+                )
+                db.add(selected_monitor)
+                monitors.append(selected_monitor)
+            selected_monitor.name = f"Manual · {channel.name} · {target[0]}"[:128]
+            selected_monitor.extra_models = serialize_monitor_models([])
+            selected_monitor.status = "active"
+            selected_monitor.created_by = "admin"
+            for monitor in monitors:
+                if monitor is not selected_monitor:
+                    monitor.status = "disabled"
+        else:
+            recommended = choices[0] if choices else None
+            if recommended is not None:
+                target = (recommended["endpoint"], recommended["model"])
+                matching = sorted(
+                    (
+                        monitor
+                        for monitor in monitors
+                        if (
+                            str(getattr(monitor, "endpoint", "") or "").strip(),
+                            str(getattr(monitor, "primary_model", "") or "").strip(),
+                        )
+                        == target
+                    ),
+                    key=lambda monitor: (
+                        getattr(monitor, "created_by", "") != AUTO_MONITOR_CREATED_BY,
+                        str(getattr(monitor, "id", "") or ""),
+                    ),
+                )
+                selected_monitor = matching[0] if matching else None
+                if selected_monitor is None:
+                    selected_monitor = ProviderChannelMonitor(
+                        id=generate_id("cma_"),
+                        channel_id=channel_id,
+                        name=f"Auto · {channel.name} · {target[0]}"[:128],
+                        endpoint=target[0],
+                        primary_model=target[1],
+                        extra_models=serialize_monitor_models([]),
+                        status="active",
+                        interval_seconds=int(_settings.provider_channel_monitor_default_interval),
+                        timeout_seconds=int(_settings.provider_channel_monitor_default_timeout),
+                        created_by=AUTO_MONITOR_CREATED_BY,
+                    )
+                    db.add(selected_monitor)
+                    monitors.append(selected_monitor)
+            for monitor in monitors:
+                monitor.created_by = AUTO_MONITOR_CREATED_BY
+                monitor.status = "active" if monitor is selected_monitor else "disabled"
+                monitor.extra_models = serialize_monitor_models([])
 
-    await db.commit()
-    await reconcile_provider_channel_monitors(db)
+        await db.flush()
+        await reconcile_provider_channel_monitors(db)
+        await db.commit()
+        reconciled_monitors = (
+            await db.execute(select(ProviderChannelMonitor).where(ProviderChannelMonitor.channel_id == channel_id))
+        ).scalars().all()
+        selection = _provider_channel_monitor_selection_payload(channel, routes, reconciled_monitors)
+    except Exception:
+        await db.rollback()
+        raise
     invalidate_reliability_cache()
-    reconciled_monitors = (
-        await db.execute(select(ProviderChannelMonitor).where(ProviderChannelMonitor.channel_id == channel_id))
-    ).scalars().all()
-    selection = _provider_channel_monitor_selection_payload(channel, routes, reconciled_monitors)
     return {"channel_id": channel_id, "monitor_selection": selection}
 
 

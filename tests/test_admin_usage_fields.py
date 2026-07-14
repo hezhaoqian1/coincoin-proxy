@@ -94,6 +94,7 @@ class _FakeDB:
         self.added = []
         self.commits = 0
         self.rollbacks = 0
+        self.flushes = 0
         self._get_values = dict(get_values or {})
 
     async def get(self, model, key):
@@ -118,7 +119,7 @@ class _FakeDB:
         self.rollbacks += 1
 
     async def flush(self):
-        pass
+        self.flushes += 1
 
     def add(self, obj):
         self.added.append(obj)
@@ -144,8 +145,10 @@ class _MonitorSelectionDB(_FakeDB):
         self.execute_count += 1
         if self.execute_count in {1, 4}:
             return _FakeScalarsResult(self.routes)
-        if self.execute_count in {2, 5}:
+        if self.execute_count == 2:
             return _FakeScalarsResult(self.monitors)
+        if self.execute_count == 5:
+            return _FakeScalarsResult([*self.monitors, *self.added])
         if self.execute_count == 3:
             return _FakeScalarsResult([self.channel])
         if self.execute_count == 6:
@@ -711,6 +714,49 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             },
         )
 
+    def test_provider_channel_payload_omits_monitor_selection_when_not_loaded(self) -> None:
+        channel = SimpleNamespace(
+            id="ch_payload",
+            name="Payload",
+            provider_platform="sub2api",
+            channel_type="openai_compatible",
+            base_url="https://payload.example/v1",
+            encrypted_api_key=None,
+            auth_style="bearer",
+            status="active",
+            priority=0,
+            weight=1,
+            allowed_fails=3,
+            cooldown_seconds=30,
+            capabilities="responses",
+            provider_account_fingerprint="",
+            cost_tier="",
+            notes="",
+            updated_by="admin",
+            created_at=datetime(2026, 7, 15, 0, 0, 0),
+            updated_at=datetime(2026, 7, 15, 0, 0, 0),
+        )
+
+        payload = admin_module._provider_channel_payload(channel)
+
+        self.assertNotIn("monitor_selection", payload)
+
+    def test_provider_channel_monitor_selection_reports_valid_duplicate_before_invalid_manual(self) -> None:
+        channel = SimpleNamespace(id="ch_duplicates", name="Duplicates", channel_type="openai_compatible", status="active", priority=0, weight=1)
+        route = SimpleNamespace(id="route_valid", channel_id=channel.id, upstream_model="gpt-valid", endpoint="responses", status="active", priority_override=None, weight_override=None)
+        invalid_manual = SimpleNamespace(id="cma_a_invalid", channel_id=channel.id, endpoint="chat/completions", primary_model="gpt-legacy", status="active", created_by="admin")
+        valid_manual = SimpleNamespace(id="cma_z_valid", channel_id=channel.id, endpoint="responses", primary_model="gpt-valid", status="active", created_by="admin")
+
+        selection = admin_module._provider_channel_monitor_selection_payload(
+            channel,
+            [route],
+            [invalid_manual, valid_manual],
+        )
+
+        self.assertEqual(selection["state"], "valid")
+        self.assertEqual(selection["selected_model"], "gpt-valid")
+        self.assertEqual(selection["selected_endpoint"], "responses")
+
     async def test_provider_channel_monitor_selection_supports_manual_and_auto_modes(self) -> None:
         from app.models import ModelChannelRoute, ProviderChannel, ProviderChannelMonitor
 
@@ -731,11 +777,23 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             timeout_seconds=30,
             created_by=admin_module.AUTO_MONITOR_CREATED_BY,
         )
+        manual_monitor = SimpleNamespace(
+            id="cma_probe_manual",
+            channel_id=channel.id,
+            name="Manual Probe",
+            endpoint="chat/completions",
+            primary_model="gpt-manual",
+            extra_models="[]",
+            status="disabled",
+            interval_seconds=300,
+            timeout_seconds=30,
+            created_by="admin",
+        )
         fake_db = _FakeDB(
             execute_results=[
                 _FakeScalarsResult(routes),
-                _FakeScalarsResult([monitor]),
-                _FakeScalarsResult([monitor]),
+                _FakeScalarsResult([monitor, manual_monitor]),
+                _FakeScalarsResult([monitor, manual_monitor]),
             ],
             get_values={(ProviderChannel, channel.id): channel},
         )
@@ -758,16 +816,24 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                 )
 
             self.assertEqual(response.status_code, 200, response.text)
-            self.assertEqual(monitor.primary_model, "gpt-manual")
-            self.assertEqual(monitor.endpoint, "chat/completions")
-            self.assertEqual(monitor.created_by, "admin")
+            self.assertEqual(monitor.primary_model, "gpt-auto")
+            self.assertEqual(monitor.endpoint, "responses")
+            self.assertEqual(monitor.status, "disabled")
+            self.assertEqual(manual_monitor.primary_model, "gpt-manual")
+            self.assertEqual(manual_monitor.endpoint, "chat/completions")
+            self.assertEqual(manual_monitor.status, "active")
+            self.assertEqual(manual_monitor.created_by, "admin")
             self.assertEqual(fake_db.commits, 1)
             reconcile.assert_awaited_once_with(fake_db)
             invalidate.assert_called_once_with()
             refresh_router.assert_not_awaited()
 
         fake_db._execute_results.extend(
-            [_FakeScalarsResult(routes), _FakeScalarsResult([monitor]), _FakeScalarsResult([monitor])]
+            [
+                _FakeScalarsResult(routes),
+                _FakeScalarsResult([monitor, manual_monitor]),
+                _FakeScalarsResult([monitor, manual_monitor]),
+            ]
         )
         with (
             patch.object(admin_module, "reconcile_provider_channel_monitors", AsyncMock(return_value={})) as reconcile,
@@ -910,6 +976,90 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 400, response.text)
         self.assertEqual(fake_db.commits, 0)
+
+    async def test_provider_channel_monitor_selection_rolls_back_reconcile_failure(self) -> None:
+        from app.models import ProviderChannel
+
+        channel = SimpleNamespace(id="ch_tx", name="Transactional", channel_type="openai_compatible", status="active", priority=0, weight=1)
+        route = SimpleNamespace(id="route_tx", channel_id=channel.id, upstream_model="gpt-tx", endpoint="responses", status="active", priority_override=None, weight_override=None)
+        fake_db = _FakeDB(
+            execute_results=[_FakeScalarsResult([route]), _FakeScalarsResult([])],
+            get_values={(ProviderChannel, channel.id): channel},
+        )
+
+        async def fake_get_db():
+            yield fake_db
+
+        async def fail_reconcile(db):
+            self.assertIs(db, fake_db)
+            self.assertEqual(fake_db.flushes, 1)
+            self.assertEqual(fake_db.commits, 0)
+            raise RuntimeError("reconcile failed")
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+        with (
+            patch.object(admin_module, "reconcile_provider_channel_monitors", side_effect=fail_reconcile),
+            patch.object(admin_module, "invalidate_reliability_cache") as invalidate,
+        ):
+            transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                response = await client.put(
+                    f"/admin/provider-channels/{channel.id}/monitor-selection",
+                    json={"mode": "manual", "model": "gpt-tx", "endpoint": "responses"},
+                )
+
+        self.assertEqual(response.status_code, 500, response.text)
+        self.assertEqual(fake_db.commits, 0)
+        self.assertEqual(fake_db.rollbacks, 1)
+        invalidate.assert_not_called()
+
+    async def test_provider_channel_monitor_selection_preserves_target_identity_across_endpoints(self) -> None:
+        channel = SimpleNamespace(id="ch_identity", name="Identity", channel_type="openai_compatible", status="active", priority=0, weight=1)
+        routes = [
+            SimpleNamespace(id="route_responses", channel_id=channel.id, upstream_model="gpt-same", endpoint="responses", status="active", priority_override=0, weight_override=2),
+            SimpleNamespace(id="route_chat", channel_id=channel.id, upstream_model="gpt-same", endpoint="chat/completions", status="active", priority_override=1, weight_override=1),
+        ]
+        old_monitor = SimpleNamespace(
+            id="cma_responses",
+            channel_id=channel.id,
+            name="Responses history",
+            endpoint="responses",
+            primary_model="gpt-same",
+            extra_models="[]",
+            status="active",
+            interval_seconds=300,
+            timeout_seconds=30,
+            last_status="operational",
+            last_latency_ms=123,
+            created_by="admin",
+        )
+        fake_db = _MonitorSelectionDB(channel=channel, routes=routes, monitors=[old_monitor])
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.put(
+                f"/admin/provider-channels/{channel.id}/monitor-selection",
+                json={"mode": "manual", "model": "gpt-same", "endpoint": "chat/completions"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(old_monitor.endpoint, "responses")
+        self.assertEqual(old_monitor.primary_model, "gpt-same")
+        self.assertEqual(old_monitor.last_status, "operational")
+        self.assertEqual(old_monitor.last_latency_ms, 123)
+        self.assertEqual(old_monitor.status, "disabled")
+        self.assertEqual(len(fake_db.added), 1)
+        selected = fake_db.added[0]
+        self.assertNotEqual(selected.id, old_monitor.id)
+        self.assertEqual(selected.endpoint, "chat/completions")
+        self.assertEqual(selected.primary_model, "gpt-same")
+        self.assertEqual(selected.status, "active")
 
     async def test_provider_channel_stability_aggregates_request_logs(self) -> None:
         channel = SimpleNamespace(
