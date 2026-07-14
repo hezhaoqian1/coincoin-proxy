@@ -2143,7 +2143,7 @@
         <div class="sr-page-header">
           <div>
             <h1 class="page-title">服务可靠性</h1>
-            <p class="page-desc">按公开模型查看可用通道、切换情况、延迟和近期故障。</p>
+            <p class="page-desc">先看渠道健康，再核对公开模型的路由覆盖、真实流量和近期故障。</p>
           </div>
           <div class="sr-page-actions">
             <span id="serviceReliabilityUpdatedAt" class="sr-updated-at">等待加载</span>
@@ -2154,35 +2154,35 @@
         <div id="serviceReliabilitySummary" class="sr-summary-strip" aria-live="polite"></div>
         <div id="serviceReliabilityIncidents" class="sr-incident-band" hidden></div>
 
-        <section class="sr-section" aria-labelledby="serviceReliabilityModelsTitle">
-          <div class="sr-section-header">
-            <div>
-              <h2 id="serviceReliabilityModelsTitle">模型状态</h2>
-              <p>先看用户实际调用的公开模型，再展开它的通道路由。</p>
-            </div>
-          </div>
-          <div class="sr-table-wrap">
-            <table class="sr-table">
-              <thead><tr><th>公开模型</th><th>状态</th><th>5 分钟请求</th><th>失败</th><th>Fallback</th><th>平均延迟</th><th>路由</th></tr></thead>
-              <tbody id="serviceReliabilityModelsBody"></tbody>
-            </table>
-          </div>
-          <div id="serviceReliabilityRouteDrawer" class="sr-route-drawer" hidden></div>
-        </section>
-
         <section class="sr-section" aria-labelledby="serviceReliabilityChannelsTitle">
           <div class="sr-section-header">
             <div>
               <h2 id="serviceReliabilityChannelsTitle">通道状态</h2>
-              <p>新建通道和 route 后会自动出现在这里，无需重复配置。</p>
+              <p>代表探测只判定当前渠道；真实请求、路由覆盖和路由冷却单独展示。</p>
+            </div>
+          </div>
+          <div class="sr-table-wrap">
+            <table class="sr-table sr-channel-table">
+              <thead><tr><th>通道</th><th>代表监测</th><th>状态</th><th>活跃路由</th><th>真实流量</th><th>Fallback</th><th>延迟 / 检测时间</th><th>探测</th></tr></thead>
+              <tbody id="serviceReliabilityChannelsBody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="sr-section" aria-labelledby="serviceReliabilityModelsTitle">
+          <div class="sr-section-header">
+            <div>
+              <h2 id="serviceReliabilityModelsTitle">公开模型路由覆盖与真实流量</h2>
+              <p>状态来自活跃 route、真实请求、Fallback、延迟和路由器冷却，不继承代表探测结果。</p>
             </div>
           </div>
           <div class="sr-table-wrap">
             <table class="sr-table">
-              <thead><tr><th>通道</th><th>状态</th><th>公开模型</th><th>5 分钟请求</th><th>Fallback</th><th>延迟</th><th>最近检测</th><th>操作</th></tr></thead>
-              <tbody id="serviceReliabilityChannelsBody"></tbody>
+              <thead><tr><th>公开模型</th><th>路由状态</th><th>5 分钟请求</th><th>失败</th><th>Fallback</th><th>平均延迟</th><th>路由</th></tr></thead>
+              <tbody id="serviceReliabilityModelsBody"></tbody>
             </table>
           </div>
+          <div id="serviceReliabilityRouteDrawer" class="sr-route-drawer" hidden></div>
         </section>
 
         <section class="sr-section" aria-labelledby="serviceReliabilityFailuresTitle">
@@ -2372,6 +2372,11 @@
           <div class="form-group"><label class="form-label">成本档位</label><input id="providerChannelCostTier" class="form-input" placeholder="cheap / premium / official" /></div>
         </div>
         <div class="form-group"><label class="form-label">备注</label><input id="providerChannelNotes" class="form-input" /></div>
+        <div class="form-group provider-channel-monitor-selection">
+          <label class="form-label" for="providerChannelMonitorSelection">监测模型</label>
+          <select id="providerChannelMonitorSelection" class="form-select"></select>
+          <div id="providerChannelMonitorSelectionState" class="provider-channel-monitor-selection-state"></div>
+        </div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" onclick="closeModal('providerChannelModal')">取消</button>
@@ -4686,6 +4691,79 @@
       }
     }
 
+    function providerChannelMonitorTargetValue(model, endpoint) {
+      return `manual:${encodeURIComponent(model || '')}:${encodeURIComponent(endpoint || '')}`;
+    }
+
+    function renderProviderChannelMonitorSelection(channel = {}, channelId = '') {
+      const select = document.getElementById('providerChannelMonitorSelection');
+      const stateNode = document.getElementById('providerChannelMonitorSelectionState');
+      const monitor_selection = channel.monitor_selection || {};
+      const choices = monitor_selection.choices || [];
+      const recommended = monitor_selection.recommended;
+      const autoLabel = recommended
+        ? `自动（当前默认 ${recommended.model} · ${recommended.endpoint}）`
+        : '自动（当前无可用 route）';
+      const selectedValue = providerChannelMonitorTargetValue(
+        monitor_selection.selected_model,
+        monitor_selection.selected_endpoint,
+      );
+      const options = [`<option value="auto">${escapeHtml(autoLabel)}</option>`];
+
+      if (monitor_selection.mode === 'manual' && !monitor_selection.is_valid && monitor_selection.selected_model) {
+        options.push(`<option value="invalid" selected>当前手动监测项已失效（${escapeHtml(monitor_selection.selected_model)} · ${escapeHtml(monitor_selection.selected_endpoint || '-')}）</option>`);
+      }
+      choices.forEach(choice => {
+        const value = providerChannelMonitorTargetValue(choice.model, choice.endpoint);
+        const selected = monitor_selection.mode === 'manual' && monitor_selection.is_valid && value === selectedValue;
+        options.push(`<option value="${escapeHtml(value)}"${selected ? ' selected' : ''}>手动 · ${escapeHtml(choice.model)} · ${escapeHtml(choice.endpoint)}</option>`);
+      });
+
+      select.innerHTML = options.join('');
+      if (monitor_selection.mode !== 'manual') select.value = 'auto';
+      select.disabled = !channelId || choices.length === 0;
+      stateNode.classList.remove('is-error');
+      if (!channelId) {
+        stateNode.textContent = '未配置：先保存渠道并创建活跃 route。';
+      } else if (!choices.length) {
+        stateNode.textContent = monitor_selection.state === 'invalid'
+          ? '当前手动监测项已失效；添加活跃 route 后请重置为自动。'
+          : '未配置：当前没有可用于代表探测的活跃 route。';
+      } else if (monitor_selection.state === 'invalid') {
+        stateNode.textContent = '当前手动监测项已失效，请选择自动或一个有效 route。';
+        stateNode.classList.add('is-error');
+      } else {
+        stateNode.textContent = monitor_selection.mode === 'manual'
+          ? '手动选择会保持到重置为自动或对应 route 失效。'
+          : '自动选择按优先级、权重和 route 顺序确定。';
+      }
+    }
+
+    function providerChannelMonitorSelectionPayload() {
+      const select = document.getElementById('providerChannelMonitorSelection');
+      if (select.value === 'invalid') throw new Error('当前手动监测项已失效，请选择自动或有效 route');
+      if (select.disabled || select.value === 'auto') return { mode: 'auto' };
+      const [prefix, encodedModel, encodedEndpoint] = select.value.split(':');
+      if (prefix !== 'manual' || !encodedModel || !encodedEndpoint) throw new Error('监测模型选择无效');
+      return {
+        mode: 'manual',
+        model: decodeURIComponent(encodedModel),
+        endpoint: decodeURIComponent(encodedEndpoint),
+      };
+    }
+
+    async function saveProviderChannelMonitorSelection(channelId) {
+      const payload = providerChannelMonitorSelectionPayload();
+      const selectionResponse = await fetch(`/admin/provider-channels/${encodeURIComponent(channelId)}/monitor-selection`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+        body: JSON.stringify(payload),
+      });
+      const selectionData = await selectionResponse.json();
+      if (!selectionResponse.ok) throw new Error(selectionData.detail || '监测模型保存失败');
+      return selectionData;
+    }
+
     function openProviderChannelModal(channelId = '') {
       const channel = providerChannelCache.find(item => item.id === channelId) || {};
       document.getElementById('providerChannelModalTitle').textContent = channelId ? `编辑 ${channel.name || channelId}` : '新增上游渠道';
@@ -4705,6 +4783,7 @@
       document.getElementById('providerChannelCapabilities').value = (channel.capabilities || []).join(',');
       document.getElementById('providerChannelCostTier').value = channel.cost_tier || '';
       document.getElementById('providerChannelNotes').value = channel.notes || '';
+      renderProviderChannelMonitorSelection(channel, channelId);
       if (!channelId) handleProviderChannelTypeChange();
       openModal('providerChannelModal');
     }
@@ -4740,6 +4819,19 @@
         });
         const d = await r.json();
         if (!r.ok) return toast(d.detail || '保存渠道失败', 'error');
+        if (channelId) {
+          try {
+            await saveProviderChannelMonitorSelection(channelId);
+          } catch (selectionError) {
+            console.error(selectionError);
+            const stateNode = document.getElementById('providerChannelMonitorSelectionState');
+            stateNode.textContent = `渠道字段已保存，但监测模型保存失败：${selectionError.message || '未知错误'}`;
+            stateNode.classList.add('is-error');
+            toast('渠道字段已保存，但监测模型未保存', 'error');
+            await loadProviderChannels();
+            return;
+          }
+        }
         closeModal('providerChannelModal');
         toast('上游渠道已保存', 'success');
         await loadProviderChannels();

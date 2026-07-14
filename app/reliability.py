@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .channel_monitoring import monitor_model_list
+from .channel_monitoring import AUTO_MONITOR_CREATED_BY, monitor_model_list
 from .db import get_db
 from .models import (
     ModelChannelRoute,
@@ -156,12 +156,15 @@ def assemble_reliability_overview(
 
     traffic_by_channel: dict[str, dict[str, Any]] = {}
     traffic_by_model: dict[str, dict[str, Any]] = {}
+    traffic_by_model_channel: dict[tuple[str, str], dict[str, Any]] = {}
     for row in traffic_rows:
         channel_id = str(_row_value(row, "channel_id", "") or "")
         public_model_id = str(_row_value(row, "public_model_id", "") or "")
         traffic = _traffic_payload(row)
         traffic_by_channel[channel_id] = _merge_traffic(traffic_by_channel.get(channel_id), traffic)
         traffic_by_model[public_model_id] = _merge_traffic(traffic_by_model.get(public_model_id), traffic)
+        traffic_key = (public_model_id, channel_id)
+        traffic_by_model_channel[traffic_key] = _merge_traffic(traffic_by_model_channel.get(traffic_key), traffic)
 
     channel_payloads: list[dict[str, Any]] = []
     for channel in sorted(channel_list, key=lambda item: (int(getattr(item, "priority", 0) or 0), str(item.name or ""))):
@@ -197,6 +200,14 @@ def assemble_reliability_overview(
             key=lambda row: _status_rank(_monitor_status(row)),
             default=None,
         )
+        monitor_models = monitor_model_list(primary_monitor) if primary_monitor is not None else []
+        monitor_mode = ""
+        if primary_monitor is not None:
+            monitor_mode = (
+                "auto"
+                if str(getattr(primary_monitor, "created_by", "") or "") == AUTO_MONITOR_CREATED_BY
+                else "manual"
+            )
         channel_payloads.append(
             {
                 "id": channel_id,
@@ -213,6 +224,9 @@ def assemble_reliability_overview(
                 "monitor_id": str(getattr(primary_monitor, "id", "") or ""),
                 "monitor_status": monitor_status,
                 "monitor_message": str(getattr(primary_monitor, "last_message", "") or "")[:512],
+                "monitor_model": monitor_models[0] if monitor_models else "",
+                "monitor_endpoint": str(getattr(primary_monitor, "endpoint", "") or ""),
+                "monitor_mode": monitor_mode,
                 "last_checked_at": _as_iso(getattr(primary_monitor, "last_checked_at", None)),
                 "requests_5m": traffic["requests"],
                 "failed_requests_5m": traffic["failed_requests"],
@@ -244,8 +258,16 @@ def assemble_reliability_overview(
             ),
         ):
             channel = channel_by_id.get(str(route.channel_id))
-            channel_payload = next((item for item in channel_payloads if item["id"] == str(route.channel_id)), None)
-            route_status = str((channel_payload or {}).get("health_status") or "pending")
+            route_traffic = traffic_by_model_channel.get(
+                (public_model_id, str(route.channel_id)),
+                _empty_traffic(),
+            )
+            if _runtime_cooling(runtime_by_channel.get(str(route.channel_id)), now):
+                route_status = "cooling"
+            elif route_traffic["failed_requests"] > 0 or route_traffic["fallback_rate"] >= 0.05:
+                route_status = "degraded"
+            else:
+                route_status = "operational"
             route_statuses.append(route_status)
             route_payloads.append(
                 {
@@ -257,17 +279,19 @@ def assemble_reliability_overview(
                     "priority": int(route.priority_override if route.priority_override is not None else getattr(channel, "priority", 0) or 0),
                     "weight": max(1, int(route.weight_override if route.weight_override is not None else getattr(channel, "weight", 1) or 1)),
                     "health_status": route_status,
+                    "requests_5m": route_traffic["requests"],
+                    "failed_requests_5m": route_traffic["failed_requests"],
+                    "fallback_rate_5m": route_traffic["fallback_rate"],
+                    "avg_latency_ms_5m": route_traffic["avg_latency_ms"],
                 }
             )
 
         if not active_routes:
             health_status = "failed"
-        elif all(status in {"failed", "cooling", "disabled", "unconfigured"} for status in route_statuses):
-            health_status = "failed"
-        elif any(status in {"failed", "cooling", "degraded"} for status in route_statuses):
+        elif all(status == "cooling" for status in route_statuses):
+            health_status = "cooling"
+        elif any(status in {"cooling", "degraded"} for status in route_statuses):
             health_status = "degraded"
-        elif all(status == "pending" for status in route_statuses) and traffic["requests"] == 0:
-            health_status = "pending"
         elif traffic["failed_requests"] > 0 or traffic["fallback_rate"] >= 0.05:
             health_status = "degraded"
         else:
@@ -323,9 +347,10 @@ def assemble_reliability_overview(
         for row in recent_failures
     ]
 
+    relevant_channels = [item for item in channel_payloads if item["configured_status"] == "active"]
     overall_status = _worst_status(
-        (item["health_status"] for item in model_payloads),
-        default="operational" if channel_payloads else "pending",
+        (item["health_status"] for item in relevant_channels),
+        default="disabled" if channel_payloads else "pending",
     )
     total_requests = sum(item["requests_5m"] for item in model_payloads)
     total_fallbacks = sum(item["fallback_requests_5m"] for item in model_payloads)
@@ -335,6 +360,9 @@ def assemble_reliability_overview(
         "cache_ttl_seconds": RELIABILITY_CACHE_TTL_SECONDS,
         "overall": {
             "health_status": overall_status,
+            "channels_total": len(channel_payloads),
+            "channels_operational": sum(1 for item in channel_payloads if item["health_status"] == "operational"),
+            "channels_affected": sum(1 for item in channel_payloads if item["health_status"] in {"degraded", "cooling", "failed"}),
             "models_total": len(model_payloads),
             "models_operational": sum(1 for item in model_payloads if item["health_status"] == "operational"),
             "models_affected": sum(1 for item in model_payloads if item["health_status"] in {"degraded", "cooling", "failed"}),

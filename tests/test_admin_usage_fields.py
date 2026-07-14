@@ -406,6 +406,50 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("loadMonitoringSummary", admin_html)
         self.assertNotIn("loadOpsHealth", admin_html)
 
+    def test_service_reliability_page_is_channel_first_and_relabels_models(self) -> None:
+        admin_html = (Path(admin_module.__file__).parent / "static" / "admin.html").read_text()
+
+        page = admin_html[admin_html.index('id="page-service-reliability"'):]
+        channel_index = page.index('id="serviceReliabilityChannelsTitle"')
+        model_index = page.index('id="serviceReliabilityModelsTitle"')
+        failures_index = page.index('id="serviceReliabilityFailuresTitle"')
+
+        self.assertLess(channel_index, model_index)
+        self.assertLess(model_index, failures_index)
+        self.assertIn("公开模型路由覆盖与真实流量", page)
+        self.assertNotIn(">模型状态<", page)
+
+    def test_provider_channel_modal_wires_monitor_selection_and_two_stage_save(self) -> None:
+        admin_html = (Path(admin_module.__file__).parent / "static" / "admin.html").read_text()
+
+        self.assertIn('id="providerChannelMonitorSelection"', admin_html)
+        self.assertIn('id="providerChannelMonitorSelectionState"', admin_html)
+        self.assertIn("自动（当前默认", admin_html)
+        self.assertIn("当前手动监测项已失效", admin_html)
+        self.assertIn("monitor_selection.choices", admin_html)
+        self.assertIn("monitor_selection.recommended", admin_html)
+        self.assertIn("function renderProviderChannelMonitorSelection", admin_html)
+        self.assertIn("function providerChannelMonitorSelectionPayload", admin_html)
+        self.assertIn("async function saveProviderChannelMonitorSelection", admin_html)
+        self.assertIn("`/admin/provider-channels/${encodeURIComponent(channelId)}/monitor-selection`", admin_html)
+        self.assertIn("method: 'PUT'", admin_html)
+        self.assertIn("await saveProviderChannelMonitorSelection(channelId)", admin_html)
+        self.assertIn("渠道字段已保存，但监测模型", admin_html)
+
+    def test_service_reliability_channel_table_keeps_explicit_probe_action(self) -> None:
+        reliability_js = (
+            Path(admin_module.__file__).parent / "static" / "admin_assets" / "service-reliability.js"
+        ).read_text()
+
+        self.assertIn("item.monitor_model", reliability_js)
+        self.assertIn("item.monitor_endpoint", reliability_js)
+        self.assertIn("item.monitor_mode", reliability_js)
+        self.assertIn("data-sr-monitor", reliability_js)
+        self.assertIn("runServiceReliabilityProbe", reliability_js)
+        self.assertIn("/admin/provider-channel-monitors/${encodeURIComponent(monitorId)}/run", reliability_js)
+        self.assertIn("method: 'POST'", reliability_js)
+        self.assertNotIn("/models", reliability_js)
+
     async def test_reliability_reconcile_failure_rolls_back_without_escaping(self) -> None:
         db = _FakeDB()
 
