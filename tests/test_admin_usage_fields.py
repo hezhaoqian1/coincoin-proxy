@@ -87,13 +87,18 @@ class _FakeSummaryResult:
 
 
 class _FakeDB:
-    def __init__(self, *, execute_results=None, scalar_results=None):
+    def __init__(self, *, execute_results=None, scalar_results=None, get_values=None):
         self._execute_results = list(execute_results or [])
         self._scalar_results = list(scalar_results or [])
         self.queries = []
         self.added = []
         self.commits = 0
         self.rollbacks = 0
+        self.flushes = 0
+        self._get_values = dict(get_values or {})
+
+    async def get(self, model, key):
+        return self._get_values.get((model, key))
 
     async def execute(self, _query):
         self.queries.append(_query)
@@ -114,10 +119,41 @@ class _FakeDB:
         self.rollbacks += 1
 
     async def flush(self):
-        pass
+        self.flushes += 1
 
     def add(self, obj):
         self.added.append(obj)
+
+
+class _MonitorSelectionDB(_FakeDB):
+    def __init__(self, *, channel, routes, monitors):
+        super().__init__(scalar_results=[channel])
+        self.channel = channel
+        self.routes = routes
+        self.monitors = monitors
+        self.execute_count = 0
+
+    async def get(self, model, key):
+        from app.models import ProviderChannel
+
+        if model is ProviderChannel and key == self.channel.id:
+            return self.channel
+        return None
+
+    async def execute(self, _query):
+        self.queries.append(_query)
+        self.execute_count += 1
+        if self.execute_count in {1, 4}:
+            return _FakeScalarsResult(self.routes)
+        if self.execute_count == 2:
+            return _FakeScalarsResult(self.monitors)
+        if self.execute_count == 5:
+            return _FakeScalarsResult([*self.monitors, *self.added])
+        if self.execute_count == 3:
+            return _FakeScalarsResult([self.channel])
+        if self.execute_count == 6:
+            return _FakeScalarsResult([*self.monitors, *self.added])
+        raise AssertionError(f"unexpected execute call {self.execute_count}")
 
 
 class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
@@ -370,6 +406,64 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("loadMonitoringSummary", admin_html)
         self.assertNotIn("loadOpsHealth", admin_html)
 
+    def test_service_reliability_page_is_channel_first_and_relabels_models(self) -> None:
+        admin_html = (Path(admin_module.__file__).parent / "static" / "admin.html").read_text()
+
+        page = admin_html[admin_html.index('id="page-service-reliability"'):]
+        channel_index = page.index('id="serviceReliabilityChannelsTitle"')
+        model_index = page.index('id="serviceReliabilityModelsTitle"')
+        failures_index = page.index('id="serviceReliabilityFailuresTitle"')
+
+        self.assertLess(channel_index, model_index)
+        self.assertLess(model_index, failures_index)
+        self.assertIn("公开模型路由覆盖与真实流量", page)
+        self.assertNotIn(">模型状态<", page)
+
+    def test_provider_channel_modal_wires_monitor_selection_and_two_stage_save(self) -> None:
+        admin_html = (Path(admin_module.__file__).parent / "static" / "admin.html").read_text()
+
+        self.assertIn('id="providerChannelMonitorSelection"', admin_html)
+        self.assertIn('id="providerChannelMonitorSelectionState"', admin_html)
+        self.assertIn("自动（当前默认", admin_html)
+        self.assertIn("当前手动监测项已失效", admin_html)
+        self.assertIn("monitor_selection.choices", admin_html)
+        self.assertIn("monitor_selection.recommended", admin_html)
+        self.assertIn("function renderProviderChannelMonitorSelection", admin_html)
+        self.assertIn("function providerChannelMonitorSelectionPayload", admin_html)
+        self.assertIn("async function saveProviderChannelMonitorSelection", admin_html)
+        self.assertIn("`/admin/provider-channels/${encodeURIComponent(channelId)}/monitor-selection`", admin_html)
+        self.assertIn("method: 'PUT'", admin_html)
+        self.assertIn("await saveProviderChannelMonitorSelection(channelId)", admin_html)
+        self.assertIn("渠道字段已保存，但监测模型", admin_html)
+
+    def test_invalid_manual_monitor_without_choices_can_reset_to_auto(self) -> None:
+        admin_html = (Path(admin_module.__file__).parent / "static" / "admin.html").read_text()
+
+        self.assertIn(
+            "const invalidManualSelection = monitor_selection.mode === 'manual' && monitor_selection.state === 'invalid';",
+            admin_html,
+        )
+        self.assertIn(
+            "select.disabled = !channelId || (choices.length === 0 && !invalidManualSelection);",
+            admin_html,
+        )
+        self.assertIn('<option value="auto">', admin_html)
+        self.assertIn("if (select.disabled || select.value === 'auto') return { mode: 'auto' };", admin_html)
+
+    def test_service_reliability_channel_table_keeps_explicit_probe_action(self) -> None:
+        reliability_js = (
+            Path(admin_module.__file__).parent / "static" / "admin_assets" / "service-reliability.js"
+        ).read_text()
+
+        self.assertIn("item.monitor_model", reliability_js)
+        self.assertIn("item.monitor_endpoint", reliability_js)
+        self.assertIn("item.monitor_mode", reliability_js)
+        self.assertIn("data-sr-monitor", reliability_js)
+        self.assertIn("runServiceReliabilityProbe", reliability_js)
+        self.assertIn("/admin/provider-channel-monitors/${encodeURIComponent(monitorId)}/run", reliability_js)
+        self.assertIn("method: 'POST'", reliability_js)
+        self.assertNotIn("/models", reliability_js)
+
     async def test_reliability_reconcile_failure_rolls_back_without_escaping(self) -> None:
         db = _FakeDB()
 
@@ -519,6 +613,8 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                 _FakeAllResult([]),
                 _FakeAllResult([]),
                 _FakeScalarsResult([]),
+                _FakeScalarsResult([]),
+                _FakeScalarsResult([]),
             ]
         )
 
@@ -591,12 +687,42 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             last_error_code="",
             rolling_latency_ms=900,
         )
+        routes = [
+            SimpleNamespace(
+                id="route_b",
+                channel_id="ch_northstar",
+                upstream_model="gpt-manual",
+                endpoint="chat/completions",
+                status="active",
+                priority_override=0,
+                weight_override=2,
+            ),
+            SimpleNamespace(
+                id="route_a",
+                channel_id="ch_northstar",
+                upstream_model="gpt-auto",
+                endpoint="responses",
+                status="active",
+                priority_override=0,
+                weight_override=5,
+            ),
+        ]
+        monitor = SimpleNamespace(
+            id="cma_northstar",
+            channel_id="ch_northstar",
+            endpoint="responses",
+            primary_model="gpt-auto",
+            status="active",
+            created_by=admin_module.AUTO_MONITOR_CREATED_BY,
+        )
         fake_db = _FakeDB(
             execute_results=[
                 _FakeScalarsResult([channel]),
                 _FakeAllResult([route_row]),
                 _FakeAllResult([billing_row]),
                 _FakeScalarsResult([runtime_row]),
+                _FakeScalarsResult(routes),
+                _FakeScalarsResult([monitor]),
             ]
         )
 
@@ -630,6 +756,410 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(item["api_key_configured"])
         self.assertEqual(item["api_key_fingerprint"], "fp_test")
+        self.assertEqual(
+            item["monitor_selection"],
+            {
+                "mode": "auto",
+                "selected_model": "gpt-auto",
+                "selected_endpoint": "responses",
+                "state": "valid",
+                "is_valid": True,
+                "recommended": {"model": "gpt-auto", "endpoint": "responses"},
+                "choices": [
+                    {"model": "gpt-auto", "endpoint": "responses"},
+                    {"model": "gpt-manual", "endpoint": "chat/completions"},
+                ],
+            },
+        )
+
+    def test_provider_channel_payload_omits_monitor_selection_when_not_loaded(self) -> None:
+        channel = SimpleNamespace(
+            id="ch_payload",
+            name="Payload",
+            provider_platform="sub2api",
+            channel_type="openai_compatible",
+            base_url="https://payload.example/v1",
+            encrypted_api_key=None,
+            auth_style="bearer",
+            status="active",
+            priority=0,
+            weight=1,
+            allowed_fails=3,
+            cooldown_seconds=30,
+            capabilities="responses",
+            provider_account_fingerprint="",
+            cost_tier="",
+            notes="",
+            updated_by="admin",
+            created_at=datetime(2026, 7, 15, 0, 0, 0),
+            updated_at=datetime(2026, 7, 15, 0, 0, 0),
+        )
+
+        payload = admin_module._provider_channel_payload(channel)
+
+        self.assertNotIn("monitor_selection", payload)
+
+    def test_provider_channel_monitor_selection_reports_valid_duplicate_before_invalid_manual(self) -> None:
+        channel = SimpleNamespace(id="ch_duplicates", name="Duplicates", channel_type="openai_compatible", status="active", priority=0, weight=1)
+        route = SimpleNamespace(id="route_valid", channel_id=channel.id, upstream_model="gpt-valid", endpoint="responses", status="active", priority_override=None, weight_override=None)
+        invalid_manual = SimpleNamespace(id="cma_a_invalid", channel_id=channel.id, endpoint="chat/completions", primary_model="gpt-legacy", status="active", created_by="admin")
+        valid_manual = SimpleNamespace(id="cma_z_valid", channel_id=channel.id, endpoint="responses", primary_model="gpt-valid", status="active", created_by="admin")
+
+        selection = admin_module._provider_channel_monitor_selection_payload(
+            channel,
+            [route],
+            [invalid_manual, valid_manual],
+        )
+
+        self.assertEqual(selection["state"], "valid")
+        self.assertEqual(selection["selected_model"], "gpt-valid")
+        self.assertEqual(selection["selected_endpoint"], "responses")
+
+    async def test_provider_channel_monitor_selection_supports_manual_and_auto_modes(self) -> None:
+        from app.models import ModelChannelRoute, ProviderChannel, ProviderChannelMonitor
+
+        channel = SimpleNamespace(id="ch_probe", name="Probe", channel_type="openai_compatible", status="active", priority=3, weight=1)
+        routes = [
+            SimpleNamespace(id="route_auto", channel_id=channel.id, upstream_model="gpt-auto", endpoint="responses", status="active", priority_override=0, weight_override=5),
+            SimpleNamespace(id="route_manual", channel_id=channel.id, upstream_model="gpt-manual", endpoint="chat/completions", status="active", priority_override=1, weight_override=10),
+        ]
+        monitor = SimpleNamespace(
+            id="cma_probe",
+            channel_id=channel.id,
+            name="Auto Probe",
+            endpoint="responses",
+            primary_model="gpt-auto",
+            extra_models="[]",
+            status="active",
+            interval_seconds=300,
+            timeout_seconds=30,
+            created_by=admin_module.AUTO_MONITOR_CREATED_BY,
+        )
+        manual_monitor = SimpleNamespace(
+            id="cma_probe_manual",
+            channel_id=channel.id,
+            name="Manual Probe",
+            endpoint="chat/completions",
+            primary_model="gpt-manual",
+            extra_models="[]",
+            status="disabled",
+            interval_seconds=300,
+            timeout_seconds=30,
+            created_by="admin",
+        )
+        fake_db = _FakeDB(
+            execute_results=[
+                _FakeScalarsResult(routes),
+                _FakeScalarsResult([monitor, manual_monitor]),
+                _FakeScalarsResult([monitor, manual_monitor]),
+            ],
+            scalar_results=[channel],
+        )
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+        with (
+            patch.object(admin_module, "reconcile_provider_channel_monitors", AsyncMock(return_value={})) as reconcile,
+            patch.object(admin_module, "invalidate_reliability_cache") as invalidate,
+            patch.object(admin_module, "refresh_provider_channel_router_from_db", AsyncMock()) as refresh_router,
+        ):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                response = await client.put(
+                    f"/admin/provider-channels/{channel.id}/monitor-selection",
+                    json={"mode": "manual", "model": "gpt-manual", "endpoint": "chat/completions"},
+                )
+
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(monitor.primary_model, "gpt-auto")
+            self.assertEqual(monitor.endpoint, "responses")
+            self.assertEqual(monitor.status, "disabled")
+            self.assertEqual(manual_monitor.primary_model, "gpt-manual")
+            self.assertEqual(manual_monitor.endpoint, "chat/completions")
+            self.assertEqual(manual_monitor.status, "active")
+            self.assertEqual(manual_monitor.created_by, admin_module.MANUAL_MONITOR_CREATED_BY)
+            self.assertEqual(fake_db.commits, 1)
+            reconcile.assert_awaited_once_with(fake_db, commit=False)
+            invalidate.assert_called_once_with()
+            refresh_router.assert_not_awaited()
+            self.assertIn("FOR UPDATE", str(fake_db.queries[0]).upper())
+
+        fake_db._execute_results.extend(
+            [
+                _FakeScalarsResult(routes),
+                _FakeScalarsResult([monitor, manual_monitor]),
+                _FakeScalarsResult([monitor, manual_monitor]),
+            ]
+        )
+        fake_db._scalar_results.append(channel)
+        with (
+            patch.object(admin_module, "reconcile_provider_channel_monitors", AsyncMock(return_value={})) as reconcile,
+            patch.object(admin_module, "invalidate_reliability_cache") as invalidate,
+        ):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                response = await client.put(
+                    f"/admin/provider-channels/{channel.id}/monitor-selection",
+                    json={"mode": "auto"},
+                )
+
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(monitor.created_by, admin_module.AUTO_MONITOR_CREATED_BY)
+            reconcile.assert_awaited_once_with(fake_db, commit=False)
+            invalidate.assert_called_once_with()
+
+    async def test_provider_channel_monitor_selection_rejects_inactive_route(self) -> None:
+        from app.models import ProviderChannel
+
+        channel = SimpleNamespace(id="ch_probe", name="Probe", channel_type="openai_compatible", status="active", priority=0, weight=1)
+        inactive = SimpleNamespace(id="route_inactive", channel_id=channel.id, upstream_model="gpt-old", endpoint="responses", status="disabled", priority_override=None, weight_override=None)
+        fake_db = _FakeDB(
+            execute_results=[_FakeScalarsResult([inactive]), _FakeScalarsResult([])],
+            scalar_results=[channel],
+        )
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.put(
+                f"/admin/provider-channels/{channel.id}/monitor-selection",
+                json={"mode": "manual", "model": "gpt-old", "endpoint": "responses"},
+            )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(fake_db.commits, 0)
+
+    async def test_provider_channel_monitor_auto_reset_returns_reconciled_created_monitor(self) -> None:
+        channel = SimpleNamespace(id="ch_new_probe", name="New Probe", channel_type="openai_compatible", status="active", priority=0, weight=1)
+        route = SimpleNamespace(id="route_recommended", channel_id=channel.id, upstream_model="gpt-recommended", endpoint="responses", status="active", priority_override=None, weight_override=None)
+        fake_db = _MonitorSelectionDB(channel=channel, routes=[route], monitors=[])
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.put(
+                f"/admin/provider-channels/{channel.id}/monitor-selection",
+                json={"mode": "auto"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        selection = response.json()["monitor_selection"]
+        self.assertEqual(selection["state"], "valid")
+        self.assertEqual(selection["selected_model"], "gpt-recommended")
+        self.assertEqual(selection["selected_endpoint"], "responses")
+        self.assertEqual(len(fake_db.added), 1)
+        self.assertEqual(fake_db.added[0].created_by, admin_module.AUTO_MONITOR_CREATED_BY)
+        self.assertEqual(fake_db.added[0].status, "active")
+
+    async def test_provider_channel_monitor_auto_reset_reuses_canonical_monitor(self) -> None:
+        channel = SimpleNamespace(id="ch_reuse", name="Reuse Probe", channel_type="openai_compatible", status="active", priority=0, weight=1)
+        route = SimpleNamespace(id="route_recommended", channel_id=channel.id, upstream_model="gpt-recommended", endpoint="responses", status="active", priority_override=None, weight_override=None)
+        manual = SimpleNamespace(id="cma_manual", channel_id=channel.id, name="Manual", endpoint="chat/completions", primary_model="gpt-manual", extra_models="[]", status="active", interval_seconds=300, timeout_seconds=30, created_by="admin")
+        canonical = SimpleNamespace(id="cma_canonical", channel_id=channel.id, name="Auto", endpoint="responses", primary_model="gpt-recommended", extra_models="[]", status="disabled", interval_seconds=300, timeout_seconds=30, created_by=admin_module.AUTO_MONITOR_CREATED_BY)
+        fake_db = _MonitorSelectionDB(channel=channel, routes=[route], monitors=[manual, canonical])
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.put(
+                f"/admin/provider-channels/{channel.id}/monitor-selection",
+                json={"mode": "auto"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(fake_db.added, [])
+        self.assertEqual(canonical.status, "active")
+        self.assertEqual(canonical.primary_model, "gpt-recommended")
+        self.assertEqual(manual.status, "disabled")
+        self.assertEqual({manual.id, canonical.id}, {"cma_manual", "cma_canonical"})
+        self.assertNotIn("DELETE", " ".join(str(query).upper() for query in fake_db.queries))
+
+    async def test_provider_channel_monitor_selection_returns_404_for_missing_channel(self) -> None:
+        from app.models import ProviderChannel
+
+        fake_db = _FakeDB(scalar_results=[None])
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.put(
+                "/admin/provider-channels/ch_missing/monitor-selection",
+                json={"mode": "auto"},
+            )
+
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertEqual(len(fake_db.queries), 1)
+        self.assertIn("FOR UPDATE", str(fake_db.queries[0]).upper())
+
+    async def test_provider_channel_monitor_selection_rejects_active_mismatched_pair(self) -> None:
+        from app.models import ProviderChannel
+
+        channel = SimpleNamespace(id="ch_pair", name="Pair Probe", channel_type="openai_compatible", status="active", priority=0, weight=1)
+        routes = [
+            SimpleNamespace(id="route_responses", channel_id=channel.id, upstream_model="gpt-a", endpoint="responses", status="active", priority_override=None, weight_override=None),
+            SimpleNamespace(id="route_chat", channel_id=channel.id, upstream_model="gpt-b", endpoint="chat/completions", status="active", priority_override=None, weight_override=None),
+        ]
+        fake_db = _FakeDB(
+            execute_results=[_FakeScalarsResult(routes), _FakeScalarsResult([])],
+            scalar_results=[channel],
+        )
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.put(
+                f"/admin/provider-channels/{channel.id}/monitor-selection",
+                json={"mode": "manual", "model": "gpt-a", "endpoint": "chat/completions"},
+            )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(fake_db.commits, 0)
+
+    async def test_provider_channel_monitor_selection_rolls_back_reconcile_failure(self) -> None:
+        from app.models import ProviderChannel
+
+        channel = SimpleNamespace(id="ch_tx", name="Transactional", channel_type="openai_compatible", status="active", priority=0, weight=1)
+        route = SimpleNamespace(id="route_tx", channel_id=channel.id, upstream_model="gpt-tx", endpoint="responses", status="active", priority_override=None, weight_override=None)
+        fake_db = _FakeDB(
+            execute_results=[_FakeScalarsResult([route]), _FakeScalarsResult([])],
+            scalar_results=[channel],
+        )
+
+        async def fake_get_db():
+            yield fake_db
+
+        async def fail_reconcile(db, *, commit=True):
+            self.assertIs(db, fake_db)
+            self.assertFalse(commit)
+            self.assertEqual(fake_db.flushes, 1)
+            self.assertEqual(fake_db.commits, 0)
+            raise RuntimeError("reconcile failed")
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+        with (
+            patch.object(admin_module, "reconcile_provider_channel_monitors", side_effect=fail_reconcile),
+            patch.object(admin_module, "invalidate_reliability_cache") as invalidate,
+        ):
+            transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                response = await client.put(
+                    f"/admin/provider-channels/{channel.id}/monitor-selection",
+                    json={"mode": "manual", "model": "gpt-tx", "endpoint": "responses"},
+                )
+
+        self.assertEqual(response.status_code, 500, response.text)
+        self.assertEqual(fake_db.commits, 0)
+        self.assertEqual(fake_db.rollbacks, 1)
+        invalidate.assert_not_called()
+
+    async def test_provider_channel_monitor_selection_rolls_back_final_read_failure(self) -> None:
+        channel = SimpleNamespace(id="ch_read_failure", name="Read Failure", channel_type="openai_compatible", status="active", priority=0, weight=1)
+        route = SimpleNamespace(id="route_read_failure", channel_id=channel.id, upstream_model="gpt-read", endpoint="responses", status="active", priority_override=None, weight_override=None)
+
+        class _FailingFinalReadDB(_FakeDB):
+            async def execute(self, query):
+                self.queries.append(query)
+                if self._execute_results:
+                    return self._execute_results.pop(0)
+                raise RuntimeError("final monitor read failed")
+
+        fake_db = _FailingFinalReadDB(
+            execute_results=[_FakeScalarsResult([route]), _FakeScalarsResult([])],
+            scalar_results=[channel],
+        )
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+        with (
+            patch.object(admin_module, "reconcile_provider_channel_monitors", AsyncMock(return_value={})) as reconcile,
+            patch.object(admin_module, "invalidate_reliability_cache") as invalidate,
+        ):
+            transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                response = await client.put(
+                    f"/admin/provider-channels/{channel.id}/monitor-selection",
+                    json={"mode": "manual", "model": "gpt-read", "endpoint": "responses"},
+                )
+
+        self.assertEqual(response.status_code, 500, response.text)
+        reconcile.assert_awaited_once_with(fake_db, commit=False)
+        self.assertEqual(fake_db.commits, 0)
+        self.assertEqual(fake_db.rollbacks, 1)
+        invalidate.assert_not_called()
+
+    async def test_provider_channel_monitor_selection_preserves_target_identity_across_endpoints(self) -> None:
+        channel = SimpleNamespace(id="ch_identity", name="Identity", channel_type="openai_compatible", status="active", priority=0, weight=1)
+        routes = [
+            SimpleNamespace(id="route_responses", channel_id=channel.id, upstream_model="gpt-same", endpoint="responses", status="active", priority_override=0, weight_override=2),
+            SimpleNamespace(id="route_chat", channel_id=channel.id, upstream_model="gpt-same", endpoint="chat/completions", status="active", priority_override=1, weight_override=1),
+        ]
+        old_monitor = SimpleNamespace(
+            id="cma_responses",
+            channel_id=channel.id,
+            name="Responses history",
+            endpoint="responses",
+            primary_model="gpt-same",
+            extra_models="[]",
+            status="active",
+            interval_seconds=300,
+            timeout_seconds=30,
+            last_status="operational",
+            last_latency_ms=123,
+            created_by="admin",
+        )
+        fake_db = _MonitorSelectionDB(channel=channel, routes=routes, monitors=[old_monitor])
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.put(
+                f"/admin/provider-channels/{channel.id}/monitor-selection",
+                json={"mode": "manual", "model": "gpt-same", "endpoint": "chat/completions"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(old_monitor.endpoint, "responses")
+        self.assertEqual(old_monitor.primary_model, "gpt-same")
+        self.assertEqual(old_monitor.last_status, "operational")
+        self.assertEqual(old_monitor.last_latency_ms, 123)
+        self.assertEqual(old_monitor.status, "disabled")
+        self.assertEqual(len(fake_db.added), 1)
+        selected = fake_db.added[0]
+        self.assertNotEqual(selected.id, old_monitor.id)
+        self.assertEqual(selected.endpoint, "chat/completions")
+        self.assertEqual(selected.primary_model, "gpt-same")
+        self.assertEqual(selected.status, "active")
 
     async def test_provider_channel_stability_aggregates_request_logs(self) -> None:
         channel = SimpleNamespace(
@@ -3359,8 +3889,12 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             def __init__(self) -> None:
                 self.statements = []
 
-            async def execute(self, statement):
-                self.statements.append(str(statement))
+            async def execute(self, statement, parameters=None):
+                sql = str(statement)
+                self.statements.append(sql)
+                if "information_schema.COLUMNS" in sql:
+                    return _FakeScalarOneResult(512)
+                return _FakeScalarOneResult(None)
 
         conn = _MigrationConn()
         await main_module._run_migrations(conn)
@@ -3369,6 +3903,130 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             "ALTER TABLE coincoin_model_pricing_overrides ADD COLUMN video_multiplier DOUBLE DEFAULT 1",
             conn.statements,
         )
+
+    async def test_required_varchar_width_is_noop_when_column_is_already_wide(self) -> None:
+        class _MigrationConn:
+            def __init__(self) -> None:
+                self.statements = []
+
+            async def execute(self, statement, parameters=None):
+                self.statements.append((str(statement), parameters or {}))
+                return _FakeScalarOneResult(512)
+
+        conn = _MigrationConn()
+
+        await main_module._ensure_required_varchar_width(
+            conn,
+            table_name="coincoin_request_logs",
+            column_name="fallback_from_channel_id",
+            required_width=512,
+        )
+
+        self.assertEqual(len(conn.statements), 1)
+        self.assertIn("information_schema.COLUMNS", conn.statements[0][0])
+        self.assertNotIn("ALTER TABLE", conn.statements[0][0])
+
+    async def test_required_varchar_width_binds_metadata_parameters_on_single_statement_argument(self) -> None:
+        class _OneArgumentMigrationConn:
+            def __init__(self) -> None:
+                self.statement = None
+
+            async def execute(self, statement):
+                self.statement = statement
+                return _FakeScalarOneResult(512)
+
+        conn = _OneArgumentMigrationConn()
+
+        await main_module._ensure_required_varchar_width(
+            conn,
+            table_name="coincoin_request_logs",
+            column_name="fallback_from_channel_id",
+            required_width=512,
+        )
+
+        self.assertIsNotNone(conn.statement)
+        self.assertEqual(
+            conn.statement.compile().params,
+            {
+                "table_name": "coincoin_request_logs",
+                "column_name": "fallback_from_channel_id",
+            },
+        )
+        self.assertIn(":table_name", str(conn.statement))
+        self.assertIn(":column_name", str(conn.statement))
+
+    async def test_required_varchar_width_alters_narrow_column_then_verifies(self) -> None:
+        class _MigrationConn:
+            def __init__(self) -> None:
+                self.widths = [32, 512]
+                self.statements = []
+
+            async def execute(self, statement, parameters=None):
+                sql = str(statement)
+                self.statements.append((sql, parameters or {}))
+                if "information_schema.COLUMNS" in sql:
+                    return _FakeScalarOneResult(self.widths.pop(0))
+                return _FakeScalarOneResult(None)
+
+        conn = _MigrationConn()
+
+        await main_module._ensure_required_varchar_width(
+            conn,
+            table_name="coincoin_request_logs",
+            column_name="fallback_from_channel_id",
+            required_width=512,
+        )
+
+        self.assertEqual(len(conn.statements), 3)
+        self.assertEqual(
+            conn.statements[1][0],
+            "ALTER TABLE coincoin_request_logs MODIFY COLUMN fallback_from_channel_id VARCHAR(512) DEFAULT ''",
+        )
+        self.assertIn("information_schema.COLUMNS", conn.statements[2][0])
+
+    async def test_required_varchar_width_propagates_alter_failure_and_rejects_failed_postcondition(self) -> None:
+        class _QueryFailureConn:
+            async def execute(self, statement, parameters=None):
+                raise RuntimeError("information schema unavailable")
+
+        with self.assertRaisesRegex(RuntimeError, "information schema unavailable"):
+            await main_module._ensure_required_varchar_width(
+                _QueryFailureConn(),
+                table_name="coincoin_request_logs",
+                column_name="fallback_from_channel_id",
+                required_width=512,
+            )
+
+        class _AlterFailureConn:
+            async def execute(self, statement, parameters=None):
+                if "information_schema.COLUMNS" in str(statement):
+                    return _FakeScalarOneResult(32)
+                raise RuntimeError("alter denied")
+
+        with self.assertRaisesRegex(RuntimeError, "alter denied"):
+            await main_module._ensure_required_varchar_width(
+                _AlterFailureConn(),
+                table_name="coincoin_request_logs",
+                column_name="fallback_from_channel_id",
+                required_width=512,
+            )
+
+        class _FailedPostconditionConn:
+            def __init__(self) -> None:
+                self.widths = [32, 64]
+
+            async def execute(self, statement, parameters=None):
+                if "information_schema.COLUMNS" in str(statement):
+                    return _FakeScalarOneResult(self.widths.pop(0))
+                return _FakeScalarOneResult(None)
+
+        with self.assertRaisesRegex(RuntimeError, "required width 512"):
+            await main_module._ensure_required_varchar_width(
+                _FailedPostconditionConn(),
+                table_name="coincoin_request_logs",
+                column_name="fallback_from_channel_id",
+                required_width=512,
+            )
 
     def test_pricing_payload_tolerates_legacy_model_without_video_fields(self) -> None:
         legacy_model = SimpleNamespace(

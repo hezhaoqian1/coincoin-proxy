@@ -71,8 +71,9 @@
     const overall = payload.overall || {};
     const summary = document.getElementById('serviceReliabilitySummary');
     summary.innerHTML = [
-      ['整体状态', statusBadge(overall.health_status), `${number(overall.models_operational)} 个模型正常`],
-      ['公开模型', number(overall.models_total), `${number(overall.models_affected)} 个受影响`],
+      ['整体状态', statusBadge(overall.health_status), '按渠道最差状态判定'],
+      ['渠道正常', `${number(overall.channels_operational)} / ${number(overall.channels_total)}`, `${number(overall.channels_affected)} 个受影响`],
+      ['路由覆盖', `${number(overall.models_operational)} / ${number(overall.models_total)}`, `${number(overall.models_affected)} 个公开模型受影响`],
       ['5 分钟请求', number(overall.requests_5m), `${number(overall.failed_requests_5m)} 次失败`],
       ['Fallback', percent(overall.fallback_rate_5m), `${number(overall.fallback_requests_5m)} 次切换`],
       ['当前事件', number(overall.active_incidents), overall.active_incidents ? '需要关注' : '暂无事件'],
@@ -134,18 +135,22 @@
     const body = document.getElementById('serviceReliabilityChannelsBody');
     body.innerHTML = channels.length ? channels.map(item => {
       const monitorId = item.monitor_id || '';
+      const monitorMode = item.monitor_mode === 'manual' ? '手动' : (item.monitor_mode === 'auto' ? '自动' : '未配置');
+      const monitorTarget = item.monitor_model
+        ? `<div class="sr-primary">${html(item.monitor_model)}</div><div class="sr-secondary">${html(item.monitor_endpoint || '-')} · ${html(monitorMode)}</div>`
+        : `<div class="sr-secondary">${html(monitorMode)}</div>`;
       const action = monitorId
         ? `<button class="btn btn-sm" type="button" data-sr-monitor="${html(encodeURIComponent(monitorId))}" ${runningMonitors.has(monitorId) ? 'disabled' : ''}>${runningMonitors.has(monitorId) ? '检测中' : '立即探测'}</button>`
-        : '<span class="sr-secondary">等待 route 生成检测项</span>';
+        : '<span class="sr-secondary">未配置代表探测</span>';
       return `
         <tr>
           <td><div class="sr-primary">${html(item.name || item.id)}</div><div class="sr-secondary">${html(item.provider_platform || item.channel_type || '-')} · P${number(item.priority)} / W${number(item.weight)}</div></td>
+          <td>${monitorTarget}</td>
           <td>${statusBadge(item.health_status)}${item.monitor_message ? `<div class="sr-secondary">${html(item.monitor_message)}</div>` : ''}</td>
           <td><div class="sr-primary">${number(item.active_route_count)} 条 route</div><div class="sr-secondary">${html((item.public_models || []).join(', ') || '-')}</div></td>
           <td><div>${number(item.requests_5m)}</div><div class="sr-secondary">失败 ${number(item.failed_requests_5m)}</div></td>
           <td>${percent(item.fallback_rate_5m)}</td>
-          <td><div>${latency(item.avg_latency_ms_5m)}</div><div class="sr-secondary">峰值 ${latency(item.max_latency_ms_5m)}</div></td>
-          <td><div>${dateTime(item.last_checked_at)}</div>${item.cooldown_until ? `<div class="sr-secondary">冷却至 ${dateTime(item.cooldown_until)}</div>` : ''}</td>
+          <td><div>${latency(item.avg_latency_ms_5m)}</div><div class="sr-secondary">检测 ${dateTime(item.last_checked_at)}</div>${item.cooldown_until ? `<div class="sr-secondary">冷却至 ${dateTime(item.cooldown_until)}</div>` : ''}</td>
           <td>${action}</td>
         </tr>
       `;
@@ -175,8 +180,8 @@
     latestOverview = payload;
     renderSummary(payload);
     renderIncidents(payload);
-    renderModels(payload);
     renderChannels(payload);
+    renderModels(payload);
     renderFailures(payload);
     const updated = document.getElementById('serviceReliabilityUpdatedAt');
     updated.textContent = `更新于 ${dateTime(payload.generated_at)} · 每 15 秒刷新`;

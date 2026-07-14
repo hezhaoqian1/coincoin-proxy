@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .channel_monitoring import monitor_model_list
+from .channel_monitoring import AUTO_MONITOR_CREATED_BY, monitor_model_list
 from .db import get_db
 from .models import (
     ModelChannelRoute,
@@ -24,6 +24,7 @@ from .security import require_admin
 router = APIRouter(prefix="/admin/reliability", tags=["admin-reliability"])
 
 RELIABILITY_CACHE_TTL_SECONDS = 10
+REAL_TRAFFIC_DEGRADED_AVG_LATENCY_MS = 30_000
 _CACHE_VALUE: dict[str, Any] | None = None
 _CACHE_EXPIRES_AT = 0.0
 _CACHE_LOCK = asyncio.Lock()
@@ -47,6 +48,33 @@ def _row_value(row: Any, name: str, default: Any = None) -> Any:
     if mapping is not None:
         return mapping.get(name, default)
     return default
+
+
+def _row_has_field(row: Any, name: str) -> bool:
+    if hasattr(row, name):
+        return True
+    mapping = getattr(row, "_mapping", None)
+    return mapping is not None and name in mapping
+
+
+def _normalize_endpoint(value: Any) -> str:
+    endpoint = str(value or "").strip().lower().split("?", 1)[0].rstrip("/").lstrip("/")
+    if endpoint.startswith("v1/"):
+        endpoint = endpoint[3:]
+    if endpoint.endswith(":stream"):
+        endpoint = endpoint[:-7]
+    if endpoint == "responses:image_generation":
+        return "images/generations"
+    if endpoint == "messages":
+        return "chat/completions"
+    for known_endpoint in ("chat/completions", "responses"):
+        if endpoint.endswith(known_endpoint):
+            return known_endpoint
+    return endpoint
+
+
+def _fallback_source_channel_ids(value: Any) -> list[str]:
+    return list(dict.fromkeys(item.strip() for item in str(value or "").split(",") if item.strip()))
 
 
 def _status_rank(status: str) -> int:
@@ -84,6 +112,8 @@ def _traffic_payload(row: Any) -> dict[str, Any]:
         "failed_requests": max(0, int(_row_value(row, "failed_requests", 0) or 0)),
         "fallback_requests": fallback_requests,
         "fallback_rate": round(fallback_requests / requests, 4) if requests else 0.0,
+        "fallback_out_requests": 0,
+        "fallback_out_rate": 0.0,
         "avg_latency_ms": max(0, round(float(_row_value(row, "avg_latency_ms", 0) or 0))),
         "max_latency_ms": max(0, int(_row_value(row, "max_latency_ms", 0) or 0)),
         "last_seen_at": _as_iso(_row_value(row, "last_seen_at")),
@@ -92,6 +122,24 @@ def _traffic_payload(row: Any) -> dict[str, Any]:
 
 def _empty_traffic() -> dict[str, Any]:
     return _traffic_payload(SimpleTrafficRow())
+
+
+def _fallback_out_rate(requests: int, fallback_out_requests: int) -> float:
+    fallback_out_requests = max(0, int(fallback_out_requests or 0))
+    attempts = max(0, int(requests or 0)) + fallback_out_requests
+    return round(fallback_out_requests / attempts, 4) if attempts else 0.0
+
+
+def _traffic_is_degraded(traffic: dict[str, Any], *, source_fallback: bool = False) -> bool:
+    fallback_rate = traffic["fallback_out_rate"] if source_fallback else traffic["fallback_rate"]
+    return bool(
+        traffic["failed_requests"] > 0
+        or fallback_rate >= 0.05
+        or (
+            traffic["requests"] > 0
+            and traffic["avg_latency_ms"] >= REAL_TRAFFIC_DEGRADED_AVG_LATENCY_MS
+        )
+    )
 
 
 def _merge_traffic(current: dict[str, Any] | None, incoming: dict[str, Any]) -> dict[str, Any]:
@@ -103,6 +151,7 @@ def _merge_traffic(current: dict[str, Any] | None, incoming: dict[str, Any]) -> 
         + int(incoming["avg_latency_ms"]) * int(incoming["requests"])
     )
     fallback_requests = int(current["fallback_requests"]) + int(incoming["fallback_requests"])
+    fallback_out_requests = int(current.get("fallback_out_requests", 0)) + int(incoming.get("fallback_out_requests", 0))
     last_seen_values = [value for value in (current.get("last_seen_at"), incoming.get("last_seen_at")) if value]
     return {
         "requests": requests,
@@ -110,10 +159,30 @@ def _merge_traffic(current: dict[str, Any] | None, incoming: dict[str, Any]) -> 
         "failed_requests": int(current["failed_requests"]) + int(incoming["failed_requests"]),
         "fallback_requests": fallback_requests,
         "fallback_rate": round(fallback_requests / requests, 4) if requests else 0.0,
+        "fallback_out_requests": fallback_out_requests,
+        "fallback_out_rate": _fallback_out_rate(requests, fallback_out_requests),
         "avg_latency_ms": round(weighted_latency / requests) if requests else 0,
         "max_latency_ms": max(int(current["max_latency_ms"]), int(incoming["max_latency_ms"])),
         "last_seen_at": max(last_seen_values) if last_seen_values else None,
     }
+
+
+def _channel_route_traffic(traffic: dict[str, Any], *, legacy_fallback: bool) -> dict[str, Any]:
+    result = dict(traffic)
+    fallback_out_requests = int(traffic["fallback_requests"]) if legacy_fallback else 0
+    result["fallback_requests"] = 0
+    result["fallback_rate"] = 0.0
+    result["fallback_out_requests"] = fallback_out_requests
+    result["fallback_out_rate"] = _fallback_out_rate(int(traffic["requests"]), fallback_out_requests)
+    return result
+
+
+def _fallback_out_traffic(count: int, *, last_seen_at: str | None) -> dict[str, Any]:
+    traffic = _empty_traffic()
+    traffic["fallback_out_requests"] = max(0, int(count or 0))
+    traffic["fallback_out_rate"] = _fallback_out_rate(0, traffic["fallback_out_requests"])
+    traffic["last_seen_at"] = last_seen_at
+    return traffic
 
 
 def _monitor_status(monitor: Any) -> str:
@@ -156,12 +225,46 @@ def assemble_reliability_overview(
 
     traffic_by_channel: dict[str, dict[str, Any]] = {}
     traffic_by_model: dict[str, dict[str, Any]] = {}
+    traffic_by_model_channel: dict[tuple[str, str], dict[str, Any]] = {}
+    traffic_by_model_channel_endpoint: dict[tuple[str, str, str], dict[str, Any]] = {}
     for row in traffic_rows:
         channel_id = str(_row_value(row, "channel_id", "") or "")
         public_model_id = str(_row_value(row, "public_model_id", "") or "")
+        endpoint = _normalize_endpoint(_row_value(row, "endpoint", ""))
         traffic = _traffic_payload(row)
-        traffic_by_channel[channel_id] = _merge_traffic(traffic_by_channel.get(channel_id), traffic)
         traffic_by_model[public_model_id] = _merge_traffic(traffic_by_model.get(public_model_id), traffic)
+        has_fallback_source = _row_has_field(row, "fallback_from_channel_id")
+        channel_route_traffic = _channel_route_traffic(traffic, legacy_fallback=not has_fallback_source)
+        traffic_by_channel[channel_id] = _merge_traffic(traffic_by_channel.get(channel_id), channel_route_traffic)
+        traffic_key = (public_model_id, channel_id)
+        traffic_by_model_channel[traffic_key] = _merge_traffic(
+            traffic_by_model_channel.get(traffic_key),
+            channel_route_traffic,
+        )
+        endpoint_key = (public_model_id, channel_id, endpoint)
+        traffic_by_model_channel_endpoint[endpoint_key] = _merge_traffic(
+            traffic_by_model_channel_endpoint.get(endpoint_key),
+            channel_route_traffic,
+        )
+
+        fallback_count = int(traffic["fallback_requests"])
+        if has_fallback_source and fallback_count > 0:
+            fallback_out = _fallback_out_traffic(fallback_count, last_seen_at=traffic["last_seen_at"])
+            for source_channel_id in _fallback_source_channel_ids(_row_value(row, "fallback_from_channel_id", "")):
+                traffic_by_channel[source_channel_id] = _merge_traffic(
+                    traffic_by_channel.get(source_channel_id),
+                    fallback_out,
+                )
+                source_key = (public_model_id, source_channel_id)
+                traffic_by_model_channel[source_key] = _merge_traffic(
+                    traffic_by_model_channel.get(source_key),
+                    fallback_out,
+                )
+                source_endpoint_key = (public_model_id, source_channel_id, endpoint)
+                traffic_by_model_channel_endpoint[source_endpoint_key] = _merge_traffic(
+                    traffic_by_model_channel_endpoint.get(source_endpoint_key),
+                    fallback_out,
+                )
 
     channel_payloads: list[dict[str, Any]] = []
     for channel in sorted(channel_list, key=lambda item: (int(getattr(item, "priority", 0) or 0), str(item.name or ""))):
@@ -185,7 +288,7 @@ def assemble_reliability_overview(
             health_status = "cooling"
         elif monitor_status == "failed":
             health_status = "failed"
-        elif monitor_status == "degraded" or traffic["failed_requests"] > 0 or traffic["fallback_rate"] >= 0.05:
+        elif monitor_status == "degraded" or _traffic_is_degraded(traffic, source_fallback=True):
             health_status = "degraded"
         elif monitor_status == "pending" and traffic["requests"] == 0:
             health_status = "pending"
@@ -197,6 +300,14 @@ def assemble_reliability_overview(
             key=lambda row: _status_rank(_monitor_status(row)),
             default=None,
         )
+        monitor_models = monitor_model_list(primary_monitor) if primary_monitor is not None else []
+        monitor_mode = ""
+        if primary_monitor is not None:
+            monitor_mode = (
+                "auto"
+                if str(getattr(primary_monitor, "created_by", "") or "") == AUTO_MONITOR_CREATED_BY
+                else "manual"
+            )
         channel_payloads.append(
             {
                 "id": channel_id,
@@ -213,11 +324,14 @@ def assemble_reliability_overview(
                 "monitor_id": str(getattr(primary_monitor, "id", "") or ""),
                 "monitor_status": monitor_status,
                 "monitor_message": str(getattr(primary_monitor, "last_message", "") or "")[:512],
+                "monitor_model": monitor_models[0] if monitor_models else "",
+                "monitor_endpoint": str(getattr(primary_monitor, "endpoint", "") or ""),
+                "monitor_mode": monitor_mode,
                 "last_checked_at": _as_iso(getattr(primary_monitor, "last_checked_at", None)),
                 "requests_5m": traffic["requests"],
                 "failed_requests_5m": traffic["failed_requests"],
-                "fallback_requests_5m": traffic["fallback_requests"],
-                "fallback_rate_5m": traffic["fallback_rate"],
+                "fallback_requests_5m": traffic["fallback_out_requests"],
+                "fallback_rate_5m": traffic["fallback_out_rate"],
                 "avg_latency_ms_5m": traffic["avg_latency_ms"],
                 "max_latency_ms_5m": traffic["max_latency_ms"],
                 "cooldown_until": _as_iso(getattr(runtime_state, "cooldown_until", None)),
@@ -244,8 +358,28 @@ def assemble_reliability_overview(
             ),
         ):
             channel = channel_by_id.get(str(route.channel_id))
-            channel_payload = next((item for item in channel_payloads if item["id"] == str(route.channel_id)), None)
-            route_status = str((channel_payload or {}).get("health_status") or "pending")
+            route_endpoint = _normalize_endpoint(getattr(route, "endpoint", ""))
+            if route_endpoint:
+                route_traffic = None
+                for traffic_key in (
+                    (public_model_id, str(route.channel_id), route_endpoint),
+                    (public_model_id, str(route.channel_id), ""),
+                ):
+                    endpoint_traffic = traffic_by_model_channel_endpoint.get(traffic_key)
+                    if endpoint_traffic is not None:
+                        route_traffic = _merge_traffic(route_traffic, endpoint_traffic)
+                route_traffic = route_traffic or _empty_traffic()
+            else:
+                route_traffic = traffic_by_model_channel.get(
+                    (public_model_id, str(route.channel_id)),
+                    _empty_traffic(),
+                )
+            if _runtime_cooling(runtime_by_channel.get(str(route.channel_id)), now):
+                route_status = "cooling"
+            elif _traffic_is_degraded(route_traffic, source_fallback=True):
+                route_status = "degraded"
+            else:
+                route_status = "operational"
             route_statuses.append(route_status)
             route_payloads.append(
                 {
@@ -257,18 +391,21 @@ def assemble_reliability_overview(
                     "priority": int(route.priority_override if route.priority_override is not None else getattr(channel, "priority", 0) or 0),
                     "weight": max(1, int(route.weight_override if route.weight_override is not None else getattr(channel, "weight", 1) or 1)),
                     "health_status": route_status,
+                    "requests_5m": route_traffic["requests"],
+                    "failed_requests_5m": route_traffic["failed_requests"],
+                    "fallback_requests_5m": route_traffic["fallback_out_requests"],
+                    "fallback_rate_5m": route_traffic["fallback_out_rate"],
+                    "avg_latency_ms_5m": route_traffic["avg_latency_ms"],
                 }
             )
 
         if not active_routes:
             health_status = "failed"
-        elif all(status in {"failed", "cooling", "disabled", "unconfigured"} for status in route_statuses):
-            health_status = "failed"
-        elif any(status in {"failed", "cooling", "degraded"} for status in route_statuses):
+        elif all(status == "cooling" for status in route_statuses):
+            health_status = "cooling"
+        elif any(status in {"cooling", "degraded"} for status in route_statuses):
             health_status = "degraded"
-        elif all(status == "pending" for status in route_statuses) and traffic["requests"] == 0:
-            health_status = "pending"
-        elif traffic["failed_requests"] > 0 or traffic["fallback_rate"] >= 0.05:
+        elif _traffic_is_degraded(traffic):
             health_status = "degraded"
         else:
             health_status = "operational"
@@ -323,9 +460,10 @@ def assemble_reliability_overview(
         for row in recent_failures
     ]
 
+    relevant_channels = [item for item in channel_payloads if item["configured_status"] == "active"]
     overall_status = _worst_status(
-        (item["health_status"] for item in model_payloads),
-        default="operational" if channel_payloads else "pending",
+        (item["health_status"] for item in relevant_channels),
+        default="disabled" if channel_payloads else "pending",
     )
     total_requests = sum(item["requests_5m"] for item in model_payloads)
     total_fallbacks = sum(item["fallback_requests_5m"] for item in model_payloads)
@@ -335,6 +473,9 @@ def assemble_reliability_overview(
         "cache_ttl_seconds": RELIABILITY_CACHE_TTL_SECONDS,
         "overall": {
             "health_status": overall_status,
+            "channels_total": len(channel_payloads),
+            "channels_operational": sum(1 for item in channel_payloads if item["health_status"] == "operational"),
+            "channels_affected": sum(1 for item in channel_payloads if item["health_status"] in {"degraded", "cooling", "failed"}),
             "models_total": len(model_payloads),
             "models_operational": sum(1 for item in model_payloads if item["health_status"] == "operational"),
             "models_affected": sum(1 for item in model_payloads if item["health_status"] in {"degraded", "cooling", "failed"}),
@@ -385,6 +526,8 @@ async def build_reliability_overview(db: AsyncSession) -> dict[str, Any]:
             select(
                 public_model_expr.label("public_model_id"),
                 RequestLog.channel_id.label("channel_id"),
+                RequestLog.endpoint.label("endpoint"),
+                RequestLog.fallback_from_channel_id.label("fallback_from_channel_id"),
                 func.count(RequestLog.id).label("requests"),
                 func.coalesce(func.sum(case((RequestLog.status_code < 400, 1), else_=0)), 0).label("success_requests"),
                 func.coalesce(func.sum(case((RequestLog.status_code >= 400, 1), else_=0)), 0).label("failed_requests"),
@@ -394,7 +537,12 @@ async def build_reliability_overview(db: AsyncSession) -> dict[str, Any]:
                 func.max(RequestLog.created_at).label("last_seen_at"),
             )
             .where(RequestLog.created_at >= since, RequestLog.channel_id != "")
-            .group_by(public_model_expr, RequestLog.channel_id)
+            .group_by(
+                public_model_expr,
+                RequestLog.channel_id,
+                RequestLog.endpoint,
+                RequestLog.fallback_from_channel_id,
+            )
         )
     ).all()
     recent_failures = (

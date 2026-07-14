@@ -1,0 +1,26 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "2026-07-15-channel-representative-probe",
+  "requiredBaselineRefs": [
+    "docs/aegis/specs/2026-07-15-channel-representative-probe-design.md",
+    "docs/aegis/adr/ADR-0002-route-derived-reliability-observation.md",
+    "docs/aegis/baseline/service-reliability.md"
+  ],
+  "deliveredContextRefs": [
+    "docs/aegis/specs/2026-07-15-channel-representative-probe-design.md",
+    "docs/aegis/adr/ADR-0002-route-derived-reliability-observation.md",
+    "docs/aegis/baseline/service-reliability.md"
+  ],
+  "acknowledgedBeforePlanRefs": [
+    "docs/aegis/specs/2026-07-15-channel-representative-probe-design.md",
+    "docs/aegis/adr/ADR-0002-route-derived-reliability-observation.md",
+    "docs/aegis/baseline/service-reliability.md"
+  ],
+  "citedInPlanRefs": [
+    "docs/aegis/specs/2026-07-15-channel-representative-probe-design.md",
+    "docs/aegis/adr/ADR-0002-route-derived-reliability-observation.md",
+    "docs/aegis/baseline/service-reliability.md"
+  ],
+  "missingRefs": [],
+  "decision": "continue"
+}

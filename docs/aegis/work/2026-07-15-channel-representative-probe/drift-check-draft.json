@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "2026-07-15-channel-representative-probe",
+  "taskIntentRef": "docs/aegis/work/2026-07-15-channel-representative-probe/task-intent-draft.json",
+  "baselineRefs": [
+    "docs/aegis/specs/2026-07-15-channel-representative-probe-design.md",
+    "docs/aegis/adr/ADR-0002-route-derived-reliability-observation.md",
+    "docs/aegis/baseline/service-reliability.md"
+  ],
+  "scopeStatus": "tasks-1-4-aligned-with-design-implementation-tests-and-current-architecture-records; task-5-not-yet-verified",
+  "compatStatus": "283-test-focused-compatibility-suite-and-requested-static-checks-passed-locally",
+  "retirementStatus": "legacy-extra-model-execution-retired; redundant-automatic-monitors-disabled; persistence-api-shape-and-history-retained",
+  "newRiskSignals": [
+    "Production provider-channel selection, one healthy real probe, and unchanged routing configuration still require Task 5 acceptance."
+  ],
+  "decision": "continue"
+}

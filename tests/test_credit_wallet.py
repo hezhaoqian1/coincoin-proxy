@@ -35,6 +35,12 @@ class _EntityResult:
         return self._value
 
 
+def _migration_metadata_result(statement):
+    if "information_schema.COLUMNS" in str(statement):
+        return _EntityResult(512)
+    return None
+
+
 class _FakeDB:
     def __init__(self, execute_results=None, flush_results=None):
         self.execute_results = list(execute_results or [])
@@ -461,6 +467,7 @@ class CreditWalletTests(unittest.IsolatedAsyncioTestCase):
 
             async def execute(self, statement):
                 self.statements.append(str(statement))
+                return _migration_metadata_result(statement)
 
         conn = _MigrationConn()
         await main_module._run_migrations(conn)
@@ -489,6 +496,7 @@ class CreditWalletTests(unittest.IsolatedAsyncioTestCase):
 
             async def execute(self, statement):
                 self.statements.append(str(statement).strip())
+                return _migration_metadata_result(statement)
 
         conn = _MigrationConn()
         await main_module._run_migrations(conn)
@@ -638,6 +646,9 @@ class CreditWalletTests(unittest.IsolatedAsyncioTestCase):
 
             async def execute(self, statement):
                 sql = str(statement).strip()
+                metadata_result = _migration_metadata_result(statement)
+                if metadata_result is not None:
+                    return metadata_result
                 is_credit_table = sql.startswith("CREATE TABLE coincoin_credit_")
                 is_credit_index = (
                     sql.startswith("CREATE INDEX ix_credit_")
@@ -684,6 +695,9 @@ class CreditWalletTests(unittest.IsolatedAsyncioTestCase):
 
         class _MigrationConn:
             async def execute(self, statement):
+                metadata_result = _migration_metadata_result(statement)
+                if metadata_result is not None:
+                    return metadata_result
                 if str(statement).strip().startswith(
                     "CREATE UNIQUE INDEX uq_credit_balances_source"
                 ):
@@ -699,6 +713,9 @@ class CreditWalletTests(unittest.IsolatedAsyncioTestCase):
         ]:
             class _MigrationConn:
                 async def execute(self, statement):
+                    metadata_result = _migration_metadata_result(statement)
+                    if metadata_result is not None:
+                        return metadata_result
                     if str(statement).strip().startswith(
                         "CREATE UNIQUE INDEX uq_credit_balances_source"
                     ):
@@ -722,6 +739,9 @@ class CreditWalletTests(unittest.IsolatedAsyncioTestCase):
         ]:
             class _MigrationConn:
                 async def execute(self, statement):
+                    metadata_result = _migration_metadata_result(statement)
+                    if metadata_result is not None:
+                        return metadata_result
                     if str(statement).strip().startswith(target):
                         raise error
 

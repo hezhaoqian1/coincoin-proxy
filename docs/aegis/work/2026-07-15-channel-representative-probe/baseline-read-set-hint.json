@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "candidateDocs": [
+    "docs/aegis/specs/2026-07-15-channel-representative-probe-design.md",
+    "docs/aegis/adr/ADR-0002-route-derived-reliability-observation.md",
+    "docs/aegis/baseline/service-reliability.md"
+  ],
+  "whyRelevant": "These define approved behavior, observation-only boundaries, and the current reliability ownership model.",
+  "missingAuthority": []
+}

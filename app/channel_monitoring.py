@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import settings
 from .db import SessionLocal
+from .channel_monitor_leases import monitor_claim_lease_seconds
 from .anthropic_adapter import (
     DEFAULT_ANTHROPIC_VERSION,
     build_anthropic_messages_url,
@@ -36,7 +37,8 @@ logger = logging.getLogger("coincoin.channel_monitoring")
 MONITOR_OK_STATUSES = {"operational", "degraded"}
 MONITOR_FAILURE_STATUSES = {"failed", "error"}
 AUTO_MONITOR_CREATED_BY = "route-reconciler"
-AUTO_MONITOR_MODEL_LIMIT = 3
+MANUAL_MONITOR_CREATED_BY = "admin-override"
+INVALID_MANUAL_MONITOR_CREATED_BY = "admin-override-invalid"
 
 
 @dataclass(frozen=True)
@@ -92,12 +94,6 @@ def monitor_model_list(monitor: ProviderChannelMonitor) -> list[str]:
     return list(dict.fromkeys(item for item in values if item))
 
 
-def _monitor_claim_lease_seconds(monitor: ProviderChannelMonitor) -> int:
-    timeout = max(5, int(monitor.timeout_seconds or settings.provider_channel_monitor_default_timeout))
-    request_count = max(1, len(monitor_model_list(monitor))) + 1
-    return max(60, timeout * request_count + 30)
-
-
 def _monitor_endpoint_for_route(route: ModelChannelRoute, channel: ProviderChannel) -> str | None:
     endpoint = str(getattr(route, "endpoint", "") or "").strip()
     if endpoint in {"responses", "chat/completions"}:
@@ -114,113 +110,188 @@ def _route_priority(route: ModelChannelRoute, channel: ProviderChannel) -> int:
     return int(override if override is not None else getattr(channel, "priority", 0) or 0)
 
 
-def desired_route_monitor_specs(
+def _route_weight(route: ModelChannelRoute, channel: ProviderChannel) -> int:
+    override = getattr(route, "weight_override", None)
+    return max(1, int(override if override is not None else getattr(channel, "weight", 1) or 1))
+
+
+def _route_monitor_candidates(
     channels: Iterable[ProviderChannel],
     routes: Iterable[ModelChannelRoute],
-) -> list[RouteMonitorSpec]:
+) -> dict[str, list[tuple[tuple[int, int, str], RouteMonitorSpec]]]:
     channel_by_id = {
         str(channel.id): channel
         for channel in channels
         if str(getattr(channel, "status", "") or "").strip().lower() == "active"
     }
-    grouped: dict[tuple[str, str], list[tuple[int, str, str]]] = {}
+    candidates: dict[str, list[tuple[tuple[int, int, str], RouteMonitorSpec]]] = {}
     for route in routes:
         if str(getattr(route, "status", "") or "").strip().lower() != "active":
             continue
-        channel = channel_by_id.get(str(getattr(route, "channel_id", "") or ""))
+        channel_id = str(getattr(route, "channel_id", "") or "")
+        channel = channel_by_id.get(channel_id)
         if channel is None:
             continue
         endpoint = _monitor_endpoint_for_route(route, channel)
         if endpoint is None:
             continue
-        model = str(getattr(route, "upstream_model", "") or getattr(route, "public_model_id", "") or "").strip()
+        model = str(getattr(route, "upstream_model", "") or "").strip()
         if not model:
             continue
-        grouped.setdefault((str(channel.id), endpoint), []).append(
-            (_route_priority(route, channel), str(getattr(route, "public_model_id", "") or ""), model)
+        route_id = str(getattr(route, "id", "") or "")
+        spec = RouteMonitorSpec(
+            channel_id=channel_id,
+            channel_name=str(getattr(channel, "name", "") or channel_id),
+            endpoint=endpoint,
+            models=(model,),
         )
-
-    specs: list[RouteMonitorSpec] = []
-    for (channel_id, endpoint), values in sorted(grouped.items()):
-        channel = channel_by_id[channel_id]
-        models: list[str] = []
-        for _priority, _public_model_id, model in sorted(values):
-            if model not in models:
-                models.append(model)
-            if len(models) >= AUTO_MONITOR_MODEL_LIMIT:
-                break
-        specs.append(
-            RouteMonitorSpec(
-                channel_id=channel_id,
-                channel_name=str(getattr(channel, "name", "") or channel_id),
-                endpoint=endpoint,
-                models=tuple(models),
-            )
+        candidates.setdefault(channel_id, []).append(
+            ((_route_priority(route, channel), -_route_weight(route, channel), route_id), spec)
         )
-    return specs
+    return candidates
 
 
-def _auto_monitor_id(channel_id: str, endpoint: str) -> str:
-    digest = hashlib.sha256(f"{channel_id}:{endpoint}".encode("utf-8")).hexdigest()[:24]
+def desired_route_monitor_specs(
+    channels: Iterable[ProviderChannel],
+    routes: Iterable[ModelChannelRoute],
+) -> list[RouteMonitorSpec]:
+    candidates = _route_monitor_candidates(channels, routes)
+    return [sorted(candidates[channel_id], key=lambda item: item[0])[0][1] for channel_id in sorted(candidates)]
+
+
+def _auto_monitor_id(channel_id: str) -> str:
+    digest = hashlib.sha256(channel_id.encode("utf-8")).hexdigest()[:24]
     return f"cma_{digest}"
 
 
 def _is_auto_monitor(monitor: ProviderChannelMonitor) -> bool:
-    return (
-        str(getattr(monitor, "created_by", "") or "") == AUTO_MONITOR_CREATED_BY
-        or str(getattr(monitor, "id", "") or "").startswith("cma_")
-    )
+    return str(getattr(monitor, "created_by", "") or "") == AUTO_MONITOR_CREATED_BY
 
 
-async def reconcile_provider_channel_monitors(db: AsyncSession) -> dict[str, int]:
+def _is_invalid_manual_override(monitor: ProviderChannelMonitor) -> bool:
+    return str(getattr(monitor, "created_by", "") or "") == INVALID_MANUAL_MONITOR_CREATED_BY
+
+
+async def reconcile_provider_channel_monitors(db: AsyncSession, *, commit: bool = True) -> dict[str, int]:
     channels = (await db.execute(select(ProviderChannel))).scalars().all()
     routes = (await db.execute(select(ModelChannelRoute))).scalars().all()
     monitors = (await db.execute(select(ProviderChannelMonitor))).scalars().all()
     specs = desired_route_monitor_specs(channels, routes)
-
-    manual_coverage: dict[tuple[str, str], set[str]] = {}
-    auto_by_key: dict[tuple[str, str], ProviderChannelMonitor] = {}
+    spec_by_channel = {spec.channel_id: spec for spec in specs}
+    active_targets = {
+        channel_id: {(spec.endpoint, spec.models[0]) for _sort_key, spec in candidates}
+        for channel_id, candidates in _route_monitor_candidates(channels, routes).items()
+    }
+    monitors_by_channel: dict[str, list[ProviderChannelMonitor]] = {}
     for monitor in monitors:
-        key = (str(monitor.channel_id), str(monitor.endpoint or "responses"))
-        if _is_auto_monitor(monitor):
-            auto_by_key.setdefault(key, monitor)
-        elif str(getattr(monitor, "status", "") or "").strip().lower() == "active":
-            manual_coverage.setdefault(key, set()).update(monitor_model_list(monitor))
+        monitors_by_channel.setdefault(str(monitor.channel_id), []).append(monitor)
 
     created = 0
     updated = 0
     disabled = 0
-    desired_keys: set[tuple[str, str]] = set()
-    for spec in specs:
-        key = (spec.channel_id, spec.endpoint)
-        desired_keys.add(key)
-        covered = manual_coverage.get(key, set())
-        uncovered = [model for model in spec.models if model not in covered]
-        monitor = auto_by_key.get(key)
-        if not uncovered:
-            if monitor is not None and str(monitor.status or "").lower() != "disabled":
-                monitor.status = "disabled"
-                disabled += 1
+    channel_ids = sorted(set(spec_by_channel) | set(monitors_by_channel))
+    for channel_id in channel_ids:
+        channel_monitors = monitors_by_channel.get(channel_id, [])
+        manual_monitors = sorted(
+            (monitor for monitor in channel_monitors if not _is_auto_monitor(monitor)),
+            key=lambda monitor: str(getattr(monitor, "id", "") or ""),
+        )
+        auto_monitors = sorted(
+            (monitor for monitor in channel_monitors if _is_auto_monitor(monitor)),
+            key=lambda monitor: str(getattr(monitor, "id", "") or ""),
+        )
+
+        valid_targets = active_targets.get(channel_id, set())
+        active_manual = [
+            monitor
+            for monitor in manual_monitors
+            if str(getattr(monitor, "status", "") or "").strip().lower() == "active"
+        ]
+        valid_active = [
+            monitor
+            for monitor in active_manual
+            if (
+                str(getattr(monitor, "endpoint", "") or "responses").strip(),
+                str(getattr(monitor, "primary_model", "") or "").strip(),
+            )
+            in valid_targets
+        ]
+        keep_manual = valid_active[0] if valid_active else None
+        current_invalid = active_manual[0] if active_manual and keep_manual is None else None
+        retained_invalid = any(_is_invalid_manual_override(monitor) for monitor in manual_monitors)
+        manual_controls_channel = keep_manual is not None or current_invalid is not None or retained_invalid
+
+        if manual_controls_channel:
+            for monitor in manual_monitors:
+                changed = False
+                if getattr(monitor, "extra_models", None) != serialize_monitor_models([]):
+                    monitor.extra_models = serialize_monitor_models([])
+                    changed = True
+                if monitor is keep_manual:
+                    desired_owner = MANUAL_MONITOR_CREATED_BY
+                elif keep_manual is not None and _is_invalid_manual_override(monitor):
+                    desired_owner = MANUAL_MONITOR_CREATED_BY
+                elif monitor is current_invalid:
+                    desired_owner = INVALID_MANUAL_MONITOR_CREATED_BY
+                elif _is_invalid_manual_override(monitor):
+                    desired_owner = INVALID_MANUAL_MONITOR_CREATED_BY
+                else:
+                    desired_owner = str(getattr(monitor, "created_by", "") or "")
+                if str(getattr(monitor, "created_by", "") or "") != desired_owner:
+                    monitor.created_by = desired_owner
+                    changed = True
+                if monitor is not keep_manual and str(getattr(monitor, "status", "") or "").lower() != "disabled":
+                    monitor.status = "disabled"
+                    disabled += 1
+                if changed:
+                    updated += 1
+            for monitor in auto_monitors:
+                extra_changed = getattr(monitor, "extra_models", None) != serialize_monitor_models([])
+                if extra_changed:
+                    monitor.extra_models = serialize_monitor_models([])
+                if str(getattr(monitor, "status", "") or "").lower() != "disabled":
+                    monitor.status = "disabled"
+                    disabled += 1
+                elif extra_changed:
+                    updated += 1
             continue
 
-        primary_model = uncovered[0]
-        extra_models = serialize_monitor_models(uncovered[1:])
+        spec = spec_by_channel.get(channel_id)
+        if spec is None:
+            for monitor in auto_monitors:
+                extra_changed = getattr(monitor, "extra_models", None) != serialize_monitor_models([])
+                if extra_changed:
+                    monitor.extra_models = serialize_monitor_models([])
+                if str(getattr(monitor, "status", "") or "").lower() != "disabled":
+                    monitor.status = "disabled"
+                    disabled += 1
+                elif extra_changed:
+                    updated += 1
+            continue
+
+        primary_model = spec.models[0]
+        matching_auto = [
+            monitor
+            for monitor in auto_monitors
+            if str(getattr(monitor, "endpoint", "") or "responses").strip() == spec.endpoint
+            and str(getattr(monitor, "primary_model", "") or "").strip() == primary_model
+        ]
+        monitor = matching_auto[0] if matching_auto else (auto_monitors[0] if auto_monitors else None)
         name = f"Auto · {spec.channel_name} · {spec.endpoint}"[:128]
         if monitor is None:
             monitor = ProviderChannelMonitor(
-                id=_auto_monitor_id(spec.channel_id, spec.endpoint),
+                id=_auto_monitor_id(spec.channel_id),
                 channel_id=spec.channel_id,
                 name=name,
                 endpoint=spec.endpoint,
                 primary_model=primary_model,
-                extra_models=extra_models,
+                extra_models=serialize_monitor_models([]),
                 status="active",
                 interval_seconds=int(settings.provider_channel_monitor_default_interval),
                 timeout_seconds=int(settings.provider_channel_monitor_default_timeout),
                 created_by=AUTO_MONITOR_CREATED_BY,
             )
             db.add(monitor)
-            auto_by_key[key] = monitor
             created += 1
             continue
 
@@ -230,7 +301,7 @@ async def reconcile_provider_channel_monitors(db: AsyncSession) -> dict[str, int
             "name": name,
             "endpoint": spec.endpoint,
             "primary_model": primary_model,
-            "extra_models": extra_models,
+            "extra_models": serialize_monitor_models([]),
             "status": "active",
             "interval_seconds": int(settings.provider_channel_monitor_default_interval),
             "timeout_seconds": int(settings.provider_channel_monitor_default_timeout),
@@ -242,15 +313,19 @@ async def reconcile_provider_channel_monitors(db: AsyncSession) -> dict[str, int
                 changed = True
         if changed:
             updated += 1
+        for redundant in auto_monitors:
+            if redundant is monitor:
+                continue
+            extra_changed = getattr(redundant, "extra_models", None) != serialize_monitor_models([])
+            if extra_changed:
+                redundant.extra_models = serialize_monitor_models([])
+            if str(getattr(redundant, "status", "") or "").strip().lower() != "disabled":
+                redundant.status = "disabled"
+                disabled += 1
+            elif extra_changed:
+                updated += 1
 
-    for key, monitor in auto_by_key.items():
-        if key in desired_keys:
-            continue
-        if str(getattr(monitor, "status", "") or "").strip().lower() != "disabled":
-            monitor.status = "disabled"
-            disabled += 1
-
-    if created or updated or disabled:
+    if commit and (created or updated or disabled):
         await db.commit()
     return {"created": created, "updated": updated, "disabled": disabled}
 
@@ -259,13 +334,71 @@ def _mask_message(message: str) -> str:
     return str(message or "").replace("\n", " ").strip()[:512]
 
 
-def _status_for_response(response: httpx.Response, payload: Any, latency_ms: int) -> tuple[str, str]:
+def _has_structured_model_output(payload: Any, *, endpoint: str, channel_type: str) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    if channel_type == "anthropic_compatible":
+        content = payload.get("content")
+        return isinstance(content, list) and any(
+            isinstance(item, dict)
+            and item.get("type") == "text"
+            and isinstance(item.get("text"), str)
+            and bool(item["text"].strip())
+            for item in content
+        )
+    if endpoint == "chat/completions":
+        choices = payload.get("choices")
+        if not isinstance(choices, list):
+            return False
+        for choice in choices:
+            message = choice.get("message") if isinstance(choice, dict) else None
+            if not isinstance(message, dict):
+                continue
+            content = message.get("content")
+            if isinstance(content, str) and content.strip():
+                return True
+            if isinstance(content, list) and any(
+                isinstance(item, dict)
+                and isinstance(item.get("text"), str)
+                and bool(item["text"].strip())
+                for item in content
+            ):
+                return True
+        return False
+    output = payload.get("output")
+    return isinstance(output, list) and any(
+        isinstance(item, dict)
+        and item.get("type") == "message"
+        and isinstance(item.get("content"), list)
+        and any(
+            isinstance(content, dict)
+            and content.get("type") in {"output_text", "text"}
+            and isinstance(content.get("text"), str)
+            and bool(content["text"].strip())
+            for content in item["content"]
+        )
+        for item in output
+    )
+
+
+def _status_for_response(
+    response: httpx.Response,
+    payload: Any,
+    latency_ms: int,
+    *,
+    endpoint: str,
+    channel_type: str,
+) -> tuple[str, str]:
     if response.status_code in {408, 409, 429} or response.status_code >= 500:
         return "failed", f"HTTP {response.status_code}"
-    if response.status_code >= 400:
+    if response.status_code < 200 or response.status_code >= 300:
         return "error", f"HTTP {response.status_code}"
-    if isinstance(payload, dict) and isinstance(payload.get("error"), dict):
-        return "failed", _mask_message(payload["error"].get("message") or f"HTTP {response.status_code}")
+    if isinstance(payload, dict) and payload.get("error"):
+        error = payload["error"]
+        message = error.get("message") if isinstance(error, dict) else str(error)
+        return "failed", _mask_message(message or f"HTTP {response.status_code}")
+    if not _has_structured_model_output(payload, endpoint=endpoint, channel_type=channel_type):
+        return "failed", "response missing structured model output"
     if latency_ms >= 30_000:
         return "degraded", f"slow response {latency_ms}ms"
     return "operational", "ok"
@@ -303,19 +436,6 @@ def _is_claude_code_only_channel(channel: ProviderChannel) -> bool:
     return "claude-code" in text
 
 
-async def _ping_models(client: httpx.AsyncClient, base_url: str, headers: dict[str, str]) -> tuple[int, str]:
-    started = time.monotonic()
-    try:
-        response = await client.get(f"{base_url}/models", headers=headers)
-        latency_ms = int((time.monotonic() - started) * 1000)
-        if response.status_code >= 400:
-            return latency_ms, f"models HTTP {response.status_code}"
-        return latency_ms, ""
-    except (httpx.TimeoutException, httpx.RequestError) as exc:
-        latency_ms = int((time.monotonic() - started) * 1000)
-        return latency_ms, _mask_message(str(exc) or type(exc).__name__)
-
-
 async def _probe_model(
     client: httpx.AsyncClient,
     *,
@@ -324,7 +444,6 @@ async def _probe_model(
     endpoint: str,
     model: str,
     ping_latency_ms: int,
-    ping_message: str,
     channel_type: str = "",
 ) -> ProbeResult:
     checked_at = _utcnow()
@@ -335,7 +454,7 @@ async def _probe_model(
             url = f"{url}?beta=true"
         payload = {
             "model": model,
-            "messages": [{"role": "user", "content": "ping"}],
+            "messages": [{"role": "user", "content": "Reply with OK."}],
             "max_tokens": 8,
             "stream": False,
         }
@@ -343,7 +462,7 @@ async def _probe_model(
         url = f"{base_url}/chat/completions"
         payload = {
             "model": model,
-            "messages": [{"role": "user", "content": "ping"}],
+            "messages": [{"role": "user", "content": "Reply with OK."}],
             "max_tokens": 8,
             "stream": False,
         }
@@ -351,8 +470,8 @@ async def _probe_model(
         url = f"{base_url}/responses"
         payload = {
             "model": model,
-            "input": "ping",
-            "max_output_tokens": 8,
+            "input": "Reply with OK.",
+            "max_output_tokens": 16,
             "store": False,
             "stream": False,
         }
@@ -365,10 +484,13 @@ async def _probe_model(
             data: Any = response.json()
         except ValueError:
             data = response.text
-        status, message = _status_for_response(response, data, latency_ms)
-        if ping_message and status == "operational":
-            status = "degraded"
-            message = ping_message
+        status, message = _status_for_response(
+            response,
+            data,
+            latency_ms,
+            endpoint=endpoint,
+            channel_type=channel_type,
+        )
         return ProbeResult(
             model=model,
             status=status,
@@ -416,8 +538,8 @@ async def run_provider_channel_monitor_once(
         await db.commit()
         return [result]
 
-    models = monitor_model_list(monitor)
-    if not models:
+    model = str(getattr(monitor, "primary_model", "") or "").strip()
+    if not model:
         result = ProbeResult("", "error", 0, 0, 0, "monitor has no model", now)
         await _record_monitor_results(db, monitor, [result])
         await db.commit()
@@ -440,10 +562,6 @@ async def run_provider_channel_monitor_once(
         client = httpx.AsyncClient(timeout=timeout, trust_env=False)
         close_client = True
     try:
-        if channel_type == "anthropic_compatible":
-            ping_latency_ms, ping_message = 0, ""
-        else:
-            ping_latency_ms, ping_message = await _ping_models(client, base_url, headers)
         results = [
             await _probe_model(
                 client,
@@ -452,10 +570,8 @@ async def run_provider_channel_monitor_once(
                 channel_type=channel_type,
                 endpoint=monitor.endpoint,
                 model=model,
-                ping_latency_ms=ping_latency_ms,
-                ping_message=ping_message,
+                ping_latency_ms=0,
             )
-            for model in models
         ]
     finally:
         if close_client:
@@ -569,7 +685,7 @@ async def claim_due_provider_channel_monitor_ids(db: AsyncSession, *, limit: int
         last_checked = row.last_checked_at
         interval = max(15, int(row.interval_seconds or settings.provider_channel_monitor_default_interval))
         if last_checked is None or last_checked <= now - timedelta(seconds=interval):
-            row.claimed_until = now + timedelta(seconds=_monitor_claim_lease_seconds(row))
+            row.claimed_until = now + timedelta(seconds=monitor_claim_lease_seconds(row))
             due.append(row.id)
     await db.commit()
     return due
@@ -600,7 +716,7 @@ async def provider_channel_monitor_loop(poll_interval_seconds: int) -> None:
                         monitor = await db.get(ProviderChannelMonitor, monitor_id)
                         if monitor is None:
                             continue
-                        hard_timeout = max(5, _monitor_claim_lease_seconds(monitor) - 5)
+                        hard_timeout = max(5, monitor_claim_lease_seconds(monitor) - 5)
                         await asyncio.wait_for(
                             run_provider_channel_monitor_once(db, monitor_id),
                             timeout=hard_timeout,

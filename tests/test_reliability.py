@@ -1,3 +1,4 @@
+import inspect
 import os
 import unittest
 from datetime import datetime, timedelta
@@ -10,12 +11,17 @@ os.environ.setdefault("COINCOIN_DATABASE_URL", "mysql://test@127.0.0.1:3306/test
 
 from app.main import app
 import app.admin as admin_module
+import app.main as main_module
 from app.config import settings
+from app.models import RequestLog
 from app.reliability import (
     assemble_reliability_overview,
+    build_reliability_overview,
     get_cached_reliability_overview,
     invalidate_reliability_cache,
 )
+from app.security import generate_id
+from app.usage_buffer import UsageBuffer
 
 
 class ReliabilityOverviewTests(unittest.IsolatedAsyncioTestCase):
@@ -127,11 +133,208 @@ class ReliabilityOverviewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(by_channel["ch_degraded"]["fallback_requests_5m"], 3)
 
         by_model = {item["public_model_id"]: item for item in payload["models"]}
-        self.assertEqual(by_model["gpt-5.6"]["health_status"], "pending")
-        self.assertEqual(by_model["gpt-5.5"]["health_status"], "failed")
+        self.assertEqual(by_model["gpt-5.6"]["health_status"], "operational")
+        self.assertEqual(by_model["gpt-5.5"]["health_status"], "degraded")
         self.assertEqual(by_model["gpt-5.5"]["fallback_rate_5m"], 0.3)
         self.assertEqual(payload["overall"]["health_status"], "failed")
         self.assertGreaterEqual(payload["overall"]["active_incidents"], 1)
+
+    def test_failed_representative_probe_affects_channel_not_public_model_route(self) -> None:
+        now = datetime(2026, 7, 15, 10, 0, 0)
+        channel = SimpleNamespace(
+            id="ch_probe",
+            name="Probe Channel",
+            provider_platform="sub2api",
+            channel_type="openai_compatible",
+            status="active",
+            priority=0,
+            weight=1,
+        )
+        route = SimpleNamespace(
+            id="route_probe",
+            public_model_id="gpt-public",
+            endpoint="responses",
+            channel_id=channel.id,
+            upstream_model="gpt-upstream",
+            priority_override=None,
+            weight_override=None,
+            status="active",
+        )
+        monitor = SimpleNamespace(
+            id="monitor_probe",
+            channel_id=channel.id,
+            endpoint="responses",
+            primary_model="gpt-upstream",
+            status="active",
+            created_by="route-reconciler",
+            last_status="failed",
+            last_message="HTTP 503",
+            last_checked_at=now,
+        )
+
+        payload = assemble_reliability_overview(
+            channels=[channel],
+            routes=[route],
+            runtime_states=[],
+            monitors=[monitor],
+            traffic_rows=[],
+            recent_failures=[],
+            now=now,
+        )
+
+        self.assertEqual(payload["channels"][0]["health_status"], "failed")
+        self.assertEqual(payload["models"][0]["health_status"], "operational")
+        self.assertEqual(payload["models"][0]["routes"][0]["health_status"], "operational")
+
+    def test_actual_runtime_cooldown_affects_public_model_route_health(self) -> None:
+        now = datetime(2026, 7, 15, 10, 0, 0)
+        channel = SimpleNamespace(
+            id="ch_cooling",
+            name="Cooling Channel",
+            provider_platform="sub2api",
+            channel_type="openai_compatible",
+            status="active",
+            priority=0,
+            weight=1,
+        )
+        route = SimpleNamespace(
+            id="route_cooling",
+            public_model_id="gpt-public",
+            endpoint="responses",
+            channel_id=channel.id,
+            upstream_model="gpt-upstream",
+            priority_override=None,
+            weight_override=None,
+            status="active",
+        )
+        runtime = SimpleNamespace(channel_id=channel.id, cooldown_until=now + timedelta(seconds=30))
+
+        payload = assemble_reliability_overview(
+            channels=[channel],
+            routes=[route],
+            runtime_states=[runtime],
+            monitors=[],
+            traffic_rows=[],
+            recent_failures=[],
+            now=now,
+        )
+
+        self.assertEqual(payload["models"][0]["health_status"], "cooling")
+        self.assertEqual(payload["models"][0]["routes"][0]["health_status"], "cooling")
+
+    def test_high_real_traffic_latency_degrades_route_and_model_without_probe_failure(self) -> None:
+        now = datetime(2026, 7, 15, 10, 0, 0)
+        channel = SimpleNamespace(id="ch_slow", name="Slow", provider_platform="sub2api", channel_type="openai_compatible", status="active", priority=0, weight=1)
+        route = SimpleNamespace(id="route_slow", public_model_id="gpt-slow", endpoint="responses", channel_id=channel.id, upstream_model="gpt-slow", priority_override=None, weight_override=None, status="active")
+        monitor = SimpleNamespace(id="monitor_slow", channel_id=channel.id, endpoint="responses", primary_model="gpt-slow", status="active", created_by="route-reconciler", last_status="operational", last_message="ok", last_checked_at=now)
+        traffic = SimpleNamespace(public_model_id="gpt-slow", channel_id=channel.id, requests=4, success_requests=4, failed_requests=0, fallback_requests=0, avg_latency_ms=30_000, max_latency_ms=34_000, last_seen_at=now)
+
+        payload = assemble_reliability_overview(
+            channels=[channel],
+            routes=[route],
+            runtime_states=[],
+            monitors=[monitor],
+            traffic_rows=[traffic],
+            recent_failures=[],
+            now=now,
+        )
+
+        self.assertEqual(payload["channels"][0]["monitor_status"], "operational")
+        self.assertEqual(payload["models"][0]["health_status"], "degraded")
+        self.assertEqual(payload["models"][0]["routes"][0]["health_status"], "degraded")
+
+    def test_real_traffic_latency_below_slow_threshold_remains_operational(self) -> None:
+        now = datetime(2026, 7, 15, 10, 0, 0)
+        channel = SimpleNamespace(id="ch_fast", name="Fast", provider_platform="sub2api", channel_type="openai_compatible", status="active", priority=0, weight=1)
+        route = SimpleNamespace(id="route_fast", public_model_id="gpt-fast", endpoint="responses", channel_id=channel.id, upstream_model="gpt-fast", priority_override=None, weight_override=None, status="active")
+        traffic = SimpleNamespace(public_model_id="gpt-fast", channel_id=channel.id, requests=4, success_requests=4, failed_requests=0, fallback_requests=0, avg_latency_ms=29_999, max_latency_ms=45_000, last_seen_at=now)
+
+        payload = assemble_reliability_overview(
+            channels=[channel],
+            routes=[route],
+            runtime_states=[],
+            monitors=[],
+            traffic_rows=[traffic],
+            recent_failures=[],
+            now=now,
+        )
+
+        self.assertEqual(payload["models"][0]["health_status"], "operational")
+        self.assertEqual(payload["models"][0]["routes"][0]["health_status"], "operational")
+
+    def test_overall_summary_is_channel_first(self) -> None:
+        now = datetime(2026, 7, 15, 10, 0, 0)
+        channels = [
+            SimpleNamespace(id="ch_ok", name="OK", provider_platform="sub2api", channel_type="openai_compatible", status="active", priority=0, weight=1),
+            SimpleNamespace(id="ch_bad", name="Bad", provider_platform="sub2api", channel_type="openai_compatible", status="active", priority=1, weight=1),
+        ]
+        routes = [
+            SimpleNamespace(id="route_ok", public_model_id="gpt-ok", endpoint="responses", channel_id="ch_ok", upstream_model="gpt-ok", priority_override=None, weight_override=None, status="active"),
+            SimpleNamespace(id="route_bad", public_model_id="gpt-bad", endpoint="responses", channel_id="ch_bad", upstream_model="gpt-bad", priority_override=None, weight_override=None, status="active"),
+        ]
+        monitors = [
+            SimpleNamespace(id="monitor_ok", channel_id="ch_ok", endpoint="responses", primary_model="gpt-ok", status="active", created_by="route-reconciler", last_status="operational", last_message="ok", last_checked_at=now),
+            SimpleNamespace(id="monitor_bad", channel_id="ch_bad", endpoint="responses", primary_model="gpt-bad", status="active", created_by="admin", last_status="failed", last_message="HTTP 503", last_checked_at=now),
+        ]
+
+        payload = assemble_reliability_overview(
+            channels=channels,
+            routes=routes,
+            runtime_states=[],
+            monitors=monitors,
+            traffic_rows=[],
+            recent_failures=[],
+            now=now,
+        )
+
+        self.assertEqual(payload["overall"]["health_status"], "failed")
+        self.assertEqual(payload["overall"]["channels_total"], 2)
+        self.assertEqual(payload["overall"]["channels_operational"], 1)
+        self.assertEqual(payload["overall"]["channels_affected"], 1)
+        self.assertTrue(all(item["health_status"] == "operational" for item in payload["models"]))
+
+    def test_overall_status_ignores_disabled_channels_when_active_channels_are_healthy(self) -> None:
+        now = datetime(2026, 7, 15, 10, 0, 0)
+        channels = [
+            SimpleNamespace(id="ch_active", name="Active", provider_platform="sub2api", channel_type="openai_compatible", status="active", priority=0, weight=1),
+            SimpleNamespace(id="ch_disabled", name="Disabled", provider_platform="sub2api", channel_type="openai_compatible", status="disabled", priority=1, weight=1),
+        ]
+        route = SimpleNamespace(id="route_active", public_model_id="gpt-active", endpoint="responses", channel_id="ch_active", upstream_model="gpt-active", priority_override=None, weight_override=None, status="active")
+        monitor = SimpleNamespace(id="monitor_active", channel_id="ch_active", endpoint="responses", primary_model="gpt-active", status="active", created_by="route-reconciler", last_status="operational", last_message="ok", last_checked_at=now)
+
+        payload = assemble_reliability_overview(
+            channels=channels,
+            routes=[route],
+            runtime_states=[],
+            monitors=[monitor],
+            traffic_rows=[],
+            recent_failures=[],
+            now=now,
+        )
+
+        self.assertEqual(payload["overall"]["health_status"], "operational")
+        self.assertEqual(payload["overall"]["channels_total"], 2)
+
+    def test_channel_row_exposes_representative_monitor_target(self) -> None:
+        now = datetime(2026, 7, 15, 10, 0, 0)
+        channel = SimpleNamespace(id="ch_target", name="Target", provider_platform="sub2api", channel_type="openai_compatible", status="active", priority=0, weight=1)
+        route = SimpleNamespace(id="route_target", public_model_id="gpt-public", endpoint="responses", channel_id=channel.id, upstream_model="gpt-upstream", priority_override=None, weight_override=None, status="active")
+        monitor = SimpleNamespace(id="monitor_target", channel_id=channel.id, endpoint="responses", primary_model="gpt-upstream", status="active", created_by="route-reconciler", last_status="operational", last_message="ok", last_checked_at=now)
+
+        payload = assemble_reliability_overview(
+            channels=[channel],
+            routes=[route],
+            runtime_states=[],
+            monitors=[monitor],
+            traffic_rows=[],
+            recent_failures=[],
+            now=now,
+        )
+
+        row = payload["channels"][0]
+        self.assertEqual(row["monitor_model"], "gpt-upstream")
+        self.assertEqual(row["monitor_endpoint"], "responses")
+        self.assertEqual(row["monitor_mode"], "auto")
 
     async def test_cached_overview_builds_once_inside_ttl(self) -> None:
         expected = {"generated_at": "2026-07-14T10:00:00", "overall": {"health_status": "operational"}}
@@ -146,7 +349,8 @@ class ReliabilityOverviewTests(unittest.IsolatedAsyncioTestCase):
         builder.assert_awaited_once()
 
     async def test_manual_monitor_run_invalidates_reliability_cache(self) -> None:
-        db = SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(id="monitor-1")))
+        db = SimpleNamespace()
+        monitor = SimpleNamespace(id="monitor-1", timeout_seconds=30)
         result = SimpleNamespace(
             model="gpt-5.5",
             status="operational",
@@ -158,12 +362,14 @@ class ReliabilityOverviewTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with (
+            patch.object(admin_module, "claim_provider_channel_monitor_for_run", AsyncMock(return_value=monitor)) as claim,
             patch.object(admin_module, "run_provider_channel_monitor_once", AsyncMock(return_value=[result])),
             patch.object(admin_module, "invalidate_reliability_cache") as invalidate,
         ):
             response = await admin_module.run_provider_channel_monitor_now("monitor-1", db)
 
         self.assertEqual(response.status_code, 200)
+        claim.assert_awaited_once_with(db, "monitor-1")
         invalidate.assert_called_once_with()
 
     def test_assemble_overview_aggregates_same_model_across_channels(self) -> None:
@@ -198,6 +404,372 @@ class ReliabilityOverviewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(model["fallback_rate_5m"], 0.2)
         self.assertEqual(model["avg_latency_ms_5m"], 1400)
         self.assertEqual(model["max_latency_ms_5m"], 4000)
+
+    def test_fallback_degrades_source_channel_and_route_not_successful_destination(self) -> None:
+        now = datetime(2026, 7, 15, 10, 0, 0)
+        channels = [
+            SimpleNamespace(id="ch_primary", name="Primary", provider_platform="sub2api", channel_type="openai_compatible", status="active", priority=0, weight=1),
+            SimpleNamespace(id="ch_backup", name="Backup", provider_platform="sub2api", channel_type="openai_compatible", status="active", priority=1, weight=1),
+        ]
+        routes = [
+            SimpleNamespace(id="route_primary", public_model_id="gpt-fallback", endpoint="responses", channel_id="ch_primary", upstream_model="gpt-fallback", priority_override=None, weight_override=None, status="active"),
+            SimpleNamespace(id="route_backup", public_model_id="gpt-fallback", endpoint="responses", channel_id="ch_backup", upstream_model="gpt-fallback", priority_override=None, weight_override=None, status="active"),
+        ]
+        traffic = SimpleNamespace(
+            public_model_id="gpt-fallback",
+            channel_id="ch_backup",
+            endpoint="/v1/responses",
+            fallback_from_channel_id=" ch_primary, ch_missing, ch_primary ",
+            requests=1,
+            success_requests=1,
+            failed_requests=0,
+            fallback_requests=1,
+            avg_latency_ms=900,
+            max_latency_ms=900,
+            last_seen_at=now,
+        )
+
+        payload = assemble_reliability_overview(
+            channels=channels,
+            routes=routes,
+            runtime_states=[],
+            monitors=[],
+            traffic_rows=[traffic],
+            recent_failures=[],
+            now=now,
+        )
+
+        by_channel = {item["id"]: item for item in payload["channels"]}
+        self.assertEqual(by_channel["ch_primary"]["health_status"], "degraded")
+        self.assertEqual(by_channel["ch_primary"]["fallback_requests_5m"], 1)
+        self.assertEqual(by_channel["ch_backup"]["health_status"], "operational")
+        self.assertEqual(by_channel["ch_backup"]["fallback_requests_5m"], 0)
+
+        model = payload["models"][0]
+        self.assertEqual(model["fallback_requests_5m"], 1)
+        self.assertEqual(model["fallback_rate_5m"], 1.0)
+        routes_by_channel = {item["channel_id"]: item for item in model["routes"]}
+        self.assertEqual(routes_by_channel["ch_primary"]["health_status"], "degraded")
+        self.assertEqual(routes_by_channel["ch_backup"]["health_status"], "operational")
+
+    async def test_two_generated_source_channel_ids_survive_buffer_and_aggregation(self) -> None:
+        now = datetime(2026, 7, 15, 10, 0, 0)
+        source_channel_ids = [generate_id("ch_"), generate_id("ch_")]
+        backup_channel_id = generate_id("ch_")
+        fallback_chain = ",".join(source_channel_ids)
+        buffer = UsageBuffer()
+        await buffer.add(
+            "u_fallback_chain",
+            requests=1,
+            endpoint="responses",
+            model="gpt-chain",
+            customer_model_alias="gpt-chain",
+            resolved_public_model="gpt-chain",
+            channel_id=backup_channel_id,
+            fallback_from_channel_id=fallback_chain,
+            route_attempt=2,
+            duration_ms=900,
+            status_code=200,
+        )
+        _daily, _usage_by_user, request_logs = await buffer.snapshot_and_reset()
+
+        self.assertEqual(request_logs[0]["fallback_from_channel_id"], fallback_chain)
+        channels = [
+            SimpleNamespace(id=channel_id, name=channel_id, provider_platform="sub2api", channel_type="openai_compatible", status="active", priority=index, weight=1)
+            for index, channel_id in enumerate([*source_channel_ids, backup_channel_id])
+        ]
+        routes = [
+            SimpleNamespace(id=f"route_{index}", public_model_id="gpt-chain", endpoint="responses", channel_id=channel.id, upstream_model="gpt-chain", priority_override=None, weight_override=None, status="active")
+            for index, channel in enumerate(channels)
+        ]
+        traffic = SimpleNamespace(
+            public_model_id="gpt-chain",
+            channel_id=backup_channel_id,
+            endpoint=request_logs[0]["endpoint"],
+            fallback_from_channel_id=request_logs[0]["fallback_from_channel_id"],
+            requests=1,
+            success_requests=1,
+            failed_requests=0,
+            fallback_requests=1,
+            avg_latency_ms=900,
+            max_latency_ms=900,
+            last_seen_at=now,
+        )
+
+        payload = assemble_reliability_overview(
+            channels=channels,
+            routes=routes,
+            runtime_states=[],
+            monitors=[],
+            traffic_rows=[traffic],
+            recent_failures=[],
+            now=now,
+        )
+
+        by_channel = {item["id"]: item for item in payload["channels"]}
+        for source_channel_id in source_channel_ids:
+            self.assertEqual(by_channel[source_channel_id]["fallback_requests_5m"], 1)
+            self.assertEqual(by_channel[source_channel_id]["health_status"], "degraded")
+
+    async def test_fallback_source_persistence_contract_is_widened_to_512(self) -> None:
+        self.assertEqual(RequestLog.__table__.c.fallback_from_channel_id.type.length, 512)
+
+        class _WidthResult:
+            def __init__(self, value) -> None:
+                self.value = value
+
+            def scalar_one_or_none(self):
+                return self.value
+
+        class _MigrationConn:
+            def __init__(self) -> None:
+                self.statements: list[str] = []
+
+            async def execute(self, statement, parameters=None):
+                sql = str(statement)
+                self.statements.append(sql)
+                if "information_schema.COLUMNS" in sql:
+                    return _WidthResult(512)
+                return _WidthResult(None)
+
+        conn = _MigrationConn()
+        await main_module._run_migrations(conn)
+
+        self.assertIn(
+            "ALTER TABLE coincoin_request_logs ADD COLUMN fallback_from_channel_id VARCHAR(512) DEFAULT ''",
+            conn.statements,
+        )
+        self.assertTrue(any("information_schema.COLUMNS" in sql for sql in conn.statements))
+        self.assertNotIn(
+            "ALTER TABLE coincoin_request_logs MODIFY COLUMN fallback_from_channel_id VARCHAR(512) DEFAULT ''",
+            conn.statements,
+        )
+
+    def test_source_fallback_rate_uses_completed_plus_fallback_attempts_at_threshold(self) -> None:
+        now = datetime(2026, 7, 15, 10, 0, 0)
+        channels = [
+            SimpleNamespace(id="ch_primary", name="Primary", provider_platform="sub2api", channel_type="openai_compatible", status="active", priority=0, weight=1),
+            SimpleNamespace(id="ch_backup", name="Backup", provider_platform="sub2api", channel_type="openai_compatible", status="active", priority=1, weight=1),
+        ]
+        routes = [
+            SimpleNamespace(id="route_primary", public_model_id="gpt-threshold", endpoint="responses", channel_id="ch_primary", upstream_model="gpt-threshold", priority_override=None, weight_override=None, status="active"),
+            SimpleNamespace(id="route_backup", public_model_id="gpt-threshold", endpoint="responses", channel_id="ch_backup", upstream_model="gpt-threshold", priority_override=None, weight_override=None, status="active"),
+        ]
+        traffic_rows = [
+            SimpleNamespace(public_model_id="gpt-threshold", channel_id="ch_primary", endpoint="responses", fallback_from_channel_id="", requests=19, success_requests=19, failed_requests=0, fallback_requests=0, avg_latency_ms=700, max_latency_ms=800, last_seen_at=now),
+            SimpleNamespace(public_model_id="gpt-threshold", channel_id="ch_backup", endpoint="responses", fallback_from_channel_id="ch_primary", requests=1, success_requests=1, failed_requests=0, fallback_requests=1, avg_latency_ms=900, max_latency_ms=900, last_seen_at=now),
+        ]
+
+        payload = assemble_reliability_overview(
+            channels=channels,
+            routes=routes,
+            runtime_states=[],
+            monitors=[],
+            traffic_rows=traffic_rows,
+            recent_failures=[],
+            now=now,
+        )
+
+        primary_channel = next(item for item in payload["channels"] if item["id"] == "ch_primary")
+        primary_route = next(item for item in payload["models"][0]["routes"] if item["channel_id"] == "ch_primary")
+        self.assertEqual(primary_channel["fallback_rate_5m"], 0.05)
+        self.assertEqual(primary_channel["health_status"], "degraded")
+        self.assertEqual(primary_route["fallback_rate_5m"], 0.05)
+        self.assertEqual(primary_route["health_status"], "degraded")
+
+    def test_source_fallback_rate_below_threshold_remains_operational(self) -> None:
+        now = datetime(2026, 7, 15, 10, 0, 0)
+        channels = [
+            SimpleNamespace(id="ch_primary", name="Primary", provider_platform="sub2api", channel_type="openai_compatible", status="active", priority=0, weight=1),
+            SimpleNamespace(id="ch_backup", name="Backup", provider_platform="sub2api", channel_type="openai_compatible", status="active", priority=1, weight=1),
+        ]
+        routes = [
+            SimpleNamespace(id="route_primary", public_model_id="gpt-below", endpoint="responses", channel_id="ch_primary", upstream_model="gpt-below", priority_override=None, weight_override=None, status="active"),
+            SimpleNamespace(id="route_backup", public_model_id="gpt-below", endpoint="responses", channel_id="ch_backup", upstream_model="gpt-below", priority_override=None, weight_override=None, status="active"),
+        ]
+        traffic_rows = [
+            SimpleNamespace(public_model_id="gpt-below", channel_id="ch_primary", endpoint="responses", fallback_from_channel_id="", requests=20, success_requests=20, failed_requests=0, fallback_requests=0, avg_latency_ms=700, max_latency_ms=800, last_seen_at=now),
+            SimpleNamespace(public_model_id="gpt-below", channel_id="ch_backup", endpoint="responses", fallback_from_channel_id="ch_primary", requests=1, success_requests=1, failed_requests=0, fallback_requests=1, avg_latency_ms=900, max_latency_ms=900, last_seen_at=now),
+        ]
+
+        payload = assemble_reliability_overview(
+            channels=channels,
+            routes=routes,
+            runtime_states=[],
+            monitors=[],
+            traffic_rows=traffic_rows,
+            recent_failures=[],
+            now=now,
+        )
+
+        primary_channel = next(item for item in payload["channels"] if item["id"] == "ch_primary")
+        primary_route = next(item for item in payload["models"][0]["routes"] if item["channel_id"] == "ch_primary")
+        self.assertEqual(primary_channel["fallback_rate_5m"], 0.0476)
+        self.assertEqual(primary_channel["health_status"], "operational")
+        self.assertEqual(primary_route["fallback_rate_5m"], 0.0476)
+        self.assertEqual(primary_route["health_status"], "operational")
+
+    def test_route_traffic_is_isolated_by_normalized_endpoint(self) -> None:
+        now = datetime(2026, 7, 15, 10, 0, 0)
+        channel = SimpleNamespace(id="ch_endpoints", name="Endpoints", provider_platform="sub2api", channel_type="openai_compatible", status="active", priority=0, weight=1)
+        routes = [
+            SimpleNamespace(id="route_responses", public_model_id="gpt-endpoints", endpoint="responses", channel_id=channel.id, upstream_model="gpt-endpoints", priority_override=None, weight_override=None, status="active"),
+            SimpleNamespace(id="route_chat", public_model_id="gpt-endpoints", endpoint="chat/completions", channel_id=channel.id, upstream_model="gpt-endpoints", priority_override=None, weight_override=None, status="active"),
+        ]
+        traffic_rows = [
+            SimpleNamespace(public_model_id="gpt-endpoints", channel_id=channel.id, endpoint="/v1/responses", fallback_from_channel_id="", requests=1, success_requests=0, failed_requests=1, fallback_requests=0, avg_latency_ms=31_000, max_latency_ms=31_000, last_seen_at=now),
+            SimpleNamespace(public_model_id="gpt-endpoints", channel_id=channel.id, endpoint=" CHAT/COMPLETIONS ", fallback_from_channel_id="", requests=3, success_requests=3, failed_requests=0, fallback_requests=0, avg_latency_ms=800, max_latency_ms=900, last_seen_at=now),
+        ]
+
+        payload = assemble_reliability_overview(
+            channels=[channel],
+            routes=routes,
+            runtime_states=[],
+            monitors=[],
+            traffic_rows=traffic_rows,
+            recent_failures=[],
+            now=now,
+        )
+
+        routes_by_endpoint = {item["endpoint"]: item for item in payload["models"][0]["routes"]}
+        self.assertEqual(routes_by_endpoint["responses"]["health_status"], "degraded")
+        self.assertEqual(routes_by_endpoint["responses"]["requests_5m"], 1)
+        self.assertEqual(routes_by_endpoint["chat/completions"]["health_status"], "operational")
+        self.assertEqual(routes_by_endpoint["chat/completions"]["requests_5m"], 3)
+
+    def test_streaming_endpoint_labels_normalize_without_cross_route_contamination(self) -> None:
+        now = datetime(2026, 7, 15, 10, 0, 0)
+        channel = SimpleNamespace(id="ch_stream", name="Stream", provider_platform="sub2api", channel_type="openai_compatible", status="active", priority=0, weight=1)
+        routes = [
+            SimpleNamespace(id="route_responses_stream", public_model_id="gpt-stream", endpoint="responses", channel_id=channel.id, upstream_model="gpt-stream", priority_override=None, weight_override=None, status="active"),
+            SimpleNamespace(id="route_chat_stream", public_model_id="gpt-stream", endpoint="chat/completions", channel_id=channel.id, upstream_model="gpt-stream", priority_override=None, weight_override=None, status="active"),
+        ]
+        traffic_rows = [
+            SimpleNamespace(public_model_id="gpt-stream", channel_id=channel.id, endpoint="responses:stream", fallback_from_channel_id="", requests=2, success_requests=1, failed_requests=1, fallback_requests=0, avg_latency_ms=1200, max_latency_ms=1500, last_seen_at=now),
+            SimpleNamespace(public_model_id="gpt-stream", channel_id=channel.id, endpoint="chat/completions:stream", fallback_from_channel_id="", requests=4, success_requests=4, failed_requests=0, fallback_requests=0, avg_latency_ms=800, max_latency_ms=900, last_seen_at=now),
+        ]
+
+        payload = assemble_reliability_overview(
+            channels=[channel],
+            routes=routes,
+            runtime_states=[],
+            monitors=[],
+            traffic_rows=traffic_rows,
+            recent_failures=[],
+            now=now,
+        )
+
+        routes_by_endpoint = {item["endpoint"]: item for item in payload["models"][0]["routes"]}
+        self.assertEqual(routes_by_endpoint["responses"]["requests_5m"], 2)
+        self.assertEqual(routes_by_endpoint["responses"]["health_status"], "degraded")
+        self.assertEqual(routes_by_endpoint["chat/completions"]["requests_5m"], 4)
+        self.assertEqual(routes_by_endpoint["chat/completions"]["health_status"], "operational")
+
+    def test_image_generation_usage_label_maps_to_image_route_endpoint(self) -> None:
+        now = datetime(2026, 7, 15, 10, 0, 0)
+        channel = SimpleNamespace(id="ch_image", name="Image", provider_platform="sub2api", channel_type="openai_compatible", status="active", priority=0, weight=1)
+        route = SimpleNamespace(id="route_image", public_model_id="gpt-image", endpoint="images/generations", channel_id=channel.id, upstream_model="gpt-image", priority_override=None, weight_override=None, status="active")
+        traffic = SimpleNamespace(public_model_id="gpt-image", channel_id=channel.id, endpoint="responses:image_generation", fallback_from_channel_id="", requests=1, success_requests=0, failed_requests=1, fallback_requests=0, avg_latency_ms=1200, max_latency_ms=1200, last_seen_at=now)
+
+        payload = assemble_reliability_overview(
+            channels=[channel],
+            routes=[route],
+            runtime_states=[],
+            monitors=[],
+            traffic_rows=[traffic],
+            recent_failures=[],
+            now=now,
+        )
+
+        image_route = payload["models"][0]["routes"][0]
+        self.assertEqual(image_route["requests_5m"], 1)
+        self.assertEqual(image_route["failed_requests_5m"], 1)
+        self.assertEqual(image_route["health_status"], "degraded")
+
+    def test_anthropic_messages_failure_maps_to_chat_completions_route(self) -> None:
+        now = datetime(2026, 7, 15, 10, 0, 0)
+        channel = SimpleNamespace(id="ch_anthropic", name="Anthropic", provider_platform="anthropic", channel_type="anthropic_compatible", status="active", priority=0, weight=1)
+        route = SimpleNamespace(id="route_anthropic", public_model_id="claude-test", endpoint="chat/completions", channel_id=channel.id, upstream_model="claude-test", priority_override=None, weight_override=None, status="active")
+        traffic = SimpleNamespace(public_model_id="claude-test", channel_id=channel.id, endpoint="messages", fallback_from_channel_id="", requests=1, success_requests=0, failed_requests=1, fallback_requests=0, avg_latency_ms=800, max_latency_ms=800, last_seen_at=now)
+
+        payload = assemble_reliability_overview(
+            channels=[channel],
+            routes=[route],
+            runtime_states=[],
+            monitors=[],
+            traffic_rows=[traffic],
+            recent_failures=[],
+            now=now,
+        )
+
+        route_payload = payload["models"][0]["routes"][0]
+        self.assertEqual(route_payload["requests_5m"], 1)
+        self.assertEqual(route_payload["failed_requests_5m"], 1)
+        self.assertEqual(route_payload["health_status"], "degraded")
+
+    def test_anthropic_messages_fallback_is_attributed_to_source_chat_route(self) -> None:
+        now = datetime(2026, 7, 15, 10, 0, 0)
+        channels = [
+            SimpleNamespace(id="ch_anthropic_primary", name="Anthropic Primary", provider_platform="anthropic", channel_type="anthropic_compatible", status="active", priority=0, weight=1),
+            SimpleNamespace(id="ch_anthropic_backup", name="Anthropic Backup", provider_platform="anthropic", channel_type="anthropic_compatible", status="active", priority=1, weight=1),
+        ]
+        routes = [
+            SimpleNamespace(id="route_anthropic_primary", public_model_id="claude-fallback", endpoint="chat/completions", channel_id=channels[0].id, upstream_model="claude-fallback", priority_override=None, weight_override=None, status="active"),
+            SimpleNamespace(id="route_anthropic_backup", public_model_id="claude-fallback", endpoint="chat/completions", channel_id=channels[1].id, upstream_model="claude-fallback", priority_override=None, weight_override=None, status="active"),
+        ]
+        traffic = SimpleNamespace(public_model_id="claude-fallback", channel_id=channels[1].id, endpoint="messages", fallback_from_channel_id=channels[0].id, requests=1, success_requests=1, failed_requests=0, fallback_requests=1, avg_latency_ms=900, max_latency_ms=900, last_seen_at=now)
+
+        payload = assemble_reliability_overview(
+            channels=channels,
+            routes=routes,
+            runtime_states=[],
+            monitors=[],
+            traffic_rows=[traffic],
+            recent_failures=[],
+            now=now,
+        )
+
+        routes_by_channel = {
+            item["channel_id"]: item for item in payload["models"][0]["routes"]
+        }
+        primary = routes_by_channel[channels[0].id]
+        backup = routes_by_channel[channels[1].id]
+        self.assertEqual(primary["fallback_requests_5m"], 1)
+        self.assertEqual(primary["health_status"], "degraded")
+        self.assertEqual(backup["requests_5m"], 1)
+        self.assertEqual(backup["fallback_requests_5m"], 0)
+
+    def test_wildcard_route_aggregates_traffic_across_endpoints(self) -> None:
+        now = datetime(2026, 7, 15, 10, 0, 0)
+        channel = SimpleNamespace(id="ch_wildcard", name="Wildcard", provider_platform="sub2api", channel_type="openai_compatible", status="active", priority=0, weight=1)
+        route = SimpleNamespace(id="route_wildcard", public_model_id="gpt-wildcard", endpoint="", channel_id=channel.id, upstream_model="gpt-wildcard", priority_override=None, weight_override=None, status="active")
+        traffic_rows = [
+            SimpleNamespace(public_model_id="gpt-wildcard", channel_id=channel.id, endpoint="responses", fallback_from_channel_id="", requests=2, success_requests=2, failed_requests=0, fallback_requests=0, avg_latency_ms=700, max_latency_ms=800, last_seen_at=now),
+            SimpleNamespace(public_model_id="gpt-wildcard", channel_id=channel.id, endpoint="chat/completions", fallback_from_channel_id="", requests=1, success_requests=0, failed_requests=1, fallback_requests=0, avg_latency_ms=1200, max_latency_ms=1200, last_seen_at=now),
+        ]
+
+        payload = assemble_reliability_overview(
+            channels=[channel],
+            routes=[route],
+            runtime_states=[],
+            monitors=[],
+            traffic_rows=traffic_rows,
+            recent_failures=[],
+            now=now,
+        )
+
+        wildcard = payload["models"][0]["routes"][0]
+        self.assertEqual(wildcard["requests_5m"], 3)
+        self.assertEqual(wildcard["failed_requests_5m"], 1)
+        self.assertEqual(wildcard["health_status"], "degraded")
+
+    def test_reliability_query_includes_endpoint_and_fallback_source_dimensions(self) -> None:
+        source = inspect.getsource(build_reliability_overview)
+
+        self.assertIn('RequestLog.endpoint.label("endpoint")', source)
+        self.assertIn('RequestLog.fallback_from_channel_id.label("fallback_from_channel_id")', source)
+        self.assertIn("RequestLog.endpoint,", source)
+        self.assertIn("RequestLog.fallback_from_channel_id,", source)
 
     def test_channel_action_uses_worst_active_monitor(self) -> None:
         now = datetime(2026, 7, 14, 10, 0, 0)
