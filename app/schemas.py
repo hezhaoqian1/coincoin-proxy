@@ -303,6 +303,14 @@ class AdminProviderChannelMonitorUpdate(BaseModel):
     timeout_seconds: Optional[int] = Field(default=None, ge=5, le=180)
 
 
+class AdminProviderChannelMonitorSelectionUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: str = Field(..., pattern=r"^(auto|manual)$")
+    model: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    endpoint: Optional[str] = Field(default=None, pattern=r"^(responses|chat/completions)$")
+
+
 class AdminClaudeCompatSettingsUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

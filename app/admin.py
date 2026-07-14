@@ -66,12 +66,15 @@ from .schemas import (
     AdminUserPasswordResetResponse, AdminUserCreateRequest, AdminUserCreateResponse, AdminUserUpdate,
     AdminClaudeCompatSettingsUpdate, AdminModelAliasUpdate, AdminModelChannelRouteCreate,
     AdminModelChannelRouteUpdate, AdminModelPricingUpdate, AdminProviderChannelCreate,
-    AdminProviderChannelMonitorCreate, AdminProviderChannelMonitorUpdate,
+    AdminProviderChannelMonitorCreate, AdminProviderChannelMonitorSelectionUpdate,
+    AdminProviderChannelMonitorUpdate,
     AdminProviderChannelUpdate, AdminUserModelPricingOverrideUpsert,
     AdminUserModelRoutingOverrideUpsert, AnnouncementCreate, AnnouncementUpdate,
     RedemptionCodeUpdateRequest, RedemptionGenerateRequest, RedemptionGenerateResponse,
 )
 from .channel_monitoring import (
+    AUTO_MONITOR_CREATED_BY,
+    desired_route_monitor_specs,
     monitor_availability_rows,
     monitor_model_list,
     parse_monitor_models,
@@ -550,6 +553,7 @@ def _provider_channel_payload(
     route_count: int = 0,
     runtime_state: Optional[ProviderChannelRuntimeState] = None,
     billing_stats: Optional[dict[str, int]] = None,
+    monitor_selection: Optional[dict[str, Any]] = None,
 ) -> dict:
     billing_stats = billing_stats or {}
     return {
@@ -578,9 +582,94 @@ def _provider_channel_payload(
             "today_cents": int(billing_stats.get("today_cents", 0) or 0),
             "total_cents": int(billing_stats.get("total_cents", 0) or 0),
         },
+        "monitor_selection": monitor_selection or {
+            "mode": "auto",
+            "selected_model": None,
+            "selected_endpoint": None,
+            "state": "unconfigured",
+            "is_valid": False,
+            "recommended": None,
+            "choices": [],
+        },
         "updated_by": row.updated_by,
         "created_at": row.created_at,
         "updated_at": row.updated_at,
+    }
+
+
+def _provider_channel_route_choices(
+    channel: ProviderChannel,
+    routes: list[ModelChannelRoute],
+) -> list[dict[str, str]]:
+    candidates: list[tuple[tuple[int, int, str], dict[str, str]]] = []
+    for route in routes:
+        if str(getattr(route, "channel_id", "") or "") != str(channel.id):
+            continue
+        if str(getattr(route, "status", "") or "").strip().lower() != "active":
+            continue
+        specs = desired_route_monitor_specs([channel], [route])
+        if not specs:
+            continue
+        spec = specs[0]
+        priority = getattr(route, "priority_override", None)
+        weight = getattr(route, "weight_override", None)
+        sort_key = (
+            int(priority if priority is not None else getattr(channel, "priority", 0) or 0),
+            -max(1, int(weight if weight is not None else getattr(channel, "weight", 1) or 1)),
+            str(getattr(route, "id", "") or ""),
+        )
+        candidates.append((sort_key, {"model": spec.models[0], "endpoint": spec.endpoint}))
+
+    choices: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for _sort_key, choice in sorted(candidates, key=lambda item: item[0]):
+        target = (choice["endpoint"], choice["model"])
+        if target not in seen:
+            seen.add(target)
+            choices.append(choice)
+    return choices
+
+
+def _provider_channel_monitor_selection_payload(
+    channel: ProviderChannel,
+    routes: list[ModelChannelRoute],
+    monitors: list[ProviderChannelMonitor],
+) -> dict[str, Any]:
+    choices = _provider_channel_route_choices(channel, routes)
+    recommended = choices[0] if choices else None
+    channel_monitors = sorted(
+        (monitor for monitor in monitors if str(getattr(monitor, "channel_id", "") or "") == str(channel.id)),
+        key=lambda monitor: str(getattr(monitor, "id", "") or ""),
+    )
+    manual = [monitor for monitor in channel_monitors if getattr(monitor, "created_by", "") != AUTO_MONITOR_CREATED_BY]
+    active_manual = [
+        monitor for monitor in manual if str(getattr(monitor, "status", "") or "").lower() == "active"
+    ]
+    active_auto = [
+        monitor
+        for monitor in channel_monitors
+        if getattr(monitor, "created_by", "") == AUTO_MONITOR_CREATED_BY
+        and str(getattr(monitor, "status", "") or "").lower() == "active"
+    ]
+    selected = (active_manual or manual or active_auto or channel_monitors or [None])[0]
+    mode = "manual" if selected is not None and getattr(selected, "created_by", "") != AUTO_MONITOR_CREATED_BY else "auto"
+    selected_model = str(getattr(selected, "primary_model", "") or "").strip() or None
+    selected_endpoint = str(getattr(selected, "endpoint", "") or "").strip() or None
+    valid_targets = {(item["endpoint"], item["model"]) for item in choices}
+    is_valid = bool(
+        selected is not None
+        and str(getattr(selected, "status", "") or "").lower() == "active"
+        and (selected_endpoint, selected_model) in valid_targets
+    )
+    state = "valid" if is_valid else ("unconfigured" if not choices and selected is None else "invalid")
+    return {
+        "mode": mode,
+        "selected_model": selected_model,
+        "selected_endpoint": selected_endpoint,
+        "state": state,
+        "is_valid": is_valid,
+        "recommended": recommended,
+        "choices": choices,
     }
 
 
@@ -1798,6 +1887,8 @@ async def list_provider_channels(db: AsyncSession = Depends(get_db)):
     billing_by_channel = _provider_channel_billing_stats_by_channel(billing_rows)
     runtime_rows = (await db.execute(select(ProviderChannelRuntimeState))).scalars().all()
     runtime_by_channel = {row.channel_id: row for row in runtime_rows}
+    route_rows = (await db.execute(select(ModelChannelRoute))).scalars().all()
+    monitor_rows = (await db.execute(select(ProviderChannelMonitor))).scalars().all()
     return {
         "channels": [
             _provider_channel_payload(
@@ -1805,6 +1896,7 @@ async def list_provider_channels(db: AsyncSession = Depends(get_db)):
                 route_count=route_counts.get(row.id, 0),
                 runtime_state=runtime_by_channel.get(row.id),
                 billing_stats=billing_by_channel.get(row.id),
+                monitor_selection=_provider_channel_monitor_selection_payload(row, route_rows, monitor_rows),
             )
             for row in channel_rows
         ],
@@ -2245,7 +2337,81 @@ async def get_provider_channel(channel_id: str, db: AsyncSession = Depends(get_d
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="provider channel not found")
     route_count = await db.scalar(select(func.count(ModelChannelRoute.id)).where(ModelChannelRoute.channel_id == channel_id)) or 0
     runtime_state = await db.get(ProviderChannelRuntimeState, channel_id)
-    return _provider_channel_payload(channel, route_count=int(route_count or 0), runtime_state=runtime_state)
+    routes = (
+        await db.execute(select(ModelChannelRoute).where(ModelChannelRoute.channel_id == channel_id))
+    ).scalars().all()
+    monitors = (
+        await db.execute(select(ProviderChannelMonitor).where(ProviderChannelMonitor.channel_id == channel_id))
+    ).scalars().all()
+    return _provider_channel_payload(
+        channel,
+        route_count=int(route_count or 0),
+        runtime_state=runtime_state,
+        monitor_selection=_provider_channel_monitor_selection_payload(channel, routes, monitors),
+    )
+
+
+@router.put("/provider-channels/{channel_id}/monitor-selection", dependencies=[Depends(admin_guard)])
+async def update_provider_channel_monitor_selection(
+    channel_id: str,
+    payload: AdminProviderChannelMonitorSelectionUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    channel = await db.get(ProviderChannel, channel_id)
+    if channel is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="provider channel not found")
+    routes = (
+        await db.execute(select(ModelChannelRoute).where(ModelChannelRoute.channel_id == channel_id))
+    ).scalars().all()
+    monitors = (
+        await db.execute(select(ProviderChannelMonitor).where(ProviderChannelMonitor.channel_id == channel_id))
+    ).scalars().all()
+    choices = _provider_channel_route_choices(channel, routes)
+
+    if payload.mode == "manual":
+        if not payload.model or not payload.endpoint:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="manual selection requires model and endpoint")
+        target = (payload.endpoint.strip(), payload.model.strip())
+        valid_targets = {(item["endpoint"], item["model"]) for item in choices}
+        if target not in valid_targets:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="monitor selection is not an active channel route")
+        manual = sorted(
+            (monitor for monitor in monitors if getattr(monitor, "created_by", "") != AUTO_MONITOR_CREATED_BY),
+            key=lambda monitor: str(getattr(monitor, "id", "") or ""),
+        )
+        active = sorted(
+            (monitor for monitor in monitors if str(getattr(monitor, "status", "") or "").lower() == "active"),
+            key=lambda monitor: str(getattr(monitor, "id", "") or ""),
+        )
+        monitor = (manual or active or monitors or [None])[0]
+        if monitor is None:
+            monitor = ProviderChannelMonitor(
+                id=generate_id("cma_"),
+                channel_id=channel_id,
+                name=f"Manual · {channel.name}"[:128],
+                interval_seconds=int(_settings.provider_channel_monitor_default_interval),
+                timeout_seconds=int(_settings.provider_channel_monitor_default_timeout),
+            )
+            db.add(monitor)
+            monitors.append(monitor)
+        monitor.channel_id = channel_id
+        monitor.name = f"Manual · {channel.name} · {target[0]}"[:128]
+        monitor.endpoint = target[0]
+        monitor.primary_model = target[1]
+        monitor.extra_models = serialize_monitor_models([])
+        monitor.status = "active"
+        monitor.created_by = "admin"
+    else:
+        for monitor in monitors:
+            monitor.created_by = AUTO_MONITOR_CREATED_BY
+            monitor.status = "disabled"
+            monitor.extra_models = serialize_monitor_models([])
+
+    await db.commit()
+    await reconcile_provider_channel_monitors(db)
+    invalidate_reliability_cache()
+    selection = _provider_channel_monitor_selection_payload(channel, routes, monitors)
+    return {"channel_id": channel_id, "monitor_selection": selection}
 
 
 @router.post("/provider-channels/{channel_id}/test-connection", dependencies=[Depends(admin_guard)])
