@@ -61,6 +61,8 @@ def _normalize_endpoint(value: Any) -> str:
     endpoint = str(value or "").strip().lower().split("?", 1)[0].rstrip("/").lstrip("/")
     if endpoint.startswith("v1/"):
         endpoint = endpoint[3:]
+    if endpoint.endswith(":stream"):
+        endpoint = endpoint[:-7]
     for known_endpoint in ("chat/completions", "responses"):
         if endpoint.endswith(known_endpoint):
             return known_endpoint
@@ -118,6 +120,12 @@ def _empty_traffic() -> dict[str, Any]:
     return _traffic_payload(SimpleTrafficRow())
 
 
+def _fallback_out_rate(requests: int, fallback_out_requests: int) -> float:
+    fallback_out_requests = max(0, int(fallback_out_requests or 0))
+    attempts = max(0, int(requests or 0)) + fallback_out_requests
+    return round(fallback_out_requests / attempts, 4) if attempts else 0.0
+
+
 def _traffic_is_degraded(traffic: dict[str, Any], *, source_fallback: bool = False) -> bool:
     fallback_rate = traffic["fallback_out_rate"] if source_fallback else traffic["fallback_rate"]
     return bool(
@@ -148,7 +156,7 @@ def _merge_traffic(current: dict[str, Any] | None, incoming: dict[str, Any]) -> 
         "fallback_requests": fallback_requests,
         "fallback_rate": round(fallback_requests / requests, 4) if requests else 0.0,
         "fallback_out_requests": fallback_out_requests,
-        "fallback_out_rate": round(fallback_out_requests / requests, 4) if requests else (1.0 if fallback_out_requests else 0.0),
+        "fallback_out_rate": _fallback_out_rate(requests, fallback_out_requests),
         "avg_latency_ms": round(weighted_latency / requests) if requests else 0,
         "max_latency_ms": max(int(current["max_latency_ms"]), int(incoming["max_latency_ms"])),
         "last_seen_at": max(last_seen_values) if last_seen_values else None,
@@ -161,18 +169,14 @@ def _channel_route_traffic(traffic: dict[str, Any], *, legacy_fallback: bool) ->
     result["fallback_requests"] = 0
     result["fallback_rate"] = 0.0
     result["fallback_out_requests"] = fallback_out_requests
-    result["fallback_out_rate"] = (
-        round(fallback_out_requests / int(traffic["requests"]), 4)
-        if traffic["requests"]
-        else (1.0 if fallback_out_requests else 0.0)
-    )
+    result["fallback_out_rate"] = _fallback_out_rate(int(traffic["requests"]), fallback_out_requests)
     return result
 
 
 def _fallback_out_traffic(count: int, *, last_seen_at: str | None) -> dict[str, Any]:
     traffic = _empty_traffic()
     traffic["fallback_out_requests"] = max(0, int(count or 0))
-    traffic["fallback_out_rate"] = 1.0 if traffic["fallback_out_requests"] else 0.0
+    traffic["fallback_out_rate"] = _fallback_out_rate(0, traffic["fallback_out_requests"])
     traffic["last_seen_at"] = last_seen_at
     return traffic
 
