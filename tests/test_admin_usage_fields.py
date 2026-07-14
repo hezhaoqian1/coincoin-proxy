@@ -1018,6 +1018,44 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fake_db.rollbacks, 1)
         invalidate.assert_not_called()
 
+    async def test_provider_channel_monitor_selection_rolls_back_final_read_failure(self) -> None:
+        channel = SimpleNamespace(id="ch_read_failure", name="Read Failure", channel_type="openai_compatible", status="active", priority=0, weight=1)
+        route = SimpleNamespace(id="route_read_failure", channel_id=channel.id, upstream_model="gpt-read", endpoint="responses", status="active", priority_override=None, weight_override=None)
+
+        class _FailingFinalReadDB(_FakeDB):
+            async def execute(self, query):
+                self.queries.append(query)
+                if self._execute_results:
+                    return self._execute_results.pop(0)
+                raise RuntimeError("final monitor read failed")
+
+        fake_db = _FailingFinalReadDB(
+            execute_results=[_FakeScalarsResult([route]), _FakeScalarsResult([])],
+            scalar_results=[channel],
+        )
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+        with (
+            patch.object(admin_module, "reconcile_provider_channel_monitors", AsyncMock(return_value={})) as reconcile,
+            patch.object(admin_module, "invalidate_reliability_cache") as invalidate,
+        ):
+            transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                response = await client.put(
+                    f"/admin/provider-channels/{channel.id}/monitor-selection",
+                    json={"mode": "manual", "model": "gpt-read", "endpoint": "responses"},
+                )
+
+        self.assertEqual(response.status_code, 500, response.text)
+        reconcile.assert_awaited_once_with(fake_db, commit=False)
+        self.assertEqual(fake_db.commits, 0)
+        self.assertEqual(fake_db.rollbacks, 1)
+        invalidate.assert_not_called()
+
     async def test_provider_channel_monitor_selection_preserves_target_identity_across_endpoints(self) -> None:
         channel = SimpleNamespace(id="ch_identity", name="Identity", channel_type="openai_compatible", status="active", priority=0, weight=1)
         routes = [

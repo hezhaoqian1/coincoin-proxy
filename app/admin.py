@@ -2473,11 +2473,11 @@ async def update_provider_channel_monitor_selection(
 
         await db.flush()
         await reconcile_provider_channel_monitors(db, commit=False)
-        await db.commit()
         reconciled_monitors = (
             await db.execute(select(ProviderChannelMonitor).where(ProviderChannelMonitor.channel_id == channel_id))
         ).scalars().all()
         selection = _provider_channel_monitor_selection_payload(channel, routes, reconciled_monitors)
+        await db.commit()
     except Exception:
         await db.rollback()
         raise
