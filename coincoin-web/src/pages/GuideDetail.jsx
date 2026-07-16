@@ -112,7 +112,6 @@ function GuideCommandTabs({ items }) {
                 <div>
                     <span className="guide-kicker">Platform</span>
                     <h2>选择你的系统</h2>
-                    <p>一次只展示一套命令，避免上下滚动找对应平台。</p>
                 </div>
                 <div className="guide-command-tab-list" role="tablist" aria-label="操作系统选择">
                     {items.map((item, index) => (
