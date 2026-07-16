@@ -589,15 +589,15 @@ curl -sS ${OPENAI_BASE_URL}/images/generations \\
 python3 - "$RESP" "$OUT" <<'PY'
 import base64
 import json
+import subprocess
 import sys
-import urllib.request
 
 data = json.load(open(sys.argv[1], encoding="utf-8"))
 item = (data.get("data") or [{}])[0]
 if item.get("b64_json"):
     open(sys.argv[2], "wb").write(base64.b64decode(item["b64_json"]))
 elif item.get("url"):
-    urllib.request.urlretrieve(item["url"], sys.argv[2])
+    subprocess.run(["curl", "-L", "-sS", "--fail", "-o", sys.argv[2], item["url"]], check=True)
 else:
     raise SystemExit(json.dumps(data, ensure_ascii=False))
 print("saved", sys.argv[2])
@@ -626,7 +626,8 @@ $Item = $Result.data[0]
 if ($Item.b64_json) {
   [IO.File]::WriteAllBytes($Output, [Convert]::FromBase64String($Item.b64_json))
 } elseif ($Item.url) {
-  Invoke-WebRequest -Uri $Item.url -OutFile $Output
+  curl.exe -L -sS --fail -o $Output $Item.url
+  if ($LASTEXITCODE -ne 0) { throw "Image URL download failed." }
 } else {
   throw ($Result | ConvertTo-Json -Depth 8)
 }
@@ -662,15 +663,15 @@ while true; do
     python3 - "$RESULT_JSON" "$OUT" <<'PY'
 import base64
 import json
+import subprocess
 import sys
-import urllib.request
 
 data = json.load(open(sys.argv[1], encoding="utf-8"))
 item = (data.get("result", {}).get("data") or [{}])[0]
 if item.get("b64_json"):
     open(sys.argv[2], "wb").write(base64.b64decode(item["b64_json"]))
 elif item.get("url"):
-    urllib.request.urlretrieve(item["url"], sys.argv[2])
+    subprocess.run(["curl", "-L", "-sS", "--fail", "-o", sys.argv[2], item["url"]], check=True)
 else:
     raise SystemExit(json.dumps(data, ensure_ascii=False))
 print("saved", sys.argv[2])
@@ -730,7 +731,8 @@ $Item = $Result.result.data[0]
 if ($Item.b64_json) {
   [IO.File]::WriteAllBytes($Output, [Convert]::FromBase64String($Item.b64_json))
 } elseif ($Item.url) {
-  Invoke-WebRequest -Uri $Item.url -OutFile $Output
+  curl.exe -L -sS --fail -o $Output $Item.url
+  if ($LASTEXITCODE -ne 0) { throw "Image URL download failed." }
 } else {
   throw ($Result | ConvertTo-Json -Depth 8)
 }
@@ -766,15 +768,19 @@ curl -sS "${OPENAI_BASE_URL}/images/edits" \\
 python3 - "$RESP" "$OUT" <<'PY'
 import base64
 import json
+import subprocess
 import sys
 
 resp_path, out_path = sys.argv[1], sys.argv[2]
 data = json.load(open(resp_path, encoding="utf-8"))
 item = (data.get("data") or [{}])[0]
 b64 = item.get("b64_json")
-if not b64:
+if b64:
+    open(out_path, "wb").write(base64.b64decode(b64))
+elif item.get("url"):
+    subprocess.run(["curl", "-L", "-sS", "--fail", "-o", out_path, item["url"]], check=True)
+else:
     raise SystemExit(json.dumps(data, ensure_ascii=False))
-open(out_path, "wb").write(base64.b64decode(b64))
 print("saved", out_path)
 PY`
 
@@ -796,11 +802,15 @@ curl.exe "${OPENAI_BASE_URL}/images/edits" \`
   -o $Response
 
 $Result = Get-Content $Response -Raw | ConvertFrom-Json
-if (-not $Result.data[0].b64_json) {
+$Item = $Result.data[0]
+if ($Item.b64_json) {
+  [IO.File]::WriteAllBytes($Output, [Convert]::FromBase64String($Item.b64_json))
+} elseif ($Item.url) {
+  curl.exe -L -sS --fail -o $Output $Item.url
+  if ($LASTEXITCODE -ne 0) { throw "Image URL download failed." }
+} else {
   throw ($Result | ConvertTo-Json -Depth 8)
 }
-
-[IO.File]::WriteAllBytes($Output, [Convert]::FromBase64String($Result.data[0].b64_json))
 Write-Host "saved $Output"`
 
         const multiImageEditCommand = `OUT="coincoin_multi_image_edit.png"
@@ -841,14 +851,18 @@ while true; do
     python3 - "$RESULT_JSON" "$OUT" <<'PY'
 import base64
 import json
+import subprocess
 import sys
 
 data = json.load(open(sys.argv[1], encoding="utf-8"))
 item = (data.get("result", {}).get("data") or [{}])[0]
 b64 = item.get("b64_json")
-if not b64:
+if b64:
+    open(sys.argv[2], "wb").write(base64.b64decode(b64))
+elif item.get("url"):
+    subprocess.run(["curl", "-L", "-sS", "--fail", "-o", sys.argv[2], item["url"]], check=True)
+else:
     raise SystemExit(json.dumps(data, ensure_ascii=False))
-open(sys.argv[2], "wb").write(base64.b64decode(b64))
 print("saved", sys.argv[2])
 PY
     break
@@ -909,7 +923,15 @@ do {
   }
 } until ($Result.status -eq "completed")
 
-[IO.File]::WriteAllBytes($Output, [Convert]::FromBase64String($Result.result.data[0].b64_json))
+$Item = $Result.result.data[0]
+if ($Item.b64_json) {
+  [IO.File]::WriteAllBytes($Output, [Convert]::FromBase64String($Item.b64_json))
+} elseif ($Item.url) {
+  curl.exe -L -sS --fail -o $Output $Item.url
+  if ($LASTEXITCODE -ne 0) { throw "Image URL download failed." }
+} else {
+  throw ($Result | ConvertTo-Json -Depth 8)
+}
 Write-Host "saved $Output"`
 
         const usageCommand = `curl ${OPENAI_BASE_URL}/usage?limit=5 \\
@@ -1052,13 +1074,13 @@ Write-Host "saved $Output"`
                     {
                         title: 'macOS / Linux 文生图',
                         platform: 'macOS / Linux 文生图',
-                        summary: '生成完成后保存为 `coincoin_image.png`。示例使用 `1024x1024`；也可按上游支持情况改为 `1536x1024`、`1024x1536` 或 `auto`。',
+                        summary: '生成完成后保存为 `coincoin_image.png`。示例使用 `1024x1024`；也可按上游支持情况改为 `1536x1024`、`1024x1536` 或 `auto`，最终像素以实际文件为准。',
                         code: imageGenerationCommand,
                     },
                     {
                         title: 'Windows PowerShell 文生图',
                         platform: 'Windows 文生图',
-                        summary: '生成完成后保存为 `coincoin_image.png`。`size` 使用像素尺寸或 `auto`，不要把 `1K`、`2K`、`4K` 当成通用兼容值。',
+                        summary: '生成完成后保存为 `coincoin_image.png`。`size` 是目标尺寸或 `auto`，最终像素由上游决定；不要把 `1K`、`2K`、`4K` 当成通用兼容值。',
                         code: imageGenerationWindowsCommand,
                     },
                     {

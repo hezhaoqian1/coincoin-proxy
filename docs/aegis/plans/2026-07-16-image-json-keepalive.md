@@ -80,7 +80,12 @@ Verification: full backend tests, frontend build, `git diff --check`, credential
 - [x] Run focused tests, full backend tests, and frontend production build.
 - [x] Run diff and credential scans; review only the task files.
 - [x] Commit with concise Conventional Commit messages and integrate current `origin/master`.
-- [ ] Push to `master`, wait for Railway deployment, and verify a slow image request no longer returns Cloudflare 524.
+- [x] Push to `master`, wait for Railway deployment, and verify a slow image request no longer returns Cloudflare 524.
+
+Production evidence: the public request completed in 34.4 seconds with
+`x-coincoin-image-keepalive: whitespace`, four leading JSON whitespace bytes,
+and a parseable image URL response. The URL downloaded successfully with
+`curl -L`; Python `urlretrieve` returned 403, so public guide fallbacks use curl.
 
 ## Risks and Rollback
 
