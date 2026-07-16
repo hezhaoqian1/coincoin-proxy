@@ -36,6 +36,7 @@ test('macOS and Linux Grok command preserves and applies the Python config edito
     assert.ok(pythonBlock, 'generated command should contain the Python config editor')
     assert.match(command, /r"\(\?ms\)\^\\\[model\\\.grok-build\\\]\\s\*\.\*\?\(\?=\^\\\[\|\\Z\)"/)
     assert.ok(command.includes(`section.rstrip() + '\\ndefault = "grok-build"\\n'`))
+    assert.match(command, /printf 'Grok Build config written to %s\\n' "\$CONFIG"\ngrok inspect\n/)
 
     const syntaxCheck = spawnSync('python3', ['-c', 'import sys; compile(sys.stdin.read(), "grok-config", "exec")'], {
         input: pythonBlock[1],
@@ -70,4 +71,11 @@ test('Windows Grok command preserves PowerShell regex escapes', () => {
 
     assert.ok(command.includes("'(?ms)^\\[model\\.grok-build\\]\\s*.*?(?=^\\[|\\z)'"))
     assert.ok(command.includes("'(?ms)^\\[models\\]\\s*.*?(?=^\\[|\\z)'"))
+    assert.match(command, /Write-Host "Grok Build config written to \$Config"\ngrok inspect\n/)
+})
+
+test('Grok guide explains the user config path and login-free outcome', () => {
+    assert.match(guideSource, /用户级 `~\/\.grok\/config\.toml`/)
+    assert.match(guideSource, /成功后无需登录 xAI 账号/)
+    assert.match(guideSource, /写入并检查 `~\/\.grok\/config\.toml`/)
 })
