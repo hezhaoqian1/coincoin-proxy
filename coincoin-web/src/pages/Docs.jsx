@@ -42,10 +42,11 @@ const TAB_INDEX_BY_KEY = {
 }
 
 const TAB_KEY_BY_INDEX = ['quickstart', 'models', 'api', 'snippets']
-const MODEL_CATEGORY_KEYS = ['all', 'openai', 'claude', 'gemini', 'image', 'video']
+const MODEL_CATEGORY_KEYS = ['all', 'openai', 'xai', 'claude', 'gemini', 'image', 'video']
 const MODEL_CATEGORY_META = {
     all: { label: '全部', icon: 'grid' },
     openai: { label: 'OpenAI', icon: 'openai' },
+    xai: { label: 'xAI', icon: 'xai' },
     claude: { label: 'Anthropic', icon: 'anthropic' },
     gemini: { label: 'Gemini', icon: 'google' },
     image: { label: '图片', icon: 'image' },
@@ -78,6 +79,15 @@ function CategoryIcon({ category, compact = false }) {
             <span className={className} aria-hidden="true">
                 <svg viewBox="0 0 24 24" fill="currentColor">
                     <path d="M12.48 10.92v3.28h7.84c-.24 1.84-.853 3.187-1.787 4.133-1.147 1.147-2.933 2.4-6.053 2.4-4.827 0-8.6-3.893-8.6-8.72s3.773-8.72 8.6-8.72c2.6 0 4.507 1.027 5.907 2.347l2.307-2.307C18.747 1.44 16.133 0 12.48 0 5.867 0 .307 5.387.307 12s5.56 12 12.173 12c3.573 0 6.267-1.173 8.373-3.36 2.16-2.16 2.84-5.213 2.84-7.667 0-.76-.053-1.467-.173-2.053H12.48z" />
+                </svg>
+            </span>
+        )
+    }
+    if (meta.icon === 'xai') {
+        return (
+            <span className={className} aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+                    <path d="M5 5l14 14M19 5L5 19" />
                 </svg>
             </span>
         )
@@ -117,6 +127,7 @@ function getModelCategory(model, type) {
     if (type === 'video') return 'video'
     if (type === 'image') return 'image'
     if (id.startsWith('claude-') || ['opus', 'sonnet', 'haiku'].includes(id)) return 'claude'
+    if (id.startsWith('grok-') || model.owned_by === 'xai') return 'xai'
     if (id.includes('gemini') || model.owned_by === 'google') return 'gemini'
     return 'openai'
 }
@@ -296,6 +307,12 @@ function AudienceGuide() {
             bullets: ['准备开发者 Key', '直接照抄 config.toml', '通常用 responses']
         },
         {
+            title: 'Grok Build',
+            tag: '已实测',
+            desc: '官方 Grok Build CLI 通过 Responses 接入 CoinCoin。',
+            bullets: ['模型固定为 grok-build', 'Base URL 使用统一 /v1', '推理、流式和函数工具回路已验证']
+        },
+        {
             title: 'OpenCode',
             tag: '已实测',
             desc: '本地 coding agent 工作流，已验证基础可用。',
@@ -440,6 +457,10 @@ base_url = "${SITE}/v1"
 experimental_bearer_token = "sk_cc_xxxxx"
 wire_api = "responses"`}</pre>
 
+            <h3>Grok Build</h3>
+            <p>Grok Build 必须使用 Responses 后端和 <code>grok-build</code> 公开模型。</p>
+            <p><Link className="btn btn-secondary btn-sm" to="/guides/grok-build">打开 Grok Build 一键配置教程</Link></p>
+
             <h3>Claude Code</h3>
             <pre className="code-block">{`mkdir -p ~/.claude && cat > ~/.claude/settings.json <<'EOF'
 {
@@ -488,6 +509,12 @@ claude`}</pre>
                         <td>推荐的命令行接法，默认建议直接固定到 <code>gpt-5.4</code>。</td>
                     </tr>
                     <tr>
+                        <td>Grok Build</td>
+                        <td><span className="badge badge-success">已实测支持</span></td>
+                        <td><code>/v1 + responses</code></td>
+                        <td>官方 CLI 用 <code>grok-build</code> 公开别名，支持推理、流式输出和文件工具多轮回路。</td>
+                    </tr>
+                    <tr>
                         <td>OpenCode</td>
                         <td><span className="badge badge-success">已实测支持</span></td>
                         <td><code>/v1 + 自定义 provider</code></td>
@@ -516,7 +543,7 @@ claude`}</pre>
 
             <h3>切换模型时你要改什么？</h3>
             <ul className="doc-list">
-                <li>只需要把请求或客户端配置中的 <code>model</code> 改成目标模型，例如 <code>gpt-5.4</code>、<code>sonnet</code>、<code>claude-opus-4-8</code>、<code>gemini-image</code>。</li>
+                <li>只需要把请求或客户端配置中的 <code>model</code> 改成目标模型，例如 <code>gpt-5.4</code>、<code>grok-build</code>、<code>sonnet</code>、<code>claude-opus-4-8</code>、<code>gemini-image</code>。</li>
                 <li>Base URL 和 API Key 不需要改，仍然走同一个 ClawFather 入口。</li>
                 <li>文本请求推荐走 <code>/v1/chat/completions</code> 或 <code>/v1/responses</code>，图片请求走 <code>/v1/images/generations</code> 或 <code>/v1/images/edits</code>，并使用 <code>{imageModelId}</code> 这类图片模型。</li>
                 <li>图片请求统一走 ClawFather 公开入口，不需要终端用户配置额外服务。</li>
@@ -1015,6 +1042,18 @@ name = "ClawFather"
 base_url = "${SITE}/v1"
 env_key = "CLAWFATHER_OPENAI_API_KEY"
 wire_api = "responses"`}</pre>
+
+            <h3>Grok Build</h3>
+            <pre className="code-block">{`[models]
+default = "grok-build"
+
+[model.grok-build]
+model = "grok-build"
+base_url = "${SITE}/v1"
+api_key = "sk_cc_xxxxx"
+api_backend = "responses"
+context_window = 500000`}</pre>
+            <p><Link to="/guides/grok-build">查看完整安装、备份、配置和工具回路验证教程</Link></p>
 
             <h3>Claude Code</h3>
             <pre className="code-block">{`mkdir -p ~/.claude && cat > ~/.claude/settings.json <<'EOF'

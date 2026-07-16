@@ -342,6 +342,103 @@ wire_api = "responses"
 
 codex`
 
+        const grokBuildCommand = `if ! command -v grok >/dev/null 2>&1; then
+  curl -fsSL https://x.ai/cli/install.sh | bash
+  export PATH="$HOME/bin:$HOME/.grok/bin:$PATH"
+fi
+
+mkdir -p ~/.grok
+CONFIG="$HOME/.grok/config.toml"
+[ -f "$CONFIG" ] || touch "$CONFIG"
+cp "$CONFIG" "$CONFIG.bak.$(date +%Y%m%d%H%M%S)"
+
+GROK_CONFIG="$CONFIG" python3 <<'PY'
+import os
+import re
+from pathlib import Path
+
+path = Path(os.environ["GROK_CONFIG"])
+text = path.read_text(encoding="utf-8")
+text = re.sub(r"(?ms)^\[model\.grok-build\]\s*.*?(?=^\[|\Z)", "", text)
+
+models_match = re.search(r"(?ms)^\[models\]\s*.*?(?=^\[|\Z)", text)
+if models_match:
+    section = models_match.group(0)
+    if re.search(r"(?m)^default\s*=", section):
+        section = re.sub(r'(?m)^default\s*=.*$', 'default = "grok-build"', section)
+    else:
+        section = section.rstrip() + '\ndefault = "grok-build"\n'
+    text = text[:models_match.start()] + section + text[models_match.end():]
+else:
+    text = text.rstrip() + '\n\n[models]\ndefault = "grok-build"\n'
+
+block = '''[model.grok-build]
+model = "grok-build"
+base_url = "${OPENAI_BASE_URL}"
+api_key = "${snippetKey}"
+name = "Grok Build via CoinCoin"
+api_backend = "responses"
+context_window = 500000
+'''
+path.write_text(text.rstrip() + "\n\n" + block, encoding="utf-8")
+PY
+
+chmod 600 "$CONFIG"
+grok -p "Reply exactly: COINCOIN_GROK_BUILD_OK" -m grok-build --output-format json --max-turns 1
+
+TEST_DIR=$(mktemp -d)
+printf 'GROK_BUILD_TOOL_LOOP_OK\n' > "$TEST_DIR/probe.txt"
+grok --cwd "$TEST_DIR" -p "Read probe.txt with the file tool, then reply with its exact contents." -m grok-build --output-format json --max-turns 3 --always-approve
+rm -rf "$TEST_DIR"`
+
+        const grokBuildWindowsCommand = `if (-not (Get-Command grok -ErrorAction SilentlyContinue)) {
+  irm https://x.ai/cli/install.ps1 | iex
+}
+
+$GrokDir = Join-Path $HOME ".grok"
+$Config = Join-Path $GrokDir "config.toml"
+New-Item -ItemType Directory -Force $GrokDir | Out-Null
+if (Test-Path $Config) {
+  Copy-Item $Config "$Config.bak.$(Get-Date -Format 'yyyyMMddHHmmss')"
+  $Text = Get-Content $Config -Raw
+} else {
+  $Text = ""
+}
+
+$Text = [regex]::Replace($Text, '(?ms)^\[model\.grok-build\]\s*.*?(?=^\[|\z)', '')
+$ModelsPattern = '(?ms)^\[models\]\s*.*?(?=^\[|\z)'
+if ([regex]::IsMatch($Text, $ModelsPattern)) {
+  $Text = [regex]::Replace($Text, $ModelsPattern, {
+    param($Match)
+    $Section = $Match.Value
+    if ($Section -match '(?m)^default\s*=') {
+      return [regex]::Replace($Section, '(?m)^default\s*=.*$', 'default = "grok-build"')
+    }
+    return $Section.TrimEnd() + [Environment]::NewLine + 'default = "grok-build"' + [Environment]::NewLine
+  })
+} else {
+  $Text = $Text.TrimEnd() + [Environment]::NewLine + [Environment]::NewLine + '[models]' + [Environment]::NewLine + 'default = "grok-build"' + [Environment]::NewLine
+}
+
+$Block = @'
+[model.grok-build]
+model = "grok-build"
+base_url = "${OPENAI_BASE_URL}"
+api_key = "${snippetKey}"
+name = "Grok Build via CoinCoin"
+api_backend = "responses"
+context_window = 500000
+'@
+($Text.TrimEnd() + [Environment]::NewLine + [Environment]::NewLine + $Block) | Set-Content $Config -Encoding UTF8
+
+grok -p "Reply exactly: COINCOIN_GROK_BUILD_OK" -m grok-build --output-format json --max-turns 1
+
+$TestDir = Join-Path ([System.IO.Path]::GetTempPath()) ("coincoin-grok-build-" + [guid]::NewGuid())
+New-Item -ItemType Directory -Force $TestDir | Out-Null
+Set-Content (Join-Path $TestDir "probe.txt") "GROK_BUILD_TOOL_LOOP_OK" -Encoding UTF8
+grok --cwd $TestDir -p "Read probe.txt with the file tool, then reply with its exact contents." -m grok-build --output-format json --max-turns 3 --always-approve
+Remove-Item $TestDir -Recurse -Force`
+
         const claudeUnixCommand = `CLAUDE_DIR="\${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 SETTINGS_FILE="$CLAUDE_DIR/settings.json"
 
@@ -498,6 +595,12 @@ aider --model openai/${codingModelId}`
 
         const otherGuides = [
             {
+                id: 'grok-build',
+                icon: 'X',
+                title: 'Grok Build 接入',
+                summary: '官方 CLI、Responses 后端和完整文件工具回路。',
+            },
+            {
                 id: 'opencode',
                 icon: 'OC',
                 title: 'OpenCode 接入',
@@ -550,6 +653,25 @@ aider --model openai/${codingModelId}`
                         platform: 'Windows',
                         summary: '写入 `$HOME\\.codex\\config.toml`；旧文件存在时先复制一份带时间戳的备份。',
                         code: codexWindowsCommand,
+                    },
+                ],
+                commandGroupMode: 'tabs',
+            },
+            'grok-build': {
+                title: 'Grok Build 配置',
+                description: '安装官方 Grok Build CLI，把内置 `grok-build` 模型覆盖到 CoinCoin 的 Responses 入口，然后运行基础对话和真实文件工具回路验证。配置前会备份现有 `config.toml`。',
+                commandGroup: [
+                    {
+                        title: 'macOS / Linux 一键配置',
+                        platform: 'macOS / Linux',
+                        summary: '安装官方 CLI、保留其他 Grok 设置、写入 CoinCoin Responses 模型，并运行文件读取工具回路。',
+                        code: grokBuildCommand,
+                    },
+                    {
+                        title: 'Windows PowerShell 一键配置',
+                        platform: 'Windows',
+                        summary: '安装官方 CLI、备份配置、替换 `grok-build` 模型段，并运行文件读取工具回路。',
+                        code: grokBuildWindowsCommand,
                     },
                 ],
                 commandGroupMode: 'tabs',
