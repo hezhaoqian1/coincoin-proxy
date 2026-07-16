@@ -505,6 +505,57 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         registry._initialized = False
         registry.init_from_settings()
 
+    def _add_grok_model(self, public_model_id: str = "grok-build") -> None:
+        catalog = json.loads(settings.model_catalog_json)
+        catalog.setdefault("models", []).append(
+            {
+                "id": public_model_id,
+                "owned_by": "xai",
+                "provider_name": "xAI",
+                "provider_model": "grok-4.5",
+                "upstream_model": "grok-4.5",
+                "capabilities": ["chat/completions", "responses"],
+                "routing_mode": "route_only",
+                "delivery_lane": "route_only",
+                "price_input_per_million": 500,
+                "price_output_per_million": 3000,
+                "billable_sku": f"xai-{public_model_id}-text",
+            }
+        )
+        settings.model_catalog_json = json.dumps(catalog)
+        registry._initialized = False
+        registry.init_from_settings()
+        channel_router.set_snapshot(
+            [
+                ProviderChannelSnapshot(
+                    channel_id="ch_grok_test",
+                    provider_platform="xai",
+                    channel_type="openai_compatible",
+                    base_url="https://grok.example/v1",
+                    api_key="grok-key",
+                    auth_style="bearer",
+                    priority=0,
+                    capabilities=("chat/completions", "responses"),
+                )
+            ],
+            [
+                ModelChannelRouteSnapshot(
+                    route_id="mcr_grok_responses",
+                    public_model_id=public_model_id,
+                    endpoint="responses",
+                    channel_id="ch_grok_test",
+                    upstream_model="grok-4.5",
+                ),
+                ModelChannelRouteSnapshot(
+                    route_id="mcr_grok_chat",
+                    public_model_id=public_model_id,
+                    endpoint="chat/completions",
+                    channel_id="ch_grok_test",
+                    upstream_model="grok-4.5",
+                ),
+            ],
+        )
+
     def tearDown(self) -> None:
         for patcher in reversed(getattr(self, "_workbench_auth_patchers", [])):
             patcher.stop()
@@ -552,6 +603,265 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(upstream_client.calls[0]["url"], "https://root-base.example/v1/responses")
         self.assertEqual(upstream_client.calls[0]["json"]["model"], "root-upstream-model")
         self.assertEqual(upstream_client.calls[0]["headers"]["authorization"], "Bearer root-key")
+
+    async def test_grok_build_responses_preserves_flat_function_tools(self) -> None:
+        self._add_grok_model()
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "resp_grok_tool",
+                        "model": "grok-4.5-build-free",
+                        "status": "completed",
+                        "output": [
+                            {
+                                "type": "function_call",
+                                "id": "call_grok_read",
+                                "call_id": "call_grok_read",
+                                "name": "read_file",
+                                "arguments": '{"path":"probe.txt"}',
+                            }
+                        ],
+                        "usage": {"input_tokens": 8, "output_tokens": 3, "total_tokens": 11},
+                    }
+                )
+            ]
+        )
+        tool = {
+            "type": "function",
+            "name": "read_file",
+            "description": "Read a file",
+            "parameters": {
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+            },
+        }
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(proxy_module.usage_buffer, "add", AsyncMock()) as add_usage:
+                response = await client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={
+                        "model": "grok-build",
+                        "input": "Read probe.txt",
+                        "tools": [tool],
+                        "tool_choice": "auto",
+                        "reasoning": {"effort": "high"},
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(upstream_client.calls[0]["url"], "https://grok.example/v1/responses")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "grok-4.5")
+        self.assertEqual(upstream_client.calls[0]["json"]["tools"], [tool])
+        self.assertEqual(upstream_client.calls[0]["json"]["tool_choice"], "auto")
+        self.assertEqual(upstream_client.calls[0]["json"]["reasoning"], {"effort": "high"})
+        self.assertEqual(response.json()["model"], "grok-build")
+        self.assertEqual(upstream_client.calls[0]["headers"]["authorization"], "Bearer grok-key")
+        add_usage.assert_awaited_once()
+        usage_kwargs = add_usage.await_args.kwargs
+        self.assertEqual(usage_kwargs["model"], "grok-build")
+        self.assertEqual(usage_kwargs["customer_model_alias"], "grok-build")
+        self.assertEqual(usage_kwargs["provider_model"], "grok-4.5")
+        self.assertEqual(usage_kwargs["billable_sku"], "xai-grok-build-text")
+        self.assertEqual(usage_kwargs["channel_id"], "ch_grok_test")
+        self.assertEqual(usage_kwargs["provider_platform"], "xai")
+
+    async def test_grok_build_chat_maps_reasoning_effort_to_responses(self) -> None:
+        self._add_grok_model()
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "resp_grok_reasoning",
+                        "model": "grok-4.5-build-free",
+                        "output": [
+                            {
+                                "type": "message",
+                                "content": [{"type": "output_text", "text": "OK"}],
+                            }
+                        ],
+                        "usage": {"input_tokens": 5, "output_tokens": 1, "total_tokens": 6},
+                    }
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(openai_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                openai_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(openai_module.usage_buffer, "add", AsyncMock()):
+                response = await client.post(
+                    "/v1/chat/completions",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={
+                        "model": "grok-build",
+                        "messages": [{"role": "user", "content": "Reply with only: OK"}],
+                        "reasoning_effort": "high",
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["model"], "grok-build")
+        self.assertEqual(response.json()["choices"][0]["message"]["content"], "OK")
+        self.assertEqual(upstream_client.calls[0]["url"], "https://grok.example/v1/responses")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "grok-4.5")
+        self.assertEqual(upstream_client.calls[0]["json"]["reasoning"], {"effort": "high"})
+
+    async def test_grok_4_5_responses_stream_preserves_public_model_and_usage_identity(self) -> None:
+        self._add_grok_model("grok-4.5")
+        upstream_client = _RecordingStreamClient(
+            [
+                _FakeEventStreamResponse(
+                    [
+                        'data: {"type":"response.created","response":{"id":"resp_grok_stream","status":"in_progress","model":"grok-4.5-build-free","output":[]}}',
+                        "",
+                        'data: {"type":"response.output_text.delta","model":"grok-4.5-build-free","delta":"GROK_STREAM_OK"}',
+                        "",
+                        'data: {"type":"response.completed","response":{"id":"resp_grok_stream","status":"completed","model":"grok-4.5-build-free","output":[{"type":"message","content":[{"type":"output_text","text":"GROK_STREAM_OK"}]}],"usage":{"input_tokens":7,"output_tokens":2,"total_tokens":9}}}',
+                        "",
+                        "data: [DONE]",
+                        "",
+                    ]
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_stream_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(proxy_module.usage_buffer, "add", AsyncMock()) as add_usage:
+                response = await client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"model": "grok-4.5", "input": "Reply exactly: GROK_STREAM_OK", "stream": True},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn("GROK_STREAM_OK", response.text)
+        self.assertIn('"model":"grok-4.5"', response.text.replace(" ", ""))
+        self.assertNotIn("grok-4.5-build-free", response.text)
+        self.assertEqual(upstream_client.calls[0]["url"], "https://grok.example/v1/responses")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "grok-4.5")
+        self.assertEqual(upstream_client.calls[0]["headers"]["authorization"], "Bearer grok-key")
+        add_usage.assert_awaited_once()
+        usage_kwargs = add_usage.await_args.kwargs
+        self.assertEqual(usage_kwargs["endpoint"], "responses:stream")
+        self.assertEqual(usage_kwargs["model"], "grok-4.5")
+        self.assertEqual(usage_kwargs["provider_model"], "grok-4.5")
+        self.assertEqual(usage_kwargs["billable_sku"], "xai-grok-4.5-text")
+        self.assertEqual(usage_kwargs["channel_id"], "ch_grok_test")
+
+    async def test_grok_build_chat_converts_vision_input_for_responses(self) -> None:
+        self._add_grok_model()
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "resp_grok_vision",
+                        "model": "grok-4.5-build-free",
+                        "output": [
+                            {
+                                "type": "message",
+                                "content": [{"type": "output_text", "text": "GROK_VISION_OK"}],
+                            }
+                        ],
+                        "usage": {"input_tokens": 12, "output_tokens": 2, "total_tokens": 14},
+                    }
+                )
+            ]
+        )
+        image_url = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB"
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(openai_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                openai_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(openai_module.usage_buffer, "add", AsyncMock()):
+                response = await client.post(
+                    "/v1/chat/completions",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={
+                        "model": "grok-build",
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": "Inspect the image"},
+                                    {"type": "image_url", "image_url": {"url": image_url}},
+                                ],
+                            }
+                        ],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["choices"][0]["message"]["content"], "GROK_VISION_OK")
+        content = upstream_client.calls[0]["json"]["input"][0]["content"]
+        self.assertEqual(content[0], {"type": "input_text", "text": "Inspect the image"})
+        self.assertEqual(content[1], {"type": "input_image", "image_url": image_url})
+
+    async def test_grok_build_responses_preserves_function_call_output_round_trip(self) -> None:
+        self._add_grok_model()
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "resp_grok_tool_result",
+                        "model": "grok-4.5-build-free",
+                        "status": "completed",
+                        "output": [
+                            {
+                                "type": "message",
+                                "content": [{"type": "output_text", "text": "GROK_BUILD_TOOL_LOOP_OK"}],
+                            }
+                        ],
+                        "usage": {"input_tokens": 10, "output_tokens": 2, "total_tokens": 12},
+                    }
+                )
+            ]
+        )
+        tool_result = {
+            "type": "function_call_output",
+            "call_id": "call_grok_read",
+            "output": "GROK_BUILD_TOOL_LOOP_OK",
+        }
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(proxy_module.usage_buffer, "add", AsyncMock()):
+                response = await client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"model": "grok-build", "input": [tool_result]},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(upstream_client.calls[0]["json"]["input"], [tool_result])
+        self.assertEqual(response.json()["model"], "grok-build")
+        self.assertEqual(
+            response.json()["output"][0]["content"][0]["text"],
+            "GROK_BUILD_TOOL_LOOP_OK",
+        )
 
     async def test_chat_without_model_keeps_legacy_public_alias(self) -> None:
         upstream_client = _RecordingClient(

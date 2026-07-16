@@ -1623,6 +1623,11 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
             if field in payload:
                 resp_payload[field] = payload[field]
 
+    # Chat Completions exposes reasoning as `reasoning_effort`, while the
+    # Responses API expects the nested `reasoning.effort` shape.
+    if payload.get("reasoning_effort") is not None:
+        resp_payload["reasoning"] = {"effort": payload["reasoning_effort"]}
+
     # 透传 stop（如果模型支持）
     if "stop" in payload:
         resp_payload["stop"] = payload["stop"]

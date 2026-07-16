@@ -686,6 +686,33 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertEqual(resolved.public_model.cache_creation_multiplier, 1.25)
         self.assertEqual(resolved.public_model.effective_cache_creation_input_per_million, 312.5)
 
+    def test_checked_in_grok_models_are_route_only_and_share_grok_4_5_upstream(self) -> None:
+        settings.model_catalog_json = ""
+        registry._initialized = False
+        registry.init_from_settings()
+
+        grok = registry.get_public_model("grok-4.5")
+        build = registry.get_public_model("grok-build")
+
+        self.assertIsNotNone(grok)
+        self.assertIsNotNone(build)
+        for model in (grok, build):
+            self.assertEqual(model.owned_by, "xai")
+            self.assertEqual(model.provider_model, "grok-4.5")
+            self.assertEqual(model.upstream_model, "grok-4.5")
+            self.assertEqual(model.routing_mode, "route_only")
+            self.assertEqual(model.delivery_lane, "route_only")
+            self.assertEqual(model.capabilities, ("chat/completions", "responses"))
+            self.assertEqual(
+                model.metadata["supported_parameters"],
+                ["stream", "reasoning_effort", "tools", "vision"],
+            )
+
+        self.assertEqual(build.billable_sku, "xai-grok-build-text")
+        self.assertEqual(build.metadata["preferred_api_backend"], "responses")
+        with self.assertRaises(ModelCapabilityError):
+            registry.resolve_public_model("grok-build", "responses")
+
     def test_explicit_gpt_5_2_alias_keeps_legacy_lane(self) -> None:
         resolved = registry.resolve_public_model(
             "gpt-5.2",

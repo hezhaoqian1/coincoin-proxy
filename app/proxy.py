@@ -3195,17 +3195,24 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             _resp_out_cap = None
             try:
                 async for chunk in upstream.aiter_bytes():
-                    yield chunk.replace(_model_mask[0], _model_mask[1]) if _model_mask else chunk
                     buf += chunk
                     while b"\n\n" in buf:
                         event_raw, buf = buf.split(b"\n\n", 1)
+                        outbound_lines = []
                         for line in event_raw.split(b"\n"):
                             if line.startswith(b"data: "):
                                 payload_str = line[6:].strip()
                                 if payload_str == b"[DONE]":
+                                    outbound_lines.append(line)
                                     continue
                                 try:
                                     evt = json.loads(payload_str)
+                                    if isinstance(evt, dict):
+                                        if "model" in evt:
+                                            evt["model"] = display_model
+                                        response_evt = evt.get("response")
+                                        if isinstance(response_evt, dict) and "model" in response_evt:
+                                            response_evt["model"] = display_model
                                     usage = evt.get("usage") or (evt.get("response") or {}).get("usage")
                                     if usage:
                                         _stream_usage["input"] = extract_total_input_tokens(usage)
@@ -3222,8 +3229,20 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                                         _rid = _r.get("id", "")
                                         if isinstance(_rid, str) and _rid:
                                             _resp_id_cap = _rid
+                                    line = b"data: " + json.dumps(
+                                        evt,
+                                        ensure_ascii=False,
+                                        separators=(",", ":"),
+                                    ).encode("utf-8")
                                 except (json.JSONDecodeError, ValueError):
-                                    pass
+                                    if _model_mask:
+                                        line = line.replace(_model_mask[0], _model_mask[1])
+                            elif _model_mask:
+                                line = line.replace(_model_mask[0], _model_mask[1])
+                            outbound_lines.append(line)
+                        yield b"\n".join(outbound_lines) + b"\n\n"
+                if buf:
+                    yield buf.replace(_model_mask[0], _model_mask[1]) if _model_mask else buf
             finally:
                 await upstream.aclose()
                 if upstream.status_code < 400:
