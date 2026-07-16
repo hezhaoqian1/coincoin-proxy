@@ -96,6 +96,7 @@
 .docs-content {
     padding: var(--space-xl);
     min-height: 60vh;
+    min-width: 0;
 }
 
 /* Doc Section */
