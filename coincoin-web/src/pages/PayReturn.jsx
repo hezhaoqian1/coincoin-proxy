@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { confirmOrder, getApiKey } from '../api/client'
+import { confirmOrder, confirmOrderFromReturn, getApiKey } from '../api/client'
 import './PayReturn.css'
 
 const MAX_ATTEMPTS = 300
@@ -10,6 +10,7 @@ export default function PayReturn() {
     const [status, setStatus] = useState('checking')
     const [orderInfo, setOrderInfo] = useState(null)
     const [confirmResult, setConfirmResult] = useState(null)
+    const [pendingMessage, setPendingMessage] = useState('')
     const [countdown, setCountdown] = useState(5)
     const [attempt, setAttempt] = useState(0)
     const navigate = useNavigate()
@@ -62,13 +63,10 @@ export default function PayReturn() {
             attempts++
             setAttempt(attempts)
 
-            if (!getApiKey()) {
-                setStatus('need_login')
-                return
-            }
-
             try {
-                const result = await confirmOrder(order.orderNo, attempts === 1 ? proofUrl : undefined)
+                const result = attempts === 1
+                    ? await confirmOrderFromReturn(order.orderNo, proofUrl)
+                    : await confirmOrder(order.orderNo)
 
                 if (result.success) {
                     setConfirmResult(result)
@@ -85,6 +83,16 @@ export default function PayReturn() {
                 }
             } catch {
                 // 402 = not paid yet, other errors = transient, both should retry
+            }
+
+            if (!getApiKey()) {
+                setPendingMessage(
+                    attempts === 1
+                        ? '已收到支付平台回跳，但当前浏览器没有登录态。系统会继续通过支付通知/自动对账入账；登录后即可查看余额。'
+                        : '当前浏览器没有登录态。系统会继续通过支付通知/自动对账入账；登录后即可查看余额。'
+                )
+                setStatus('pending_auto')
+                return
             }
 
             if (attempts < MAX_ATTEMPTS) {
@@ -138,6 +146,17 @@ export default function PayReturn() {
                             <p>检测到支付回跳，但当前浏览器未登录（没有 API Key）。请先登录后再查看余额，或稍后等待系统自动到账。</p>
                             <div className="result-actions">
                                 <Link to="/login" className="btn btn-primary">去登录</Link>
+                                <Link to="/dashboard" className="btn btn-secondary">查看仪表盘</Link>
+                            </div>
+                        </div>
+                    )}
+                    {status === 'pending_auto' && (
+                        <div className="result-content">
+                            <div className="result-icon failed">!</div>
+                            <h2>支付已返回</h2>
+                            <p>{pendingMessage || '当前浏览器没有登录态。系统会继续通过支付通知/自动对账入账；登录后即可查看余额。'}</p>
+                            <div className="result-actions">
+                                <Link to="/login" className="btn btn-primary">登录查看余额</Link>
                                 <Link to="/dashboard" className="btn btn-secondary">查看仪表盘</Link>
                             </div>
                         </div>
