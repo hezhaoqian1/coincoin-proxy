@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { confirmOrder, confirmOrderFromReturn, getApiKey } from '../api/client'
+import { hasSignedPaymentReturn, resolvePaymentReturnOrder } from './paymentReturnState'
 import './PayReturn.css'
 
 const MAX_ATTEMPTS = 300
@@ -35,25 +36,17 @@ export default function PayReturn() {
 
     useEffect(() => {
         const stored = localStorage.getItem('coincoin_last_order')
-        const qs = new URLSearchParams(location.search || '')
-        const orderNoFromQuery = qs.get('order_no') || qs.get('out_trade_no') || ''
         const proofUrl = typeof window !== 'undefined' ? window.location.href : ''
-
-        let order = null
-        if (stored) {
-            try { order = JSON.parse(stored) } catch { order = null }
-        }
-        if (!order && orderNoFromQuery) {
-            order = { orderNo: orderNoFromQuery, planName: '', money: '' }
-            // Save it so Dashboard can also auto-confirm later if needed.
-            localStorage.setItem('coincoin_last_order', JSON.stringify(order))
-        }
+        const order = resolvePaymentReturnOrder(location.search, stored)
+        const hasSignedProof = hasSignedPaymentReturn(location.search)
 
         if (!order) {
             setStatus('failed')
             return
         }
 
+        // Keep the signed return order as the shared browser fallback for Dashboard.
+        localStorage.setItem('coincoin_last_order', JSON.stringify(order))
         setOrderInfo(order)
 
         let attempts = 0
@@ -64,7 +57,7 @@ export default function PayReturn() {
             setAttempt(attempts)
 
             try {
-                const result = attempts === 1
+                const result = hasSignedProof
                     ? await confirmOrderFromReturn(order.orderNo, proofUrl)
                     : await confirmOrder(order.orderNo)
 
@@ -85,11 +78,9 @@ export default function PayReturn() {
                 // 402 = not paid yet, other errors = transient, both should retry
             }
 
-            if (!getApiKey()) {
+            if (!hasSignedProof && !getApiKey()) {
                 setPendingMessage(
-                    attempts === 1
-                        ? '已收到支付平台回跳，但当前浏览器没有登录态。系统会继续通过支付通知/自动对账入账；登录后即可查看余额。'
-                        : '当前浏览器没有登录态。系统会继续通过支付通知/自动对账入账；登录后即可查看余额。'
+                    '当前回跳缺少完整支付凭证，且浏览器没有登录态。系统会继续通过支付通知/自动对账入账；登录后即可查看余额。'
                 )
                 setStatus('pending_auto')
                 return
