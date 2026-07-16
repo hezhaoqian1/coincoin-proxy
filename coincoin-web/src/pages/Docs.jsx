@@ -413,7 +413,7 @@ function QuickStart({ primaryTextModel, primaryImageModel }) {
                 <div className="gemini-usage-card">
                     <span className="inline-badge">图生图</span>
                     <strong>POST /v1/images/edits</strong>
-                    <p>上传 1-2 张参考图时使用同步编辑；3-8 张参考图改用异步 <code>/v1/image-jobs/edits</code>。</p>
+                    <p><code>gpt-image-2</code> 单图编辑使用同步接口；Gemini 的 3-8 张参考图使用异步 <code>/v1/image-jobs/edits</code>。</p>
                     <p><Link to="/guides/images">打开图生图教程</Link></p>
                 </div>
             </div>
@@ -815,7 +815,7 @@ function ApiReference({ primaryTextModel, primaryImageModel, primaryVideoModel }
             </div>
             <pre className="code-block">{`curl ${SITE}/v1/image-jobs/edits \\
   -H "Authorization: Bearer sk_cc_xxxxx" \\
-  -F "model=${imageModelId}" \\
+  -F "model=gemini-image" \\
   -F "prompt=Combine these references into one poster illustration" \\
   -F "n=1" \\
   -F "size=1024x1024" \\
@@ -876,8 +876,8 @@ function ApiReference({ primaryTextModel, primaryImageModel, primaryVideoModel }
 }`}</pre>
 
             <ul className="doc-list">
-                <li>当前图片编辑分为两条公开契约：<code>1-2</code> 张输入图继续走同步 <code>/v1/images/edits</code>，<code>3-8</code> 张输入图改走异步 <code>/v1/image-jobs/edits</code>。</li>
-                <li>如果你把 <code>3+</code> 张输入图直接发到 <code>/v1/images/edits</code>，接口会明确返回 <code>image_job_required</code>，而不是随机超时。</li>
+                <li><code>gpt-image-2</code> 单图图生图走同步 <code>/v1/images/edits</code>；Gemini 的 <code>3-8</code> 张输入图走异步 <code>/v1/image-jobs/edits</code>。</li>
+                <li>如果你把 <code>3+</code> 张 Gemini 输入图直接发到 <code>/v1/images/edits</code>，接口会明确返回 <code>image_job_required</code>。</li>
                 <li>图片模型当前输出候选数只支持 <code>n=1</code>。</li>
                 <li>当前图片编辑不支持 <code>mask</code> 上传；如果传了掩码，会返回 <code>mask_not_supported</code>。</li>
                 <li>如果平台侧图片运行时暂不可用，图片请求会返回配置错误，而不是偷偷回退到别的模型。</li>
@@ -894,7 +894,7 @@ function ApiReference({ primaryTextModel, primaryImageModel, primaryVideoModel }
                 <tbody>
                     <tr><td>400</td><td>模型或参数错误</td><td>例如模型不存在、模型不支持该端点</td></tr>
                     <tr><td>400</td><td><code>image_candidate_count_not_supported</code></td><td>图片模型当前只支持 <code>n=1</code></td></tr>
-                    <tr><td>400</td><td><code>image_job_required</code></td><td>同步图生图请求里传了 <code>3+</code> 张输入图，请改用 <code>/v1/image-jobs/edits</code></td></tr>
+                    <tr><td>400</td><td><code>image_job_required</code></td><td>同步 Gemini 图生图请求里传了 <code>3+</code> 张输入图，或超过同步等待预算，请改用 <code>/v1/image-jobs/edits</code></td></tr>
                     <tr><td>400</td><td><code>mask_not_supported</code></td><td>当前图片编辑不支持 <code>mask</code> 上传</td></tr>
                     <tr><td>400</td><td><code>missing_reference_media</code></td><td>Seedance 视频请求缺少图片、首帧、首尾帧或多模态参考</td></tr>
                     <tr><td>400</td><td><code>video_reference_requires_video_model</code></td><td>视频/音频参考只能使用带 <code>-video</code> 后缀的 Seedance 模型</td></tr>

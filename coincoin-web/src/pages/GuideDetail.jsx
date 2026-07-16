@@ -770,7 +770,7 @@ Write-Host "saved $Output"`
             },
             images: {
                 title: '图片接口 / 图生图',
-                description: '文生图和图片编辑走同一个公开 `/v1` 入口，成功产出图片后按张计费。1-2 张参考图用同步 `/images/edits`；3-8 张参考图用异步 `/image-jobs/edits`，先排队，再轮询结果。',
+                description: '文生图和图片编辑走同一个公开 `/v1` 入口，成功产出图片后按张计费。单图图生图使用 OpenAI 兼容的 `/images/edits`；Gemini 的 3-8 张参考图使用异步 `/image-jobs/edits`。',
                 commandGroup: [
                     {
                         title: '文生图',
@@ -795,15 +795,15 @@ Write-Host "saved $Output"`
                         code: imageEditWindowsCommand,
                     },
                     {
-                        title: 'macOS / Linux 多图异步图生图',
-                        platform: 'macOS / Linux 多图',
-                        summary: '把 3 张参考图保存成 `ref-1.png`、`ref-2.png`、`ref-3.png`；任务完成后保存 `coincoin_multi_image_edit.png`。',
+                        title: 'macOS / Linux Gemini 多图异步图生图',
+                        platform: 'macOS / Linux Gemini 多图',
+                        summary: '仅适用于 `gemini-image`。把 3 张参考图保存成 `ref-1.png`、`ref-2.png`、`ref-3.png`；完成后保存 `coincoin_multi_image_edit.png`。',
                         code: multiImageEditCommand,
                     },
                     {
-                        title: 'Windows PowerShell 多图异步图生图',
-                        platform: 'Windows 多图',
-                        summary: '把 3 张参考图保存成 `ref-1.png`、`ref-2.png`、`ref-3.png`；任务完成后保存 `coincoin_multi_image_edit.png`。',
+                        title: 'Windows PowerShell Gemini 多图异步图生图',
+                        platform: 'Windows Gemini 多图',
+                        summary: '仅适用于 `gemini-image`。把 3 张参考图保存成 `ref-1.png`、`ref-2.png`、`ref-3.png`；完成后保存 `coincoin_multi_image_edit.png`。',
                         code: multiImageEditWindowsCommand,
                     },
                     {
