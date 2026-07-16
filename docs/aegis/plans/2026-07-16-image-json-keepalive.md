@@ -79,7 +79,7 @@ Verification: full backend tests, frontend build, `git diff --check`, credential
 - [x] Document the interval, `0` disable switch, late-error HTTP 200 tradeoff, and async alternative.
 - [x] Run focused tests, full backend tests, and frontend production build.
 - [x] Run diff and credential scans; review only the task files.
-- [ ] Commit with concise Conventional Commit messages and rebase on current `origin/master`.
+- [x] Commit with concise Conventional Commit messages and integrate current `origin/master`.
 - [ ] Push to `master`, wait for Railway deployment, and verify a slow image request no longer returns Cloudflare 524.
 
 ## Risks and Rollback
