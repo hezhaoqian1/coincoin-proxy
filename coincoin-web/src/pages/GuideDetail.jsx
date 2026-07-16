@@ -493,6 +493,173 @@ aider --model openai/${codingModelId}`
     "size": "1024x1024"
   }'`
 
+        const imageEditCommand = `INPUT="./input.png"
+OUT="coincoin_image_edit.png"
+RESP="$(mktemp)"
+
+if [ ! -f "$INPUT" ]; then
+  echo "Put your reference image at $INPUT first."
+  exit 1
+fi
+
+curl -sS "${OPENAI_BASE_URL}/images/edits" \\
+  -H "Authorization: Bearer ${snippetKey}" \\
+  -F "model=${imageModelId}" \\
+  -F "prompt=Keep the main subject, change the background into a clean studio product scene" \\
+  -F "n=1" \\
+  -F "size=1024x1024" \\
+  -F "image=@$INPUT" \\
+  -o "$RESP"
+
+python3 - "$RESP" "$OUT" <<'PY'
+import base64
+import json
+import sys
+
+resp_path, out_path = sys.argv[1], sys.argv[2]
+data = json.load(open(resp_path, encoding="utf-8"))
+item = (data.get("data") or [{}])[0]
+b64 = item.get("b64_json")
+if not b64:
+    raise SystemExit(json.dumps(data, ensure_ascii=False))
+open(out_path, "wb").write(base64.b64decode(b64))
+print("saved", out_path)
+PY`
+
+        const imageEditWindowsCommand = `$InputImage = ".\\input.png"
+$Output = "coincoin_image_edit.png"
+$Response = "coincoin_image_edit_response.json"
+
+if (-not (Test-Path $InputImage)) {
+  throw "Put your reference image at $InputImage first."
+}
+
+curl.exe "${OPENAI_BASE_URL}/images/edits" \`
+  -H "Authorization: Bearer ${snippetKey}" \`
+  -F "model=${imageModelId}" \`
+  -F "prompt=Keep the main subject, change the background into a clean studio product scene" \`
+  -F "n=1" \`
+  -F "size=1024x1024" \`
+  -F "image=@$InputImage" \`
+  -o $Response
+
+$Result = Get-Content $Response -Raw | ConvertFrom-Json
+if (-not $Result.data[0].b64_json) {
+  throw ($Result | ConvertTo-Json -Depth 8)
+}
+
+[IO.File]::WriteAllBytes($Output, [Convert]::FromBase64String($Result.data[0].b64_json))
+Write-Host "saved $Output"`
+
+        const multiImageEditCommand = `OUT="coincoin_multi_image_edit.png"
+JOB_JSON="$(mktemp)"
+RESULT_JSON="$(mktemp)"
+
+for file in ./ref-1.png ./ref-2.png ./ref-3.png; do
+  if [ ! -f "$file" ]; then
+    echo "Put reference images at ./ref-1.png ./ref-2.png ./ref-3.png first."
+    exit 1
+  fi
+done
+
+curl -sS "${OPENAI_BASE_URL}/image-jobs/edits" \\
+  -H "Authorization: Bearer ${snippetKey}" \\
+  -F "model=gemini-image" \\
+  -F "prompt=Combine these references into one coherent product poster" \\
+  -F "n=1" \\
+  -F "size=1024x1024" \\
+  -F "image=@./ref-1.png" \\
+  -F "image=@./ref-2.png" \\
+  -F "image=@./ref-3.png" \\
+  -o "$JOB_JSON"
+
+JOB_ID=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["id"])' "$JOB_JSON")
+echo "queued $JOB_ID"
+
+DEADLINE=$((SECONDS + 600))
+while true; do
+  curl -sS "${OPENAI_BASE_URL}/image-jobs/$JOB_ID" \\
+    -H "Authorization: Bearer ${snippetKey}" \\
+    -o "$RESULT_JSON"
+
+  STATUS=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"])' "$RESULT_JSON")
+  echo "status $STATUS"
+
+  if [ "$STATUS" = "completed" ]; then
+    python3 - "$RESULT_JSON" "$OUT" <<'PY'
+import base64
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+item = (data.get("result", {}).get("data") or [{}])[0]
+b64 = item.get("b64_json")
+if not b64:
+    raise SystemExit(json.dumps(data, ensure_ascii=False))
+open(sys.argv[2], "wb").write(base64.b64decode(b64))
+print("saved", sys.argv[2])
+PY
+    break
+  fi
+
+  if [ "$STATUS" = "failed" ]; then
+    cat "$RESULT_JSON"
+    exit 1
+  fi
+
+  if [ "$SECONDS" -gt "$DEADLINE" ]; then
+    echo "image job timed out"
+    exit 1
+  fi
+
+  sleep 5
+done`
+
+        const multiImageEditWindowsCommand = `$Output = "coincoin_multi_image_edit.png"
+$JobJson = "coincoin_image_job.json"
+$ResultJson = "coincoin_image_job_result.json"
+
+foreach ($File in @(".\\ref-1.png", ".\\ref-2.png", ".\\ref-3.png")) {
+  if (-not (Test-Path $File)) {
+    throw "Put reference images at .\\ref-1.png .\\ref-2.png .\\ref-3.png first."
+  }
+}
+
+curl.exe "${OPENAI_BASE_URL}/image-jobs/edits" \`
+  -H "Authorization: Bearer ${snippetKey}" \`
+  -F "model=gemini-image" \`
+  -F "prompt=Combine these references into one coherent product poster" \`
+  -F "n=1" \`
+  -F "size=1024x1024" \`
+  -F "image=@.\\ref-1.png" \`
+  -F "image=@.\\ref-2.png" \`
+  -F "image=@.\\ref-3.png" \`
+  -o $JobJson
+
+$Job = Get-Content $JobJson -Raw | ConvertFrom-Json
+Write-Host "queued $($Job.id)"
+$Deadline = (Get-Date).AddMinutes(10)
+
+do {
+  Start-Sleep -Seconds 5
+  curl.exe "${OPENAI_BASE_URL}/image-jobs/$($Job.id)" \`
+    -H "Authorization: Bearer ${snippetKey}" \`
+    -o $ResultJson
+
+  $Result = Get-Content $ResultJson -Raw | ConvertFrom-Json
+  Write-Host "status $($Result.status)"
+
+  if ($Result.status -eq "failed") {
+    throw ($Result | ConvertTo-Json -Depth 8)
+  }
+  if ((Get-Date) -gt $Deadline) {
+    throw "image job timed out"
+  }
+} until ($Result.status -eq "completed")
+
+[IO.File]::WriteAllBytes($Output, [Convert]::FromBase64String($Result.result.data[0].b64_json))
+Write-Host "saved $Output"`
+
         const usageCommand = `curl ${OPENAI_BASE_URL}/usage?limit=5 \\
   -H "Authorization: Bearer ${snippetKey}"`
 
@@ -524,8 +691,8 @@ aider --model openai/${codingModelId}`
             {
                 id: 'images',
                 icon: 'IMG',
-                title: '图片接口',
-                summary: '文生图、图编辑和 usage 计费检查。',
+                title: '图片接口 / 图生图',
+                summary: '文生图、单图图生图、多图异步编辑和 usage 计费检查。',
             },
         ]
 
@@ -602,8 +769,8 @@ aider --model openai/${codingModelId}`
                 command: openclawCommand,
             },
             images: {
-                title: '图片接口',
-                description: '文生图和图片编辑走同一个公开 `/v1` 入口，成功产出图片后按张计费。',
+                title: '图片接口 / 图生图',
+                description: '文生图和图片编辑走同一个公开 `/v1` 入口，成功产出图片后按张计费。1-2 张参考图用同步 `/images/edits`；3-8 张参考图用异步 `/image-jobs/edits`，先排队，再轮询结果。',
                 commandGroup: [
                     {
                         title: '文生图',
@@ -614,6 +781,30 @@ aider --model openai/${codingModelId}`
                         title: 'Gemini 文生图',
                         summary: '需要 Gemini 生图时显式传 `model: "gemini-image"`。',
                         code: geminiImageGenerationCommand,
+                    },
+                    {
+                        title: 'macOS / Linux 图生图',
+                        platform: 'macOS / Linux 图生图',
+                        summary: '把参考图保存成 `input.png` 后运行；同步编辑完成后保存 `coincoin_image_edit.png`。',
+                        code: imageEditCommand,
+                    },
+                    {
+                        title: 'Windows PowerShell 图生图',
+                        platform: 'Windows 图生图',
+                        summary: '把参考图保存成 `input.png` 后运行；同步编辑完成后保存 `coincoin_image_edit.png`。',
+                        code: imageEditWindowsCommand,
+                    },
+                    {
+                        title: 'macOS / Linux 多图异步图生图',
+                        platform: 'macOS / Linux 多图',
+                        summary: '把 3 张参考图保存成 `ref-1.png`、`ref-2.png`、`ref-3.png`；任务完成后保存 `coincoin_multi_image_edit.png`。',
+                        code: multiImageEditCommand,
+                    },
+                    {
+                        title: 'Windows PowerShell 多图异步图生图',
+                        platform: 'Windows 多图',
+                        summary: '把 3 张参考图保存成 `ref-1.png`、`ref-2.png`、`ref-3.png`；任务完成后保存 `coincoin_multi_image_edit.png`。',
+                        code: multiImageEditWindowsCommand,
                     },
                     {
                         title: '查看最近用量',

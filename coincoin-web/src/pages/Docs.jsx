@@ -414,6 +414,7 @@ function QuickStart({ primaryTextModel, primaryImageModel }) {
                     <span className="inline-badge">图生图</span>
                     <strong>POST /v1/images/edits</strong>
                     <p>上传 1-2 张参考图时使用同步编辑；3-8 张参考图改用异步 <code>/v1/image-jobs/edits</code>。</p>
+                    <p><Link to="/guides/images">打开图生图教程</Link></p>
                 </div>
             </div>
             <pre className="code-block">{`curl ${SITE}/v1/images/generations \\
