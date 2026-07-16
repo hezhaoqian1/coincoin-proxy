@@ -502,6 +502,16 @@ export async function confirmOrder(orderNo, proofUrl) {
     return res.json()
 }
 
+/** Confirm a signed payment return without requiring browser auth. */
+export async function confirmOrderFromReturn(orderNo, proofUrl) {
+    const res = await fetch(`${PROXY_BASE}/v1/orders/confirm-return`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order_no: orderNo, proof_url: proofUrl })
+    })
+    return res.json()
+}
+
 /** Redeem a code */
 export async function redeemCode(code) {
     const res = await fetch(`${PROXY_BASE}/v1/redeem`, {

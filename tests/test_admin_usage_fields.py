@@ -2777,6 +2777,110 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(order.status, "pending")
         self.assertEqual(fake_db.commits, 0)
 
+    async def test_confirm_return_accepts_signed_proof_without_browser_auth(self) -> None:
+        payment_module.settings.epay_api_url = "https://code.nxslq.top/"
+        payment_module.settings.epay_pid = "177938431"
+        payment_module.settings.epay_key = "j9J4loEx5Qy"
+
+        user = SimpleNamespace(id="u_1", balance=500, referred_by=None, status="active")
+        credit_balance = SimpleNamespace(remaining_cents=10000)
+        order = SimpleNamespace(
+            id="po_1",
+            order_no="CC_test_order",
+            user_id="u_1",
+            amount_rmb="59.90",
+            status="pending",
+            add_balance_cents=10000,
+            product_id="credit_light",
+            catalog_version="credit-v1",
+            purchase_action="credit_purchase",
+            promised_credit_cents=10000,
+            station_id=None,
+            trade_no=None,
+            confirmed_at=None,
+        )
+        fake_db = _FakeDB(
+            execute_results=[
+                _FakeEntityResult(order),
+                _FakeEntityResult(user),
+                _FakeScalarOneResult(None),
+                _FakeEntityResult(None),
+                _FakeScalarsResult([]),
+                _FakeScalarsResult([]),
+                _FakeAllResult([]),
+                _FakeAllResult([]),
+                _FakeEntityResult(None),
+                _FakeEntityResult(None),
+                _FakeEntityResult(order),
+            ]
+        )
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[payment_module.get_db] = fake_get_db
+
+        transport = httpx.ASGITransport(app=app)
+        try:
+            with (
+                patch("app.payment_common.grant_permanent_credit", new=AsyncMock(return_value=credit_balance)),
+                patch(
+                    "app.payment.get_available_balance_cents",
+                    new=AsyncMock(return_value={"available_cents": 10500}),
+                ),
+            ):
+                async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                    response = await client.post(
+                        "/v1/orders/confirm-return",
+                        json={
+                            "order_no": "CC_test_order",
+                            "proof_url": "https://bird-alipay.up.railway.app/pay/return?order_no=CC_test_order"
+                            "&pid=177938431&trade_no=2026032622080275954&out_trade_no=CC_test_order"
+                            "&type=alipay&name=%E4%BD%93%E9%AA%8C%E5%8C%85&money=59.90&trade_status=TRADE_SUCCESS"
+                            "&sign=299320d0b4a31d21731379f748a9cba3&sign_type=MD5",
+                        },
+                    )
+        finally:
+            app.dependency_overrides.pop(payment_module.get_db, None)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["added_cents"], 10000)
+        self.assertEqual(payload["available_cents"], 10500)
+        self.assertEqual(user.balance, 500)
+        self.assertEqual(order.trade_no, "2026032622080275954")
+        self.assertGreaterEqual(fake_db.commits, 1)
+
+    async def test_confirm_return_rejects_mismatched_signed_proof(self) -> None:
+        payment_module.settings.epay_api_url = "https://code.nxslq.top/"
+        payment_module.settings.epay_pid = "177938431"
+        payment_module.settings.epay_key = "j9J4loEx5Qy"
+
+        async def fake_get_db():
+            yield _FakeDB()
+
+        app.dependency_overrides[payment_module.get_db] = fake_get_db
+
+        transport = httpx.ASGITransport(app=app)
+        try:
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                response = await client.post(
+                    "/v1/orders/confirm-return",
+                    json={
+                        "order_no": "CC_test_order",
+                        "proof_url": "https://bird-alipay.up.railway.app/pay/return"
+                        "?pid=177938431&trade_no=2026032622080275954&out_trade_no=CC_other_order"
+                        "&type=alipay&name=%E4%BD%93%E9%AA%8C%E5%8C%85&money=9.90&trade_status=TRADE_SUCCESS"
+                        "&sign=ecc2773589dd2c440e03d798adc4b2f9&sign_type=MD5",
+                    },
+                )
+        finally:
+            app.dependency_overrides.pop(payment_module.get_db, None)
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(response.json()["detail"], "payment proof does not match this order")
+
     async def test_confirm_order_rejects_pending_monthly_product_without_frozen_credit(self) -> None:
         payment_module.settings.epay_api_url = "https://code.nxslq.top/"
         payment_module.settings.epay_pid = "177938431"
