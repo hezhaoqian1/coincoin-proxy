@@ -138,6 +138,45 @@ async def _attach_available_balance(result: dict, db: AsyncSession) -> dict:
     return result
 
 
+async def _create_station_commission_for_confirmed_order(order_no: str, db: AsyncSession) -> None:
+    try:
+        refreshed_order_result = await db.execute(select(PaymentOrder).where(PaymentOrder.order_no == order_no))
+        refreshed_order = getattr(refreshed_order_result, "scalar_one_or_none", lambda: None)()
+        if refreshed_order:
+            await create_station_commission_entry_for_confirmed_order(db, refreshed_order)
+            await db.commit()
+    except Exception:
+        logger.exception("failed to create station commission entry for %s", order_no)
+
+
+async def _confirm_order_with_signed_proof(payload: OrderConfirmRequest, db: AsyncSession) -> dict:
+    if not payload.proof_url:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "payment proof URL is required")
+    try:
+        callback_params = verify_epay_callback_params(
+            extract_epay_params_from_proof_url(payload.proof_url),
+            require_success=True,
+        )
+    except EpayVerificationError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, exc.detail) from exc
+
+    if callback_params["out_trade_no"] != payload.order_no:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "payment proof does not match this order")
+
+    try:
+        result = await confirm_paid_order(
+            order_no=payload.order_no,
+            money=callback_params["money"],
+            trade_no=callback_params["trade_no"],
+            db=db,
+        )
+    except PaymentConfirmError as exc:
+        raise _translate_confirm_error(exc) from exc
+
+    await _create_station_commission_for_confirmed_order(payload.order_no, db)
+    return result
+
+
 def _payment_order_payload(order: PaymentOrder) -> dict:
     return {
         "id": order.id,
@@ -301,36 +340,7 @@ async def confirm_order(
         return _response_from_confirm_result(await _attach_available_balance(result, db), "order already confirmed")
 
     if payload.proof_url:
-        try:
-            callback_params = verify_epay_callback_params(
-                extract_epay_params_from_proof_url(payload.proof_url),
-                require_success=True,
-            )
-        except EpayVerificationError as exc:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, exc.detail) from exc
-
-        if callback_params["out_trade_no"] != payload.order_no:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "payment proof does not match this order")
-
-        try:
-            result = await confirm_paid_order(
-                order_no=payload.order_no,
-                money=callback_params["money"],
-                trade_no=callback_params["trade_no"],
-                db=db,
-            )
-        except PaymentConfirmError as exc:
-            raise _translate_confirm_error(exc) from exc
-
-        try:
-            refreshed_order_result = await db.execute(select(PaymentOrder).where(PaymentOrder.order_no == payload.order_no))
-            refreshed_order = getattr(refreshed_order_result, "scalar_one_or_none", lambda: None)()
-            if refreshed_order:
-                await create_station_commission_entry_for_confirmed_order(db, refreshed_order)
-                await db.commit()
-        except Exception:
-            logger.exception("failed to create station commission entry for %s", payload.order_no)
-
+        result = await _confirm_order_with_signed_proof(payload, db)
         message = "order already confirmed" if result.get("already_confirmed") else "recharge success"
         return _response_from_confirm_result(await _attach_available_balance(result, db), message)
 
@@ -338,13 +348,16 @@ async def confirm_order(
         result = await _confirm_with_query_fallback(payload.order_no, db)
     except HTTPException:
         raise
-    try:
-        refreshed_order_result = await db.execute(select(PaymentOrder).where(PaymentOrder.order_no == payload.order_no))
-        refreshed_order = getattr(refreshed_order_result, "scalar_one_or_none", lambda: None)()
-        if refreshed_order:
-            await create_station_commission_entry_for_confirmed_order(db, refreshed_order)
-            await db.commit()
-    except Exception:
-        logger.exception("failed to create station commission entry for %s", payload.order_no)
+    await _create_station_commission_for_confirmed_order(payload.order_no, db)
+    message = "order already confirmed" if result.get("already_confirmed") else "recharge success"
+    return _response_from_confirm_result(await _attach_available_balance(result, db), message)
+
+
+@router.post("/orders/confirm-return", response_model=OrderConfirmResponse)
+async def confirm_order_from_return(
+    payload: OrderConfirmRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await _confirm_order_with_signed_proof(payload, db)
     message = "order already confirmed" if result.get("already_confirmed") else "recharge success"
     return _response_from_confirm_result(await _attach_available_balance(result, db), message)
