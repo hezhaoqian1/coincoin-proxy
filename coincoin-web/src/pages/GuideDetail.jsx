@@ -341,7 +341,7 @@ wire_api = "responses"
 
 codex`
 
-        const grokBuildCommand = `if ! command -v grok >/dev/null 2>&1; then
+        const grokBuildCommand = String.raw`if ! command -v grok >/dev/null 2>&1; then
   curl -fsSL https://x.ai/cli/install.sh | bash
   export PATH="$HOME/bin:$HOME/.grok/bin:$PATH"
 fi
@@ -383,6 +383,8 @@ path.write_text(text.rstrip() + "\n\n" + block, encoding="utf-8")
 PY
 
 chmod 600 "$CONFIG"
+printf 'Grok Build config written to %s\n' "$CONFIG"
+grok inspect
 grok -p "Reply exactly: COINCOIN_GROK_BUILD_OK" -m grok-build --output-format json --max-turns 1
 
 TEST_DIR=$(mktemp -d)
@@ -390,7 +392,7 @@ printf 'GROK_BUILD_TOOL_LOOP_OK\n' > "$TEST_DIR/probe.txt"
 grok --cwd "$TEST_DIR" -p "Read probe.txt with the file tool, then reply with its exact contents." -m grok-build --output-format json --max-turns 3 --always-approve
 rm -rf "$TEST_DIR"`
 
-        const grokBuildWindowsCommand = `if (-not (Get-Command grok -ErrorAction SilentlyContinue)) {
+        const grokBuildWindowsCommand = String.raw`if (-not (Get-Command grok -ErrorAction SilentlyContinue)) {
   irm https://x.ai/cli/install.ps1 | iex
 }
 
@@ -430,6 +432,8 @@ context_window = 500000
 '@
 ($Text.TrimEnd() + [Environment]::NewLine + [Environment]::NewLine + $Block) | Set-Content $Config -Encoding UTF8
 
+Write-Host "Grok Build config written to $Config"
+grok inspect
 grok -p "Reply exactly: COINCOIN_GROK_BUILD_OK" -m grok-build --output-format json --max-turns 1
 
 $TestDir = Join-Path ([System.IO.Path]::GetTempPath()) ("coincoin-grok-build-" + [guid]::NewGuid())
@@ -1002,18 +1006,18 @@ Write-Host "saved $Output"`
             },
             'grok-build': {
                 title: 'Grok Build 配置',
-                description: '安装官方 Grok Build CLI，把内置 `grok-build` 模型覆盖到 CoinCoin 的 Responses 入口，然后运行基础对话和真实文件工具回路验证。配置前会备份现有 `config.toml`。',
+                description: '按 xAI 官方自定义模型格式写入用户级 `~/.grok/config.toml`，把 `grok-build` 指向 CoinCoin Responses 入口。写入后会先运行 `grok inspect`，再验证基础对话和真实文件工具回路；成功后无需登录 xAI 账号。',
                 commandGroup: [
                     {
                         title: 'macOS / Linux 一键配置',
                         platform: 'macOS / Linux',
-                        summary: '安装官方 CLI、保留其他 Grok 设置、写入 CoinCoin Responses 模型，并运行文件读取工具回路。',
+                        summary: '安装官方 CLI、保留其他 Grok 设置、写入并检查 `~/.grok/config.toml`，然后运行文件读取工具回路。',
                         code: grokBuildCommand,
                     },
                     {
                         title: 'Windows PowerShell 一键配置',
                         platform: 'Windows',
-                        summary: '安装官方 CLI、备份配置、替换 `grok-build` 模型段，并运行文件读取工具回路。',
+                        summary: '安装官方 CLI、备份并检查 `$HOME\\.grok\\config.toml`、替换 `grok-build` 模型段，然后运行文件读取工具回路。',
                         code: grokBuildWindowsCommand,
                     },
                 ],
