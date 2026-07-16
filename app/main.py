@@ -17,6 +17,7 @@ from .image_jobs import (
     openai_router as image_jobs_openai_router,
     router as image_jobs_router,
 )
+from .image_keepalive import ImageJSONKeepaliveASGIMiddleware
 from .media_artifacts import router as media_artifacts_router
 from .video_jobs import (
     openai_router as video_jobs_openai_router,
@@ -1106,6 +1107,7 @@ app = FastAPI(
 )
 
 app.add_middleware(QuotaReservationASGIMiddleware)
+app.add_middleware(ImageJSONKeepaliveASGIMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

@@ -86,6 +86,7 @@ class Settings(BaseSettings):
     image_job_async_max_inputs: int = 8
     image_job_max_total_bytes: int = 50 * 1024 * 1024
     image_edit_sync_gateway_timeout_seconds: int = 60
+    image_nonstream_keepalive_interval_seconds: int = 15
     admin_upload_dir: str = "/tmp/coincoin-admin-uploads"
 
     # Database — prefer database_url (Railway ${{MySQL.MYSQL_URL}});
