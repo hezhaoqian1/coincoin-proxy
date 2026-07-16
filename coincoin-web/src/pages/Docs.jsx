@@ -620,6 +620,7 @@ function ModelsAndPricing({ textModels, imageModels, videoModels, defaultTextMod
             <div className="endpoint-strip">
                 <button onClick={() => copy(openaiBaseUrl, 'openai')}><span>OpenAI Base URL</span><code>{openaiBaseUrl}</code><strong>{copied === 'openai' ? '已复制' : '复制'}</strong></button>
                 <button onClick={() => copy(firstCurl, 'curl')}><span>第一条请求</span><code>curl chat/completions</code><strong>{copied === 'curl' ? '已复制' : '复制'}</strong></button>
+                <Link to="/guides/grok-build"><span>Grok / Grok Build</span><code>grok-4.5 · grok-build</code><strong>快速接入</strong></Link>
             </div>
 
             <div className="model-catalog-head">

@@ -249,6 +249,7 @@ export default function AppShell({ title, description, actions, children }) {
                     { to: '/docs?tab=models', pathname: '/docs', search: { tab: 'models' }, label: '可用模型', icon: 'pricing' },
                     { to: '/guides/api-quickstart', pathname: '/guides/api-quickstart', label: 'API 快速接入', icon: 'docs' },
                     { to: '/guides/codex', pathname: '/guides/codex', label: 'Codex 接入', icon: 'terminal' },
+                    { to: '/guides/grok-build', pathname: '/guides/grok-build', label: 'Grok 快速接入', icon: 'terminal' },
                     { to: '/guides/claude-code', pathname: '/guides/claude-code', label: 'Claude Code 接入', icon: 'access' },
                     { to: '/guides/other', pathname: '/guides/other', label: '其他接入', icon: 'docs' },
                 ],
