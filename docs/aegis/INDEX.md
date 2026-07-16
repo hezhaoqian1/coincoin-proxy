@@ -1,5 +1,7 @@
 # Aegis Workspace Index
 
+- `plans/2026-07-16-image-json-keepalive.md` — synchronous image JSON heartbeat transport and async compatibility boundary.
+
 This index tracks files created under this project's `docs/aegis/` workspace.
 Entries are workspace records, not authoritative runtime decisions.
 

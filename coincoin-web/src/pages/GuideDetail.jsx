@@ -572,14 +572,169 @@ aider --model openai/${codingModelId}`
 
         const imageModelId = defaultImageModel?.id || imageModels[0]?.id || 'gpt-image-2'
 
-        const imageGenerationCommand = `curl ${OPENAI_BASE_URL}/images/generations \\
+        const imageGenerationCommand = `OUT="coincoin_image.png"
+RESP="$(mktemp)"
+
+curl -sS ${OPENAI_BASE_URL}/images/generations \\
   -H "Authorization: Bearer ${snippetKey}" \\
   -H "Content-Type: application/json" \\
   -d '{
     "model": "${imageModelId}",
     "prompt": "A clean product poster for an AI gateway",
-    "size": "1024x1024"
-  }'`
+    "size": "1024x1024",
+    "n": 1
+  }' \\
+  -o "$RESP"
+
+python3 - "$RESP" "$OUT" <<'PY'
+import base64
+import json
+import sys
+import urllib.request
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+item = (data.get("data") or [{}])[0]
+if item.get("b64_json"):
+    open(sys.argv[2], "wb").write(base64.b64decode(item["b64_json"]))
+elif item.get("url"):
+    urllib.request.urlretrieve(item["url"], sys.argv[2])
+else:
+    raise SystemExit(json.dumps(data, ensure_ascii=False))
+print("saved", sys.argv[2])
+PY`
+
+        const imageGenerationWindowsCommand = `$Output = "coincoin_image.png"
+$Response = "coincoin_image_response.json"
+$Request = "coincoin_image_request.json"
+$Body = @{
+  model = "${imageModelId}"
+  prompt = "A clean product poster for an AI gateway"
+  size = "1024x1024"
+  n = 1
+} | ConvertTo-Json
+$Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[IO.File]::WriteAllText($Request, $Body, $Utf8NoBom)
+
+curl.exe ${OPENAI_BASE_URL}/images/generations \`
+  -H "Authorization: Bearer ${snippetKey}" \`
+  -H "Content-Type: application/json" \`
+  --data-binary "@$Request" \`
+  -o $Response
+
+$Result = Get-Content $Response -Raw | ConvertFrom-Json
+$Item = $Result.data[0]
+if ($Item.b64_json) {
+  [IO.File]::WriteAllBytes($Output, [Convert]::FromBase64String($Item.b64_json))
+} elseif ($Item.url) {
+  Invoke-WebRequest -Uri $Item.url -OutFile $Output
+} else {
+  throw ($Result | ConvertTo-Json -Depth 8)
+}
+Write-Host "saved $Output"`
+
+        const asyncImageGenerationCommand = `OUT="coincoin_image_async.png"
+JOB_JSON="$(mktemp)"
+RESULT_JSON="$(mktemp)"
+
+curl -sS ${OPENAI_BASE_URL}/image-jobs/generations \\
+  -H "Authorization: Bearer ${snippetKey}" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "${imageModelId}",
+    "prompt": "A clean product poster for an AI gateway",
+    "size": "1024x1024",
+    "n": 1
+  }' \\
+  -o "$JOB_JSON"
+
+JOB_ID=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["id"])' "$JOB_JSON")
+echo "queued $JOB_ID"
+
+DEADLINE=$((SECONDS + 600))
+while true; do
+  curl -sS ${OPENAI_BASE_URL}/image-jobs/$JOB_ID \\
+    -H "Authorization: Bearer ${snippetKey}" \\
+    -o "$RESULT_JSON"
+  STATUS=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"])' "$RESULT_JSON")
+  echo "status $STATUS"
+
+  if [ "$STATUS" = "completed" ]; then
+    python3 - "$RESULT_JSON" "$OUT" <<'PY'
+import base64
+import json
+import sys
+import urllib.request
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+item = (data.get("result", {}).get("data") or [{}])[0]
+if item.get("b64_json"):
+    open(sys.argv[2], "wb").write(base64.b64decode(item["b64_json"]))
+elif item.get("url"):
+    urllib.request.urlretrieve(item["url"], sys.argv[2])
+else:
+    raise SystemExit(json.dumps(data, ensure_ascii=False))
+print("saved", sys.argv[2])
+PY
+    break
+  fi
+  if [ "$STATUS" = "failed" ]; then
+    cat "$RESULT_JSON"
+    exit 1
+  fi
+  if [ "$SECONDS" -gt "$DEADLINE" ]; then
+    echo "image job timed out"
+    exit 1
+  fi
+  sleep 5
+done`
+
+        const asyncImageGenerationWindowsCommand = `$Output = "coincoin_image_async.png"
+$JobJson = "coincoin_image_job.json"
+$ResultJson = "coincoin_image_job_result.json"
+$RequestJson = "coincoin_image_job_request.json"
+$Body = @{
+  model = "${imageModelId}"
+  prompt = "A clean product poster for an AI gateway"
+  size = "1024x1024"
+  n = 1
+} | ConvertTo-Json
+$Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[IO.File]::WriteAllText($RequestJson, $Body, $Utf8NoBom)
+
+curl.exe ${OPENAI_BASE_URL}/image-jobs/generations \`
+  -H "Authorization: Bearer ${snippetKey}" \`
+  -H "Content-Type: application/json" \`
+  --data-binary "@$RequestJson" \`
+  -o $JobJson
+
+$Job = Get-Content $JobJson -Raw | ConvertFrom-Json
+Write-Host "queued $($Job.id)"
+$Deadline = (Get-Date).AddMinutes(10)
+
+do {
+  Start-Sleep -Seconds 5
+  curl.exe "${OPENAI_BASE_URL}/image-jobs/$($Job.id)" \`
+    -H "Authorization: Bearer ${snippetKey}" \`
+    -o $ResultJson
+  $Result = Get-Content $ResultJson -Raw | ConvertFrom-Json
+  Write-Host "status $($Result.status)"
+  if ($Result.status -eq "failed") {
+    throw ($Result | ConvertTo-Json -Depth 8)
+  }
+  if ((Get-Date) -gt $Deadline) {
+    throw "image job timed out"
+  }
+} until ($Result.status -eq "completed")
+
+$Item = $Result.result.data[0]
+if ($Item.b64_json) {
+  [IO.File]::WriteAllBytes($Output, [Convert]::FromBase64String($Item.b64_json))
+} elseif ($Item.url) {
+  Invoke-WebRequest -Uri $Item.url -OutFile $Output
+} else {
+  throw ($Result | ConvertTo-Json -Depth 8)
+}
+Write-Host "saved $Output"`
 
         const geminiImageGenerationCommand = `curl ${OPENAI_BASE_URL}/images/generations \\
   -H "Authorization: Bearer ${snippetKey}" \\
@@ -892,17 +1047,36 @@ Write-Host "saved $Output"`
             },
             images: {
                 title: '图片接口 / 图生图',
-                description: '文生图和图片编辑走同一个公开 `/v1` 入口，成功产出图片后按张计费。单图图生图使用 OpenAI 兼容的 `/images/edits`；Gemini 的 3-8 张参考图使用异步 `/image-jobs/edits`。',
+                description: '文生图和图片编辑走同一个公开 `/v1` 入口，成功产出图片后按张计费。同步慢请求会发送 JSON 合法空白保持连接；单图图生图使用 `/images/edits`，Gemini 的 3-8 张参考图使用异步 `/image-jobs/edits`。',
                 commandGroup: [
                     {
-                        title: '文生图',
-                        summary: '请求里显式传入图片模型，例如 `gpt-image-2`。',
+                        title: 'macOS / Linux 文生图',
+                        platform: 'macOS / Linux 文生图',
+                        summary: '生成完成后保存为 `coincoin_image.png`。示例使用 `1024x1024`；也可按上游支持情况改为 `1536x1024`、`1024x1536` 或 `auto`。',
                         code: imageGenerationCommand,
+                    },
+                    {
+                        title: 'Windows PowerShell 文生图',
+                        platform: 'Windows 文生图',
+                        summary: '生成完成后保存为 `coincoin_image.png`。`size` 使用像素尺寸或 `auto`，不要把 `1K`、`2K`、`4K` 当成通用兼容值。',
+                        code: imageGenerationWindowsCommand,
                     },
                     {
                         title: 'Gemini 文生图',
                         summary: '需要 Gemini 生图时显式传 `model: "gemini-image"`。',
                         code: geminiImageGenerationCommand,
+                    },
+                    {
+                        title: 'macOS / Linux 异步文生图',
+                        platform: 'macOS / Linux 异步文生图',
+                        summary: '创建任务后每 5 秒轮询，完成后保存 `coincoin_image_async.png`。异步避免长连接，但不会缩短生图时间。',
+                        code: asyncImageGenerationCommand,
+                    },
+                    {
+                        title: 'Windows PowerShell 异步文生图',
+                        platform: 'Windows 异步文生图',
+                        summary: '创建任务后每 5 秒轮询，完成后保存 `coincoin_image_async.png`。适合客户端自身总超时较短的情况。',
+                        code: asyncImageGenerationWindowsCommand,
                     },
                     {
                         title: 'macOS / Linux 图生图',

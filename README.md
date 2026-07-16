@@ -95,6 +95,7 @@ See [`docs/usage-quota-infra.md`](./docs/usage-quota-infra.md).
 - **Chat Completions compatibility**: `/v1/chat/completions` with streaming, tools, function calling, and OpenAI-shaped responses.
 - **Embeddings**: `/v1/embeddings` with the public `text-embedding-3-small` alias.
 - **Image generation and editing**: `/v1/images/generations`, `/v1/images/edits`, and async `/v1/image-jobs/edits`.
+- **Slow image connection protection**: synchronous image JSON responses emit JSON-safe whitespace heartbeats so idle CDN connections remain open while the upstream finishes.
 - **Usage accounting**: input/output token units, image units, job costs, balance, and request history.
 - **Provider channels**: admin-managed OpenAI-compatible upstream URLs and keys.
 - **Route fallback**: priority, weight, cooldown, failure thresholds, and system fallback back to catalog defaults.
@@ -158,6 +159,12 @@ Optional production lanes can be added with the variables in [`env.example`](./e
 - provider channel active monitoring
 - Checkly-style protected probes
 
+Synchronous image requests use a 15-second JSON whitespace keepalive by default. Set
+`COINCOIN_IMAGE_NONSTREAM_KEEPALIVE_INTERVAL_SECONDS=0` to disable it. Once the
+first heartbeat is sent, HTTP status is committed as `200`; a later upstream failure
+is returned in the final OpenAI-compatible JSON error body. Use the async image-job
+endpoints when clients require short requests or authoritative late HTTP statuses.
+
 ### 3. Run
 
 ```bash
@@ -212,6 +219,20 @@ curl http://127.0.0.1:8000/v1/images/edits \
   -F "image=@./input.png"
 ```
 
+### Async Image Generation
+
+```bash
+curl http://127.0.0.1:8000/v1/image-jobs/generations \
+  -H "Authorization: Bearer sk_cc_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-image-2",
+    "prompt": "A blue coin mascot on a white background",
+    "size": "1024x1024",
+    "n": 1
+  }'
+```
+
 ### Async Multi-Image Editing
 
 ```bash
@@ -244,6 +265,7 @@ curl http://127.0.0.1:8000/v1/image-jobs/<job_id> \
 | `/v1/embeddings` | `POST` | Embeddings with `text-embedding-3-small` |
 | `/v1/images/generations` | `POST` | Image generation |
 | `/v1/images/edits` | `POST` | Image editing and image-to-image |
+| `/v1/image-jobs/generations` | `POST` | Async image generation job |
 | `/v1/image-jobs/edits` | `POST` | Async multi-image edit job |
 | `/v1/image-jobs/{job_id}` | `GET` | Async job status and result |
 | `/v1/balance` | `GET` | User balance and aggregate usage |

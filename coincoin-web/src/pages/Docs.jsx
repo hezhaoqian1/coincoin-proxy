@@ -821,6 +821,24 @@ function ApiReference({ primaryTextModel, primaryImageModel, primaryVideoModel }
   "prompt": "A futuristic coin mascot in a glass city",
   "size": "1024x1024"
 }`}</pre>
+            <div className="doc-callout">
+                <strong>慢请求会保持同步连接</strong>
+                <p>图片上游较慢时，接口会定期发送 JSON 合法空白，避免连接在等待最终结果时触发 CDN 524。客户端应继续读取到完整 JSON；这不会缩短实际生图时间。</p>
+                <p>首个保活字节发出后 HTTP 状态会固定为 <code>200</code>，晚到错误请读取最终 JSON 的 <code>error</code>。需要短请求或严格错误状态时使用 <code>/v1/image-jobs/generations</code>。</p>
+            </div>
+
+            <h3>Images: 异步生成</h3>
+            <div className="endpoint-block">
+                <span className="method post">POST</span>
+                <code>/v1/image-jobs/generations</code>
+            </div>
+            <pre className="code-block">{`{
+  "model": "${imageModelId}",
+  "prompt": "A futuristic coin mascot in a glass city",
+  "size": "1024x1024",
+  "n": 1
+}`}</pre>
+            <p>创建成功返回 <code>202</code> 和任务 <code>id</code>，随后通过 <code>/v1/image-jobs/{'{job_id}'}</code> 查询。异步只缩短单次网络请求，不会加快上游生成。</p>
 
             <h3>Images: 编辑 / 图生图</h3>
             <div className="endpoint-block">
