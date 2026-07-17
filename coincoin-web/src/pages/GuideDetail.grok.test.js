@@ -36,6 +36,7 @@ test('macOS and Linux Grok command preserves and applies the Python config edito
     assert.ok(pythonBlock, 'generated command should contain the Python config editor')
     assert.match(command, /r"\(\?ms\)\^\\\[model\\\.grok-build\\\]\\s\*\.\*\?\(\?=\^\\\[\|\\Z\)"/)
     assert.match(command, /r"\(\?ms\)\^\\\[model\\\.grok-4\\\.5\\\]\\s\*\.\*\?\(\?=\^\\\[\|\\Z\)"/)
+    assert.match(command, /r'\(\?ms\)\^\\\[model\\\."grok-4\\\.5"\\\]\\s\*\.\*\?\(\?=\^\\\[\|\\Z\)'/)
     assert.ok(command.includes(`section.rstrip() + '\\ndefault = "grok-4.5"\\n'`))
     assert.match(command, /printf 'Grok Build config written to %s\\n' "\$CONFIG"\ngrok inspect\n/)
 
@@ -48,7 +49,7 @@ test('macOS and Linux Grok command preserves and applies the Python config edito
     const home = await mkdtemp(join(tmpdir(), 'coincoin-grok-guide-'))
     const configPath = join(home, 'config.toml')
     try {
-        await writeFile(configPath, '[cli]\ninstaller = "npm"\n\n[model.grok-build]\nmodel = "grok-build"\n', 'utf8')
+        await writeFile(configPath, '[cli]\ninstaller = "npm"\n\n[model.grok-build]\nmodel = "grok-build"\n\n[model."grok-4.5"]\nmodel = "stale"\n', 'utf8')
         const applyConfig = spawnSync('python3', ['-c', pythonBlock[1]], {
             encoding: 'utf8',
             env: { ...process.env, GROK_CONFIG: configPath },
@@ -59,13 +60,23 @@ test('macOS and Linux Grok command preserves and applies the Python config edito
         assert.match(config, /\[cli\]\ninstaller = "npm"/)
         assert.match(config, /\[models\]\ndefault = "grok-4\.5"/)
         assert.match(config, /web_search = "grok-4\.5"/)
-        assert.match(config, /\[model\.grok-4\.5\]/)
+        assert.match(config, /\[model\."grok-4\.5"\]/)
+        assert.doesNotMatch(config, /model = "stale"/)
         assert.doesNotMatch(config, /\[model\.grok-build\]/)
         assert.match(config, /base_url = "https:\/\/coincoin\.ai\/v1"/)
         assert.match(config, /api_key = "test-coincoin-key"/)
         assert.match(config, /api_backend = "responses"/)
         assert.match(config, /supports_backend_search = true/)
         assert.match(command, /COINCOIN_GROK_WEB_SEARCH_OK/)
+
+        const tomlCheck = spawnSync('python3', ['-c', [
+            'import sys, tomllib',
+            'with open(sys.argv[1], "rb") as handle:',
+            '    config = tomllib.load(handle)',
+            'assert config["models"]["default"] == "grok-4.5"',
+            'assert config["model"]["grok-4.5"]["model"] == "grok-4.5"',
+        ].join('\n'), configPath], { encoding: 'utf8' })
+        assert.equal(tomlCheck.status, 0, tomlCheck.stderr)
     } finally {
         await rm(home, { recursive: true, force: true })
     }
@@ -76,6 +87,7 @@ test('Windows Grok command preserves PowerShell regex escapes', () => {
 
     assert.ok(command.includes("'(?ms)^\\[model\\.grok-build\\]\\s*.*?(?=^\\[|\\z)'"))
     assert.ok(command.includes("'(?ms)^\\[model\\.grok-4\\.5\\]\\s*.*?(?=^\\[|\\z)'"))
+    assert.ok(command.includes("'(?ms)^\\[model\\.\"grok-4\\.5\"\\]\\s*.*?(?=^\\[|\\z)'"))
     assert.ok(command.includes("'(?ms)^\\[models\\]\\s*.*?(?=^\\[|\\z)'"))
     assert.ok(command.includes("'web_search = \"grok-4.5\"'"))
     assert.ok(command.includes('supports_backend_search = true'))

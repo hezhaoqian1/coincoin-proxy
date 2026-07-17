@@ -1046,7 +1046,7 @@ wire_api = "responses"`}</pre>
 default = "grok-4.5"
 web_search = "grok-4.5"
 
-[model.grok-4.5]
+[model."grok-4.5"]
 model = "grok-4.5"
 base_url = "${SITE}/v1"
 api_key = "sk_cc_xxxxx"
