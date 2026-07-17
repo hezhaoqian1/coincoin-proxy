@@ -1568,6 +1568,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             base_price_input_per_million=250,
             base_price_output_per_million=1500,
             effective_cached_input_per_million=375.0,
+            server_side_tool_usage_details={"web_search_calls": 4, "x_search_calls": 1},
         )
         fake_db = _FakeDB(
             execute_results=[
@@ -1607,6 +1608,8 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(item["provider_platform"], "sub2api")
         self.assertEqual(item["fallback_from_channel_id"], "ch_primary")
         self.assertEqual(item["route_attempt"], 1)
+        self.assertEqual(item["server_side_tool_usage_details"]["web_search_calls"], 4)
+        self.assertEqual(item["num_server_side_tools_used"], 5)
 
     async def test_invalidate_user_key_cache_is_best_effort_when_query_fails(self) -> None:
         class _FailingDB:
@@ -1822,6 +1825,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             duration_ms=1200,
             status_code=200,
             route_reason="catalog:gpt-5.4",
+            server_side_tool_usage_details={"web_search_calls": 4, "x_search_calls": 1},
         )
         fake_db = _FakeDB(
             execute_results=[
@@ -1844,6 +1848,8 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["summary"]["cache_read_tokens"], 0)
         self.assertEqual(payload["summary"]["cache_creation_tokens"], 0)
         self.assertEqual(payload["data"][0]["api_key_id"], "k_selected")
+        self.assertEqual(payload["data"][0]["server_side_tool_usage_details"]["web_search_calls"], 4)
+        self.assertEqual(payload["data"][0]["num_server_side_tools_used"], 5)
         self.assertNotIn("provider_model", payload["data"][0])
 
     async def test_user_usage_summary_covers_all_filtered_rows_not_current_page(self) -> None:
@@ -1897,6 +1903,8 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["summary"]["image_count"], 3)
         self.assertEqual(payload["data"][0]["cache_read_tokens"], 2)
         self.assertEqual(payload["data"][0]["cache_creation_tokens"], 0)
+        self.assertEqual(payload["data"][0]["server_side_tool_usage_details"], {})
+        self.assertEqual(payload["data"][0]["num_server_side_tools_used"], 0)
         self.assertNotIn("provider_model", payload["data"][0])
 
     async def test_usage_date_filters_use_china_day_boundaries(self) -> None:

@@ -126,6 +126,7 @@ async def _run_migrations(conn):
         ("coincoin_request_logs", "cached_tokens", "BIGINT DEFAULT 0"),
         ("coincoin_request_logs", "cache_read_tokens", "BIGINT DEFAULT 0"),
         ("coincoin_request_logs", "cache_creation_tokens", "BIGINT DEFAULT 0"),
+        ("coincoin_request_logs", "server_side_tool_usage_details", "JSON NULL"),
         ("coincoin_request_logs", "api_key_id", "VARCHAR(32) NULL"),
         ("coincoin_request_logs", "route_reason", "VARCHAR(128) DEFAULT ''"),
         ("coincoin_usage_daily", "images_total", "BIGINT DEFAULT 0"),

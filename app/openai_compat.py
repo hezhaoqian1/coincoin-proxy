@@ -56,8 +56,10 @@ from .usage_buffer import (
     china_today,
     extract_cache_creation_tokens,
     extract_cache_read_tokens,
+    extract_server_side_tool_usage_details,
     extract_total_input_tokens,
     schedule_usage_add,
+    serialize_server_side_tool_usage,
     usage_buffer,
 )
 from .finance_summary import ensure_finance_summary_initialized, increment_finance_summary
@@ -806,6 +808,9 @@ async def get_usage(
                 "duration_ms": log.duration_ms,
                 "status_code": log.status_code,
                 "route_reason": getattr(log, "route_reason", ""),
+                **serialize_server_side_tool_usage(
+                    getattr(log, "server_side_tool_usage_details", None) or {}
+                ),
             }
             for log in logs
         ],
@@ -1922,7 +1927,13 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
         has_tool_calls = False
         first_content_sent = False
         compat_stream_t0 = time.monotonic()
-        _compat_stream_usage = {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0}
+        _compat_stream_usage = {
+            "input": 0,
+            "output": 0,
+            "cache_read": 0,
+            "cache_creation": 0,
+            "server_side_tools": {},
+        }
         _compat_stream_usage_seen = False
 
         async def iter_events():
@@ -1948,6 +1959,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                         _compat_stream_usage["output"] = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
                         _compat_stream_usage["cache_read"] = extract_cache_read_tokens(usage)
                         _compat_stream_usage["cache_creation"] = extract_cache_creation_tokens(usage)
+                        _compat_stream_usage["server_side_tools"] = extract_server_side_tool_usage_details(usage)
                     
                     # 处理文本内容
                     if event_type in ("response.output_text.delta", "response.output_text.chunk"):
@@ -2083,6 +2095,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                         output_tokens=_compat_stream_usage["output"],
                         cache_read_tokens=_compat_stream_usage["cache_read"],
                         cache_creation_tokens=_compat_stream_usage["cache_creation"],
+                        server_side_tool_usage_details=_compat_stream_usage["server_side_tools"],
                         requests=1,
                         endpoint="chat/completions:stream",
                         model=display_model,
@@ -2352,6 +2365,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
     output_tokens_delta = 0
     cache_read_tokens_delta = 0
     cache_creation_tokens_delta = 0
+    server_side_tool_usage_details: Dict[str, int] = {}
     if isinstance(data, dict) and isinstance(data.get("error"), dict):
         _record_current_failure(status_code=upstream.status_code if upstream.status_code >= 400 else None, error_code=str(data["error"].get("code") or "upstream_error"))
         _notify_chat_fallback_exhausted(
@@ -2370,6 +2384,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
         output_tokens_delta = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
         cache_read_tokens_delta = extract_cache_read_tokens(usage)
         cache_creation_tokens_delta = extract_cache_creation_tokens(usage)
+        server_side_tool_usage_details = extract_server_side_tool_usage_details(usage)
 
     if upstream.status_code < 400:
         _record_channel_success(used_cfg, duration_ms=duration_ms)
@@ -2380,6 +2395,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
             output_tokens=output_tokens_delta,
             cache_read_tokens=cache_read_tokens_delta,
             cache_creation_tokens=cache_creation_tokens_delta,
+            server_side_tool_usage_details=server_side_tool_usage_details,
             requests=1,
             endpoint="chat/completions",
             model=display_model,

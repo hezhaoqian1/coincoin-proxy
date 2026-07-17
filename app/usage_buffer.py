@@ -24,6 +24,15 @@ from .usage_events import schedule_usage_event_shadow
 
 logger = logging.getLogger("coincoin.usage")
 CHINA_TZ_OFFSET = timedelta(hours=8)
+SERVER_SIDE_TOOL_USAGE_KEYS = (
+    "web_search_calls",
+    "x_search_calls",
+    "code_interpreter_calls",
+    "file_search_calls",
+    "mcp_calls",
+    "document_search_calls",
+    "image_generation_calls",
+)
 
 
 def china_today(now: datetime | None = None) -> date:
@@ -38,6 +47,33 @@ def _safe_int(value) -> int:
         return int(value or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def extract_server_side_tool_usage_details(usage: dict) -> Dict[str, int]:
+    """Return a bounded, stable set of non-negative server-side tool counters."""
+    if not isinstance(usage, dict):
+        usage = {}
+    raw_details = usage.get("server_side_tool_usage_details", usage)
+    if not isinstance(raw_details, dict):
+        raw_details = {}
+    if not any(key in raw_details for key in SERVER_SIDE_TOOL_USAGE_KEYS):
+        return {}
+    return {
+        key: max(0, _safe_int(raw_details.get(key)))
+        for key in SERVER_SIDE_TOOL_USAGE_KEYS
+    }
+
+
+def total_server_side_tools_used(details: dict) -> int:
+    return sum(extract_server_side_tool_usage_details(details).values())
+
+
+def serialize_server_side_tool_usage(details: dict) -> Dict[str, object]:
+    normalized = extract_server_side_tool_usage_details(details)
+    return {
+        "server_side_tool_usage_details": normalized,
+        "num_server_side_tools_used": total_server_side_tools_used(normalized),
+    }
 
 
 def extract_cache_read_tokens(usage: dict) -> int:
@@ -266,6 +302,7 @@ class UsageBuffer:
         effective_cached_input_per_million: float = 0.0,
         effective_cache_creation_input_per_million: float = 0.0,
         reservation_id: str = "",
+        server_side_tool_usage_details: Optional[dict] = None,
     ) -> None:
         """添加使用量（高性能，不阻塞请求）
         
@@ -276,6 +313,9 @@ class UsageBuffer:
         cache_read_tokens = int(cache_read_tokens or 0)
         cached_tokens = int(cached_tokens or 0)
         cache_creation_tokens = int(cache_creation_tokens or 0)
+        normalized_server_side_tool_usage_details = extract_server_side_tool_usage_details(
+            server_side_tool_usage_details or {}
+        )
         if input_tokens < cache_read_tokens + cache_creation_tokens:
             input_tokens += cache_read_tokens + cache_creation_tokens
 
@@ -393,6 +433,7 @@ class UsageBuffer:
                 "cached_tokens": int(cache_read_tokens or cached_tokens or 0),
                 "cache_read_tokens": int(cache_read_tokens or cached_tokens or 0),
                 "cache_creation_tokens": int(cache_creation_tokens or 0),
+                "server_side_tool_usage_details": normalized_server_side_tool_usage_details,
                 "image_count": int(image_count or 0),
                 "video_count": int(video_count or 0),
                 "provider_model": (provider_model or model)[:128],
@@ -623,6 +664,7 @@ async def flush_once() -> None:
                         cached_tokens=log.get("cached_tokens", 0),
                         cache_read_tokens=log.get("cache_read_tokens", log.get("cached_tokens", 0)),
                         cache_creation_tokens=log.get("cache_creation_tokens", 0),
+                        server_side_tool_usage_details=log.get("server_side_tool_usage_details") or None,
                         image_count=log.get("image_count", 0),
                         video_count=log.get("video_count", 0),
                         provider_model=log.get("provider_model", ""),

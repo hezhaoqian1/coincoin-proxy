@@ -153,7 +153,17 @@
 }
 
 .usage-table .data-table {
-    min-width: 1360px;
+    min-width: 1480px;
+}
+
+.server-tool-usage {
+    display: inline-block;
+    max-width: 190px;
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    line-height: 1.45;
+    white-space: normal;
 }
 
 .model-tag-sm {

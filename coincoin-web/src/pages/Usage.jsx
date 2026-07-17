@@ -12,6 +12,16 @@ const RANGE_OPTIONS = [
     { key: 'month', label: '本月迄今', preset: 'month' },
 ]
 
+const SERVER_SIDE_TOOL_LABELS = [
+    ['web_search_calls', 'Web'],
+    ['x_search_calls', 'X'],
+    ['code_interpreter_calls', 'Code'],
+    ['file_search_calls', 'File'],
+    ['mcp_calls', 'MCP'],
+    ['document_search_calls', 'Doc'],
+    ['image_generation_calls', 'Image'],
+]
+
 function formatCacheHitRate(cachedTokens, inputTokens) {
     if (!inputTokens) return '0%'
     return `${((cachedTokens / inputTokens) * 100).toFixed(1)}%`
@@ -62,6 +72,17 @@ function formatDurationMs(durationMs) {
     if (ms < 1000) return `${Math.max(0, Math.round(ms))}ms`
     if (ms < 10_000) return `${(ms / 1000).toFixed(2)}s`
     return `${(ms / 1000).toFixed(1)}s`
+}
+
+function formatServerSideToolUsage(log) {
+    const details = log.server_side_tool_usage_details || {}
+    const parts = SERVER_SIDE_TOOL_LABELS
+        .map(([key, label]) => [label, Number(details[key] || 0)])
+        .filter(([, count]) => count > 0)
+        .map(([label, count]) => `${label} ${count}`)
+    if (parts.length) return parts.join(' · ')
+    const total = Number(log.num_server_side_tools_used || 0)
+    return total > 0 ? `共 ${total} 次` : '-'
 }
 
 function getDateRange(option) {
@@ -184,7 +205,7 @@ export default function Usage() {
 
     const exportCSV = () => {
         if (!usage?.data?.length) return
-        const headers = ['时间', '端点', '模型', '计量类型', '计量值', 'Input Token', '缓存读取 Token', '缓存写入 Token', '普通输入 Token', 'Output Token', '总 Token', '缓存读取占比', '花费($)', '耗时(ms)', '状态码']
+        const headers = ['时间', '端点', '模型', '计量类型', '计量值', '服务端工具', 'Input Token', '缓存读取 Token', '缓存写入 Token', '普通输入 Token', 'Output Token', '总 Token', '缓存读取占比', '花费($)', '耗时(ms)', '状态码']
         const rows = usage.data.map(d => [
             d.created_at, d.endpoint, d.model,
             d.usage_unit_type,
@@ -193,6 +214,7 @@ export default function Usage() {
                 : d.usage_unit_type === 'videos'
                     ? (d.video_count || d.usage_unit_count)
                     : d.usage_unit_count,
+            formatServerSideToolUsage(d),
             d.input_tokens, getCacheReadTokens(d), getCacheCreationTokens(d), getRegularInputTokens(d), d.output_tokens, d.total_tokens,
             d.usage_unit_type === 'tokens' ? formatCacheHitRate(getCacheReadTokens(d), getTotalInputForCache(d)) : '-',
             d.cost_usd.toFixed(4), d.duration_ms, d.status_code
@@ -433,6 +455,7 @@ export default function Usage() {
                                     <th>端点</th>
                                     <th>模型</th>
                                     <th>计量</th>
+                                    <th>服务端工具</th>
                                     <th>Input Token</th>
                                     <th>缓存读取</th>
                                     <th>缓存写入</th>
@@ -456,6 +479,11 @@ export default function Usage() {
                                                 {formatUsageUnits(log)}
                                             </span>
                                         </td>
+                                        <td>
+                                            <span className="server-tool-usage" title={`服务端工具共 ${log.num_server_side_tools_used || 0} 次`}>
+                                                {formatServerSideToolUsage(log)}
+                                            </span>
+                                        </td>
                                         <td>{log.input_tokens.toLocaleString()}</td>
                                         <td>{getCacheReadTokens(log).toLocaleString()}</td>
                                         <td>{getCacheCreationTokens(log).toLocaleString()}</td>
@@ -473,7 +501,7 @@ export default function Usage() {
                                     </tr>
                                 ))}
                                 {usage.data.length === 0 && (
-                                    <tr><td colSpan="14" style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-tertiary)' }}>暂无数据</td></tr>
+                                    <tr><td colSpan="15" style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-tertiary)' }}>暂无数据</td></tr>
                                 )}
                             </tbody>
                         </table>

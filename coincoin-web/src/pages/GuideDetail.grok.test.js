@@ -57,10 +57,13 @@ test('macOS and Linux Grok command preserves and applies the Python config edito
         const config = await readFile(configPath, 'utf8')
         assert.match(config, /\[cli\]\ninstaller = "npm"/)
         assert.match(config, /\[models\]\ndefault = "grok-build"/)
+        assert.match(config, /web_search = "grok-build"/)
         assert.match(config, /\[model\.grok-build\]/)
         assert.match(config, /base_url = "https:\/\/coincoin\.ai\/v1"/)
         assert.match(config, /api_key = "test-coincoin-key"/)
         assert.match(config, /api_backend = "responses"/)
+        assert.match(config, /supports_backend_search = true/)
+        assert.match(command, /COINCOIN_GROK_WEB_SEARCH_OK/)
     } finally {
         await rm(home, { recursive: true, force: true })
     }
@@ -71,6 +74,9 @@ test('Windows Grok command preserves PowerShell regex escapes', () => {
 
     assert.ok(command.includes("'(?ms)^\\[model\\.grok-build\\]\\s*.*?(?=^\\[|\\z)'"))
     assert.ok(command.includes("'(?ms)^\\[models\\]\\s*.*?(?=^\\[|\\z)'"))
+    assert.ok(command.includes("'web_search = \"grok-build\"'"))
+    assert.ok(command.includes('supports_backend_search = true'))
+    assert.match(command, /COINCOIN_GROK_WEB_SEARCH_OK/)
     assert.match(command, /Write-Host "Grok Build config written to \$Config"\ngrok inspect\n/)
 })
 
