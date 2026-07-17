@@ -420,7 +420,7 @@ function QuickStart({ primaryTextModel, primaryImageModel }) {
     "stream": false
   }'`}</pre>
 
-            <h3>Gemini 生图</h3>
+            <h3>图片生成与图生图</h3>
             <div className="gemini-usage-grid">
                 <div className="gemini-usage-card">
                     <span className="inline-badge">文生图</span>
@@ -443,6 +443,7 @@ function QuickStart({ primaryTextModel, primaryImageModel }) {
     "size": "1024x1024",
     "n": 1
   }'`}</pre>
+            <p><Link to="/guides/images">打开完整图片教程，按任务和操作系统选择可直接保存图片的脚本。</Link></p>
 
             <h3>Codex</h3>
             <pre className="code-block">{`model = "${CODEX_MODEL_ID}"
@@ -558,13 +559,14 @@ function ModelsAndPricing({ textModels, imageModels, videoModels, defaultTextMod
     const [activeCategory, setActiveCategory] = useState('all')
     const [copied, setCopied] = useState('')
     const openaiBaseUrl = `${SITE}/v1`
-    const snippetKey = effectiveApiKey || 'sk_cc_xxxxx'
+    const copyKey = effectiveApiKey || 'sk_cc_xxxxx'
+    const previewKey = effectiveApiKey ? 'YOUR_DEVELOPER_API_KEY' : 'sk_cc_xxxxx'
     const firstRequestModelId = textModels.find((model) => model.id === CODEX_MODEL_ID)?.id
         || defaultTextModel?.id
         || textModels[0]?.id
         || CODEX_MODEL_ID
     const firstCurl = `curl ${openaiBaseUrl}/chat/completions \\
-  -H "Authorization: Bearer ${snippetKey}" \\
+  -H "Authorization: Bearer ${copyKey}" \\
   -H "Content-Type: application/json" \\
   -d '{"model":"${firstRequestModelId}","messages":[{"role":"user","content":"Reply with only: OK"}]}'`
 
@@ -699,7 +701,7 @@ function ModelsAndPricing({ textModels, imageModels, videoModels, defaultTextMod
                 </div>
             </div>
             <pre className="code-block">{`curl ${openaiBaseUrl}/images/generations \\
-  -H "Authorization: Bearer ${snippetKey}" \\
+  -H "Authorization: Bearer ${previewKey}" \\
   -H "Content-Type: application/json" \\
   -d '{
     "model": "${defaultImageModel?.id || imageModels[0]?.id || 'gpt-image-2'}",
@@ -708,7 +710,7 @@ function ModelsAndPricing({ textModels, imageModels, videoModels, defaultTextMod
     "n": 1
   }'`}</pre>
             <pre className="code-block">{`curl ${openaiBaseUrl}/images/generations \\
-  -H "Authorization: Bearer ${snippetKey}" \\
+  -H "Authorization: Bearer ${previewKey}" \\
   -H "Content-Type: application/json" \\
   -d '{
     "model": "gemini-image",
@@ -824,8 +826,14 @@ function ApiReference({ primaryTextModel, primaryImageModel, primaryVideoModel }
 }`}</pre>
             <div className="doc-callout">
                 <strong>慢请求会保持同步连接</strong>
-                <p>图片上游较慢时，接口会定期发送 JSON 合法空白，避免连接在等待最终结果时触发 CDN 524。客户端应继续读取到完整 JSON；这不会缩短实际生图时间。</p>
-                <p>首个保活字节发出后 HTTP 状态会固定为 <code>200</code>，晚到错误请读取最终 JSON 的 <code>error</code>。需要短请求或严格错误状态时使用 <code>/v1/image-jobs/generations</code>。</p>
+                <p>图片上游较慢时，接口会定期发送 JSON 合法空白，降低空闲连接被网关中断的概率。客户端应继续读取到完整 JSON；这不会缩短实际生图时间，也不能覆盖客户端自身的总超时。</p>
+                <p>首个保活字节发出后 HTTP 状态会固定为 <code>200</code>，晚到错误请读取最终 JSON 的 <code>error</code>。客户端或网络链路有 120 秒左右总超时时，使用 <code>/v1/image-jobs/generations</code>。</p>
+            </div>
+
+            <div className="doc-callout">
+                <strong>尺寸和结果格式</strong>
+                <p><code>size</code> 是目标尺寸。常用兼容值是 <code>1024x1024</code>、<code>1536x1024</code>、<code>1024x1536</code> 或 <code>auto</code>；<code>1K</code>、<code>2K</code>、<code>4K</code> 不是通用 OpenAI-compatible 值，最终像素以上游实际文件为准。</p>
+                <p>结果可能是 <code>b64_json</code> 或临时 <code>url</code>。下载 URL 时应跟随跳转，例如使用 <code>curl -L</code>。</p>
             </div>
 
             <h3>Images: 异步生成</h3>
@@ -839,7 +847,7 @@ function ApiReference({ primaryTextModel, primaryImageModel, primaryVideoModel }
   "size": "1024x1024",
   "n": 1
 }`}</pre>
-            <p>创建成功返回 <code>202</code> 和任务 <code>id</code>，随后通过 <code>/v1/image-jobs/{'{job_id}'}</code> 查询。异步只缩短单次网络请求，不会加快上游生成。</p>
+            <p>创建成功返回 <code>202</code> 和任务 <code>id</code>，随后通过 <code>/v1/image-jobs/{'{job_id}'}</code> 查询。异步把一条长连接拆成创建和轮询多个短请求，不会加快上游生成。</p>
 
             <h3>Images: 编辑 / 图生图</h3>
             <div className="endpoint-block">

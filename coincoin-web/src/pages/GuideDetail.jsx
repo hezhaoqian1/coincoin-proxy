@@ -3,6 +3,7 @@ import { Link, Navigate, useParams } from 'react-router-dom'
 import AppShell from '../components/AppShell'
 import { useAuth } from '../hooks/useAuth'
 import { usePublicModels } from '../hooks/usePublicModels'
+import { getGuideCodePreview } from './guideCodePreview'
 import './GuideDetail.css'
 
 const SITE_ROOT = typeof window !== 'undefined' ? window.location.origin : ''
@@ -36,14 +37,16 @@ function CopyButton({ text, idleLabel = '复制', doneLabel = '已复制', class
     )
 }
 
-function GuideCommand({ title, summary, code }) {
+function GuideCommand({ title, summary, code, secret }) {
+    const previewCode = getGuideCodePreview(code, secret)
+
     return (
         <section className="guide-command glass-card">
             <div className="guide-command-callout">
                 <div className="guide-command-callout-copy">
                     <span className="guide-command-callout-tag">一键配置</span>
                     <strong>复制后直接回终端粘贴回车</strong>
-                    <p>不需要手动分段操作，整段复制即可完成配置。</p>
+                    <p>{secret ? '页面预览已隐藏 Key，复制内容会自动带上当前开发者 Key。' : '不需要手动分段操作，整段复制即可完成配置。'}</p>
                 </div>
                 <CopyButton
                     text={code}
@@ -60,12 +63,12 @@ function GuideCommand({ title, summary, code }) {
                     <p>{summary}</p>
                 </div>
             </div>
-            <pre className="guide-code-block">{code}</pre>
+            <pre className="guide-code-block">{previewCode}</pre>
         </section>
     )
 }
 
-function GuideCodeGrid({ items }) {
+function GuideCodeGrid({ items, secret }) {
     return (
         <section className="guide-code-grid">
             {items.map((item) => (
@@ -78,14 +81,14 @@ function GuideCodeGrid({ items }) {
                         </div>
                         <CopyButton text={item.code} idleLabel="复制" />
                     </div>
-                    <pre className="guide-code-block guide-code-block-compact">{item.code}</pre>
+                    <pre className="guide-code-block guide-code-block-compact">{getGuideCodePreview(item.code, secret)}</pre>
                 </article>
             ))}
         </section>
     )
 }
 
-function GuideCommandGroup({ items }) {
+function GuideCommandGroup({ items, secret }) {
     return (
         <div className="guide-command-group">
             {items.map((item) => (
@@ -94,13 +97,14 @@ function GuideCommandGroup({ items }) {
                     title={item.title}
                     summary={item.summary}
                     code={item.code}
+                    secret={secret}
                 />
             ))}
         </div>
     )
 }
 
-function GuideCommandTabs({ items }) {
+function GuideCommandTabs({ items, secret }) {
     const [activeIndex, setActiveIndex] = useState(0)
     const activeItem = items[activeIndex] || items[0]
 
@@ -133,7 +137,78 @@ function GuideCommandTabs({ items }) {
                 title={activeItem.title}
                 summary={activeItem.summary}
                 code={activeItem.code}
+                secret={secret}
             />
+        </section>
+    )
+}
+
+function GuideTaskTabs({ tasks, secret }) {
+    const [activeTaskIndex, setActiveTaskIndex] = useState(0)
+    const [activePlatformIndex, setActivePlatformIndex] = useState(0)
+    const activeTask = tasks[activeTaskIndex] || tasks[0]
+    const activeItem = activeTask?.items?.[activePlatformIndex] || activeTask?.items?.[0]
+
+    if (!activeTask || !activeItem) return null
+
+    const selectTask = (index) => {
+        setActiveTaskIndex(index)
+        setActivePlatformIndex(0)
+    }
+
+    return (
+        <section className="guide-task-browser glass-card">
+            <div className="guide-task-browser-header">
+                <span className="guide-kicker">Image workflow</span>
+                <h2>选择图片任务</h2>
+                <p>先选任务，再选系统。页面一次只展示当前需要执行的命令。</p>
+            </div>
+
+            <div className="guide-task-tab-list" role="tablist" aria-label="图片任务选择">
+                {tasks.map((task, index) => (
+                    <button
+                        key={task.id}
+                        type="button"
+                        role="tab"
+                        aria-selected={activeTaskIndex === index}
+                        className={`guide-task-tab ${activeTaskIndex === index ? 'is-active' : ''}`}
+                        onClick={() => selectTask(index)}
+                    >
+                        {task.title}
+                    </button>
+                ))}
+            </div>
+
+            <div className="guide-task-panel" role="tabpanel">
+                <div className="guide-task-panel-header">
+                    <div>
+                        <span className="guide-kicker">Command</span>
+                        <h3>{activeTask.title}</h3>
+                        <p>{activeTask.summary}</p>
+                    </div>
+                    <div className="guide-platform-tab-list" role="tablist" aria-label={`${activeTask.title}系统选择`}>
+                        {activeTask.items.map((item, index) => (
+                            <button
+                                key={item.title}
+                                type="button"
+                                role="tab"
+                                aria-selected={activePlatformIndex === index}
+                                className={`guide-platform-tab ${activePlatformIndex === index ? 'is-active' : ''}`}
+                                onClick={() => setActivePlatformIndex(index)}
+                            >
+                                {item.platform || item.title}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
+                <GuideCommand
+                    title={activeItem.title}
+                    summary={activeItem.summary}
+                    code={activeItem.code}
+                    secret={secret}
+                />
+            </div>
         </section>
     )
 }
@@ -738,15 +813,6 @@ if ($Item.b64_json) {
 }
 Write-Host "saved $Output"`
 
-        const geminiImageGenerationCommand = `curl ${OPENAI_BASE_URL}/images/generations \\
-  -H "Authorization: Bearer ${snippetKey}" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "gemini-image",
-    "prompt": "A clean product poster in Gemini image style",
-    "size": "1024x1024"
-  }'`
-
         const imageEditCommand = `INPUT="./input.png"
 OUT="coincoin_image_edit.png"
 RESP="$(mktemp)"
@@ -937,6 +1003,9 @@ Write-Host "saved $Output"`
         const usageCommand = `curl ${OPENAI_BASE_URL}/usage?limit=5 \\
   -H "Authorization: Bearer ${snippetKey}"`
 
+        const usageWindowsCommand = `curl.exe "${OPENAI_BASE_URL}/usage?limit=5" \`
+  -H "Authorization: Bearer ${snippetKey}"`
+
         const otherGuides = [
             {
                 id: 'grok-build',
@@ -1070,64 +1139,101 @@ Write-Host "saved $Output"`
             images: {
                 title: '图片接口 / 图生图',
                 description: '文生图和图片编辑走同一个公开 `/v1` 入口，成功产出图片后按张计费。同步慢请求会发送 JSON 合法空白保持连接；单图图生图使用 `/images/edits`，Gemini 的 3-8 张参考图使用异步 `/image-jobs/edits`。',
-                commandGroup: [
+                commandTasks: [
                     {
-                        title: 'macOS / Linux 文生图',
-                        platform: 'macOS / Linux 文生图',
-                        summary: '生成完成后保存为 `coincoin_image.png`。示例使用 `1024x1024`；也可按上游支持情况改为 `1536x1024`、`1024x1536` 或 `auto`，最终像素以实际文件为准。',
-                        code: imageGenerationCommand,
+                        id: 'sync-generation',
+                        title: '同步文生图',
+                        summary: '适合能持续读取响应的客户端。示例默认使用当前图片模型；需要 Gemini 时把 `model` 改为 `gemini-image`。',
+                        items: [
+                            {
+                                title: 'macOS / Linux 同步文生图',
+                                platform: 'macOS / Linux',
+                                summary: '生成完成后保存为 `coincoin_image.png`。示例使用 `1024x1024`；也可按上游支持情况改为 `1536x1024`、`1024x1536` 或 `auto`，最终像素以实际文件为准。',
+                                code: imageGenerationCommand,
+                            },
+                            {
+                                title: 'Windows PowerShell 同步文生图',
+                                platform: 'Windows PowerShell',
+                                summary: '生成完成后保存为 `coincoin_image.png`。`size` 是目标尺寸或 `auto`，最终像素由上游决定；不要把 `1K`、`2K`、`4K` 当成通用兼容值。',
+                                code: imageGenerationWindowsCommand,
+                            },
+                        ],
                     },
                     {
-                        title: 'Windows PowerShell 文生图',
-                        platform: 'Windows 文生图',
-                        summary: '生成完成后保存为 `coincoin_image.png`。`size` 是目标尺寸或 `auto`，最终像素由上游决定；不要把 `1K`、`2K`、`4K` 当成通用兼容值。',
-                        code: imageGenerationWindowsCommand,
+                        id: 'async-generation',
+                        title: '异步文生图',
+                        summary: '创建任务后轮询结果，避免维持一条可能超过 120 秒的长连接；上游实际生图时间不会因此变短。',
+                        items: [
+                            {
+                                title: 'macOS / Linux 异步文生图',
+                                platform: 'macOS / Linux',
+                                summary: '创建任务后每 5 秒轮询，完成后保存 `coincoin_image_async.png`。适合客户端或网络链路有总超时限制的情况。',
+                                code: asyncImageGenerationCommand,
+                            },
+                            {
+                                title: 'Windows PowerShell 异步文生图',
+                                platform: 'Windows PowerShell',
+                                summary: '创建任务后每 5 秒轮询，完成后保存 `coincoin_image_async.png`。每次 HTTP 请求都很短。',
+                                code: asyncImageGenerationWindowsCommand,
+                            },
+                        ],
                     },
                     {
-                        title: 'Gemini 文生图',
-                        summary: '需要 Gemini 生图时显式传 `model: "gemini-image"`。',
-                        code: geminiImageGenerationCommand,
+                        id: 'single-image-edit',
+                        title: '单图图生图',
+                        summary: '上传一张参考图到同步 `/images/edits` 接口，完成后把 base64 或 URL 结果保存为本地 PNG。',
+                        items: [
+                            {
+                                title: 'macOS / Linux 单图图生图',
+                                platform: 'macOS / Linux',
+                                summary: '把参考图保存成 `input.png` 后运行；同步编辑完成后保存 `coincoin_image_edit.png`。',
+                                code: imageEditCommand,
+                            },
+                            {
+                                title: 'Windows PowerShell 单图图生图',
+                                platform: 'Windows PowerShell',
+                                summary: '把参考图保存成 `input.png` 后运行；同步编辑完成后保存 `coincoin_image_edit.png`。',
+                                code: imageEditWindowsCommand,
+                            },
+                        ],
                     },
                     {
-                        title: 'macOS / Linux 异步文生图',
-                        platform: 'macOS / Linux 异步文生图',
-                        summary: '创建任务后每 5 秒轮询，完成后保存 `coincoin_image_async.png`。异步避免长连接，但不会缩短生图时间。',
-                        code: asyncImageGenerationCommand,
+                        id: 'gemini-multi-image',
+                        title: 'Gemini 多图',
+                        summary: '仅适用于 `gemini-image` 的 3-8 张参考图，通过异步 `/image-jobs/edits` 创建并轮询任务。',
+                        items: [
+                            {
+                                title: 'macOS / Linux Gemini 多图异步图生图',
+                                platform: 'macOS / Linux',
+                                summary: '把 3 张参考图保存成 `ref-1.png`、`ref-2.png`、`ref-3.png`；完成后保存 `coincoin_multi_image_edit.png`。',
+                                code: multiImageEditCommand,
+                            },
+                            {
+                                title: 'Windows PowerShell Gemini 多图异步图生图',
+                                platform: 'Windows PowerShell',
+                                summary: '把 3 张参考图保存成 `ref-1.png`、`ref-2.png`、`ref-3.png`；完成后保存 `coincoin_multi_image_edit.png`。',
+                                code: multiImageEditWindowsCommand,
+                            },
+                        ],
                     },
                     {
-                        title: 'Windows PowerShell 异步文生图',
-                        platform: 'Windows 异步文生图',
-                        summary: '创建任务后每 5 秒轮询，完成后保存 `coincoin_image_async.png`。适合客户端自身总超时较短的情况。',
-                        code: asyncImageGenerationWindowsCommand,
-                    },
-                    {
-                        title: 'macOS / Linux 图生图',
-                        platform: 'macOS / Linux 图生图',
-                        summary: '把参考图保存成 `input.png` 后运行；同步编辑完成后保存 `coincoin_image_edit.png`。',
-                        code: imageEditCommand,
-                    },
-                    {
-                        title: 'Windows PowerShell 图生图',
-                        platform: 'Windows 图生图',
-                        summary: '把参考图保存成 `input.png` 后运行；同步编辑完成后保存 `coincoin_image_edit.png`。',
-                        code: imageEditWindowsCommand,
-                    },
-                    {
-                        title: 'macOS / Linux Gemini 多图异步图生图',
-                        platform: 'macOS / Linux Gemini 多图',
-                        summary: '仅适用于 `gemini-image`。把 3 张参考图保存成 `ref-1.png`、`ref-2.png`、`ref-3.png`；完成后保存 `coincoin_multi_image_edit.png`。',
-                        code: multiImageEditCommand,
-                    },
-                    {
-                        title: 'Windows PowerShell Gemini 多图异步图生图',
-                        platform: 'Windows Gemini 多图',
-                        summary: '仅适用于 `gemini-image`。把 3 张参考图保存成 `ref-1.png`、`ref-2.png`、`ref-3.png`；完成后保存 `coincoin_multi_image_edit.png`。',
-                        code: multiImageEditWindowsCommand,
-                    },
-                    {
-                        title: '查看最近用量',
-                        summary: '小文本请求单条 `cost_cents` 可能是 0，图片请求按张计费更直观。',
-                        code: usageCommand,
+                        id: 'usage',
+                        title: '查看用量',
+                        summary: '读取最近 5 条调用记录，核对图片张数、费用和耗时。',
+                        items: [
+                            {
+                                title: 'macOS / Linux 查看最近用量',
+                                platform: 'macOS / Linux',
+                                summary: '图片请求按张计费，查看 `image_count`、`cost_usd` 和 `duration_ms`。',
+                                code: usageCommand,
+                            },
+                            {
+                                title: 'Windows PowerShell 查看最近用量',
+                                platform: 'Windows PowerShell',
+                                summary: '图片请求按张计费，查看 `image_count`、`cost_usd` 和 `duration_ms`。',
+                                code: usageWindowsCommand,
+                            },
+                        ],
                     },
                 ],
             },
@@ -1166,18 +1272,21 @@ Write-Host "saved $Output"`
                 )}
 
                 {(effectiveApiKey || guide.examples || guide.integrations) && (guide.examples ? (
-                    <GuideCodeGrid items={guide.examples} />
+                    <GuideCodeGrid items={guide.examples} secret={effectiveApiKey} />
                 ) : guide.integrations ? (
                     <OtherGuideGrid items={guide.integrations} />
+                ) : guide.commandTasks ? (
+                    <GuideTaskTabs tasks={guide.commandTasks} secret={effectiveApiKey} />
                 ) : guide.commandGroupMode === 'tabs' ? (
-                    <GuideCommandTabs items={guide.commandGroup} />
+                    <GuideCommandTabs items={guide.commandGroup} secret={effectiveApiKey} />
                 ) : guide.commandGroup ? (
-                    <GuideCommandGroup items={guide.commandGroup} />
+                    <GuideCommandGroup items={guide.commandGroup} secret={effectiveApiKey} />
                 ) : (
                     <GuideCommand
                         title={guide.commandTitle}
                         summary={guide.commandSummary}
                         code={guide.command}
+                        secret={effectiveApiKey}
                     />
                 ))}
             </div>

@@ -82,7 +82,7 @@ End users only talk to CoinCoin's public API and public model names. Internal ga
 | Public model catalog | Expose stable aliases like `gpt-5.2-codex`, `gemini-fast`, and `gemini-image` without leaking internal provider names. |
 | Prepaid billing | Track input tokens, output tokens, images, jobs, balance, and per-request cost in one system. |
 | Provider routing | Add OpenAI-compatible upstream channels, route public models to them, and fail over when a channel cools down. |
-| Image workflows | Serve `/v1/images/generations`, synchronous image edits, and async multi-image editing jobs. |
+| Image workflows | Serve synchronous generation/editing plus async generation and multi-image editing jobs. |
 | Admin operations | Manage users, keys, usage, recharge records, model routes, channel health, and monitoring probes. |
 
 Optional durable usage/quota infrastructure is available through Redis Streams
@@ -94,8 +94,8 @@ See [`docs/usage-quota-infra.md`](./docs/usage-quota-infra.md).
 
 - **Chat Completions compatibility**: `/v1/chat/completions` with streaming, tools, function calling, and OpenAI-shaped responses.
 - **Embeddings**: `/v1/embeddings` with the public `text-embedding-3-small` alias.
-- **Image generation and editing**: `/v1/images/generations`, `/v1/images/edits`, and async `/v1/image-jobs/edits`.
-- **Slow image connection protection**: synchronous image JSON responses emit JSON-safe whitespace heartbeats so idle CDN connections remain open while the upstream finishes.
+- **Image generation and editing**: `/v1/images/generations`, `/v1/images/edits`, and async `/v1/image-jobs/generations` and `/v1/image-jobs/edits`.
+- **Slow image connection protection**: synchronous image JSON responses emit JSON-safe whitespace heartbeats so idle network intermediaries can keep the connection open while the upstream finishes.
 - **Usage accounting**: input/output token units, image units, job costs, balance, and request history.
 - **Provider channels**: admin-managed OpenAI-compatible upstream URLs and keys.
 - **Route fallback**: priority, weight, cooldown, failure thresholds, and system fallback back to catalog defaults.
@@ -164,6 +164,9 @@ Synchronous image requests use a 15-second JSON whitespace keepalive by default.
 first heartbeat is sent, HTTP status is committed as `200`; a later upstream failure
 is returned in the final OpenAI-compatible JSON error body. Use the async image-job
 endpoints when clients require short requests or authoritative late HTTP statuses.
+Heartbeats do not override a client's own total timeout. Async jobs split one long
+request into a short create request plus polling requests; they do not make the
+upstream generate the image faster.
 
 ### 3. Run
 
@@ -178,6 +181,10 @@ Open:
 - Admin console: `http://127.0.0.1:8000/admin/ui?token=<admin-token>`
 
 ## API Examples
+
+The hosted [image guide](https://coincoin.ai/guides/images) provides ready-to-run
+macOS/Linux and Windows PowerShell scripts for generation, editing, polling, and
+image-file download.
 
 ### Chat Completions
 
@@ -218,6 +225,13 @@ curl http://127.0.0.1:8000/v1/images/edits \
   -F "size=1024x1024" \
   -F "image=@./input.png"
 ```
+
+For image requests, `size` is a target. Common OpenAI-compatible values are
+`1024x1024`, `1536x1024`, `1024x1536`, and `auto` when the selected upstream
+supports them. `1K`, `2K`, and `4K` are not universal compatibility values, and
+the final file dimensions are determined by the upstream. Responses may contain
+either `b64_json` or a temporary `url`; URL downloads should follow redirects,
+for example with `curl -L`.
 
 ### Async Image Generation
 
