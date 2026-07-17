@@ -40,14 +40,14 @@ class CoinCoinGrokCliLiveTests(unittest.TestCase):
                 "\n".join(
                     [
                         "[models]",
-                        'default = "grok-build"',
-                        'web_search = "grok-build"',
+                        'default = "grok-4.5"',
+                        'web_search = "grok-4.5"',
                         "",
-                        "[model.grok-build]",
-                        'model = "grok-build"',
+                        "[model.grok-4.5]",
+                        'model = "grok-4.5"',
                         f'base_url = "{self.base_url}"',
                         f'api_key = "{self.api_key}"',
-                        'name = "Grok Build via CoinCoin live regression"',
+                        'name = "Grok 4.5 via CoinCoin live regression"',
                         'api_backend = "responses"',
                         "context_window = 500000",
                         "supports_backend_search = true",
@@ -67,7 +67,7 @@ class CoinCoinGrokCliLiveTests(unittest.TestCase):
                         f"@xai-official/grok, then include {marker} in the answer."
                     ),
                     "-m",
-                    "grok-build",
+                    "grok-4.5",
                     "--output-format",
                     "json",
                     "--max-turns",
@@ -99,7 +99,7 @@ class CoinCoinGrokCliLiveTests(unittest.TestCase):
             matching = [
                 item
                 for item in last_payload.get("data", [])
-                if item.get("model") == "grok-build"
+                if item.get("model") == "grok-4.5"
                 and item.get("endpoint") in {"responses", "responses:stream"}
                 and item.get("server_side_tool_usage_details", {}).get("web_search_calls", 0) > 0
             ]
