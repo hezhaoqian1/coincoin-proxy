@@ -438,6 +438,7 @@ path = Path(os.environ["GROK_CONFIG"])
 text = path.read_text(encoding="utf-8")
 text = re.sub(r"(?ms)^\[model\.grok-build\]\s*.*?(?=^\[|\Z)", "", text)
 text = re.sub(r"(?ms)^\[model\.grok-4\.5\]\s*.*?(?=^\[|\Z)", "", text)
+text = re.sub(r'(?ms)^\[model\."grok-4\.5"\]\s*.*?(?=^\[|\Z)', "", text)
 
 models_match = re.search(r"(?ms)^\[models\]\s*.*?(?=^\[|\Z)", text)
 if models_match:
@@ -454,7 +455,7 @@ if models_match:
 else:
     text = text.rstrip() + '\n\n[models]\ndefault = "grok-4.5"\nweb_search = "grok-4.5"\n'
 
-block = '''[model.grok-4.5]
+block = '''[model."grok-4.5"]
 model = "grok-4.5"
 base_url = "${OPENAI_BASE_URL}"
 api_key = "${snippetKey}"
@@ -493,6 +494,7 @@ if (Test-Path $Config) {
 
 $Text = [regex]::Replace($Text, '(?ms)^\[model\.grok-build\]\s*.*?(?=^\[|\z)', '')
 $Text = [regex]::Replace($Text, '(?ms)^\[model\.grok-4\.5\]\s*.*?(?=^\[|\z)', '')
+$Text = [regex]::Replace($Text, '(?ms)^\[model\."grok-4\.5"\]\s*.*?(?=^\[|\z)', '')
 $ModelsPattern = '(?ms)^\[models\]\s*.*?(?=^\[|\z)'
 if ([regex]::IsMatch($Text, $ModelsPattern)) {
   $Text = [regex]::Replace($Text, $ModelsPattern, {
@@ -515,7 +517,7 @@ if ([regex]::IsMatch($Text, $ModelsPattern)) {
 }
 
 $Block = @'
-[model.grok-4.5]
+[model."grok-4.5"]
 model = "grok-4.5"
 base_url = "${OPENAI_BASE_URL}"
 api_key = "${snippetKey}"

@@ -43,7 +43,7 @@ class CoinCoinGrokCliLiveTests(unittest.TestCase):
                         'default = "grok-4.5"',
                         'web_search = "grok-4.5"',
                         "",
-                        "[model.grok-4.5]",
+                        '[model."grok-4.5"]',
                         'model = "grok-4.5"',
                         f'base_url = "{self.base_url}"',
                         f'api_key = "{self.api_key}"',
