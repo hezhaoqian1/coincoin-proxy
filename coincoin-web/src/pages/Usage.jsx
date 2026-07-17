@@ -355,6 +355,8 @@ export default function Usage() {
                             <option value="">全部端点</option>
                             <option value="responses">responses</option>
                             <option value="responses:stream">responses:stream</option>
+                            <option value="messages">messages</option>
+                            <option value="messages:stream">messages:stream</option>
                             <option value="chat/completions">chat/completions</option>
                             <option value="chat/completions:stream">chat/completions:stream</option>
                             <option value="images/generations">images/generations</option>
