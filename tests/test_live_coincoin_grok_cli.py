@@ -80,7 +80,8 @@ class CoinCoinGrokCliLiveTests(unittest.TestCase):
                 check=False,
             )
 
-        self.assertEqual(completed.returncode, 0, completed.stderr[-2000:])
+        safe_stderr = completed.stderr.replace(self.api_key, "[REDACTED]")
+        self.assertEqual(completed.returncode, 0, safe_stderr[-2000:])
         self.assertIn(marker, completed.stdout)
 
         headers = {"Authorization": f"Bearer {self.api_key}"}
