@@ -172,8 +172,13 @@ class ImageJSONKeepaliveMiddlewareTests(unittest.IsolatedAsyncioTestCase):
         from app.main import app
 
         self.assertEqual(
-            [item.cls.__name__ for item in app.user_middleware[:3]],
-            ["CORSMiddleware", "ImageJSONKeepaliveASGIMiddleware", "QuotaReservationASGIMiddleware"],
+            [item.cls.__name__ for item in app.user_middleware[:4]],
+            [
+                "CORSMiddleware",
+                "AdminTimingASGIMiddleware",
+                "ImageJSONKeepaliveASGIMiddleware",
+                "QuotaReservationASGIMiddleware",
+            ],
         )
 
     async def test_late_unhandled_exception_becomes_json_error(self) -> None:
