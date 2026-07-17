@@ -3,6 +3,6 @@
   "artifactKey": "final-master-ship-gate",
   "type": "ship-gate",
   "source": "origin/master-integrated targeted/full unittest runs, clean-master differential, static checks, and Vite build",
-  "summary": "On origin/master 9f8147a plus this branch, 128 targeted tests pass, Python and inline scripts parse, Aegis and diff checks pass, and Vite transforms 87 modules successfully. Full discovery runs 638 tests with only the same three video RequestLog errors reproduced by 27 clean-master video tests. Middleware order coverage was updated and passes.",
+  "summary": "On origin/master 9f8147a plus this branch, 140 targeted tests pass, Python and inline scripts parse, Aegis and diff checks pass, and Vite transforms 87 modules successfully. Full discovery runs 639 tests with only the same three video RequestLog errors reproduced by 27 clean-master video tests. Middleware order coverage was updated and passes.",
   "verifier": "targeted/build/static exit 0; full-suite differential confirms no in-branch failures"
 }

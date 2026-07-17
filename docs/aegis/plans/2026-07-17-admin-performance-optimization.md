@@ -41,7 +41,7 @@ Use the project virtualenv from the primary workspace:
 env PYTHONPATH=. PYTHONPYCACHEPREFIX=/tmp/pycache \
   COINCOIN_DB_HOST=localhost COINCOIN_DB_NAME=test \
   COINCOIN_DB_USER=test COINCOIN_DB_PASSWORD=test \
-  /Users/windupbird/Documents/Coincoin中转站/coincoin-proxy/.venv/bin/python \
+  .venv/bin/python \
   -m unittest tests.test_admin_usage_fields -v
 
 git diff --check
@@ -70,9 +70,11 @@ Files: `app/admin.py`, `app/static/admin.html`,
 `tests/test_admin_usage_fields.py`.
 
 Repair track: optimize the existing master batch owner to one subscription
-query, one traffic-pack query, and one permanent-credit query. Remove the
-separate active/recent traffic-pack queries and the window-function dependency;
-apply pagination to the user list while preserving finance summary reuse.
+query, one active-pack query, chunked MySQL-compatible UNION queries capped at
+50 history rows per user, and one permanent-credit query. Remove the
+window-function dependency without returning unbounded history; apply
+pagination and deterministic tie-breaking to the user list while preserving
+finance summary reuse.
 
 Retirement track: list endpoints must no longer call the single-user billing
 owner in a loop. Detail/mutation endpoints keep it.
@@ -149,10 +151,9 @@ surface with no request-body logging.
 - Bulk billing grouping must preserve the existing active-subscription rule and
   traffic-pack ordering. Roll back the list endpoints to the single-user helper
   if equivalence tests fail.
-- The bulk traffic-pack query fixes query fan-out but still returns the selected
-  page's historical pack rows before retaining the latest 50 per user. Admin UI
-  pagination limits this to 50 users per page; monitor row counts if individual
-  users accumulate unusually large traffic-pack histories.
+- The bulk traffic-pack query keeps active packs complete and bounds historical
+  rows to the latest 50 per user. The API maximum of 200 users is processed in
+  chunks of 50, so history requires at most four bounded UNION queries.
 - Combined leaderboard ranking occurs after one grouped query; verify each
   window independently against the existing endpoint semantics.
 - In-memory caches are per process. They reduce normal-path load but are not a
@@ -170,8 +171,8 @@ surface with no request-body logging.
   existing admin-only batch read and admin routes stay in `admin.py`; timing
   stays in `main.py`.
 - Compatibility Boundary: existing fields and single-window endpoint remain.
-- Retirement Boundary: keep per-user list calls retired, remove the duplicate
-  active/recent traffic-pack queries and window dependency, retire triple UI
+- Retirement Boundary: keep per-user list calls retired, remove the
+  window-function dependency and unbounded history transfer, retire triple UI
   calls, duplicate cold builds, and per-page historical scans from the main path.
 - Test Obligations: RED/GREEN per task plus full admin regression.
 - Drift Rule: any schema or billing-write requirement returns to design review.

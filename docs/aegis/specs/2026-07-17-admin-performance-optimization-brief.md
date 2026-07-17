@@ -65,10 +65,11 @@ queries intact.
 
 `app/admin.py` retains the existing `_admin_billing_states_batch` owner from the
 latest master branch. The optimized path performs one subscription query, one
-traffic-pack query, and one permanent-credit query for all requested users. It
-removes the MySQL-version-sensitive window query and the separate active-pack
-query, then uses the canonical serializer in `app/billing.py`. User and finance
-lists use this owner; detail and mutation responses retain the existing
+active-pack query, MySQL-compatible chunked UNION queries that return at most
+50 history rows per user, and one permanent-credit query. It removes the
+MySQL-version-sensitive window query without pulling unbounded history into
+Python, then uses the canonical serializer in `app/billing.py`. User and
+finance lists use this owner; detail and mutation responses retain the existing
 single-user function.
 
 The admin UI requests 50 users per page. Existing callers that omit pagination

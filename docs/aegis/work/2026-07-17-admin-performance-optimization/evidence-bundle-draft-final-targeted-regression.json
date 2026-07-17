@@ -3,6 +3,6 @@
   "artifactKey": "final-targeted-regression",
   "type": "test",
   "source": "python -m unittest -q tests.test_admin_usage_fields tests.test_admin_timing tests.test_subscription_billing tests.test_quota_lifecycle",
-  "summary": "Fresh latest-master ship-gate run completed 128 targeted tests with OK. It covers admin payload compatibility, credit-aware bulk and single-user billing equivalence, pagination boundaries, finance summary, leaderboard metrics and invalid inputs, analytics cache warm/TTL/error recovery, provider totals and China-midnight windows, timing middleware, subscription billing, and quota lifecycle.",
+  "summary": "Fresh latest-master ship-gate run completed 140 targeted tests with OK. It covers admin payload compatibility, credit-aware bulk and single-user billing equivalence, pagination boundaries, finance summary, leaderboard metrics and invalid inputs, analytics cache warm/TTL/error recovery, provider totals and China-midnight windows, timing and keepalive middleware ordering, subscription billing, and quota lifecycle.",
   "verifier": "unittest exit 0"
 }

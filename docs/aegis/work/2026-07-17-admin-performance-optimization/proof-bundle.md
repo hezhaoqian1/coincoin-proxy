@@ -25,6 +25,7 @@ This proof bundle is an advisory Aegis Method Pack record. It does not determine
 - docs/aegis/work/2026-07-17-admin-performance-optimization/evidence-bundle-draft-full-suite-baseline-differential.json
 - docs/aegis/work/2026-07-17-admin-performance-optimization/evidence-bundle-draft-master-integration.json
 - docs/aegis/work/2026-07-17-admin-performance-optimization/evidence-bundle-draft-performance-shape.json
+- docs/aegis/work/2026-07-17-admin-performance-optimization/evidence-bundle-draft-pre-landing-review-fixes.json
 - docs/aegis/work/2026-07-17-admin-performance-optimization/evidence-bundle-draft-provider-midnight-window-regression.json
 - docs/aegis/work/2026-07-17-admin-performance-optimization/evidence-bundle-draft-ship-coverage-and-build.json
 
@@ -32,5 +33,5 @@ This proof bundle is an advisory Aegis Method Pack record. It does not determine
 
 - Scope status: Aligned after latest-master reconciliation: admin read performance, UI wiring, observability, tests, and records only.
 - Compatibility status: Permanent credit-wallet fields, image keepalive middleware, reliability/channel monitor data, existing admin fields, billing debits, payments, routing, and public APIs are preserved.
-- Retirement status: Latest master's canonical _admin_billing_states_batch remains sole owner; its separate active/recent pack queries and window-function dependency are retired. Triple leaderboard calls, duplicate cold dashboard builds, and warm-path all-history scans remain retired.
+- Retirement status: Latest master's canonical _admin_billing_states_batch remains sole owner; its window-function dependency and unbounded history transfer are retired through per-user UNION limits. Triple leaderboard calls, duplicate cold dashboard builds, and warm-path all-history scans remain retired.
 - Advisory decision: continue

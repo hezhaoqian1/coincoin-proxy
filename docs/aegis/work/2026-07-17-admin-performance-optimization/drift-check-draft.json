@@ -9,7 +9,7 @@
   ],
   "scopeStatus": "Aligned after latest-master reconciliation: admin read performance, UI wiring, observability, tests, and records only.",
   "compatStatus": "Permanent credit-wallet fields, image keepalive middleware, reliability/channel monitor data, existing admin fields, billing debits, payments, routing, and public APIs are preserved.",
-  "retirementStatus": "Latest master's canonical _admin_billing_states_batch remains sole owner; its separate active/recent pack queries and window-function dependency are retired. Triple leaderboard calls, duplicate cold dashboard builds, and warm-path all-history scans remain retired.",
+  "retirementStatus": "Latest master's canonical _admin_billing_states_batch remains sole owner; its window-function dependency and unbounded history transfer are retired through per-user UNION limits. Triple leaderboard calls, duplicate cold dashboard builds, and warm-path all-history scans remain retired.",
   "newRiskSignals": [
     "Bulk traffic-pack query count is fixed, but returned history rows can grow for users with unusually large pack histories.",
     "In-memory caches are per process and require production timing evidence."

@@ -7,7 +7,7 @@ No evidence has been recorded yet.
 - Artifact key: batch-user-billing-red-green
 - Type: test
 - Source: tests.test_admin_usage_fields targeted unittest run
-- Summary: New tests failed before implementation, then passed. On latest master, the existing credit-aware batch owner now uses three fixed billing queries (subscription, traffic packs, permanent credits), removes the window function and separate active-pack query, and list_users adds one paged user query with limit/offset.
+- Summary: New tests failed before implementation, then passed. On latest master, the existing credit-aware batch owner keeps active packs complete, retrieves at most 50 history rows per user through MySQL-compatible UNION chunks, preserves permanent credits, removes the window function and unbounded history transfer, and list_users adds deterministic paged ordering with limit/offset.
 - Verifier: unittest: 4 tests OK
 
 ## EvidenceBundleDraft
@@ -23,7 +23,7 @@ No evidence has been recorded yet.
 - Artifact key: final-targeted-regression
 - Type: test
 - Source: python -m unittest -q tests.test_admin_usage_fields tests.test_admin_timing tests.test_subscription_billing tests.test_quota_lifecycle
-- Summary: Fresh latest-master ship-gate run completed 128 targeted tests with OK. It covers admin payload compatibility, credit-aware bulk and single-user billing equivalence, pagination boundaries, finance summary, leaderboard metrics and invalid inputs, analytics cache warm/TTL/error recovery, provider totals and China-midnight windows, timing middleware, subscription billing, and quota lifecycle.
+- Summary: Fresh latest-master ship-gate run completed 140 targeted tests with OK. It covers admin payload compatibility, credit-aware bulk and single-user billing equivalence, pagination boundaries, finance summary, leaderboard metrics and invalid inputs, analytics cache warm/TTL/error recovery, provider totals and China-midnight windows, timing and keepalive middleware ordering, subscription billing, and quota lifecycle.
 - Verifier: unittest exit 0
 
 ## EvidenceBundleDraft
@@ -31,7 +31,7 @@ No evidence has been recorded yet.
 - Artifact key: full-suite-baseline-differential
 - Type: regression
 - Source: full unittest discovery on task worktree plus tests.test_video_jobs on clean detached HEAD worktree
-- Summary: Latest-master full discovery ran 638 tests: 3 errors and 2 skips. The same three video-generation RequestLog constructor errors reproduce on clean origin/master 9f8147a (27 video tests, 3 errors), and app/video_jobs.py plus app/models.py are unchanged by this task; classified as an independent baseline failure.
+- Summary: Latest-master full discovery ran 639 tests: 3 errors and 2 skips. The same three video-generation RequestLog constructor errors reproduce on clean origin/master 9f8147a (27 video tests, 3 errors), and app/video_jobs.py plus app/models.py are unchanged by this task; classified as an independent baseline failure.
 - Verifier: unittest differential reproduction
 
 ## EvidenceBundleDraft
@@ -47,7 +47,7 @@ No evidence has been recorded yet.
 - Artifact key: performance-shape
 - Type: performance
 - Source: query-count and cache-call tests in tests.test_admin_usage_fields
-- Summary: The original diagnosis found up to roughly 601 user-page statements on the older branch. Latest master had already introduced a five-query fixed batch path; this integration reduces it to four total statements (one paged user query plus subscription, traffic-pack, and permanent-credit queries), while removing the window-function dependency. Three leaderboard requests become one request/query; concurrent cold dashboard builds single-flight behind a 300-second cache; provider all-time totals leave the warm path behind a 900-second cache.
+- Summary: The original diagnosis found up to roughly 601 user-page statements on the older branch. Latest master had already introduced a five-query batch path for the normal 50-user page; this integration keeps that main-path query count while adding pagination, deterministic ordering, MySQL-compatible per-user history limits, and no unbounded history transfer. The API maximum of 200 users uses at most four history UNION chunks. Three leaderboard requests become one request/query; concurrent cold dashboard builds single-flight behind a 300-second cache; provider all-time totals leave the warm path behind a 900-second cache.
 - Verifier: targeted tests and final diff inspection
 
 ## EvidenceBundleDraft
@@ -62,8 +62,8 @@ No evidence has been recorded yet.
 
 - Artifact key: ship-coverage-and-build
 - Type: ship-gate
-- Source: gstack coverage audit, 100-test targeted suite, and Vite production build
-- Summary: Coverage audit improved from 60% to the 80% target after seven boundary tests. The latest-master targeted suite ran 128 tests with OK. Vite 6.4.3 transformed 87 modules and completed a production build with Node 24.14.0; the existing 674 kB chunk-size warning remains informational.
+- Source: gstack coverage audit, 140-test targeted suite, and Vite production build
+- Summary: Coverage audit improved from 60% to the 80% target after seven boundary tests. The latest-master targeted suite ran 140 tests with OK. Vite 6.4.3 transformed 87 modules and completed a production build with Node 24.14.0; the existing 674 kB chunk-size warning remains informational.
 - Verifier: coverage gate PASS 80%; unittest exit 0; vite build exit 0
 
 ## EvidenceBundleDraft
@@ -79,5 +79,16 @@ No evidence has been recorded yet.
 - Artifact key: final-master-ship-gate
 - Type: ship-gate
 - Source: origin/master-integrated targeted/full unittest runs, clean-master differential, static checks, and Vite build
-- Summary: On origin/master 9f8147a plus this branch, 128 targeted tests pass, Python and inline scripts parse, Aegis and diff checks pass, and Vite transforms 87 modules successfully. Full discovery runs 638 tests with only the same three video RequestLog errors reproduced by 27 clean-master video tests. Middleware order coverage was updated and passes.
+- Summary: On origin/master 9f8147a plus this branch, 140 targeted tests pass, Python and inline scripts parse, Aegis and diff checks pass, and Vite transforms 87 modules successfully. Full discovery runs 639 tests with only the same three video RequestLog errors reproduced by 27 clean-master video tests. Middleware order coverage was updated and passes.
 - Verifier: targeted/build/static exit 0; full-suite differential confirms no in-branch failures
+
+## EvidenceBundleDraft
+
+
+## EvidenceBundleDraft
+
+- Artifact key: pre-landing-review-fixes
+- Type: review
+- Source: independent pre-landing review and focused regression rerun
+- Summary: The reviewer confirmed both P2 findings are closed. Historical traffic-pack reads are bounded to 50 rows per user in MySQL-compatible UNION chunks, with at most four history queries for the 200-user API maximum. Both paged sort paths append User.id as a unique tie-breaker. No P0, P1, or P2 findings remain.
+- Verifier: 6 focused tests OK; MySQL dialect compilation and git diff --check pass
