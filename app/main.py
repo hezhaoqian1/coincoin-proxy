@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .admin import router as admin_router
+from .admin_timing import AdminTimingASGIMiddleware
 from .anthropic_compat import router as anthropic_router
 from .auth import router as auth_router
 from .channel_monitoring import provider_channel_monitor_loop
@@ -1109,6 +1110,7 @@ app = FastAPI(
 
 app.add_middleware(QuotaReservationASGIMiddleware)
 app.add_middleware(ImageJSONKeepaliveASGIMiddleware)
+app.add_middleware(AdminTimingASGIMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
