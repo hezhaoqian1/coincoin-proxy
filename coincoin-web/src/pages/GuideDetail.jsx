@@ -437,27 +437,28 @@ from pathlib import Path
 path = Path(os.environ["GROK_CONFIG"])
 text = path.read_text(encoding="utf-8")
 text = re.sub(r"(?ms)^\[model\.grok-build\]\s*.*?(?=^\[|\Z)", "", text)
+text = re.sub(r"(?ms)^\[model\.grok-4\.5\]\s*.*?(?=^\[|\Z)", "", text)
 
 models_match = re.search(r"(?ms)^\[models\]\s*.*?(?=^\[|\Z)", text)
 if models_match:
     section = models_match.group(0)
     if re.search(r"(?m)^default\s*=", section):
-        section = re.sub(r'(?m)^default\s*=.*$', 'default = "grok-build"', section)
+        section = re.sub(r'(?m)^default\s*=.*$', 'default = "grok-4.5"', section)
     else:
-        section = section.rstrip() + '\ndefault = "grok-build"\n'
+        section = section.rstrip() + '\ndefault = "grok-4.5"\n'
     if re.search(r"(?m)^web_search\s*=", section):
-        section = re.sub(r'(?m)^web_search\s*=.*$', 'web_search = "grok-build"', section)
+        section = re.sub(r'(?m)^web_search\s*=.*$', 'web_search = "grok-4.5"', section)
     else:
-        section = section.rstrip() + '\nweb_search = "grok-build"\n'
+        section = section.rstrip() + '\nweb_search = "grok-4.5"\n'
     text = text[:models_match.start()] + section + text[models_match.end():]
 else:
-    text = text.rstrip() + '\n\n[models]\ndefault = "grok-build"\nweb_search = "grok-build"\n'
+    text = text.rstrip() + '\n\n[models]\ndefault = "grok-4.5"\nweb_search = "grok-4.5"\n'
 
-block = '''[model.grok-build]
-model = "grok-build"
+block = '''[model.grok-4.5]
+model = "grok-4.5"
 base_url = "${OPENAI_BASE_URL}"
 api_key = "${snippetKey}"
-name = "Grok Build via CoinCoin"
+name = "Grok 4.5 via CoinCoin"
 api_backend = "responses"
 context_window = 500000
 supports_backend_search = true
@@ -468,12 +469,12 @@ PY
 chmod 600 "$CONFIG"
 printf 'Grok Build config written to %s\n' "$CONFIG"
 grok inspect
-grok -p "Reply exactly: COINCOIN_GROK_BUILD_OK" -m grok-build --output-format json --max-turns 1
-grok -p "Use web search to find the current published npm version of @xai-official/grok, then include COINCOIN_GROK_WEB_SEARCH_OK in the answer." -m grok-build --output-format json --max-turns 3
+grok -p "Reply exactly: COINCOIN_GROK_BUILD_OK" -m grok-4.5 --output-format json --max-turns 1
+grok -p "Use web search to find the current published npm version of @xai-official/grok, then include COINCOIN_GROK_WEB_SEARCH_OK in the answer." -m grok-4.5 --output-format json --max-turns 3
 
 TEST_DIR=$(mktemp -d)
 printf 'GROK_BUILD_TOOL_LOOP_OK\n' > "$TEST_DIR/probe.txt"
-grok --cwd "$TEST_DIR" -p "Read probe.txt with the file tool, then reply with its exact contents." -m grok-build --output-format json --max-turns 3 --always-approve
+grok --cwd "$TEST_DIR" -p "Read probe.txt with the file tool, then reply with its exact contents." -m grok-4.5 --output-format json --max-turns 3 --always-approve
 rm -rf "$TEST_DIR"`
 
         const grokBuildWindowsCommand = String.raw`if (-not (Get-Command grok -ErrorAction SilentlyContinue)) {
@@ -491,33 +492,34 @@ if (Test-Path $Config) {
 }
 
 $Text = [regex]::Replace($Text, '(?ms)^\[model\.grok-build\]\s*.*?(?=^\[|\z)', '')
+$Text = [regex]::Replace($Text, '(?ms)^\[model\.grok-4\.5\]\s*.*?(?=^\[|\z)', '')
 $ModelsPattern = '(?ms)^\[models\]\s*.*?(?=^\[|\z)'
 if ([regex]::IsMatch($Text, $ModelsPattern)) {
   $Text = [regex]::Replace($Text, $ModelsPattern, {
     param($Match)
     $Section = $Match.Value
     if ($Section -match '(?m)^default\s*=') {
-      $Section = [regex]::Replace($Section, '(?m)^default\s*=.*$', 'default = "grok-build"')
+      $Section = [regex]::Replace($Section, '(?m)^default\s*=.*$', 'default = "grok-4.5"')
     } else {
-      $Section = $Section.TrimEnd() + [Environment]::NewLine + 'default = "grok-build"' + [Environment]::NewLine
+      $Section = $Section.TrimEnd() + [Environment]::NewLine + 'default = "grok-4.5"' + [Environment]::NewLine
     }
     if ($Section -match '(?m)^web_search\s*=') {
-      $Section = [regex]::Replace($Section, '(?m)^web_search\s*=.*$', 'web_search = "grok-build"')
+      $Section = [regex]::Replace($Section, '(?m)^web_search\s*=.*$', 'web_search = "grok-4.5"')
     } else {
-      $Section = $Section.TrimEnd() + [Environment]::NewLine + 'web_search = "grok-build"' + [Environment]::NewLine
+      $Section = $Section.TrimEnd() + [Environment]::NewLine + 'web_search = "grok-4.5"' + [Environment]::NewLine
     }
     return $Section
   })
 } else {
-  $Text = $Text.TrimEnd() + [Environment]::NewLine + [Environment]::NewLine + '[models]' + [Environment]::NewLine + 'default = "grok-build"' + [Environment]::NewLine + 'web_search = "grok-build"' + [Environment]::NewLine
+  $Text = $Text.TrimEnd() + [Environment]::NewLine + [Environment]::NewLine + '[models]' + [Environment]::NewLine + 'default = "grok-4.5"' + [Environment]::NewLine + 'web_search = "grok-4.5"' + [Environment]::NewLine
 }
 
 $Block = @'
-[model.grok-build]
-model = "grok-build"
+[model.grok-4.5]
+model = "grok-4.5"
 base_url = "${OPENAI_BASE_URL}"
 api_key = "${snippetKey}"
-name = "Grok Build via CoinCoin"
+name = "Grok 4.5 via CoinCoin"
 api_backend = "responses"
 context_window = 500000
 supports_backend_search = true
@@ -526,13 +528,13 @@ supports_backend_search = true
 
 Write-Host "Grok Build config written to $Config"
 grok inspect
-grok -p "Reply exactly: COINCOIN_GROK_BUILD_OK" -m grok-build --output-format json --max-turns 1
-grok -p "Use web search to find the current published npm version of @xai-official/grok, then include COINCOIN_GROK_WEB_SEARCH_OK in the answer." -m grok-build --output-format json --max-turns 3
+grok -p "Reply exactly: COINCOIN_GROK_BUILD_OK" -m grok-4.5 --output-format json --max-turns 1
+grok -p "Use web search to find the current published npm version of @xai-official/grok, then include COINCOIN_GROK_WEB_SEARCH_OK in the answer." -m grok-4.5 --output-format json --max-turns 3
 
 $TestDir = Join-Path ([System.IO.Path]::GetTempPath()) ("coincoin-grok-build-" + [guid]::NewGuid())
 New-Item -ItemType Directory -Force $TestDir | Out-Null
 Set-Content (Join-Path $TestDir "probe.txt") "GROK_BUILD_TOOL_LOOP_OK" -Encoding UTF8
-grok --cwd $TestDir -p "Read probe.txt with the file tool, then reply with its exact contents." -m grok-build --output-format json --max-turns 3 --always-approve
+grok --cwd $TestDir -p "Read probe.txt with the file tool, then reply with its exact contents." -m grok-4.5 --output-format json --max-turns 3 --always-approve
 Remove-Item $TestDir -Recurse -Force`
 
         const claudeUnixCommand = `CLAUDE_DIR="\${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
@@ -983,7 +985,7 @@ Write-Host "saved $Output"`
                     {
                         title: 'Windows PowerShell 一键配置',
                         platform: 'Windows',
-                        summary: '安装官方 CLI、备份并检查 `$HOME\\.grok\\config.toml`、替换 `grok-build` 模型段，然后运行 Web Search 和文件读取工具回路。',
+                        summary: '安装官方 CLI、备份并检查 `$HOME\\.grok\\config.toml`、将默认模型设为 `grok-4.5`，然后运行 Web Search 和文件读取工具回路。',
                         code: grokBuildWindowsCommand,
                     },
                 ],

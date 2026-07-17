@@ -310,7 +310,7 @@ function AudienceGuide() {
             title: 'Grok Build',
             tag: '已实测',
             desc: '官方 Grok Build CLI 通过 Responses 接入 CoinCoin。',
-            bullets: ['模型固定为 grok-build', 'Base URL 使用统一 /v1', '推理、流式和函数工具回路已验证']
+            bullets: ['默认模型使用 grok-4.5', 'Base URL 使用统一 /v1', '推理、流式和函数工具回路已验证']
         },
         {
             title: 'OpenCode',
@@ -460,7 +460,7 @@ experimental_bearer_token = "sk_cc_xxxxx"
 wire_api = "responses"`}</pre>
 
             <h3>Grok Build</h3>
-            <p>Grok Build 必须使用 Responses 后端和 <code>grok-build</code> 公开模型。</p>
+            <p>Grok Build 使用 Responses 后端，教程默认选择 <code>grok-4.5</code> 公开模型。</p>
             <p><Link className="btn btn-secondary btn-sm" to="/guides/grok-build">打开 Grok Build 一键配置教程</Link></p>
 
             <h3>Claude Code</h3>
@@ -514,7 +514,7 @@ claude`}</pre>
                         <td>Grok Build</td>
                         <td><span className="badge badge-success">已实测支持</span></td>
                         <td><code>/v1 + responses</code></td>
-                        <td>官方 CLI 用 <code>grok-build</code> 公开别名，支持推理、流式输出和文件工具多轮回路。</td>
+                        <td>官方 CLI 默认用 <code>grok-4.5</code> 公开模型，支持推理、流式输出、Web Search 和文件工具多轮回路。</td>
                     </tr>
                     <tr>
                         <td>OpenCode</td>
@@ -545,7 +545,7 @@ claude`}</pre>
 
             <h3>切换模型时你要改什么？</h3>
             <ul className="doc-list">
-                <li>只需要把请求或客户端配置中的 <code>model</code> 改成目标模型，例如 <code>gpt-5.4</code>、<code>grok-build</code>、<code>sonnet</code> 或 <code>claude-opus-4-8</code>。</li>
+                <li>只需要把请求或客户端配置中的 <code>model</code> 改成目标模型，例如 <code>gpt-5.4</code>、<code>grok-4.5</code>、<code>sonnet</code> 或 <code>claude-opus-4-8</code>。</li>
                 <li>Base URL 和 API Key 不需要改，仍然走同一个 ClawFather 入口。</li>
                 <li>文本请求推荐走 <code>/v1/chat/completions</code> 或 <code>/v1/responses</code>，图片请求走 <code>/v1/images/generations</code> 或 <code>/v1/images/edits</code>，并使用 <code>{imageModelId}</code> 这类图片模型。</li>
                 <li>图片请求统一走 ClawFather 公开入口，不需要终端用户配置额外服务。</li>
@@ -1043,11 +1043,11 @@ wire_api = "responses"`}</pre>
 
             <h3>Grok Build</h3>
             <pre className="code-block">{`[models]
-default = "grok-build"
-web_search = "grok-build"
+default = "grok-4.5"
+web_search = "grok-4.5"
 
-[model.grok-build]
-model = "grok-build"
+[model.grok-4.5]
+model = "grok-4.5"
 base_url = "${SITE}/v1"
 api_key = "sk_cc_xxxxx"
 api_backend = "responses"
