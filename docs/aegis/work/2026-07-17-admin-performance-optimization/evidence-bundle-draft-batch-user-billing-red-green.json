@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "artifactKey": "batch-user-billing-red-green",
+  "type": "test",
+  "source": "tests.test_admin_usage_fields targeted unittest run",
+  "summary": "New tests failed before implementation, then passed. On latest master, the existing credit-aware batch owner now uses three fixed billing queries (subscription, traffic packs, permanent credits), removes the window function and separate active-pack query, and list_users adds one paged user query with limit/offset.",
+  "verifier": "unittest: 4 tests OK"
+}

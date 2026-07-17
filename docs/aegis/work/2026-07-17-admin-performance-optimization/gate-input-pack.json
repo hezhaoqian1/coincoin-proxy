@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "baselineRefs": [
+    "origin/master@9f8147a",
+    "docs/aegis/specs/2026-07-17-admin-performance-optimization-brief.md",
+    "docs/aegis/plans/2026-07-17-admin-performance-optimization.md"
+  ],
+  "impactStatement": "docs/aegis/work/2026-07-17-admin-performance-optimization/impact-statement-draft.json",
+  "compatPlan": "Existing admin fields and /admin/usage/leaderboard remain compatible; only statistics receive bounded cache freshness.",
+  "retirementPlan": "Latest master's canonical _admin_billing_states_batch remains sole owner; its separate active/recent pack queries and window-function dependency are retired. Triple leaderboard calls, duplicate cold dashboard builds, and warm-path all-history scans remain retired.",
+  "evidenceBundle": [
+    "docs/aegis/work/2026-07-17-admin-performance-optimization/evidence-bundle-draft-batch-user-billing-red-green.json",
+    "docs/aegis/work/2026-07-17-admin-performance-optimization/evidence-bundle-draft-combined-leaderboards-red-green.json",
+    "docs/aegis/work/2026-07-17-admin-performance-optimization/evidence-bundle-draft-final-static-verification.json",
+    "docs/aegis/work/2026-07-17-admin-performance-optimization/evidence-bundle-draft-final-targeted-regression.json",
+    "docs/aegis/work/2026-07-17-admin-performance-optimization/evidence-bundle-draft-full-suite-baseline-differential.json",
+    "docs/aegis/work/2026-07-17-admin-performance-optimization/evidence-bundle-draft-master-integration.json",
+    "docs/aegis/work/2026-07-17-admin-performance-optimization/evidence-bundle-draft-performance-shape.json",
+    "docs/aegis/work/2026-07-17-admin-performance-optimization/evidence-bundle-draft-provider-midnight-window-regression.json",
+    "docs/aegis/work/2026-07-17-admin-performance-optimization/evidence-bundle-draft-ship-coverage-and-build.json"
+  ]
+}

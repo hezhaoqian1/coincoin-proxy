@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "artifactKey": "full-suite-baseline-differential",
+  "type": "regression",
+  "source": "full unittest discovery on task worktree plus tests.test_video_jobs on clean detached HEAD worktree",
+  "summary": "Full discovery ran 440 tests: 3 errors and 1 skip. The same three video-generation RequestLog constructor errors reproduce on clean commit 6d4df10 (8 video tests, 3 errors), and app/video_jobs.py plus app/models.py are unchanged by this task; classified as an independent baseline failure.",
+  "verifier": "unittest differential reproduction"
+}

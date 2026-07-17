@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "artifactKey": "combined-leaderboards-red-green",
+  "type": "test",
+  "source": "tests.test_admin_usage_fields targeted unittest run",
+  "summary": "Batch leaderboard endpoint and UI wiring tests failed before implementation and then passed; 1h, 4h, and 24h payloads are returned from one SQL execution.",
+  "verifier": "unittest: 3 tests OK"
+}

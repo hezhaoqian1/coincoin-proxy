@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "artifactKey": "final-static-verification",
+  "type": "static-check",
+  "source": "py_compile, Node inline-script parse, git diff --check",
+  "summary": "Changed Python modules compile, the one inline admin script parses, and git diff --check reports no whitespace errors. The coincoin-web production Vite build also completed successfully with 86 modules transformed by temporarily reusing the primary workspace's matching node_modules; coincoin-web source was not modified.",
+  "verifier": "all available static checks exit 0"
+}
