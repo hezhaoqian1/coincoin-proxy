@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 
 const guideSource = await readFile(new URL('./GuideDetail.jsx', import.meta.url), 'utf8')
+const guideStyles = await readFile(new URL('./GuideDetail.css', import.meta.url), 'utf8')
 
 test('image guide covers synchronous and asynchronous generation on both platforms', () => {
     assert.match(guideSource, /macOS \/ Linux 同步文生图/)
@@ -22,6 +23,16 @@ test('image guide groups commands by task and platform', () => {
     assert.doesNotMatch(guideSource, /const multiImageEditCommand/)
     assert.doesNotMatch(guideSource, /const multiImageEditWindowsCommand/)
     assert.match(guideSource, /GuideTaskTabs tasks=\{guide\.commandTasks\}/)
+})
+
+test('image tasks reuse the same platform buttons as the other tutorials', () => {
+    assert.match(guideSource, /function GuidePlatformTabs/)
+    assert.match(guideSource, /<GuidePlatformTabs\s+items=\{activeTask\.items\}/)
+    assert.match(guideSource, /ariaLabel=\{`\$\{activeTask\.title\}系统选择`\}\s+compact/)
+    assert.match(guideSource, /className=\{`guide-command-tab/)
+    assert.match(guideStyles, /\.guide-command-tab-list-compact/)
+    assert.doesNotMatch(guideSource, /guide-platform-tab/)
+    assert.doesNotMatch(guideStyles, /\.guide-platform-tab/)
 })
 
 test('image guide includes a Windows-native usage command', () => {

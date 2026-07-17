@@ -104,6 +104,29 @@ function GuideCommandGroup({ items, secret }) {
     )
 }
 
+function GuidePlatformTabs({ items, activeIndex, onSelect, ariaLabel = '操作系统选择', compact = false }) {
+    return (
+        <div
+            className={`guide-command-tab-list ${compact ? 'guide-command-tab-list-compact' : ''}`}
+            role="tablist"
+            aria-label={ariaLabel}
+        >
+            {items.map((item, index) => (
+                <button
+                    key={item.title}
+                    type="button"
+                    role="tab"
+                    aria-selected={activeIndex === index}
+                    className={`guide-command-tab ${activeIndex === index ? 'is-active' : ''}`}
+                    onClick={() => onSelect(index)}
+                >
+                    {item.platform || item.title}
+                </button>
+            ))}
+        </div>
+    )
+}
+
 function GuideCommandTabs({ items, secret }) {
     const [activeIndex, setActiveIndex] = useState(0)
     const activeItem = items[activeIndex] || items[0]
@@ -117,20 +140,7 @@ function GuideCommandTabs({ items, secret }) {
                     <span className="guide-kicker">Platform</span>
                     <h2>选择你的系统</h2>
                 </div>
-                <div className="guide-command-tab-list" role="tablist" aria-label="操作系统选择">
-                    {items.map((item, index) => (
-                        <button
-                            key={item.title}
-                            type="button"
-                            role="tab"
-                            aria-selected={activeIndex === index}
-                            className={`guide-command-tab ${activeIndex === index ? 'is-active' : ''}`}
-                            onClick={() => setActiveIndex(index)}
-                        >
-                            {item.platform || item.title}
-                        </button>
-                    ))}
-                </div>
+                <GuidePlatformTabs items={items} activeIndex={activeIndex} onSelect={setActiveIndex} />
             </div>
             <GuideCommand
                 title={activeItem.title}
@@ -144,15 +154,15 @@ function GuideCommandTabs({ items, secret }) {
 
 function GuideTaskTabs({ tasks, secret }) {
     const [activeTaskIndex, setActiveTaskIndex] = useState(0)
-    const [activePlatformIndex, setActivePlatformIndex] = useState(0)
+    const [activePlatform, setActivePlatform] = useState(tasks[0]?.items?.[0]?.platform || '')
     const activeTask = tasks[activeTaskIndex] || tasks[0]
-    const activeItem = activeTask?.items?.[activePlatformIndex] || activeTask?.items?.[0]
+    const activeItem = activeTask?.items?.find((item) => item.platform === activePlatform) || activeTask?.items?.[0]
+    const activePlatformIndex = activeTask?.items?.indexOf(activeItem) ?? 0
 
     if (!activeTask || !activeItem) return null
 
-    const selectTask = (index) => {
-        setActiveTaskIndex(index)
-        setActivePlatformIndex(0)
+    const selectPlatform = (index) => {
+        setActivePlatform(activeTask.items[index]?.platform || '')
     }
 
     return (
@@ -171,7 +181,7 @@ function GuideTaskTabs({ tasks, secret }) {
                         role="tab"
                         aria-selected={activeTaskIndex === index}
                         className={`guide-task-tab ${activeTaskIndex === index ? 'is-active' : ''}`}
-                        onClick={() => selectTask(index)}
+                        onClick={() => setActiveTaskIndex(index)}
                     >
                         {task.title}
                     </button>
@@ -185,20 +195,13 @@ function GuideTaskTabs({ tasks, secret }) {
                         <h3>{activeTask.title}</h3>
                         <p>{activeTask.summary}</p>
                     </div>
-                    <div className="guide-platform-tab-list" role="tablist" aria-label={`${activeTask.title}系统选择`}>
-                        {activeTask.items.map((item, index) => (
-                            <button
-                                key={item.title}
-                                type="button"
-                                role="tab"
-                                aria-selected={activePlatformIndex === index}
-                                className={`guide-platform-tab ${activePlatformIndex === index ? 'is-active' : ''}`}
-                                onClick={() => setActivePlatformIndex(index)}
-                            >
-                                {item.platform || item.title}
-                            </button>
-                        ))}
-                    </div>
+                    <GuidePlatformTabs
+                        items={activeTask.items}
+                        activeIndex={activePlatformIndex}
+                        onSelect={selectPlatform}
+                        ariaLabel={`${activeTask.title}系统选择`}
+                        compact
+                    />
                 </div>
 
                 <GuideCommand

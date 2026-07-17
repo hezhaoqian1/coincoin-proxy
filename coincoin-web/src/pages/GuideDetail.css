@@ -222,33 +222,6 @@
     margin-bottom: var(--space-lg);
 }
 
-.guide-platform-tab-list {
-    display: inline-flex;
-    flex-shrink: 0;
-    gap: 4px;
-    padding: 4px;
-    border-radius: 8px;
-    background: rgba(15, 23, 42, 0.06);
-}
-
-.guide-platform-tab {
-    min-height: 38px;
-    border: 0;
-    border-radius: 6px;
-    padding: 8px 12px;
-    background: transparent;
-    color: var(--text-secondary);
-    font-size: 0.86rem;
-    font-weight: 700;
-    cursor: pointer;
-}
-
-.guide-platform-tab.is-active {
-    background: #fff;
-    color: var(--text-primary);
-    box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
-}
-
 .guide-task-browser .guide-command {
     padding: 0;
     background: transparent;
@@ -281,6 +254,15 @@
     padding: 6px;
     border-radius: 999px;
     background: rgba(15, 23, 42, 0.06);
+}
+
+.guide-command-tab-list-compact {
+    flex-wrap: nowrap;
+}
+
+.guide-command-tab-list-compact .guide-command-tab {
+    padding-inline: 13px;
+    white-space: nowrap;
 }
 
 .guide-command-tab {
@@ -455,13 +437,12 @@
         flex: 1 1 160px;
     }
 
-    .guide-platform-tab-list {
-        width: 100%;
+    .guide-command-tab-list-compact .guide-command-tab {
+        min-width: 0;
+        flex-basis: 0;
+        padding-inline: 10px;
     }
 
-    .guide-platform-tab {
-        flex: 1 1 0;
-    }
 }
 
 @media (max-width: 820px) {
