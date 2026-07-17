@@ -97,3 +97,4 @@ Entries are workspace records, not authoritative runtime decisions.
 | 2026-07-17 | artifact | docs/aegis/work/2026-07-17-admin-performance-optimization/evidence-bundle-draft-provider-midnight-window-regression.json | 2026-07-17-admin-performance-optimization evidence provider-midnight-window-regression |
 | 2026-07-17 | artifact | docs/aegis/work/2026-07-17-admin-performance-optimization/evidence-bundle-draft-ship-coverage-and-build.json | 2026-07-17-admin-performance-optimization evidence ship-coverage-and-build |
 | 2026-07-17 | artifact | docs/aegis/work/2026-07-17-admin-performance-optimization/evidence-bundle-draft-master-integration.json | 2026-07-17-admin-performance-optimization evidence master-integration |
+| 2026-07-17 | artifact | docs/aegis/work/2026-07-17-admin-performance-optimization/evidence-bundle-draft-final-master-ship-gate.json | 2026-07-17-admin-performance-optimization evidence final-master-ship-gate |

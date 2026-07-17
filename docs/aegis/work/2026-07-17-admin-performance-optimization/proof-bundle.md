@@ -19,6 +19,7 @@ This proof bundle is an advisory Aegis Method Pack record. It does not determine
 
 - docs/aegis/work/2026-07-17-admin-performance-optimization/evidence-bundle-draft-batch-user-billing-red-green.json
 - docs/aegis/work/2026-07-17-admin-performance-optimization/evidence-bundle-draft-combined-leaderboards-red-green.json
+- docs/aegis/work/2026-07-17-admin-performance-optimization/evidence-bundle-draft-final-master-ship-gate.json
 - docs/aegis/work/2026-07-17-admin-performance-optimization/evidence-bundle-draft-final-static-verification.json
 - docs/aegis/work/2026-07-17-admin-performance-optimization/evidence-bundle-draft-final-targeted-regression.json
 - docs/aegis/work/2026-07-17-admin-performance-optimization/evidence-bundle-draft-full-suite-baseline-differential.json

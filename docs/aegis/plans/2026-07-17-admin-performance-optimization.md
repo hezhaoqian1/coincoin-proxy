@@ -140,7 +140,7 @@ surface with no request-body logging.
 - [x] Run the closest billing and main-app regression tests.
 - [x] Check the static admin inline JavaScript and run the `coincoin-web`
   production Vite build by temporarily reusing the primary workspace's matching
-  `node_modules`; 86 modules transformed and the build completed successfully.
+  `node_modules`; 87 modules transformed and the build completed successfully.
 - [x] Run `git diff --check` and inspect the complete diff.
 - [x] Record query-count and cache evidence in the work record.
 

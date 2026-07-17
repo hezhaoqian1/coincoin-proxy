@@ -23,7 +23,7 @@ No evidence has been recorded yet.
 - Artifact key: final-targeted-regression
 - Type: test
 - Source: python -m unittest -q tests.test_admin_usage_fields tests.test_admin_timing tests.test_subscription_billing tests.test_quota_lifecycle
-- Summary: Fresh ship-gate run completed 100 tests with OK. It covers admin payload compatibility, bulk and single-user billing equivalence, pagination boundaries, finance summary, leaderboard metrics and invalid inputs, analytics cache warm/TTL/error recovery, provider totals and China-midnight windows, timing middleware, subscription billing, and quota lifecycle.
+- Summary: Fresh latest-master ship-gate run completed 128 targeted tests with OK. It covers admin payload compatibility, credit-aware bulk and single-user billing equivalence, pagination boundaries, finance summary, leaderboard metrics and invalid inputs, analytics cache warm/TTL/error recovery, provider totals and China-midnight windows, timing middleware, subscription billing, and quota lifecycle.
 - Verifier: unittest exit 0
 
 ## EvidenceBundleDraft
@@ -31,7 +31,7 @@ No evidence has been recorded yet.
 - Artifact key: full-suite-baseline-differential
 - Type: regression
 - Source: full unittest discovery on task worktree plus tests.test_video_jobs on clean detached HEAD worktree
-- Summary: Full discovery ran 440 tests: 3 errors and 1 skip. The same three video-generation RequestLog constructor errors reproduce on clean commit 6d4df10 (8 video tests, 3 errors), and app/video_jobs.py plus app/models.py are unchanged by this task; classified as an independent baseline failure.
+- Summary: Latest-master full discovery ran 638 tests: 3 errors and 2 skips. The same three video-generation RequestLog constructor errors reproduce on clean origin/master 9f8147a (27 video tests, 3 errors), and app/video_jobs.py plus app/models.py are unchanged by this task; classified as an independent baseline failure.
 - Verifier: unittest differential reproduction
 
 ## EvidenceBundleDraft
@@ -39,7 +39,7 @@ No evidence has been recorded yet.
 - Artifact key: final-static-verification
 - Type: static-check
 - Source: py_compile, Node inline-script parse, git diff --check
-- Summary: Changed Python modules compile, the one inline admin script parses, and git diff --check reports no whitespace errors. The coincoin-web production Vite build also completed successfully with 86 modules transformed by temporarily reusing the primary workspace's matching node_modules; coincoin-web source was not modified.
+- Summary: Changed Python modules compile, both inline admin scripts parse, and git diff --check reports no whitespace errors. The latest-master coincoin-web production Vite build completed successfully with 87 modules transformed by temporarily reusing the primary workspace's matching node_modules; coincoin-web source was not modified.
 - Verifier: all available static checks exit 0
 
 ## EvidenceBundleDraft
@@ -63,7 +63,7 @@ No evidence has been recorded yet.
 - Artifact key: ship-coverage-and-build
 - Type: ship-gate
 - Source: gstack coverage audit, 100-test targeted suite, and Vite production build
-- Summary: Coverage audit improved from 60% to the 80% target after seven boundary tests. The final task-scoped suite ran 100 tests with OK. Vite 6.4.3 transformed 86 modules and completed a production build with Node 24.14.0; the existing 654 kB chunk-size warning remains informational.
+- Summary: Coverage audit improved from 60% to the 80% target after seven boundary tests. The latest-master targeted suite ran 128 tests with OK. Vite 6.4.3 transformed 87 modules and completed a production build with Node 24.14.0; the existing 674 kB chunk-size warning remains informational.
 - Verifier: coverage gate PASS 80%; unittest exit 0; vite build exit 0
 
 ## EvidenceBundleDraft
@@ -73,3 +73,11 @@ No evidence has been recorded yet.
 - Source: cherry-pick onto origin/master 9f8147a with conflict-aware owner reconciliation
 - Summary: Latest master already owned credit-aware admin batch billing. Integration retained that canonical owner, preserved permanent-credit fields plus image keepalive and reliability routes, collapsed active/recent traffic-pack reads into one MySQL-compatible query, and avoided introducing a duplicate billing owner. The merged admin/timing suite ran 114 tests with OK before documentation integration.
 - Verifier: manual conflict review, py_compile, and unittest exit 0
+
+## EvidenceBundleDraft
+
+- Artifact key: final-master-ship-gate
+- Type: ship-gate
+- Source: origin/master-integrated targeted/full unittest runs, clean-master differential, static checks, and Vite build
+- Summary: On origin/master 9f8147a plus this branch, 128 targeted tests pass, Python and inline scripts parse, Aegis and diff checks pass, and Vite transforms 87 modules successfully. Full discovery runs 638 tests with only the same three video RequestLog errors reproduced by 27 clean-master video tests. Middleware order coverage was updated and passes.
+- Verifier: targeted/build/static exit 0; full-suite differential confirms no in-branch failures
