@@ -16,8 +16,11 @@ test('image guide groups commands by task and platform', () => {
     assert.match(guideSource, /title: '同步文生图'/)
     assert.match(guideSource, /title: '异步文生图'/)
     assert.match(guideSource, /title: '单图图生图'/)
-    assert.match(guideSource, /title: 'Gemini 多图'/)
     assert.match(guideSource, /title: '查看用量'/)
+    assert.doesNotMatch(guideSource, /title: 'Gemini 多图'/)
+    assert.doesNotMatch(guideSource, /code: multiImageEditCommand/)
+    assert.doesNotMatch(guideSource, /const multiImageEditCommand/)
+    assert.doesNotMatch(guideSource, /const multiImageEditWindowsCommand/)
     assert.match(guideSource, /GuideTaskTabs tasks=\{guide\.commandTasks\}/)
 })
 

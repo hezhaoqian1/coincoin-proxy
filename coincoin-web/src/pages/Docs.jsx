@@ -339,8 +339,8 @@ function AudienceGuide() {
         {
             title: '生图 / 图生图',
             tag: '图片',
-            desc: '图片生成、少图编辑和多图异步任务。',
-            bullets: ['看 API 参考里的 images', '1-2 张图走 edits', '3-8 张图走 image-jobs']
+            desc: '图片生成、异步文生图和单图编辑。',
+            bullets: ['看 API 参考里的 images', '文生图走 generations', '单图图生图走 edits']
         }
     ]
 
@@ -430,7 +430,7 @@ function QuickStart({ primaryTextModel, primaryImageModel }) {
                 <div className="gemini-usage-card">
                     <span className="inline-badge">图生图</span>
                     <strong>POST /v1/images/edits</strong>
-                    <p><code>gpt-image-2</code> 单图编辑使用同步接口；Gemini 的 3-8 张参考图使用异步 <code>/v1/image-jobs/edits</code>。</p>
+                    <p><code>gpt-image-2</code> 单图编辑使用同步接口，上传一张参考图和编辑提示词。</p>
                     <p><Link to="/guides/images">打开图生图教程</Link></p>
                 </div>
             </div>
@@ -545,7 +545,7 @@ claude`}</pre>
 
             <h3>切换模型时你要改什么？</h3>
             <ul className="doc-list">
-                <li>只需要把请求或客户端配置中的 <code>model</code> 改成目标模型，例如 <code>gpt-5.4</code>、<code>grok-build</code>、<code>sonnet</code>、<code>claude-opus-4-8</code>、<code>gemini-image</code>。</li>
+                <li>只需要把请求或客户端配置中的 <code>model</code> 改成目标模型，例如 <code>gpt-5.4</code>、<code>grok-build</code>、<code>sonnet</code> 或 <code>claude-opus-4-8</code>。</li>
                 <li>Base URL 和 API Key 不需要改，仍然走同一个 ClawFather 入口。</li>
                 <li>文本请求推荐走 <code>/v1/chat/completions</code> 或 <code>/v1/responses</code>，图片请求走 <code>/v1/images/generations</code> 或 <code>/v1/images/edits</code>，并使用 <code>{imageModelId}</code> 这类图片模型。</li>
                 <li>图片请求统一走 ClawFather 公开入口，不需要终端用户配置额外服务。</li>
@@ -694,11 +694,6 @@ function ModelsAndPricing({ textModels, imageModels, videoModels, defaultTextMod
                     <strong><code>{defaultImageModel?.id || imageModels[0]?.id || 'gpt-image-2'}</code></strong>
                     <p>文生图走 <code>/v1/images/generations</code>，请求里显式传入图片模型。</p>
                 </div>
-                <div className="gemini-usage-card">
-                    <span className="inline-badge">Gemini</span>
-                    <strong><code>gemini-image</code></strong>
-                    <p>需要 Gemini 生图或 Gemini 图生图时，在请求里显式传 <code>model: "gemini-image"</code>。多图异步编辑继续用 Gemini 图片模型。</p>
-                </div>
             </div>
             <pre className="code-block">{`curl ${openaiBaseUrl}/images/generations \\
   -H "Authorization: Bearer ${previewKey}" \\
@@ -709,16 +704,6 @@ function ModelsAndPricing({ textModels, imageModels, videoModels, defaultTextMod
     "size": "1024x1024",
     "n": 1
   }'`}</pre>
-            <pre className="code-block">{`curl ${openaiBaseUrl}/images/generations \\
-  -H "Authorization: Bearer ${previewKey}" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "gemini-image",
-    "prompt": "A clean product poster in Gemini image style",
-    "size": "1024x1024",
-    "n": 1
-  }'`}</pre>
-
             <h3>计费说明</h3>
             <ul className="doc-list">
                 <li>文本模型按 Input / Cached Read / Output Token 计费；图片模型按图片张数计费；视频模型按任务次数计费。</li>
@@ -862,21 +847,6 @@ function ApiReference({ primaryTextModel, primaryImageModel, primaryVideoModel }
   -F "size=1024x1024" \\
   -F "image=@./input.png"`}</pre>
 
-            <h3>Images: 多图异步图生图</h3>
-            <div className="endpoint-block">
-                <span className="method post">POST</span>
-                <code>/v1/image-jobs/edits</code>
-            </div>
-            <pre className="code-block">{`curl ${SITE}/v1/image-jobs/edits \\
-  -H "Authorization: Bearer sk_cc_xxxxx" \\
-  -F "model=gemini-image" \\
-  -F "prompt=Combine these references into one poster illustration" \\
-  -F "n=1" \\
-  -F "size=1024x1024" \\
-  -F "image=@./ref-1.png" \\
-  -F "image=@./ref-2.png" \\
-  -F "image=@./ref-3.png"`}</pre>
-
             <div className="endpoint-block">
                 <span className="method get">GET</span>
                 <code>/v1/image-jobs/{'{job_id}'}</code>
@@ -930,8 +900,7 @@ function ApiReference({ primaryTextModel, primaryImageModel, primaryVideoModel }
 }`}</pre>
 
             <ul className="doc-list">
-                <li><code>gpt-image-2</code> 单图图生图走同步 <code>/v1/images/edits</code>；Gemini 的 <code>3-8</code> 张输入图走异步 <code>/v1/image-jobs/edits</code>。</li>
-                <li>如果你把 <code>3+</code> 张 Gemini 输入图直接发到 <code>/v1/images/edits</code>，接口会明确返回 <code>image_job_required</code>。</li>
+                <li><code>gpt-image-2</code> 单图图生图走同步 <code>/v1/images/edits</code>。</li>
                 <li>图片模型当前输出候选数只支持 <code>n=1</code>。</li>
                 <li>当前图片编辑不支持 <code>mask</code> 上传；如果传了掩码，会返回 <code>mask_not_supported</code>。</li>
                 <li>如果平台侧图片运行时暂不可用，图片请求会返回配置错误，而不是偷偷回退到别的模型。</li>
@@ -941,24 +910,25 @@ function ApiReference({ primaryTextModel, primaryImageModel, primaryVideoModel }
             </ul>
 
             <h3>错误码</h3>
-            <table className="data-table">
-                <thead>
-                    <tr><th>状态码</th><th>含义</th><th>说明</th></tr>
-                </thead>
-                <tbody>
-                    <tr><td>400</td><td>模型或参数错误</td><td>例如模型不存在、模型不支持该端点</td></tr>
-                    <tr><td>400</td><td><code>image_candidate_count_not_supported</code></td><td>图片模型当前只支持 <code>n=1</code></td></tr>
-                    <tr><td>400</td><td><code>image_job_required</code></td><td>同步 Gemini 图生图请求里传了 <code>3+</code> 张输入图，或超过同步等待预算，请改用 <code>/v1/image-jobs/edits</code></td></tr>
-                    <tr><td>400</td><td><code>mask_not_supported</code></td><td>当前图片编辑不支持 <code>mask</code> 上传</td></tr>
-                    <tr><td>400</td><td><code>missing_reference_media</code></td><td>Seedance 视频请求缺少图片、首帧、首尾帧或多模态参考</td></tr>
-                    <tr><td>400</td><td><code>video_reference_requires_video_model</code></td><td>视频/音频参考只能使用带 <code>-video</code> 后缀的 Seedance 模型</td></tr>
-                    <tr><td>401</td><td>认证失败</td><td>API Key 缺失或无效</td></tr>
-                    <tr><td>402</td><td>余额不足</td><td>请充值后重试</td></tr>
-                    <tr><td>403</td><td>禁止访问</td><td>Key 被禁用、用户被封禁，或使用了 session key 访问 API</td></tr>
-                    <tr><td>429</td><td>请求过多</td><td>超出速率或额度限制</td></tr>
-                    <tr><td>503</td><td>平台图片运行时暂不可用</td><td>请稍后重试或联系支持。</td></tr>
-                </tbody>
-            </table>
+            <div className="docs-table-wrap">
+                <table className="data-table docs-error-table">
+                    <thead>
+                        <tr><th>状态码</th><th>含义</th><th>说明</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>400</td><td>模型或参数错误</td><td>例如模型不存在、模型不支持该端点</td></tr>
+                        <tr><td>400</td><td><code>image_candidate_count_not_supported</code></td><td>图片模型当前只支持 <code>n=1</code></td></tr>
+                        <tr><td>400</td><td><code>mask_not_supported</code></td><td>当前图片编辑不支持 <code>mask</code> 上传</td></tr>
+                        <tr><td>400</td><td><code>missing_reference_media</code></td><td>Seedance 视频请求缺少图片、首帧、首尾帧或多模态参考</td></tr>
+                        <tr><td>400</td><td><code>video_reference_requires_video_model</code></td><td>视频/音频参考只能使用带 <code>-video</code> 后缀的 Seedance 模型</td></tr>
+                        <tr><td>401</td><td>认证失败</td><td>API Key 缺失或无效</td></tr>
+                        <tr><td>402</td><td>余额不足</td><td>请充值后重试</td></tr>
+                        <tr><td>403</td><td>禁止访问</td><td>Key 被禁用、用户被封禁，或使用了 session key 访问 API</td></tr>
+                        <tr><td>429</td><td>请求过多</td><td>超出速率或额度限制</td></tr>
+                        <tr><td>503</td><td>平台图片运行时暂不可用</td><td>请稍后重试或联系支持。</td></tr>
+                    </tbody>
+                </table>
+            </div>
 
             <div className="doc-callout">
                 <strong>公开接口先看这 4 个</strong>

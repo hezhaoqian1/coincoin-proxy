@@ -815,7 +815,7 @@ export function describePublicModel(model) {
     }
     if (capabilities.includes('images/generations') || capabilities.includes('images/edits')) {
         if (id === 'gpt-image-2') return '图片模型，支持文生图和图生图，适合高质量生成、编辑和文字较多的图片'
-        if (id === 'gemini-image') return 'Gemini 图片模型，显式传 model 时使用，适合 Gemini 生图和图生图工作流'
+        if (id === 'gemini-image') return 'Gemini 图片模型，供已有集成显式选择；当前入门教程以默认图片模型为准'
         if (id.includes('preview')) return '图片生成预览模型，适合视觉创作和风格探索'
         return '图片模型，支持文生图和图生图，适合营销图、插画和快速视觉草稿'
     }

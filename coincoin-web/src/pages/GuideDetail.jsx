@@ -882,127 +882,6 @@ if ($Item.b64_json) {
 }
 Write-Host "saved $Output"`
 
-        const multiImageEditCommand = `OUT="coincoin_multi_image_edit.png"
-JOB_JSON="$(mktemp)"
-RESULT_JSON="$(mktemp)"
-
-for file in ./ref-1.png ./ref-2.png ./ref-3.png; do
-  if [ ! -f "$file" ]; then
-    echo "Put reference images at ./ref-1.png ./ref-2.png ./ref-3.png first."
-    exit 1
-  fi
-done
-
-curl -sS "${OPENAI_BASE_URL}/image-jobs/edits" \\
-  -H "Authorization: Bearer ${snippetKey}" \\
-  -F "model=gemini-image" \\
-  -F "prompt=Combine these references into one coherent product poster" \\
-  -F "n=1" \\
-  -F "size=1024x1024" \\
-  -F "image=@./ref-1.png" \\
-  -F "image=@./ref-2.png" \\
-  -F "image=@./ref-3.png" \\
-  -o "$JOB_JSON"
-
-JOB_ID=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["id"])' "$JOB_JSON")
-echo "queued $JOB_ID"
-
-DEADLINE=$((SECONDS + 600))
-while true; do
-  curl -sS "${OPENAI_BASE_URL}/image-jobs/$JOB_ID" \\
-    -H "Authorization: Bearer ${snippetKey}" \\
-    -o "$RESULT_JSON"
-
-  STATUS=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"])' "$RESULT_JSON")
-  echo "status $STATUS"
-
-  if [ "$STATUS" = "completed" ]; then
-    python3 - "$RESULT_JSON" "$OUT" <<'PY'
-import base64
-import json
-import subprocess
-import sys
-
-data = json.load(open(sys.argv[1], encoding="utf-8"))
-item = (data.get("result", {}).get("data") or [{}])[0]
-b64 = item.get("b64_json")
-if b64:
-    open(sys.argv[2], "wb").write(base64.b64decode(b64))
-elif item.get("url"):
-    subprocess.run(["curl", "-L", "-sS", "--fail", "-o", sys.argv[2], item["url"]], check=True)
-else:
-    raise SystemExit(json.dumps(data, ensure_ascii=False))
-print("saved", sys.argv[2])
-PY
-    break
-  fi
-
-  if [ "$STATUS" = "failed" ]; then
-    cat "$RESULT_JSON"
-    exit 1
-  fi
-
-  if [ "$SECONDS" -gt "$DEADLINE" ]; then
-    echo "image job timed out"
-    exit 1
-  fi
-
-  sleep 5
-done`
-
-        const multiImageEditWindowsCommand = `$Output = "coincoin_multi_image_edit.png"
-$JobJson = "coincoin_image_job.json"
-$ResultJson = "coincoin_image_job_result.json"
-
-foreach ($File in @(".\\ref-1.png", ".\\ref-2.png", ".\\ref-3.png")) {
-  if (-not (Test-Path $File)) {
-    throw "Put reference images at .\\ref-1.png .\\ref-2.png .\\ref-3.png first."
-  }
-}
-
-curl.exe "${OPENAI_BASE_URL}/image-jobs/edits" \`
-  -H "Authorization: Bearer ${snippetKey}" \`
-  -F "model=gemini-image" \`
-  -F "prompt=Combine these references into one coherent product poster" \`
-  -F "n=1" \`
-  -F "size=1024x1024" \`
-  -F "image=@.\\ref-1.png" \`
-  -F "image=@.\\ref-2.png" \`
-  -F "image=@.\\ref-3.png" \`
-  -o $JobJson
-
-$Job = Get-Content $JobJson -Raw | ConvertFrom-Json
-Write-Host "queued $($Job.id)"
-$Deadline = (Get-Date).AddMinutes(10)
-
-do {
-  Start-Sleep -Seconds 5
-  curl.exe "${OPENAI_BASE_URL}/image-jobs/$($Job.id)" \`
-    -H "Authorization: Bearer ${snippetKey}" \`
-    -o $ResultJson
-
-  $Result = Get-Content $ResultJson -Raw | ConvertFrom-Json
-  Write-Host "status $($Result.status)"
-
-  if ($Result.status -eq "failed") {
-    throw ($Result | ConvertTo-Json -Depth 8)
-  }
-  if ((Get-Date) -gt $Deadline) {
-    throw "image job timed out"
-  }
-} until ($Result.status -eq "completed")
-
-$Item = $Result.result.data[0]
-if ($Item.b64_json) {
-  [IO.File]::WriteAllBytes($Output, [Convert]::FromBase64String($Item.b64_json))
-} elseif ($Item.url) {
-  curl.exe -L -sS --fail -o $Output $Item.url
-  if ($LASTEXITCODE -ne 0) { throw "Image URL download failed." }
-} else {
-  throw ($Result | ConvertTo-Json -Depth 8)
-}
-Write-Host "saved $Output"`
-
         const usageCommand = `curl ${OPENAI_BASE_URL}/usage?limit=5 \\
   -H "Authorization: Bearer ${snippetKey}"`
 
@@ -1044,7 +923,7 @@ Write-Host "saved $Output"`
                 id: 'images',
                 icon: 'IMG',
                 title: '图片接口 / 图生图',
-                summary: '文生图、单图图生图、多图异步编辑和 usage 计费检查。',
+                summary: '同步/异步文生图、单图图生图和 usage 计费检查。',
             },
         ]
 
@@ -1141,12 +1020,12 @@ Write-Host "saved $Output"`
             },
             images: {
                 title: '图片接口 / 图生图',
-                description: '文生图和图片编辑走同一个公开 `/v1` 入口，成功产出图片后按张计费。同步慢请求会发送 JSON 合法空白保持连接；单图图生图使用 `/images/edits`，Gemini 的 3-8 张参考图使用异步 `/image-jobs/edits`。',
+                description: '文生图和单图图生图走同一个公开 `/v1` 入口，成功产出图片后按张计费。同步慢请求会发送 JSON 合法空白保持连接；客户端有总超时时可改用异步文生图任务。',
                 commandTasks: [
                     {
                         id: 'sync-generation',
                         title: '同步文生图',
-                        summary: '适合能持续读取响应的客户端。示例默认使用当前图片模型；需要 Gemini 时把 `model` 改为 `gemini-image`。',
+                        summary: '适合能持续读取响应的客户端。示例使用当前默认图片模型，并自动保存 base64 或 URL 结果。',
                         items: [
                             {
                                 title: 'macOS / Linux 同步文生图',
@@ -1197,25 +1076,6 @@ Write-Host "saved $Output"`
                                 platform: 'Windows PowerShell',
                                 summary: '把参考图保存成 `input.png` 后运行；同步编辑完成后保存 `coincoin_image_edit.png`。',
                                 code: imageEditWindowsCommand,
-                            },
-                        ],
-                    },
-                    {
-                        id: 'gemini-multi-image',
-                        title: 'Gemini 多图',
-                        summary: '仅适用于 `gemini-image` 的 3-8 张参考图，通过异步 `/image-jobs/edits` 创建并轮询任务。',
-                        items: [
-                            {
-                                title: 'macOS / Linux Gemini 多图异步图生图',
-                                platform: 'macOS / Linux',
-                                summary: '把 3 张参考图保存成 `ref-1.png`、`ref-2.png`、`ref-3.png`；完成后保存 `coincoin_multi_image_edit.png`。',
-                                code: multiImageEditCommand,
-                            },
-                            {
-                                title: 'Windows PowerShell Gemini 多图异步图生图',
-                                platform: 'Windows PowerShell',
-                                summary: '把 3 张参考图保存成 `ref-1.png`、`ref-2.png`、`ref-3.png`；完成后保存 `coincoin_multi_image_edit.png`。',
-                                code: multiImageEditWindowsCommand,
                             },
                         ],
                     },

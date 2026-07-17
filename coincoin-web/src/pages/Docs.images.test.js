@@ -9,6 +9,12 @@ test('quickstart labels the image section for both generation and editing', () =
     assert.doesNotMatch(docsSource, /<h3>Gemini 生图<\/h3>/)
 })
 
+test('public image tutorials do not advertise Gemini workflows', () => {
+    assert.doesNotMatch(docsSource, /model: "gemini-image"/)
+    assert.doesNotMatch(docsSource, /Images: 多图异步图生图/)
+    assert.doesNotMatch(docsSource, /Gemini 的 3-8 张参考图/)
+})
+
 test('image API reference explains timeout, size, and URL result behavior', () => {
     assert.match(docsSource, /客户端自身的总超时/)
     assert.match(docsSource, /1K.*2K.*4K/)

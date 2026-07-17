@@ -24,4 +24,6 @@ test('the Grok quickstart link resolves to a configured guide', () => {
 test('the models page contains its wide table on narrow screens', () => {
     assert.match(docsStyles, /\.docs-content\s*\{[^}]*min-width:\s*0;/s)
     assert.match(docsStyles, /\.pricing-table-wrap\s*\{[^}]*overflow-x:\s*auto;/s)
+    assert.match(docsStyles, /\.docs-table-wrap\s*\{[^}]*overflow-x:\s*auto;/s)
+    assert.match(docsSource, /className="data-table docs-error-table"/)
 })

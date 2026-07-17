@@ -82,7 +82,7 @@ End users only talk to CoinCoin's public API and public model names. Internal ga
 | Public model catalog | Expose stable aliases like `gpt-5.2-codex`, `gemini-fast`, and `gemini-image` without leaking internal provider names. |
 | Prepaid billing | Track input tokens, output tokens, images, jobs, balance, and per-request cost in one system. |
 | Provider routing | Add OpenAI-compatible upstream channels, route public models to them, and fail over when a channel cools down. |
-| Image workflows | Serve synchronous generation/editing plus async generation and multi-image editing jobs. |
+| Image workflows | Serve synchronous generation/editing plus async image-generation jobs. |
 | Admin operations | Manage users, keys, usage, recharge records, model routes, channel health, and monitoring probes. |
 
 Optional durable usage/quota infrastructure is available through Redis Streams
@@ -94,7 +94,7 @@ See [`docs/usage-quota-infra.md`](./docs/usage-quota-infra.md).
 
 - **Chat Completions compatibility**: `/v1/chat/completions` with streaming, tools, function calling, and OpenAI-shaped responses.
 - **Embeddings**: `/v1/embeddings` with the public `text-embedding-3-small` alias.
-- **Image generation and editing**: `/v1/images/generations`, `/v1/images/edits`, and async `/v1/image-jobs/generations` and `/v1/image-jobs/edits`.
+- **Image generation and editing**: `/v1/images/generations`, `/v1/images/edits`, and async `/v1/image-jobs/generations`.
 - **Slow image connection protection**: synchronous image JSON responses emit JSON-safe whitespace heartbeats so idle network intermediaries can keep the connection open while the upstream finishes.
 - **Usage accounting**: input/output token units, image units, job costs, balance, and request history.
 - **Provider channels**: admin-managed OpenAI-compatible upstream URLs and keys.
@@ -219,7 +219,7 @@ curl http://127.0.0.1:8000/v1/embeddings \
 ```bash
 curl http://127.0.0.1:8000/v1/images/edits \
   -H "Authorization: Bearer sk_cc_xxx" \
-  -F "model=gemini-image" \
+  -F "model=gpt-image-2" \
   -F "prompt=Turn this into a clean pixel-art icon" \
   -F "n=1" \
   -F "size=1024x1024" \
@@ -247,20 +247,6 @@ curl http://127.0.0.1:8000/v1/image-jobs/generations \
   }'
 ```
 
-### Async Multi-Image Editing
-
-```bash
-curl http://127.0.0.1:8000/v1/image-jobs/edits \
-  -H "Authorization: Bearer sk_cc_xxx" \
-  -F "model=gemini-image" \
-  -F "prompt=Combine these references into one cohesive poster illustration" \
-  -F "n=1" \
-  -F "size=1024x1024" \
-  -F "image=@./input-1.png" \
-  -F "image=@./input-2.png" \
-  -F "image=@./input-3.png"
-```
-
 Then poll:
 
 ```bash
@@ -280,7 +266,6 @@ curl http://127.0.0.1:8000/v1/image-jobs/<job_id> \
 | `/v1/images/generations` | `POST` | Image generation |
 | `/v1/images/edits` | `POST` | Image editing and image-to-image |
 | `/v1/image-jobs/generations` | `POST` | Async image generation job |
-| `/v1/image-jobs/edits` | `POST` | Async multi-image edit job |
 | `/v1/image-jobs/{job_id}` | `GET` | Async job status and result |
 | `/v1/balance` | `GET` | User balance and aggregate usage |
 | `/v1/usage` | `GET` | Paginated request history |

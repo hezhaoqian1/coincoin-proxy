@@ -401,6 +401,16 @@
     background: var(--bg-card);
 }
 
+.docs-table-wrap {
+    width: 100%;
+    overflow-x: auto;
+    margin-bottom: var(--space-xl);
+}
+
+.docs-error-table {
+    min-width: 720px;
+}
+
 .pricing-table {
     min-width: 920px;
 }
