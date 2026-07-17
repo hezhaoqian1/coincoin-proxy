@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "artifactKey": "batch-user-billing-red-green",
+  "type": "test",
+  "source": "tests.test_admin_usage_fields targeted unittest run",
+  "summary": "New tests failed before implementation, then passed. On latest master, the existing credit-aware batch owner keeps active packs complete, retrieves at most 50 history rows per user through MySQL-compatible UNION chunks, preserves permanent credits, removes the window function and unbounded history transfer, and list_users adds deterministic paged ordering with limit/offset.",
+  "verifier": "unittest: 4 tests OK"
+}

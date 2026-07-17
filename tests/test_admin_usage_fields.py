@@ -1,3 +1,4 @@
+import asyncio
 import json
 import tempfile
 import unittest
@@ -7,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import httpx
+from fastapi import HTTPException
 
 from app.main import app
 import app.main as main_module
@@ -160,6 +162,10 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
     def tearDown(self) -> None:
         app.dependency_overrides.pop(admin_module.get_db, None)
         app.dependency_overrides.pop(admin_module.admin_guard, None)
+        admin_module._analytics_dashboard_cache.clear()
+        admin_module._analytics_dashboard_locks.clear()
+        admin_module._provider_channel_total_cache.clear()
+        admin_module._provider_channel_total_locks.clear()
         app.dependency_overrides.pop(payment_module.get_db, None)
         app.dependency_overrides.pop(webhook_module.get_db, None)
         payment_module.settings.epay_api_url = ""
@@ -317,7 +323,8 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("usageLeaderboard1hBody", admin_html)
         self.assertIn("usageLeaderboard4hBody", admin_html)
         self.assertIn("usageLeaderboard24hBody", admin_html)
-        self.assertIn("/admin/usage/leaderboard?window=", admin_html)
+        self.assertIn("/admin/usage/leaderboards?metric=cost_cents&limit=5", admin_html)
+        self.assertNotIn("windows.map(window =>", admin_html)
         self.assertIn("function loadUsageLeaderboards()", admin_html)
         self.assertIn("loadUsageLeaderboards();", admin_html)
 
@@ -612,6 +619,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                 _FakeScalarsResult([]),
                 _FakeAllResult([]),
                 _FakeAllResult([]),
+                _FakeAllResult([]),
                 _FakeScalarsResult([]),
                 _FakeScalarsResult([]),
                 _FakeScalarsResult([]),
@@ -676,8 +684,8 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             last_1h_cents=123,
             last_4h_cents=456,
             today_cents=789,
-            total_cents=3210,
         )
+        total_billing_row = SimpleNamespace(channel_id="ch_northstar", total_cents=3210)
         runtime_row = SimpleNamespace(
             channel_id="ch_northstar",
             fail_count=0,
@@ -720,6 +728,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
                 _FakeScalarsResult([channel]),
                 _FakeAllResult([route_row]),
                 _FakeAllResult([billing_row]),
+                _FakeAllResult([total_billing_row]),
                 _FakeScalarsResult([runtime_row]),
                 _FakeScalarsResult(routes),
                 _FakeScalarsResult([monitor]),
@@ -2028,6 +2037,121 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("created_at >=", overview_query)
         self.assertNotIn("coincoin_usage_daily", overview_query)
 
+    async def test_operating_dashboard_cold_cache_build_is_single_flight(self) -> None:
+        admin_module._analytics_dashboard_cache.clear()
+        admin_module._analytics_dashboard_locks.clear()
+        generated_at = datetime.utcnow()
+
+        async def build_payload(*, period, db):
+            await asyncio.sleep(0.01)
+            return {"period": period, "generated_at": generated_at}
+
+        builder = AsyncMock(side_effect=build_payload)
+        with patch.object(admin_module, "_build_analytics_operating_dashboard", builder):
+            first, second = await asyncio.gather(
+                admin_module.analytics_operating_dashboard(period="today", db=object()),
+                admin_module.analytics_operating_dashboard(period="today", db=object()),
+            )
+
+        self.assertEqual(builder.await_count, 1)
+        self.assertEqual(admin_module.ANALYTICS_DASHBOARD_CACHE_TTL_SECONDS, 300)
+        self.assertEqual(first["period"], "today")
+        self.assertEqual(second["period"], "today")
+        self.assertFalse(first["cache"]["cache_hit"])
+        self.assertTrue(second["cache"]["cache_hit"])
+
+    async def test_operating_dashboard_warm_cache_skips_builder_and_expired_cache_rebuilds(self) -> None:
+        generated_at = datetime.utcnow()
+        cache_key = "operating-dashboard:today"
+        now_ts = admin_module.time.time()
+        admin_module._analytics_dashboard_cache[cache_key] = (
+            now_ts - 10,
+            {"period": "today", "generated_at": generated_at},
+        )
+        builder = AsyncMock(return_value={"period": "today", "generated_at": generated_at})
+
+        with patch.object(admin_module, "_build_analytics_operating_dashboard", builder):
+            warm = await admin_module.analytics_operating_dashboard(period="today", db=object())
+            admin_module._analytics_dashboard_cache[cache_key] = (
+                now_ts - admin_module.ANALYTICS_DASHBOARD_CACHE_TTL_SECONDS - 1,
+                {"period": "today", "generated_at": generated_at},
+            )
+            rebuilt = await admin_module.analytics_operating_dashboard(period="today", db=object())
+
+        self.assertTrue(warm["cache"]["cache_hit"])
+        self.assertFalse(rebuilt["cache"]["cache_hit"])
+        builder.assert_awaited_once()
+
+    async def test_operating_dashboard_builder_error_releases_single_flight_lock(self) -> None:
+        generated_at = datetime.utcnow()
+        builder = AsyncMock(
+            side_effect=[
+                RuntimeError("temporary aggregate failure"),
+                {"period": "today", "generated_at": generated_at},
+            ]
+        )
+
+        with patch.object(admin_module, "_build_analytics_operating_dashboard", builder):
+            with self.assertRaisesRegex(RuntimeError, "temporary aggregate failure"):
+                await admin_module.analytics_operating_dashboard(period="today", db=object())
+            recovered = await admin_module.analytics_operating_dashboard(period="today", db=object())
+
+        self.assertEqual(builder.await_count, 2)
+        self.assertFalse(recovered["cache"]["cache_hit"])
+
+    async def test_provider_channel_historical_totals_are_cached_between_page_loads(self) -> None:
+        admin_module._provider_channel_total_cache.clear()
+        admin_module._provider_channel_total_locks.clear()
+        frozen_now = datetime(2026, 7, 17, 17, 30, 0)
+
+        class FrozenDateTime(datetime):
+            @classmethod
+            def utcnow(cls):
+                return frozen_now
+
+        recent_row = SimpleNamespace(
+            channel_id="ch_primary",
+            last_1h_cents=10,
+            last_4h_cents=40,
+            today_cents=100,
+        )
+        total_row = SimpleNamespace(channel_id="ch_primary", total_cents=999)
+        fake_db = _FakeDB(
+            execute_results=[
+                _FakeScalarsResult([]),
+                _FakeAllResult([]),
+                _FakeAllResult([recent_row]),
+                _FakeAllResult([total_row]),
+                _FakeScalarsResult([]),
+                _FakeScalarsResult([]),
+                _FakeScalarsResult([]),
+                _FakeScalarsResult([]),
+                _FakeAllResult([]),
+                _FakeAllResult([recent_row]),
+                _FakeScalarsResult([]),
+                _FakeScalarsResult([]),
+                _FakeScalarsResult([]),
+            ]
+        )
+
+        with (
+            patch.object(admin_module, "datetime", FrozenDateTime),
+            patch.object(admin_module, "_system_default_channel_payloads", return_value=[]),
+        ):
+            await admin_module.list_provider_channels(db=fake_db)
+            await admin_module.list_provider_channels(db=fake_db)
+
+        self.assertEqual(len(fake_db.queries), 13)
+        first_recent_query = str(fake_db.queries[2].compile())
+        historical_query = str(fake_db.queries[3].compile())
+        second_recent_query = str(fake_db.queries[9].compile())
+        self.assertIn("created_at >=", first_recent_query)
+        self.assertNotIn("created_at >=", historical_query)
+        self.assertIn("created_at >=", second_recent_query)
+        first_recent_params = list(fake_db.queries[2].compile().params.values())
+        self.assertIn(frozen_now - timedelta(hours=4), first_recent_params)
+        self.assertEqual(admin_module.PROVIDER_CHANNEL_TOTAL_CACHE_TTL_SECONDS, 900)
+
     async def test_admin_analytics_top_users_today_uses_rolling_24h_request_logs(self) -> None:
         row = SimpleNamespace(
             user_id="u_1",
@@ -2105,6 +2229,102 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("coincoin_request_logs", query_text)
         self.assertIn("created_at >=", query_text)
         self.assertNotIn("coincoin_usage_daily", query_text)
+
+    async def test_admin_usage_leaderboards_load_three_windows_with_one_query(self) -> None:
+        row = SimpleNamespace(
+            user_id="u_hot",
+            username="hot-user",
+            email=None,
+            external_id=None,
+            balance=1200,
+            w1h_requests_total=2,
+            w1h_input_tokens=100,
+            w1h_output_tokens=50,
+            w1h_tokens_total=150,
+            w1h_images_total=0,
+            w1h_videos_total=0,
+            w1h_cost_cents=45,
+            w4h_requests_total=6,
+            w4h_input_tokens=400,
+            w4h_output_tokens=100,
+            w4h_tokens_total=500,
+            w4h_images_total=1,
+            w4h_videos_total=0,
+            w4h_cost_cents=180,
+            w24h_requests_total=12,
+            w24h_input_tokens=800,
+            w24h_output_tokens=200,
+            w24h_tokens_total=1000,
+            w24h_images_total=3,
+            w24h_videos_total=1,
+            w24h_cost_cents=456,
+        )
+        fake_db = _FakeDB(execute_results=[_FakeAllResult([row])])
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get("/admin/usage/leaderboards?metric=cost_cents&limit=5")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(len(fake_db.queries), 1)
+        self.assertEqual(payload["windows"]["1h"]["data"][0]["cost_cents"], 45)
+        self.assertEqual(payload["windows"]["4h"]["data"][0]["cost_cents"], 180)
+        self.assertEqual(payload["windows"]["24h"]["data"][0]["cost_cents"], 456)
+        query_text = str(fake_db.queries[0].compile())
+        self.assertIn("w1h_cost_cents", query_text)
+        self.assertIn("w4h_cost_cents", query_text)
+        self.assertIn("w24h_cost_cents", query_text)
+
+    async def test_admin_usage_leaderboards_rank_requested_metric_and_reject_invalid_metric(self) -> None:
+        def row(user_id: str, requests: int, cost: int):
+            values = {
+                "user_id": user_id,
+                "username": user_id,
+                "email": None,
+                "external_id": None,
+                "balance": 0,
+            }
+            for prefix in ("w1h_", "w4h_", "w24h_"):
+                values.update({
+                    f"{prefix}requests_total": requests,
+                    f"{prefix}input_tokens": 0,
+                    f"{prefix}output_tokens": 0,
+                    f"{prefix}tokens_total": 0,
+                    f"{prefix}images_total": 0,
+                    f"{prefix}videos_total": 0,
+                    f"{prefix}cost_cents": cost,
+                })
+            return SimpleNamespace(**values)
+
+        fake_db = _FakeDB(execute_results=[_FakeAllResult([row("u_costly", 1, 100), row("u_busy", 9, 10)])])
+        payload = await admin_module.usage_leaderboards(
+            metric="requests_total",
+            limit=999,
+            db=fake_db,
+        )
+
+        self.assertEqual(payload["limit"], 50)
+        self.assertEqual(payload["windows"]["1h"]["data"][0]["user_id"], "u_busy")
+        self.assertEqual(payload["windows"]["1h"]["data"][0]["rank"], 1)
+        with self.assertRaises(HTTPException) as raised:
+            await admin_module.usage_leaderboards(metric="not-a-metric", db=fake_db)
+        self.assertEqual(raised.exception.status_code, 400)
+
+    async def test_admin_usage_leaderboards_return_empty_windows(self) -> None:
+        fake_db = _FakeDB(execute_results=[_FakeAllResult([])])
+
+        payload = await admin_module.usage_leaderboards(db=fake_db)
+
+        self.assertEqual(payload["windows"]["1h"]["data"], [])
+        self.assertEqual(payload["windows"]["4h"]["data"], [])
+        self.assertEqual(payload["windows"]["24h"]["data"], [])
 
     async def test_admin_users_can_sort_by_recent_usage(self) -> None:
         user = SimpleNamespace(
@@ -2188,7 +2408,151 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual([item["id"] for item in result], ["u_1", "u_2"])
         self.assertEqual(len(fake_db.queries), 5)
+        self.assertIn("UNION ALL", str(fake_db.queries[3].compile()))
         per_user_billing.assert_not_awaited()
+
+    async def test_batch_billing_matches_single_user_payload_and_handles_empty_input(self) -> None:
+        now = datetime.utcnow()
+        user = SimpleNamespace(id="u_1", balance=250)
+        subscription = SimpleNamespace(
+            id="sub_1",
+            user_id=user.id,
+            plan_id="monthly_light",
+            status="active",
+            period_start=now,
+            period_end=now + timedelta(days=30),
+            paid_until=now + timedelta(days=30),
+            quota_cents=8000,
+            used_cents=500,
+        )
+        active_pack = SimpleNamespace(
+            id="pack_active",
+            user_id=user.id,
+            product_id="addon_boost",
+            status="active",
+            original_cents=30000,
+            remaining_cents=1200,
+            expires_at=now + timedelta(days=10),
+            created_at=now - timedelta(days=2),
+        )
+        expired_pack = SimpleNamespace(
+            id="pack_expired",
+            user_id=user.id,
+            product_id="addon_boost",
+            status="expired",
+            original_cents=30000,
+            remaining_cents=0,
+            expires_at=now - timedelta(days=1),
+            created_at=now - timedelta(days=1),
+        )
+        single_db = _FakeDB(execute_results=[_FakeScalarsResult([expired_pack, active_pack])])
+        batch_db = _FakeDB(
+            execute_results=[
+                _FakeScalarsResult([subscription]),
+                _FakeScalarsResult([active_pack]),
+                _FakeScalarsResult([expired_pack, active_pack]),
+                _FakeScalarsResult([SimpleNamespace(user_id=user.id, remaining_cents=300)]),
+            ]
+        )
+        snapshot = {
+            "subscription": subscription,
+            "traffic_packs": [active_pack],
+            "credit_cents": 300,
+        }
+
+        with patch.object(admin_module, "get_available_balance_cents", AsyncMock(return_value=snapshot)):
+            single = await admin_module._admin_billing_state(single_db, user)
+        batch = (await admin_module._admin_billing_states_batch(batch_db, [user]))[user.id]
+        empty_db = _FakeDB()
+
+        self.assertEqual(batch, single)
+        self.assertEqual(await admin_module._admin_billing_states_batch(empty_db, []), {})
+        self.assertEqual(empty_db.queries, [])
+        self.assertNotIn("row_number", str(batch_db.queries[1].compile()).lower())
+
+    async def test_admin_users_batch_billing_and_support_pagination(self) -> None:
+        users = []
+        rows = []
+        for index in range(2):
+            user = SimpleNamespace(
+                id=f"u_{index}",
+                username=f"user-{index}",
+                email=None,
+                email_verified_at=None,
+                external_id=None,
+                status="active",
+                balance=100 + index,
+                token_limit=None,
+                token_used=0,
+                input_tokens_used=0,
+                output_tokens_used=0,
+                request_limit_per_minute=None,
+                request_limit_per_day=None,
+                referral_code=None,
+                referred_by=None,
+                created_at=datetime(2026, 7, 17, 10, index, 0),
+                updated_at=datetime(2026, 7, 17, 10, index, 0),
+            )
+            users.append(user)
+            rows.append((user, None, None))
+        fake_db = _FakeDB(execute_results=[_FakeAllResult(rows)])
+        billing_states = {
+            user.id: {
+                "subscription": {},
+                "traffic_packs": {},
+                "legacy_balance": {"remaining_cents": user.balance},
+                "available": {"remaining_cents": user.balance},
+            }
+            for user in users
+        }
+
+        with patch.object(
+            admin_module,
+            "_admin_billing_states_batch",
+            AsyncMock(return_value=billing_states),
+        ) as bulk_billing:
+            result = await admin_module.list_users(limit=50, offset=100, db=fake_db)
+
+        self.assertEqual([item["id"] for item in result], ["u_0", "u_1"])
+        bulk_billing.assert_awaited_once_with(fake_db, users)
+        self.assertEqual(len(fake_db.queries), 1)
+        compiled = fake_db.queries[0].compile()
+        self.assertIn(50, compiled.params.values())
+        self.assertIn(100, compiled.params.values())
+
+    async def test_admin_users_clamp_page_inputs_and_support_ascending_sort(self) -> None:
+        fake_db = _FakeDB(execute_results=[_FakeAllResult([])])
+
+        with patch.object(
+            admin_module,
+            "_admin_billing_states_batch",
+            AsyncMock(return_value={}),
+        ) as bulk_billing:
+            result = await admin_module.list_users(
+                limit=999,
+                offset=-50,
+                sort_order="asc",
+                db=fake_db,
+            )
+
+        self.assertEqual(result, [])
+        bulk_billing.assert_awaited_once_with(fake_db, [])
+        compiled = fake_db.queries[0].compile()
+        self.assertIn(200, compiled.params.values())
+        self.assertIn(0, compiled.params.values())
+        self.assertIn("ASC", str(compiled).upper())
+        self.assertIn("coincoin_users.id ASC", str(compiled))
+
+    def test_admin_user_ui_wires_server_side_pagination(self) -> None:
+        admin_html = (Path(admin_module.__file__).parent / "static" / "admin.html").read_text()
+
+        self.assertIn("USER_PAGE_LIMIT = 50", admin_html)
+        self.assertIn("userPageOffset", admin_html)
+        self.assertIn("loadUsersPage(-1)", admin_html)
+        self.assertIn("loadUsersPage(1)", admin_html)
+        self.assertIn("params.set('limit', String(USER_PAGE_LIMIT))", admin_html)
+        self.assertIn("params.set('offset', String(userPageOffset))", admin_html)
+        self.assertIn("params.set('sort_order', userSortAsc ? 'asc' : 'desc')", admin_html)
 
     async def test_admin_revenue_margin_today_keeps_previous_day_rows_inside_24h_window(self) -> None:
         fake_db = _FakeDB(
@@ -4550,7 +4914,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(fake_db.queries), 7)
         per_user_billing.assert_not_awaited()
 
-    async def test_batch_billing_limits_recent_pack_history_per_user_with_window_query(self) -> None:
+    async def test_batch_billing_limits_recent_pack_history_without_window_query(self) -> None:
         user = SimpleNamespace(id="u_1", balance=0)
         active_pack = SimpleNamespace(
             id="tp_active",
@@ -4589,11 +4953,32 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(all_items[0]["id"], "tp_active")
         recent_query = fake_db.queries[2].compile()
         recent_query_text = str(recent_query)
-        self.assertIn("row_number() OVER", recent_query_text)
-        self.assertIn("PARTITION BY coincoin_traffic_pack_balances.user_id", recent_query_text)
+        self.assertNotIn("row_number", recent_query_text.lower())
         self.assertIn("created_at DESC", recent_query_text)
         self.assertIn("id DESC", recent_query_text)
         self.assertIn(50, recent_query.params.values())
+
+    async def test_batch_billing_chunks_history_union_queries_at_fifty_users(self) -> None:
+        users = [SimpleNamespace(id=f"u_{index:02d}", balance=0) for index in range(51)]
+        fake_db = _FakeDB(
+            execute_results=[
+                _FakeScalarsResult([]),
+                _FakeScalarsResult([]),
+                _FakeScalarsResult([]),
+                _FakeScalarsResult([]),
+                _FakeScalarsResult([]),
+            ]
+        )
+
+        states = await admin_module._admin_billing_states_batch(fake_db, users)
+
+        self.assertEqual(len(states), 51)
+        self.assertEqual(len(fake_db.queries), 5)
+        first_history_query = str(fake_db.queries[2].compile())
+        second_history_query = str(fake_db.queries[3].compile())
+        self.assertEqual(first_history_query.count("UNION ALL"), 49)
+        self.assertNotIn("UNION ALL", second_history_query)
+        self.assertNotIn("row_number", first_history_query.lower())
 
 
 if __name__ == "__main__":

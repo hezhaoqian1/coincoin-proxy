@@ -71,4 +71,31 @@ Entries are workspace records, not authoritative runtime decisions.
 | 2026-07-15 | artifact | docs/aegis/work/2026-07-15-channel-representative-probe/evidence-bundle-draft-task4-compatibility.json | 2026-07-15-channel-representative-probe evidence task4-compatibility |
 | 2026-07-15 | artifact | docs/aegis/work/2026-07-15-channel-representative-probe/gate-input-pack.json | 2026-07-15-channel-representative-probe gate input pack |
 | 2026-07-15 | work | docs/aegis/work/2026-07-15-channel-representative-probe/proof-bundle.md | 2026-07-15-channel-representative-probe proof bundle |
+| 2026-07-16 | plan | docs/aegis/plans/2026-07-16-image-json-keepalive.md | Image JSON Keepalive |
 | 2026-07-17 | plan | docs/aegis/plans/2026-07-17-grok-web-search-observability.md | Grok Build Web Search Observability Implementation Plan |
+| 2026-07-17 | spec | docs/aegis/specs/2026-07-17-admin-performance-optimization-brief.md | CoinCoin Admin Performance Optimization Brief |
+| 2026-07-17 | plan | docs/aegis/plans/2026-07-17-admin-performance-optimization.md | CoinCoin Admin Performance Optimization Plan |
+| 2026-07-17 | work | docs/aegis/work/2026-07-17-admin-performance-optimization/10-intent.md | CoinCoin Admin Performance Optimization intent |
+| 2026-07-17 | work | docs/aegis/work/2026-07-17-admin-performance-optimization/20-checkpoint.md | CoinCoin Admin Performance Optimization checkpoint |
+| 2026-07-17 | work | docs/aegis/work/2026-07-17-admin-performance-optimization/90-evidence.md | CoinCoin Admin Performance Optimization evidence |
+| 2026-07-17 | work | docs/aegis/work/2026-07-17-admin-performance-optimization/99-reflection.md | CoinCoin Admin Performance Optimization reflection |
+| 2026-07-17 | artifact | docs/aegis/work/2026-07-17-admin-performance-optimization/task-intent-draft.json | CoinCoin Admin Performance Optimization task intent draft |
+| 2026-07-17 | artifact | docs/aegis/work/2026-07-17-admin-performance-optimization/baseline-read-set-hint.json | CoinCoin Admin Performance Optimization baseline read-set hint |
+| 2026-07-17 | artifact | docs/aegis/work/2026-07-17-admin-performance-optimization/baseline-usage-draft.json | CoinCoin Admin Performance Optimization baseline usage draft |
+| 2026-07-17 | artifact | docs/aegis/work/2026-07-17-admin-performance-optimization/impact-statement-draft.json | CoinCoin Admin Performance Optimization impact statement draft |
+| 2026-07-17 | artifact | docs/aegis/work/2026-07-17-admin-performance-optimization/todo-checkpoint-draft.json | CoinCoin Admin Performance Optimization todo checkpoint draft |
+| 2026-07-17 | artifact | docs/aegis/work/2026-07-17-admin-performance-optimization/drift-check-draft.json | CoinCoin Admin Performance Optimization drift check draft |
+| 2026-07-17 | artifact | docs/aegis/work/2026-07-17-admin-performance-optimization/evidence-bundle-draft-batch-user-billing-red-green.json | 2026-07-17-admin-performance-optimization evidence batch-user-billing-red-green |
+| 2026-07-17 | artifact | docs/aegis/work/2026-07-17-admin-performance-optimization/resume-state-hint.json | 2026-07-17-admin-performance-optimization resume state hint |
+| 2026-07-17 | artifact | docs/aegis/work/2026-07-17-admin-performance-optimization/evidence-bundle-draft-combined-leaderboards-red-green.json | 2026-07-17-admin-performance-optimization evidence combined-leaderboards-red-green |
+| 2026-07-17 | artifact | docs/aegis/work/2026-07-17-admin-performance-optimization/evidence-bundle-draft-final-targeted-regression.json | 2026-07-17-admin-performance-optimization evidence final-targeted-regression |
+| 2026-07-17 | artifact | docs/aegis/work/2026-07-17-admin-performance-optimization/evidence-bundle-draft-full-suite-baseline-differential.json | 2026-07-17-admin-performance-optimization evidence full-suite-baseline-differential |
+| 2026-07-17 | artifact | docs/aegis/work/2026-07-17-admin-performance-optimization/evidence-bundle-draft-final-static-verification.json | 2026-07-17-admin-performance-optimization evidence final-static-verification |
+| 2026-07-17 | artifact | docs/aegis/work/2026-07-17-admin-performance-optimization/evidence-bundle-draft-performance-shape.json | 2026-07-17-admin-performance-optimization evidence performance-shape |
+| 2026-07-17 | artifact | docs/aegis/work/2026-07-17-admin-performance-optimization/gate-input-pack.json | 2026-07-17-admin-performance-optimization gate input pack |
+| 2026-07-17 | work | docs/aegis/work/2026-07-17-admin-performance-optimization/proof-bundle.md | 2026-07-17-admin-performance-optimization proof bundle |
+| 2026-07-17 | artifact | docs/aegis/work/2026-07-17-admin-performance-optimization/evidence-bundle-draft-provider-midnight-window-regression.json | 2026-07-17-admin-performance-optimization evidence provider-midnight-window-regression |
+| 2026-07-17 | artifact | docs/aegis/work/2026-07-17-admin-performance-optimization/evidence-bundle-draft-ship-coverage-and-build.json | 2026-07-17-admin-performance-optimization evidence ship-coverage-and-build |
+| 2026-07-17 | artifact | docs/aegis/work/2026-07-17-admin-performance-optimization/evidence-bundle-draft-master-integration.json | 2026-07-17-admin-performance-optimization evidence master-integration |
+| 2026-07-17 | artifact | docs/aegis/work/2026-07-17-admin-performance-optimization/evidence-bundle-draft-final-master-ship-gate.json | 2026-07-17-admin-performance-optimization evidence final-master-ship-gate |
+| 2026-07-17 | artifact | docs/aegis/work/2026-07-17-admin-performance-optimization/evidence-bundle-draft-pre-landing-review-fixes.json | 2026-07-17-admin-performance-optimization evidence pre-landing-review-fixes |

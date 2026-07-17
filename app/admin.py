@@ -12,7 +12,7 @@ import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, JSONResponse
-from sqlalchemy import case, delete, func, select
+from sqlalchemy import case, delete, func, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import gemini_cpa
@@ -129,8 +129,12 @@ logger = logging.getLogger("coincoin.admin")
 ADMIN_UPLOAD_ROOT = Path(_settings.admin_upload_dir)
 ANALYTICS_BALANCE_CACHE_TTL_SECONDS = 60
 _analytics_balance_cache: dict[str, tuple[float, int]] = {}
-ANALYTICS_DASHBOARD_CACHE_TTL_SECONDS = 60
+ANALYTICS_DASHBOARD_CACHE_TTL_SECONDS = 300
 _analytics_dashboard_cache: dict[str, tuple[float, dict]] = {}
+_analytics_dashboard_locks: dict[str, asyncio.Lock] = {}
+PROVIDER_CHANNEL_TOTAL_CACHE_TTL_SECONDS = 900
+_provider_channel_total_cache: dict[str, tuple[float, dict[str, dict[str, int]]]] = {}
+_provider_channel_total_locks: dict[str, asyncio.Lock] = {}
 
 
 def _configured(value: Optional[str]) -> bool:
@@ -231,7 +235,7 @@ async def _admin_billing_states_batch(db: AsyncSession, users: list[User]) -> di
     if not users:
         return {}
 
-    user_ids = [user.id for user in users]
+    user_ids = list(dict.fromkeys(user.id for user in users))
     current = utcnow()
     subscriptions = (
         await db.execute(
@@ -255,32 +259,28 @@ async def _admin_billing_states_batch(db: AsyncSession, users: list[User]) -> di
             )
         )
     ).scalars().all()
-    ranked_pack_ids = (
-        select(
-            TrafficPackBalance.id.label("pack_id"),
-            func.row_number().over(
-                partition_by=TrafficPackBalance.user_id,
-                order_by=(
-                    TrafficPackBalance.created_at.desc(),
-                    TrafficPackBalance.id.desc(),
-                ),
-            ).label("pack_rank"),
-        )
-        .where(TrafficPackBalance.user_id.in_(user_ids))
-        .subquery()
-    )
-    recent_packs = (
-        await db.execute(
+    recent_packs: list[TrafficPackBalance] = []
+    for start in range(0, len(user_ids), 50):
+        chunk_user_ids = user_ids[start:start + 50]
+        per_user_queries = [
             select(TrafficPackBalance)
-            .join(ranked_pack_ids, TrafficPackBalance.id == ranked_pack_ids.c.pack_id)
-            .where(ranked_pack_ids.c.pack_rank <= 50)
-            .order_by(
-                TrafficPackBalance.user_id.asc(),
-                TrafficPackBalance.created_at.desc(),
-                TrafficPackBalance.id.desc(),
-            )
+            .where(TrafficPackBalance.user_id == user_id)
+            .order_by(TrafficPackBalance.created_at.desc(), TrafficPackBalance.id.desc())
+            .limit(50)
+            for user_id in chunk_user_ids
+        ]
+        history_statement = (
+            per_user_queries[0]
+            if len(per_user_queries) == 1
+            else union_all(*per_user_queries)
         )
-    ).scalars().all()
+        recent_packs.extend(
+            (
+                await db.execute(
+                    select(TrafficPackBalance).from_statement(history_statement)
+                )
+            ).scalars().all()
+        )
     credit_batches = (
         await db.execute(
             select(CreditBalance).where(
@@ -295,14 +295,14 @@ async def _admin_billing_states_batch(db: AsyncSession, users: list[User]) -> di
         normalize_subscription_period(subscription, current)
 
     subscriptions_by_user = {subscription.user_id: subscription for subscription in subscriptions}
-    packs_by_user: dict[str, list[TrafficPackBalance]] = {user_id: [] for user_id in user_ids}
+    active_packs_by_user: dict[str, list[TrafficPackBalance]] = {user_id: [] for user_id in user_ids}
     active_pack_ids_by_user: dict[str, set[str]] = {user_id: set() for user_id in user_ids}
     for pack in active_packs:
-        packs_by_user.setdefault(pack.user_id, []).append(pack)
+        active_packs_by_user.setdefault(pack.user_id, []).append(pack)
         active_pack_ids_by_user.setdefault(pack.user_id, set()).add(pack.id)
+    recent_packs_by_user: dict[str, list[TrafficPackBalance]] = {user_id: [] for user_id in user_ids}
     for pack in recent_packs:
-        if pack.id not in active_pack_ids_by_user.setdefault(pack.user_id, set()):
-            packs_by_user.setdefault(pack.user_id, []).append(pack)
+        recent_packs_by_user.setdefault(pack.user_id, []).append(pack)
     credit_cents_by_user = {user_id: 0 for user_id in user_ids}
     for batch in credit_batches:
         credit_cents_by_user[batch.user_id] = (
@@ -310,16 +310,29 @@ async def _admin_billing_states_batch(db: AsyncSession, users: list[User]) -> di
             + max(0, int(batch.remaining_cents or 0))
         )
 
-    return {
-        user.id: serialize_billing_state(
+    states: dict[str, dict] = {}
+    for user in users:
+        user_active_packs = active_packs_by_user.get(user.id, [])
+        user_recent_packs = sorted(
+            recent_packs_by_user.get(user.id, []),
+            key=lambda pack: (
+                getattr(pack, "created_at", datetime.min) or datetime.min,
+                getattr(pack, "id", ""),
+            ),
+            reverse=True,
+        )
+        active_ids = active_pack_ids_by_user.get(user.id, set())
+        merged_packs = user_active_packs + [
+            pack for pack in user_recent_packs[:50] if getattr(pack, "id", "") not in active_ids
+        ]
+        states[user.id] = serialize_billing_state(
             subscriptions_by_user.get(user.id),
-            packs_by_user.get(user.id, []),
+            merged_packs,
             user,
             now=current,
             credit_cents=credit_cents_by_user.get(user.id, 0),
         )
-        for user in users
-    }
+    return states
 
 
 def _billing_summary_for_admin(billing: dict) -> dict:
@@ -1498,6 +1511,35 @@ def _provider_channel_billing_stats_by_channel(rows, *, now: Optional[datetime] 
     return results
 
 
+async def _provider_channel_total_billing_stats(db: AsyncSession) -> dict[str, dict[str, int]]:
+    cache_key = "all-time"
+    now_ts = time.time()
+    cached = _provider_channel_total_cache.get(cache_key)
+    if cached and now_ts - cached[0] < PROVIDER_CHANNEL_TOTAL_CACHE_TTL_SECONDS:
+        return cached[1]
+
+    lock = _provider_channel_total_locks.setdefault(cache_key, asyncio.Lock())
+    async with lock:
+        now_ts = time.time()
+        cached = _provider_channel_total_cache.get(cache_key)
+        if cached and now_ts - cached[0] < PROVIDER_CHANNEL_TOTAL_CACHE_TTL_SECONDS:
+            return cached[1]
+        request_charge = _request_user_charge_expr()
+        rows = (
+            await db.execute(
+                select(
+                    RequestLog.channel_id.label("channel_id"),
+                    func.coalesce(func.sum(request_charge), 0).label("total_cents"),
+                )
+                .where(RequestLog.channel_id != "")
+                .group_by(RequestLog.channel_id)
+            )
+        ).all()
+        totals = _provider_channel_billing_stats_by_channel(rows)
+        _provider_channel_total_cache[cache_key] = (now_ts, totals)
+        return totals
+
+
 def _billing_package_entry_types():
     return ("usage_subscription_debit", "usage_traffic_pack_debit")
 
@@ -1941,6 +1983,7 @@ async def list_provider_channels(db: AsyncSession = Depends(get_db)):
     since_4h = now - timedelta(hours=4)
     china_day = (now + timedelta(hours=8)).date()
     today_start = datetime.combine(china_day, datetime.min.time()) - timedelta(hours=8)
+    recent_start = min(since_4h, today_start)
     request_charge = _request_user_charge_expr()
     billing_rows = (
         await db.execute(
@@ -1949,13 +1992,21 @@ async def list_provider_channels(db: AsyncSession = Depends(get_db)):
                 func.coalesce(func.sum(case((RequestLog.created_at >= since_1h, request_charge), else_=0)), 0).label("last_1h_cents"),
                 func.coalesce(func.sum(case((RequestLog.created_at >= since_4h, request_charge), else_=0)), 0).label("last_4h_cents"),
                 func.coalesce(func.sum(case((RequestLog.created_at >= today_start, request_charge), else_=0)), 0).label("today_cents"),
-                func.coalesce(func.sum(request_charge), 0).label("total_cents"),
             )
-            .where(RequestLog.channel_id != "")
+            .where(RequestLog.channel_id != "", RequestLog.created_at >= recent_start)
             .group_by(RequestLog.channel_id)
         )
     ).all()
-    billing_by_channel = _provider_channel_billing_stats_by_channel(billing_rows)
+    recent_billing_by_channel = _provider_channel_billing_stats_by_channel(billing_rows)
+    total_billing_by_channel = await _provider_channel_total_billing_stats(db)
+    billing_by_channel = {}
+    for channel_id in set(recent_billing_by_channel) | set(total_billing_by_channel):
+        billing_by_channel[channel_id] = {
+            **recent_billing_by_channel.get(channel_id, {}),
+            "total_cents": int(
+                (total_billing_by_channel.get(channel_id) or {}).get("total_cents", 0) or 0
+            ),
+        }
     runtime_rows = (await db.execute(select(ProviderChannelRuntimeState))).scalars().all()
     runtime_by_channel = {row.channel_id: row for row in runtime_rows}
     route_rows = (await db.execute(select(ModelChannelRoute))).scalars().all()
@@ -2872,8 +2923,16 @@ async def update_claude_compat_settings(payload: AdminClaudeCompatSettingsUpdate
 async def list_users(
     search: Optional[str] = None,
     usage_sort: Optional[str] = None,
+    sort_order: str = "desc",
+    limit: int = 200,
+    offset: int = 0,
     db: AsyncSession = Depends(get_db),
 ):
+    limit = max(1, min(int(limit or 200), 200))
+    offset = max(0, int(offset or 0))
+    sort_order = "asc" if str(sort_order or "").strip().lower() == "asc" else "desc"
+    created_order = User.created_at.asc() if sort_order == "asc" else User.created_at.desc()
+    user_id_order = User.id.asc() if sort_order == "asc" else User.id.desc()
     usage_sort, usage_sort_hours = _user_usage_sort_window(usage_sort)
     usage_columns = None
     if usage_sort and usage_sort_hours:
@@ -2924,10 +2983,14 @@ async def list_users(
                 | User.id.ilike(pat)
             )
     if usage_columns is not None:
-        query = query.order_by(func.coalesce(usage_columns.c.period_cost_cents, 0).desc(), User.created_at.desc())
+        query = query.order_by(
+            func.coalesce(usage_columns.c.period_cost_cents, 0).desc(),
+            created_order,
+            user_id_order,
+        )
     else:
-        query = query.order_by(User.created_at.desc())
-    result = await db.execute(query.limit(200))
+        query = query.order_by(created_order, user_id_order)
+    result = await db.execute(query.limit(limit).offset(offset))
     rows = result.all()
     billing_by_user = await _admin_billing_states_batch(db, [row[0] for row in rows])
     items = []
@@ -3976,31 +4039,105 @@ async def usage_leaderboard(
         "window_end": end_at,
         "metric": metric,
         "limit": limit,
-        "data": [
-            {
-                "rank": idx + 1,
-                "user_id": _row_value(row, "user_id", ""),
-                "username": _row_value(row, "username", None),
-                "email": _row_value(row, "email", None),
-                "external_id": _row_value(row, "external_id", None),
-                "display_name": _display_name(
-                    _row_value(row, "username", None),
-                    _row_value(row, "email", None),
-                    _row_value(row, "external_id", None),
-                    _row_value(row, "user_id", ""),
-                ),
-                "balance_cents": int(_row_value(row, "balance", 0) or 0),
-                "requests_total": int(_row_value(row, "requests_total", 0) or 0),
-                "input_tokens": int(_row_value(row, "input_tokens", 0) or 0),
-                "output_tokens": int(_row_value(row, "output_tokens", 0) or 0),
-                "tokens_total": int(_row_value(row, "tokens_total", 0) or 0),
-                "images_total": int(_row_value(row, "images_total", 0) or 0),
-                "videos_total": int(_row_value(row, "videos_total", 0) or 0),
-                "cost_cents": int(_row_value(row, "cost_cents", 0) or 0),
-            }
-            for idx, row in enumerate(rows)
-        ],
+        "data": [_usage_leaderboard_item(row, rank=idx + 1) for idx, row in enumerate(rows)],
     }
+
+
+def _usage_leaderboard_item(row, *, rank: int, prefix: str = "") -> dict:
+    def value(field: str, default=0):
+        return _row_value(row, f"{prefix}{field}", default)
+
+    user_id = _row_value(row, "user_id", "")
+    username = _row_value(row, "username", None)
+    email = _row_value(row, "email", None)
+    external_id = _row_value(row, "external_id", None)
+    return {
+        "rank": rank,
+        "user_id": user_id,
+        "username": username,
+        "email": email,
+        "external_id": external_id,
+        "display_name": _display_name(username, email, external_id, user_id),
+        "balance_cents": int(_row_value(row, "balance", 0) or 0),
+        "requests_total": int(value("requests_total", 0) or 0),
+        "input_tokens": int(value("input_tokens", 0) or 0),
+        "output_tokens": int(value("output_tokens", 0) or 0),
+        "tokens_total": int(value("tokens_total", 0) or 0),
+        "images_total": int(value("images_total", 0) or 0),
+        "videos_total": int(value("videos_total", 0) or 0),
+        "cost_cents": int(value("cost_cents", 0) or 0),
+    }
+
+
+@router.get("/usage/leaderboards", dependencies=[Depends(admin_guard)])
+async def usage_leaderboards(
+    metric: str = "cost_cents",
+    limit: int = 10,
+    db: AsyncSession = Depends(get_db),
+):
+    supported_metrics = {
+        "cost_cents",
+        "requests_total",
+        "tokens_total",
+        "images_total",
+        "videos_total",
+    }
+    if metric not in supported_metrics:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unsupported metric")
+    limit = max(1, min(limit, 50))
+    end_at = datetime.utcnow()
+    window_specs = (("1h", "w1h_", 1), ("4h", "w4h_", 4), ("24h", "w24h_", 24))
+    request_charge = _request_user_charge_expr()
+    columns = [
+        User.id.label("user_id"),
+        User.username.label("username"),
+        User.email.label("email"),
+        User.external_id.label("external_id"),
+        User.balance.label("balance"),
+    ]
+    for _window, prefix, hours in window_specs:
+        in_window = RequestLog.created_at >= end_at - timedelta(hours=hours)
+        columns.extend([
+            func.coalesce(func.sum(case((in_window, 1), else_=0)), 0).label(f"{prefix}requests_total"),
+            func.coalesce(func.sum(case((in_window, RequestLog.input_tokens), else_=0)), 0).label(f"{prefix}input_tokens"),
+            func.coalesce(func.sum(case((in_window, RequestLog.output_tokens), else_=0)), 0).label(f"{prefix}output_tokens"),
+            func.coalesce(func.sum(case((in_window, RequestLog.input_tokens + RequestLog.output_tokens), else_=0)), 0).label(f"{prefix}tokens_total"),
+            func.coalesce(func.sum(case((in_window, RequestLog.image_count), else_=0)), 0).label(f"{prefix}images_total"),
+            func.coalesce(func.sum(case((in_window, RequestLog.video_count), else_=0)), 0).label(f"{prefix}videos_total"),
+            func.coalesce(func.sum(case((in_window, request_charge), else_=0)), 0).label(f"{prefix}cost_cents"),
+        ])
+    rows = (
+        await db.execute(
+            select(*columns)
+            .join(User, RequestLog.user_id == User.id)
+            .where(RequestLog.created_at >= end_at - timedelta(hours=24))
+            .group_by(User.id, User.username, User.email, User.external_id, User.balance)
+        )
+    ).all()
+
+    windows = {}
+    for window, prefix, hours in window_specs:
+        ranked_rows = [
+            row for row in rows if int(_row_value(row, f"{prefix}requests_total", 0) or 0) > 0
+        ]
+        ranked_rows.sort(
+            key=lambda row: int(_row_value(row, f"{prefix}{metric}", 0) or 0),
+            reverse=True,
+        )
+        windows[window] = {
+            "window": window,
+            "window_hours": hours,
+            "window_label": f"近 {hours} 小时" if hours < 24 else "近 24 小时",
+            "window_start": end_at - timedelta(hours=hours),
+            "window_end": end_at,
+            "metric": metric,
+            "limit": limit,
+            "data": [
+                _usage_leaderboard_item(row, rank=index + 1, prefix=prefix)
+                for index, row in enumerate(ranked_rows[:limit])
+            ],
+        }
+    return {"generated_at": end_at, "metric": metric, "limit": limit, "windows": windows}
 
 
 @router.get("/analytics/low-balance-users", dependencies=[Depends(admin_guard)])
@@ -4846,17 +4983,9 @@ async def analytics_action_items(
     )
 
 
-@router.get("/analytics/operating-dashboard", dependencies=[Depends(admin_guard)])
-async def analytics_operating_dashboard(period: str = "today", db: AsyncSession = Depends(get_db)):
+async def _build_analytics_operating_dashboard(*, period: str, db: AsyncSession) -> dict:
     period, days, start_day, _since = _analytics_period(period)
     end_at = datetime.utcnow()
-    cache_key = f"operating-dashboard:{period}"
-    now_ts = time.time()
-    cached = _analytics_dashboard_cache.get(cache_key)
-    if cached and now_ts - cached[0] < ANALYTICS_DASHBOARD_CACHE_TTL_SECONDS:
-        cached_payload = dict(cached[1])
-        cached_payload["cache"] = _analytics_meta(generated_at=cached[1]["generated_at"], cache_hit=True)
-        return cached_payload
     overview = await analytics_overview(period=period, db=db)
     growth = await analytics_growth(period=period, db=db)
     revenue = await analytics_revenue_margin(period=period, db=db)
@@ -4919,9 +5048,32 @@ async def analytics_operating_dashboard(period: str = "today", db: AsyncSession 
         "errors": errors,
         "low_balance": low_balance,
     }
-    payload["cache"] = _analytics_meta(generated_at=payload["generated_at"], cache_hit=False)
-    _analytics_dashboard_cache[cache_key] = (now_ts, payload)
     return payload
+
+
+@router.get("/analytics/operating-dashboard", dependencies=[Depends(admin_guard)])
+async def analytics_operating_dashboard(period: str = "today", db: AsyncSession = Depends(get_db)):
+    period, _days, _start_day, _since = _analytics_period(period)
+    cache_key = f"operating-dashboard:{period}"
+    now_ts = time.time()
+    cached = _analytics_dashboard_cache.get(cache_key)
+    if cached and now_ts - cached[0] < ANALYTICS_DASHBOARD_CACHE_TTL_SECONDS:
+        cached_payload = dict(cached[1])
+        cached_payload["cache"] = _analytics_meta(generated_at=cached[1]["generated_at"], cache_hit=True)
+        return cached_payload
+
+    lock = _analytics_dashboard_locks.setdefault(cache_key, asyncio.Lock())
+    async with lock:
+        now_ts = time.time()
+        cached = _analytics_dashboard_cache.get(cache_key)
+        if cached and now_ts - cached[0] < ANALYTICS_DASHBOARD_CACHE_TTL_SECONDS:
+            cached_payload = dict(cached[1])
+            cached_payload["cache"] = _analytics_meta(generated_at=cached[1]["generated_at"], cache_hit=True)
+            return cached_payload
+        payload = await _build_analytics_operating_dashboard(period=period, db=db)
+        payload["cache"] = _analytics_meta(generated_at=payload["generated_at"], cache_hit=False)
+        _analytics_dashboard_cache[cache_key] = (now_ts, payload)
+        return payload
 
 
 @router.get("/finance/summary", dependencies=[Depends(admin_guard)])

@@ -1475,7 +1475,7 @@
           <div class="card-header">
             <div class="filter-bar">
               <input type="text" id="userSearch" class="form-input" style="width:300px" placeholder="搜索用户名、邮箱、external_id 或 API Key（sk_cc_...）..." oninput="debounceSearch()" />
-              <select id="userUsageSort" class="form-select" style="width:170px" onchange="loadUsers()">
+              <select id="userUsageSort" class="form-select" style="width:170px" onchange="resetUserPaginationAndLoad()">
                 <option value="">按创建时间</option>
                 <option value="1d">近 1 天消耗</option>
                 <option value="7d">近 7 天消耗</option>
@@ -1501,6 +1501,13 @@
                 </thead>
                 <tbody id="usersBody"></tbody>
               </table>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 20px;border-top:1px solid var(--border)">
+              <span id="userPageSummary" class="text-sm text-muted">第 1 页</span>
+              <div style="display:flex;gap:8px">
+                <button id="userPrevPage" class="btn btn-sm btn-secondary" onclick="loadUsersPage(-1)">上一页</button>
+                <button id="userNextPage" class="btn btn-sm btn-secondary" onclick="loadUsersPage(1)">下一页</button>
+              </div>
             </div>
           </div>
         </div>
@@ -2841,6 +2848,9 @@
     let searchTimeout = null;
     let stationSearchTimeout = null;
     let userSortAsc = false;
+    const USER_PAGE_LIMIT = 50;
+    let userPageOffset = 0;
+    let userPageHasNext = false;
     let stationPayoutBatchCache = [];
     let modelAliasCache = [];
     let currentModelAliasId = null;
@@ -3288,15 +3298,13 @@
 
     async function loadUsageLeaderboards() {
       try {
-        const windows = ['1h', '4h', '24h'];
-        const responses = await Promise.all(windows.map(window =>
-          fetch(`/admin/usage/leaderboard?window=${encodeURIComponent(window)}&metric=cost_cents&limit=5`, { headers: adminHeaders() })
-        ));
-        if (responses.some(r => !r.ok)) return toast('用量排行榜加载失败', 'error');
-        const payloads = await Promise.all(responses.map(r => r.json()));
-        renderUsageLeaderboard('usageLeaderboard1hBody', payloads[0].data || []);
-        renderUsageLeaderboard('usageLeaderboard4hBody', payloads[1].data || []);
-        renderUsageLeaderboard('usageLeaderboard24hBody', payloads[2].data || []);
+        const response = await fetch('/admin/usage/leaderboards?metric=cost_cents&limit=5', { headers: adminHeaders() });
+        if (!response.ok) return toast('用量排行榜加载失败', 'error');
+        const payload = await response.json();
+        const windows = payload.windows || {};
+        renderUsageLeaderboard('usageLeaderboard1hBody', windows['1h']?.data || []);
+        renderUsageLeaderboard('usageLeaderboard4hBody', windows['4h']?.data || []);
+        renderUsageLeaderboard('usageLeaderboard24hBody', windows['24h']?.data || []);
       } catch (e) {
         console.error(e);
         toast('用量排行榜加载失败', 'error');
@@ -3462,19 +3470,19 @@
         const params = new URLSearchParams();
         if (search) params.set('search', search);
         if (usageSort) params.set('usage_sort', usageSort);
+        params.set('sort_order', userSortAsc ? 'asc' : 'desc');
+        params.set('limit', String(USER_PAGE_LIMIT));
+        params.set('offset', String(userPageOffset));
         const query = params.toString();
         const url = query ? `/admin/users?${query}` : '/admin/users';
         const r = await fetch(url, { headers: adminHeaders() });
         if (!r.ok) return toast('加载失败', 'error');
         let data = await r.json();
-        if (!usageSort) {
-          data.sort((a, b) => {
-            const ta = new Date(a.created_at || 0).getTime();
-            const tb = new Date(b.created_at || 0).getTime();
-            return userSortAsc ? ta - tb : tb - ta;
-          });
-        }
         usersCache = data;
+        userPageHasNext = data.length === USER_PAGE_LIMIT;
+        document.getElementById('userPageSummary').textContent = `第 ${Math.floor(userPageOffset / USER_PAGE_LIMIT) + 1} 页 · 本页 ${data.length} 人`;
+        document.getElementById('userPrevPage').disabled = userPageOffset <= 0;
+        document.getElementById('userNextPage').disabled = !userPageHasNext;
         const body = document.getElementById('usersBody');
         if (!data.length) {
           body.innerHTML = '<tr><td colspan="9"><div class="empty-state"><div class="empty-state-icon">👥</div><h3>暂无用户</h3><p>先创建第一个用户吧</p></div></td></tr>';
@@ -3512,7 +3520,21 @@
       } catch (e) { console.error(e); toast('加载失败', 'error'); }
     }
 
-    function debounceSearch() { clearTimeout(searchTimeout); searchTimeout = setTimeout(loadUsers, 300); }
+    function resetUserPaginationAndLoad() {
+      userPageOffset = 0;
+      loadUsers();
+    }
+
+    function loadUsersPage(direction) {
+      if (direction > 0 && !userPageHasNext) return;
+      userPageOffset = Math.max(0, userPageOffset + direction * USER_PAGE_LIMIT);
+      loadUsers();
+    }
+
+    function debounceSearch() {
+      clearTimeout(searchTimeout);
+      searchTimeout = setTimeout(resetUserPaginationAndLoad, 300);
+    }
 
     function toggleUserSort() {
       userSortAsc = !userSortAsc;
@@ -3522,7 +3544,7 @@
         th.classList.toggle('desc', !userSortAsc);
         th.querySelector('.sort-icon').textContent = userSortAsc ? '▲' : '▼';
       }
-      loadUsers();
+      resetUserPaginationAndLoad();
     }
 
     function showCreateModal() {

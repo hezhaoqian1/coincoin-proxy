@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "artifactKey": "ship-coverage-and-build",
+  "type": "ship-gate",
+  "source": "gstack coverage audit, 140-test targeted suite, and Vite production build",
+  "summary": "Coverage audit improved from 60% to the 80% target after seven boundary tests. The latest-master targeted suite ran 140 tests with OK. Vite 6.4.3 transformed 87 modules and completed a production build with Node 24.14.0; the existing 674 kB chunk-size warning remains informational.",
+  "verifier": "coverage gate PASS 80%; unittest exit 0; vite build exit 0"
+}

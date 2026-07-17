@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "artifactKey": "provider-midnight-window-regression",
+  "type": "regression",
+  "source": "tests.test_admin_usage_fields.AdminUsageFieldTests.test_provider_channel_historical_totals_are_cached_between_page_loads",
+  "summary": "Pre-landing review found that a today_start lower bound truncated 1h/4h channel statistics just after China midnight. The query now starts at min(today_start, since_4h), and a frozen 01:30 China-time regression asserts the four-hour boundary is included.",
+  "verifier": "focused unittest exit 0 and 100-test ship regression exit 0"
+}
