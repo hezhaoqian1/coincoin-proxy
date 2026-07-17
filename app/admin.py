@@ -12,7 +12,7 @@ import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, JSONResponse
-from sqlalchemy import case, delete, func, select
+from sqlalchemy import case, delete, func, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import gemini_cpa
@@ -235,24 +235,52 @@ async def _admin_billing_states_batch(db: AsyncSession, users: list[User]) -> di
     if not users:
         return {}
 
-    user_ids = [user.id for user in users]
+    user_ids = list(dict.fromkeys(user.id for user in users))
     current = utcnow()
     subscriptions = (
         await db.execute(
             select(UserSubscription).where(UserSubscription.user_id.in_(user_ids))
         )
     ).scalars().all()
-    pack_rows = (
+    active_packs = (
         await db.execute(
             select(TrafficPackBalance)
-            .where(TrafficPackBalance.user_id.in_(user_ids))
+            .where(
+                TrafficPackBalance.user_id.in_(user_ids),
+                TrafficPackBalance.status == "active",
+                TrafficPackBalance.remaining_cents > 0,
+                TrafficPackBalance.expires_at > current,
+            )
             .order_by(
                 TrafficPackBalance.user_id.asc(),
-                TrafficPackBalance.created_at.desc(),
-                TrafficPackBalance.id.desc(),
+                TrafficPackBalance.expires_at.asc(),
+                TrafficPackBalance.created_at.asc(),
+                TrafficPackBalance.id.asc(),
             )
         )
     ).scalars().all()
+    recent_packs: list[TrafficPackBalance] = []
+    for start in range(0, len(user_ids), 50):
+        chunk_user_ids = user_ids[start:start + 50]
+        per_user_queries = [
+            select(TrafficPackBalance)
+            .where(TrafficPackBalance.user_id == user_id)
+            .order_by(TrafficPackBalance.created_at.desc(), TrafficPackBalance.id.desc())
+            .limit(50)
+            for user_id in chunk_user_ids
+        ]
+        history_statement = (
+            per_user_queries[0]
+            if len(per_user_queries) == 1
+            else union_all(*per_user_queries)
+        )
+        recent_packs.extend(
+            (
+                await db.execute(
+                    select(TrafficPackBalance).from_statement(history_statement)
+                )
+            ).scalars().all()
+        )
     credit_batches = (
         await db.execute(
             select(CreditBalance).where(
@@ -267,9 +295,14 @@ async def _admin_billing_states_batch(db: AsyncSession, users: list[User]) -> di
         normalize_subscription_period(subscription, current)
 
     subscriptions_by_user = {subscription.user_id: subscription for subscription in subscriptions}
-    all_packs_by_user: dict[str, list[TrafficPackBalance]] = {user_id: [] for user_id in user_ids}
-    for pack in pack_rows:
-        all_packs_by_user.setdefault(pack.user_id, []).append(pack)
+    active_packs_by_user: dict[str, list[TrafficPackBalance]] = {user_id: [] for user_id in user_ids}
+    active_pack_ids_by_user: dict[str, set[str]] = {user_id: set() for user_id in user_ids}
+    for pack in active_packs:
+        active_packs_by_user.setdefault(pack.user_id, []).append(pack)
+        active_pack_ids_by_user.setdefault(pack.user_id, set()).add(pack.id)
+    recent_packs_by_user: dict[str, list[TrafficPackBalance]] = {user_id: [] for user_id in user_ids}
+    for pack in recent_packs:
+        recent_packs_by_user.setdefault(pack.user_id, []).append(pack)
     credit_cents_by_user = {user_id: 0 for user_id in user_ids}
     for batch in credit_batches:
         credit_cents_by_user[batch.user_id] = (
@@ -279,26 +312,18 @@ async def _admin_billing_states_batch(db: AsyncSession, users: list[User]) -> di
 
     states: dict[str, dict] = {}
     for user in users:
-        all_packs = all_packs_by_user.get(user.id, [])
-        active_packs = sorted(
-            (
-                pack
-                for pack in all_packs
-                if getattr(pack, "status", "") == "active"
-                and int(getattr(pack, "remaining_cents", 0) or 0) > 0
-                and getattr(pack, "expires_at", None)
-                and pack.expires_at > current
-            ),
+        user_active_packs = active_packs_by_user.get(user.id, [])
+        user_recent_packs = sorted(
+            recent_packs_by_user.get(user.id, []),
             key=lambda pack: (
-                pack.expires_at,
-                getattr(pack, "created_at", current) or current,
+                getattr(pack, "created_at", datetime.min) or datetime.min,
                 getattr(pack, "id", ""),
             ),
+            reverse=True,
         )
-        recent_packs = all_packs[:50]
-        active_ids = {getattr(pack, "id", "") for pack in active_packs}
-        merged_packs = active_packs + [
-            pack for pack in recent_packs if getattr(pack, "id", "") not in active_ids
+        active_ids = active_pack_ids_by_user.get(user.id, set())
+        merged_packs = user_active_packs + [
+            pack for pack in user_recent_packs[:50] if getattr(pack, "id", "") not in active_ids
         ]
         states[user.id] = serialize_billing_state(
             subscriptions_by_user.get(user.id),
@@ -2907,6 +2932,7 @@ async def list_users(
     offset = max(0, int(offset or 0))
     sort_order = "asc" if str(sort_order or "").strip().lower() == "asc" else "desc"
     created_order = User.created_at.asc() if sort_order == "asc" else User.created_at.desc()
+    user_id_order = User.id.asc() if sort_order == "asc" else User.id.desc()
     usage_sort, usage_sort_hours = _user_usage_sort_window(usage_sort)
     usage_columns = None
     if usage_sort and usage_sort_hours:
@@ -2957,9 +2983,13 @@ async def list_users(
                 | User.id.ilike(pat)
             )
     if usage_columns is not None:
-        query = query.order_by(func.coalesce(usage_columns.c.period_cost_cents, 0).desc(), created_order)
+        query = query.order_by(
+            func.coalesce(usage_columns.c.period_cost_cents, 0).desc(),
+            created_order,
+            user_id_order,
+        )
     else:
-        query = query.order_by(created_order)
+        query = query.order_by(created_order, user_id_order)
     result = await db.execute(query.limit(limit).offset(offset))
     rows = result.all()
     billing_by_user = await _admin_billing_states_batch(db, [row[0] for row in rows])

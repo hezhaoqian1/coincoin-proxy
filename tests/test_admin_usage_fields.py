@@ -2396,6 +2396,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             _FakeScalarsResult([]),
             _FakeScalarsResult([]),
             _FakeScalarsResult([]),
+            _FakeScalarsResult([]),
         ])
 
         with patch.object(
@@ -2406,7 +2407,8 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             result = await admin_module.list_users(db=fake_db)
 
         self.assertEqual([item["id"] for item in result], ["u_1", "u_2"])
-        self.assertEqual(len(fake_db.queries), 4)
+        self.assertEqual(len(fake_db.queries), 5)
+        self.assertIn("UNION ALL", str(fake_db.queries[3].compile()))
         per_user_billing.assert_not_awaited()
 
     async def test_batch_billing_matches_single_user_payload_and_handles_empty_input(self) -> None:
@@ -2447,6 +2449,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         batch_db = _FakeDB(
             execute_results=[
                 _FakeScalarsResult([subscription]),
+                _FakeScalarsResult([active_pack]),
                 _FakeScalarsResult([expired_pack, active_pack]),
                 _FakeScalarsResult([SimpleNamespace(user_id=user.id, remaining_cents=300)]),
             ]
@@ -2538,6 +2541,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(200, compiled.params.values())
         self.assertIn(0, compiled.params.values())
         self.assertIn("ASC", str(compiled).upper())
+        self.assertIn("coincoin_users.id ASC", str(compiled))
 
     def test_admin_user_ui_wires_server_side_pagination(self) -> None:
         admin_html = (Path(admin_module.__file__).parent / "static" / "admin.html").read_text()
@@ -4879,6 +4883,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             _FakeScalarsResult([]),
             _FakeAllResult([]),
             _FakeScalarsResult([subscription]),
+            _FakeScalarsResult([active_pack]),
             _FakeScalarsResult([active_pack, expired_pack]),
             _FakeScalarsResult([credit_1, credit_2]),
         ])
@@ -4906,7 +4911,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rows["u_2"]["credit_wallet_cents"], 200)
         self.assertEqual(rows["u_2"]["available_cents"], 200)
         self.assertEqual(rows["u_2"]["billing"]["traffic_packs"]["remaining_cents"], 0)
-        self.assertEqual(len(fake_db.queries), 6)
+        self.assertEqual(len(fake_db.queries), 7)
         per_user_billing.assert_not_awaited()
 
     async def test_batch_billing_limits_recent_pack_history_without_window_query(self) -> None:
@@ -4936,7 +4941,8 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         ]
         fake_db = _FakeDB(execute_results=[
             _FakeScalarsResult([]),
-            _FakeScalarsResult(recent_history + [active_pack]),
+            _FakeScalarsResult([active_pack]),
+            _FakeScalarsResult(recent_history),
             _FakeScalarsResult([]),
         ])
 
@@ -4945,11 +4951,34 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         all_items = billing_by_user["u_1"]["traffic_packs"]["all_items"]
         self.assertEqual(len(all_items), 51)
         self.assertEqual(all_items[0]["id"], "tp_active")
-        recent_query = fake_db.queries[1].compile()
+        recent_query = fake_db.queries[2].compile()
         recent_query_text = str(recent_query)
         self.assertNotIn("row_number", recent_query_text.lower())
         self.assertIn("created_at DESC", recent_query_text)
         self.assertIn("id DESC", recent_query_text)
+        self.assertIn(50, recent_query.params.values())
+
+    async def test_batch_billing_chunks_history_union_queries_at_fifty_users(self) -> None:
+        users = [SimpleNamespace(id=f"u_{index:02d}", balance=0) for index in range(51)]
+        fake_db = _FakeDB(
+            execute_results=[
+                _FakeScalarsResult([]),
+                _FakeScalarsResult([]),
+                _FakeScalarsResult([]),
+                _FakeScalarsResult([]),
+                _FakeScalarsResult([]),
+            ]
+        )
+
+        states = await admin_module._admin_billing_states_batch(fake_db, users)
+
+        self.assertEqual(len(states), 51)
+        self.assertEqual(len(fake_db.queries), 5)
+        first_history_query = str(fake_db.queries[2].compile())
+        second_history_query = str(fake_db.queries[3].compile())
+        self.assertEqual(first_history_query.count("UNION ALL"), 49)
+        self.assertNotIn("UNION ALL", second_history_query)
+        self.assertNotIn("row_number", first_history_query.lower())
 
 
 if __name__ == "__main__":
