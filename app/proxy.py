@@ -59,6 +59,7 @@ from .usage_buffer import (
     china_today,
     extract_cache_creation_tokens,
     extract_cache_read_tokens,
+    extract_server_side_tool_usage_details,
     extract_total_input_tokens,
     schedule_usage_add,
     usage_buffer,
@@ -2496,7 +2497,13 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             stream_headers.setdefault("cache-control", "no-cache")
             stream_headers.setdefault("x-accel-buffering", "no")
             stream_headers["content-type"] = "text/event-stream; charset=utf-8"
-            stream_usage = {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0}
+            stream_usage = {
+                "input": 0,
+                "output": 0,
+                "cache_read": 0,
+                "cache_creation": 0,
+                "server_side_tools": {},
+            }
             response_id = ""
             output_items: List[Dict[str, Any]] = []
             text_parts: List[str] = []
@@ -2540,6 +2547,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                             stream_usage["output"] = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
                             stream_usage["cache_read"] = extract_cache_read_tokens(usage)
                             stream_usage["cache_creation"] = extract_cache_creation_tokens(usage)
+                            stream_usage["server_side_tools"] = extract_server_side_tool_usage_details(usage)
                         if isinstance(event.get("error"), dict):
                             yield _responses_sse_line("response.failed", {
                                 "type": "response.failed",
@@ -2660,6 +2668,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                             output_tokens=stream_usage["output"],
                             cache_read_tokens=stream_usage["cache_read"],
                             cache_creation_tokens=stream_usage["cache_creation"],
+                            server_side_tool_usage_details=stream_usage["server_side_tools"],
                             requests=1,
                             endpoint="responses:stream",
                             model=display_model,
@@ -2738,6 +2747,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         output_tokens_delta = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
         cache_read_tokens_delta = extract_cache_read_tokens(usage)
         cache_creation_tokens_delta = extract_cache_creation_tokens(usage)
+        server_side_tool_usage_details = extract_server_side_tool_usage_details(usage)
         response_id = response_payload.get("id")
         response_output = response_payload.get("output")
         if response_id and isinstance(response_output, list):
@@ -2750,6 +2760,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             output_tokens=output_tokens_delta,
             cache_read_tokens=cache_read_tokens_delta,
             cache_creation_tokens=cache_creation_tokens_delta,
+            server_side_tool_usage_details=server_side_tool_usage_details,
             requests=1,
             endpoint="responses",
             model=display_model,
@@ -3183,7 +3194,13 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 return Response(content=body, status_code=upstream.status_code, headers=response_headers, media_type=content_type)
 
         stream_t0 = time.monotonic()
-        _stream_usage = {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0}
+        _stream_usage = {
+            "input": 0,
+            "output": 0,
+            "cache_read": 0,
+            "cache_creation": 0,
+            "server_side_tools": {},
+        }
 
         _model_mask = None
         if used_cfg.model_id != display_model:
@@ -3219,6 +3236,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                                         _stream_usage["output"] = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
                                         _stream_usage["cache_read"] = extract_cache_read_tokens(usage)
                                         _stream_usage["cache_creation"] = extract_cache_creation_tokens(usage)
+                                        _stream_usage["server_side_tools"] = extract_server_side_tool_usage_details(usage)
                                     _etype = evt.get("type", "")
                                     if _etype == "response.completed":
                                         _r = evt.get("response") or evt
@@ -3259,6 +3277,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                         output_tokens=_stream_usage["output"],
                         cache_read_tokens=_stream_usage["cache_read"],
                         cache_creation_tokens=_stream_usage["cache_creation"],
+                        server_side_tool_usage_details=_stream_usage["server_side_tools"],
                         requests=1,
                         endpoint="responses:stream",
                         model=display_model,
@@ -3576,6 +3595,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
     output_tokens_delta = 0
     cache_read_tokens_delta = 0
     cache_creation_tokens_delta = 0
+    server_side_tool_usage_details: Dict[str, int] = {}
     if isinstance(data, dict) and isinstance(data.get("error"), dict):
         _record_current_failure(
             status_code=upstream.status_code if upstream.status_code >= 400 else None,
@@ -3598,6 +3618,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             output_tokens_delta = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
             cache_read_tokens_delta = extract_cache_read_tokens(usage)
             cache_creation_tokens_delta = extract_cache_creation_tokens(usage)
+            server_side_tool_usage_details = extract_server_side_tool_usage_details(usage)
             _resp_id = data.get("id")
             _resp_output = data.get("output")
             if _resp_id and isinstance(_resp_output, list):
@@ -3614,6 +3635,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             output_tokens=output_tokens_delta,
             cache_read_tokens=cache_read_tokens_delta,
             cache_creation_tokens=cache_creation_tokens_delta,
+            server_side_tool_usage_details=server_side_tool_usage_details,
             requests=1,
             endpoint="responses",
             model=display_model,

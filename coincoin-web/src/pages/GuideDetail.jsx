@@ -445,9 +445,13 @@ if models_match:
         section = re.sub(r'(?m)^default\s*=.*$', 'default = "grok-build"', section)
     else:
         section = section.rstrip() + '\ndefault = "grok-build"\n'
+    if re.search(r"(?m)^web_search\s*=", section):
+        section = re.sub(r'(?m)^web_search\s*=.*$', 'web_search = "grok-build"', section)
+    else:
+        section = section.rstrip() + '\nweb_search = "grok-build"\n'
     text = text[:models_match.start()] + section + text[models_match.end():]
 else:
-    text = text.rstrip() + '\n\n[models]\ndefault = "grok-build"\n'
+    text = text.rstrip() + '\n\n[models]\ndefault = "grok-build"\nweb_search = "grok-build"\n'
 
 block = '''[model.grok-build]
 model = "grok-build"
@@ -456,6 +460,7 @@ api_key = "${snippetKey}"
 name = "Grok Build via CoinCoin"
 api_backend = "responses"
 context_window = 500000
+supports_backend_search = true
 '''
 path.write_text(text.rstrip() + "\n\n" + block, encoding="utf-8")
 PY
@@ -464,6 +469,7 @@ chmod 600 "$CONFIG"
 printf 'Grok Build config written to %s\n' "$CONFIG"
 grok inspect
 grok -p "Reply exactly: COINCOIN_GROK_BUILD_OK" -m grok-build --output-format json --max-turns 1
+grok -p "Use web search to find the current published npm version of @xai-official/grok, then include COINCOIN_GROK_WEB_SEARCH_OK in the answer." -m grok-build --output-format json --max-turns 3
 
 TEST_DIR=$(mktemp -d)
 printf 'GROK_BUILD_TOOL_LOOP_OK\n' > "$TEST_DIR/probe.txt"
@@ -491,12 +497,19 @@ if ([regex]::IsMatch($Text, $ModelsPattern)) {
     param($Match)
     $Section = $Match.Value
     if ($Section -match '(?m)^default\s*=') {
-      return [regex]::Replace($Section, '(?m)^default\s*=.*$', 'default = "grok-build"')
+      $Section = [regex]::Replace($Section, '(?m)^default\s*=.*$', 'default = "grok-build"')
+    } else {
+      $Section = $Section.TrimEnd() + [Environment]::NewLine + 'default = "grok-build"' + [Environment]::NewLine
     }
-    return $Section.TrimEnd() + [Environment]::NewLine + 'default = "grok-build"' + [Environment]::NewLine
+    if ($Section -match '(?m)^web_search\s*=') {
+      $Section = [regex]::Replace($Section, '(?m)^web_search\s*=.*$', 'web_search = "grok-build"')
+    } else {
+      $Section = $Section.TrimEnd() + [Environment]::NewLine + 'web_search = "grok-build"' + [Environment]::NewLine
+    }
+    return $Section
   })
 } else {
-  $Text = $Text.TrimEnd() + [Environment]::NewLine + [Environment]::NewLine + '[models]' + [Environment]::NewLine + 'default = "grok-build"' + [Environment]::NewLine
+  $Text = $Text.TrimEnd() + [Environment]::NewLine + [Environment]::NewLine + '[models]' + [Environment]::NewLine + 'default = "grok-build"' + [Environment]::NewLine + 'web_search = "grok-build"' + [Environment]::NewLine
 }
 
 $Block = @'
@@ -507,12 +520,14 @@ api_key = "${snippetKey}"
 name = "Grok Build via CoinCoin"
 api_backend = "responses"
 context_window = 500000
+supports_backend_search = true
 '@
 ($Text.TrimEnd() + [Environment]::NewLine + [Environment]::NewLine + $Block) | Set-Content $Config -Encoding UTF8
 
 Write-Host "Grok Build config written to $Config"
 grok inspect
 grok -p "Reply exactly: COINCOIN_GROK_BUILD_OK" -m grok-build --output-format json --max-turns 1
+grok -p "Use web search to find the current published npm version of @xai-official/grok, then include COINCOIN_GROK_WEB_SEARCH_OK in the answer." -m grok-build --output-format json --max-turns 3
 
 $TestDir = Join-Path ([System.IO.Path]::GetTempPath()) ("coincoin-grok-build-" + [guid]::NewGuid())
 New-Item -ItemType Directory -Force $TestDir | Out-Null
@@ -957,18 +972,18 @@ Write-Host "saved $Output"`
             },
             'grok-build': {
                 title: 'Grok Build 配置',
-                description: '按 xAI 官方自定义模型格式写入用户级 `~/.grok/config.toml`，把 `grok-build` 指向 CoinCoin Responses 入口。写入后会先运行 `grok inspect`，再验证基础对话和真实文件工具回路；成功后无需登录 xAI 账号。',
+                description: '按 xAI 官方自定义模型格式写入用户级 `~/.grok/config.toml`，把默认模型和 Web Search 都指向 CoinCoin Responses 入口。写入后会运行 `grok inspect`，再验证基础对话、后端 Web Search 和真实文件工具回路；成功后无需登录 xAI 账号。',
                 commandGroup: [
                     {
                         title: 'macOS / Linux 一键配置',
                         platform: 'macOS / Linux',
-                        summary: '安装官方 CLI、保留其他 Grok 设置、写入并检查 `~/.grok/config.toml`，然后运行文件读取工具回路。',
+                        summary: '安装官方 CLI、保留其他 Grok 设置、写入并检查 `~/.grok/config.toml`，然后运行 Web Search 和文件读取工具回路。',
                         code: grokBuildCommand,
                     },
                     {
                         title: 'Windows PowerShell 一键配置',
                         platform: 'Windows',
-                        summary: '安装官方 CLI、备份并检查 `$HOME\\.grok\\config.toml`、替换 `grok-build` 模型段，然后运行文件读取工具回路。',
+                        summary: '安装官方 CLI、备份并检查 `$HOME\\.grok\\config.toml`、替换 `grok-build` 模型段，然后运行 Web Search 和文件读取工具回路。',
                         code: grokBuildWindowsCommand,
                     },
                 ],

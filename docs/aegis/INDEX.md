@@ -71,3 +71,4 @@ Entries are workspace records, not authoritative runtime decisions.
 | 2026-07-15 | artifact | docs/aegis/work/2026-07-15-channel-representative-probe/evidence-bundle-draft-task4-compatibility.json | 2026-07-15-channel-representative-probe evidence task4-compatibility |
 | 2026-07-15 | artifact | docs/aegis/work/2026-07-15-channel-representative-probe/gate-input-pack.json | 2026-07-15-channel-representative-probe gate input pack |
 | 2026-07-15 | work | docs/aegis/work/2026-07-15-channel-representative-probe/proof-bundle.md | 2026-07-15-channel-representative-probe proof bundle |
+| 2026-07-17 | plan | docs/aegis/plans/2026-07-17-grok-web-search-observability.md | Grok Build Web Search Observability Implementation Plan |

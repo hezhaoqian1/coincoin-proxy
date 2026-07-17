@@ -622,7 +622,18 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                                 "arguments": '{"path":"probe.txt"}',
                             }
                         ],
-                        "usage": {"input_tokens": 8, "output_tokens": 3, "total_tokens": 11},
+                        "usage": {
+                            "input_tokens": 8,
+                            "output_tokens": 3,
+                            "total_tokens": 11,
+                            "num_server_side_tools_used": 4,
+                            "server_side_tool_usage_details": {
+                                "web_search_calls": 4,
+                                "x_search_calls": 0,
+                                "code_interpreter_calls": 0,
+                                "file_search_calls": 0,
+                            },
+                        },
                     }
                 )
             ]
@@ -673,6 +684,61 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(usage_kwargs["billable_sku"], "xai-grok-build-text")
         self.assertEqual(usage_kwargs["channel_id"], "ch_grok_test")
         self.assertEqual(usage_kwargs["provider_platform"], "xai")
+        self.assertEqual(
+            usage_kwargs["server_side_tool_usage_details"]["web_search_calls"],
+            4,
+        )
+
+    async def test_grok_build_responses_preserves_builtin_search_tools(self) -> None:
+        self._add_grok_model()
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "resp_grok_search",
+                        "model": "grok-4.5",
+                        "status": "completed",
+                        "output": [
+                            {"type": "web_search_call", "id": "ws_1", "status": "completed"},
+                            {
+                                "type": "message",
+                                "content": [{"type": "output_text", "text": "SEARCH_OK"}],
+                            },
+                        ],
+                        "usage": {
+                            "input_tokens": 25,
+                            "output_tokens": 3,
+                            "total_tokens": 28,
+                            "server_side_tool_usage_details": {
+                                "web_search_calls": 1,
+                                "x_search_calls": 1,
+                            },
+                        },
+                    }
+                )
+            ]
+        )
+        tools = [{"type": "web_search"}, {"type": "x_search"}]
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(proxy_module.usage_buffer, "add", AsyncMock()) as add_usage:
+                response = await client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"model": "grok-build", "input": "Search", "tools": tools},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(upstream_client.calls[0]["json"]["tools"], tools)
+        self.assertEqual(response.json()["output"][0]["type"], "web_search_call")
+        usage_kwargs = add_usage.await_args.kwargs
+        self.assertEqual(usage_kwargs["server_side_tool_usage_details"]["web_search_calls"], 1)
+        self.assertEqual(usage_kwargs["server_side_tool_usage_details"]["x_search_calls"], 1)
 
     async def test_grok_build_chat_maps_reasoning_effort_to_responses(self) -> None:
         self._add_grok_model()
@@ -728,7 +794,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                         "",
                         'data: {"type":"response.output_text.delta","model":"grok-4.5-build-free","delta":"GROK_STREAM_OK"}',
                         "",
-                        'data: {"type":"response.completed","response":{"id":"resp_grok_stream","status":"completed","model":"grok-4.5-build-free","output":[{"type":"message","content":[{"type":"output_text","text":"GROK_STREAM_OK"}]}],"usage":{"input_tokens":7,"output_tokens":2,"total_tokens":9}}}',
+                        'data: {"type":"response.completed","response":{"id":"resp_grok_stream","status":"completed","model":"grok-4.5-build-free","output":[{"type":"web_search_call","id":"ws_stream","status":"completed"},{"type":"message","content":[{"type":"output_text","text":"GROK_STREAM_OK"}]}],"usage":{"input_tokens":7,"output_tokens":2,"total_tokens":9,"num_server_side_tools_used":2,"server_side_tool_usage_details":{"web_search_calls":2,"x_search_calls":0}}}}',
                         "",
                         "data: [DONE]",
                         "",
@@ -764,6 +830,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(usage_kwargs["provider_model"], "grok-4.5")
         self.assertEqual(usage_kwargs["billable_sku"], "xai-grok-4.5-text")
         self.assertEqual(usage_kwargs["channel_id"], "ch_grok_test")
+        self.assertEqual(usage_kwargs["server_side_tool_usage_details"]["web_search_calls"], 2)
 
     async def test_grok_build_chat_converts_vision_input_for_responses(self) -> None:
         self._add_grok_model()

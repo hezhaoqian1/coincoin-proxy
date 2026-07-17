@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, CheckConstraint, Date, DateTime, FetchedValue, Float, ForeignKey, Index, String, Text, UniqueConstraint, text
+from sqlalchemy import BigInteger, CheckConstraint, Date, DateTime, FetchedValue, Float, ForeignKey, Index, JSON, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
@@ -102,6 +102,7 @@ class RequestLog(Base):
     cached_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
     cache_read_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
     cache_creation_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
+    server_side_tool_usage_details: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     image_count: Mapped[int] = mapped_column(BigInteger, default=0)
     video_count: Mapped[int] = mapped_column(BigInteger, default=0)
     provider_model: Mapped[str] = mapped_column(String(128), default="")

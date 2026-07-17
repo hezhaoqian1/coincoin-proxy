@@ -9,7 +9,9 @@ from app.usage_buffer import (
     extract_cache_creation_tokens,
     extract_cache_read_tokens,
     extract_cached_tokens,
+    extract_server_side_tool_usage_details,
     extract_total_input_tokens,
+    total_server_side_tools_used,
 )
 
 
@@ -69,6 +71,35 @@ class UsageBufferUnitsTests(unittest.TestCase):
             ),
             300,
         )
+
+    def test_extract_server_side_tool_usage_details_is_bounded_and_normalized(self) -> None:
+        details = extract_server_side_tool_usage_details(
+            {
+                "num_server_side_tools_used": 99,
+                "server_side_tool_usage_details": {
+                    "web_search_calls": "4",
+                    "x_search_calls": 1,
+                    "code_interpreter_calls": -2,
+                    "file_search_calls": None,
+                    "mcp_calls": 2.8,
+                    "unknown_provider_counter": 50,
+                },
+            }
+        )
+
+        self.assertEqual(
+            details,
+            {
+                "web_search_calls": 4,
+                "x_search_calls": 1,
+                "code_interpreter_calls": 0,
+                "file_search_calls": 0,
+                "mcp_calls": 2,
+                "document_search_calls": 0,
+                "image_generation_calls": 0,
+            },
+        )
+        self.assertEqual(total_server_side_tools_used(details), 7)
 
     def test_cached_tokens_follow_configured_discount_rate(self) -> None:
         original_rate = settings.cache_discount_rate
@@ -410,6 +441,46 @@ class UsageBufferUnitsTests(unittest.TestCase):
         self.assertEqual(request_logs[0]["base_price_per_video_cents"], 98)
         self.assertEqual(request_logs[0]["effective_cached_input_per_million"], 30)
         self.assertEqual(request_logs[0]["price_version"], 7)
+
+    def test_records_normalized_server_side_tool_usage_on_request_log(self) -> None:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        buffer = UsageBuffer()
+
+        async def scenario():
+            await buffer.add(
+                "u_grok_search",
+                input_tokens=100,
+                output_tokens=20,
+                requests=1,
+                endpoint="responses",
+                model="grok-build",
+                server_side_tool_usage_details={
+                    "web_search_calls": 4,
+                    "x_search_calls": 1,
+                    "unknown_provider_counter": 9,
+                },
+            )
+            return await buffer.snapshot_and_reset()
+
+        try:
+            _, _, request_logs = loop.run_until_complete(scenario())
+        finally:
+            asyncio.set_event_loop(None)
+            loop.close()
+
+        self.assertEqual(
+            request_logs[0]["server_side_tool_usage_details"],
+            {
+                "web_search_calls": 4,
+                "x_search_calls": 1,
+                "code_interpreter_calls": 0,
+                "file_search_calls": 0,
+                "mcp_calls": 0,
+                "document_search_calls": 0,
+                "image_generation_calls": 0,
+            },
+        )
 
 
 if __name__ == "__main__":

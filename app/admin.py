@@ -121,6 +121,7 @@ from .router import (
     CLAUDE_COMPAT_PROVIDERS,
 )
 from .security import decrypt_api_key, encrypt_api_key, generate_api_key, generate_id, generate_referral_code, hash_key, hash_password, require_admin
+from .usage_buffer import serialize_server_side_tool_usage
 
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -5568,6 +5569,9 @@ async def list_user_request_logs(
                 "provider_account_fingerprint": getattr(log, "provider_account_fingerprint", ""),
                 "fallback_from_channel_id": getattr(log, "fallback_from_channel_id", ""),
                 "route_attempt": getattr(log, "route_attempt", 0),
+                **serialize_server_side_tool_usage(
+                    getattr(log, "server_side_tool_usage_details", None) or {}
+                ),
             }
             for log in logs
         ],

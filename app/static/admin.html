@@ -2222,7 +2222,7 @@
 
   <!-- Request Logs Modal -->
   <div id="logsModal" class="modal-overlay">
-    <div class="modal" style="max-width:1100px">
+    <div class="modal" style="max-width:1240px">
       <div class="modal-header">
         <span class="modal-title" id="logsModalTitle">请求日志</span>
         <button class="modal-close" onclick="closeModal('logsModal')">&times;</button>
@@ -2230,7 +2230,7 @@
       <div class="modal-body" style="padding:0;max-height:520px;overflow-y:auto">
         <table>
           <thead>
-            <tr><th>时间</th><th>接口</th><th>别名</th><th>上游模型</th><th>用量</th><th>缓存</th><th>SKU</th><th>费用</th><th>延迟</th><th>状态</th><th>Route / Channel</th></tr>
+            <tr><th>时间</th><th>接口</th><th>别名</th><th>上游模型</th><th>用量</th><th>服务端工具</th><th>缓存</th><th>SKU</th><th>费用</th><th>延迟</th><th>状态</th><th>Route / Channel</th></tr>
           </thead>
           <tbody id="logsBody"></tbody>
         </table>
@@ -5387,7 +5387,7 @@
       logsUserId = userId;
       logsOffset = 0;
       document.getElementById('logsModalTitle').textContent = `请求日志 - ${displayName}`;
-      document.getElementById('logsBody').innerHTML = '<tr><td colspan="11" style="text-align:center;padding:40px;color:var(--text-tertiary)">加载中...</td></tr>';
+      document.getElementById('logsBody').innerHTML = '<tr><td colspan="12" style="text-align:center;padding:40px;color:var(--text-tertiary)">加载中...</td></tr>';
       document.getElementById('logsPagination').textContent = '';
       openModal('logsModal');
       await loadRequestLogs();
@@ -5400,7 +5400,7 @@
         const data = await r.json();
         const body = document.getElementById('logsBody');
         if (!data.data.length) {
-          body.innerHTML = '<tr><td colspan="11"><div class="empty-state" style="padding:40px"><div class="empty-state-icon">📋</div><h3>暂无请求日志</h3></div></td></tr>';
+          body.innerHTML = '<tr><td colspan="12"><div class="empty-state" style="padding:40px"><div class="empty-state-icon">📋</div><h3>暂无请求日志</h3></div></td></tr>';
         } else {
           body.innerHTML = data.data.map(l => {
             const sc = l.status_code < 400 ? 'badge-success' : 'badge-error';
@@ -5410,6 +5410,16 @@
                 ? `${formatNum(l.video_count || l.usage_unit_count || 0)} 个视频`
                 : `输入 ${formatNum(l.input_tokens || 0)} / 输出 ${formatNum(l.output_tokens || 0)}`;
             const cacheLabel = `读 ${formatNum(l.cache_read_tokens || l.cached_tokens || 0)} / 写 ${formatNum(l.cache_creation_tokens || 0)}`;
+            const toolDetails = l.server_side_tool_usage_details || {};
+            const toolLabel = [
+              ['Web', toolDetails.web_search_calls],
+              ['X', toolDetails.x_search_calls],
+              ['Code', toolDetails.code_interpreter_calls],
+              ['File', toolDetails.file_search_calls],
+              ['MCP', toolDetails.mcp_calls],
+              ['Doc', toolDetails.document_search_calls],
+              ['Image', toolDetails.image_generation_calls],
+            ].filter(([, count]) => Number(count || 0) > 0).map(([label, count]) => `${label} ${formatNum(count)}`).join('<br/>') || '-';
             const routeMeta = [
               l.channel_id ? `${escapeHtml(l.provider_platform || l.channel_type || 'channel')} · ${escapeHtml(l.channel_id)}` : '',
               Number(l.route_attempt || 0) > 0 ? `fallback from ${escapeHtml(l.fallback_from_channel_id || '-')} · attempt ${escapeHtml(String(l.route_attempt))}` : '',
@@ -5420,6 +5430,7 @@
               <td class="text-sm text-muted">${l.model}</td>
               <td class="text-sm text-muted">${l.provider_model || '-'}</td>
               <td class="text-sm">${usageLabel}<div class="text-muted" style="font-size:11px">${l.usage_unit_type}:${formatNum(l.usage_unit_count || 0)}</div></td>
+              <td class="text-sm text-muted">${toolLabel}</td>
               <td class="text-sm text-muted">${cacheLabel}</td>
               <td class="text-sm text-muted">${l.billable_sku || '-'}</td>
               <td class="text-sm text-success">$${l.cost_usd.toFixed(4)}</td>
