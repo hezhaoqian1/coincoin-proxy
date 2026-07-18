@@ -1046,15 +1046,17 @@ wire_api = "responses"`}</pre>
 default = "grok-4.5"
 web_search = "grok-4.5"
 
-[model."grok-4.5"]
+[model."coincoin-grok"]
 model = "grok-4.5"
 base_url = "${SITE}/v1"
 api_key = "sk_cc_xxxxx"
+name = "Grok"
+description = "Grok 4.5"
 api_backend = "responses"
-context_window = 500000
+context_window = 1000000
 supports_backend_search = true`}</pre>
             <p>该配置让官方 Grok CLI 的后端 Web Search 也经过 CoinCoin，无需登录 xAI 订阅账号。</p>
-            <p><Link to="/guides/grok-build">查看完整安装、备份、Web Search 和文件工具回路验证教程</Link></p>
+            <p><Link to="/guides/grok-build">查看完整安装、备份和配置教程</Link></p>
 
             <h3>Claude Code</h3>
             <pre className="code-block">{`mkdir -p ~/.claude && cat > ~/.claude/settings.json <<'EOF'
