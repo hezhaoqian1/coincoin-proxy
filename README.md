@@ -303,6 +303,7 @@ Common admin workflows:
 - create model routes
 - choose one representative probe target per provider channel automatically or from its active routes
 - inspect channel probe health separately from public-model route coverage, real traffic, and fallback activity
+- manage the DingTalk failure-alert webhook and thresholds, send a configuration test, and inspect delivery history from Service Reliability
 - review recharge records
 - run protected monitoring probes
 

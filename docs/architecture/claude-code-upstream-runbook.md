@@ -1,6 +1,6 @@
 # Claude Code Upstream Runbook
 
-Updated: 2026-07-21
+Updated: 2026-07-22
 
 This runbook documents the runtime setup for Claude Code-only upstreams in CoinCoin. It intentionally does not include upstream API keys or admin tokens.
 
@@ -16,6 +16,12 @@ Claude Code upstreams are configured as provider channels and reached through mo
 - Required upstream request shape: Anthropic Messages request with Claude Code headers and `?beta=true`
 
 The public model remains a CoinCoin model id. The route decides which upstream model name is sent to the provider.
+
+## Customer One-click Configuration
+
+The hosted Claude Code guide preserves existing `~/.claude/settings.json` fields and updates only `env.ANTHROPIC_BASE_URL` and `env.ANTHROPIC_AUTH_TOKEN`. On macOS and Linux, the installer first proves that a Python 3.8+ interpreter can execute, writes the settings atomically with mode `0600`, then reads the file back and verifies both values before launching `claude`. A broken interpreter that exits successfully without running the script therefore stops configuration instead of silently starting Claude with stale settings.
+
+If the command reports a verification error, use the generated backup beside `settings.json` to recover and correct the local Python installation before retrying. Restart any Claude Code process that was already running because an existing process does not reload changed environment settings.
 
 ## Current Sixoner Claude Code Channel
 
