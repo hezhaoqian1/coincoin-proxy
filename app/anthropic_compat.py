@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -13,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import settings
 from .db import get_db
+from .fallback_alerts import UpstreamFailureBurstAlert, schedule_user_upstream_failure
 from .prompt_cache import build_claude_code_prompt_cache_key
 from .anthropic_adapter import (
     build_anthropic_messages_url,
@@ -33,8 +35,8 @@ from .proxy import (
     _channel_usage_kwargs,
     _record_channel_failure,
     _record_channel_success,
-    _sanitize_upstream_error_payload,
-    _sanitize_upstream_error_text,
+    _channel_fallback_route_reason,
+    _next_channel_fallback_config,
 )
 from .router import (
     CLAUDE_COMPAT_PROVIDER_KIRO_GO,
@@ -45,6 +47,7 @@ from .router import (
     registry as model_registry,
 )
 from .station_runtime import resolve_station_model_for_user, usage_pricing_kwargs
+from .security import generate_id
 from .user_model_overrides import apply_user_overrides_to_resolution
 from .usage_buffer import (
     extract_cache_creation_tokens,
@@ -56,6 +59,9 @@ from .usage_buffer import (
 
 
 router = APIRouter(prefix="/v1", tags=["anthropic-compat"])
+logger = logging.getLogger("coincoin.anthropic_compat")
+
+_MESSAGES_FALLBACK_STATUSES = {429, 502, 503}
 
 
 def _kiro_go_upstream_model(model_id: str) -> str:
@@ -98,16 +104,23 @@ def anthropic_error(
     *,
     error_type: str = "invalid_request_error",
     status_code: int = 400,
+    request_id: str = "",
 ) -> JSONResponse:
+    content: Dict[str, Any] = {
+        "type": "error",
+        "error": {
+            "type": error_type,
+            "message": message,
+        },
+    }
+    headers: Dict[str, str] = {}
+    if request_id:
+        content["request_id"] = request_id
+        headers["request-id"] = request_id
     return JSONResponse(
         status_code=status_code,
-        content={
-            "type": "error",
-            "error": {
-                "type": error_type,
-                "message": message,
-            },
-        },
+        content=content,
+        headers=headers,
     )
 
 
@@ -481,17 +494,77 @@ def _anthropic_stream_error_bytes(
     message: str,
     *,
     error_type: str = "api_error",
+    request_id: str = "",
 ) -> bytes:
+    payload: Dict[str, Any] = {
+        "type": "error",
+        "error": {
+            "type": error_type,
+            "message": message,
+        },
+    }
+    if request_id:
+        payload["request_id"] = request_id
     return _anthropic_sse_bytes(
         "error",
-        {
-            "type": "error",
-            "error": {
-                "type": error_type,
-                "message": message,
-            },
-        },
+        payload,
     )
+
+
+@dataclass(frozen=True)
+class _AnthropicUpstreamAttempt:
+    cfg: Any
+    is_native: bool
+    upstream_url: str
+    headers: Dict[str, str]
+    payload: Dict[str, Any]
+
+
+def _build_anthropic_upstream_attempt(
+    cfg: Any,
+    *,
+    request: Request,
+    client_payload: Dict[str, Any],
+    openai_payload: Dict[str, Any],
+    is_kiro_go: bool,
+) -> _AnthropicUpstreamAttempt:
+    is_native = is_kiro_go or is_anthropic_compatible_config(cfg)
+    headers = _build_anthropic_upstream_headers(cfg, request)
+    if is_native:
+        upstream_url = ensure_claude_code_messages_url(
+            _append_request_query(build_anthropic_messages_url(cfg.upstream_url), request),
+            cfg,
+        )
+        upstream_payload = _copy_anthropic_messages_payload(client_payload)
+        upstream_payload["model"] = _kiro_go_upstream_model(cfg.model_id) if is_kiro_go else cfg.model_id
+        upstream_payload["stream"] = bool(client_payload.get("stream"))
+    else:
+        upstream_url = f"{_normalize_openai_base_url(cfg.upstream_url)}/chat/completions"
+        upstream_payload = dict(openai_payload)
+        upstream_payload["model"] = cfg.model_id
+    return _AnthropicUpstreamAttempt(
+        cfg=cfg,
+        is_native=is_native,
+        upstream_url=upstream_url,
+        headers=headers,
+        payload=upstream_payload,
+    )
+
+
+def _anthropic_temporary_error(request_id: str, *, status_code: int = 502) -> JSONResponse:
+    error_type = "rate_limit_error" if status_code == 429 else "api_error"
+    return anthropic_error(
+        f"Upstream service temporarily unavailable. Request ID: {request_id}",
+        error_type=error_type,
+        status_code=status_code,
+        request_id=request_id,
+    )
+
+
+def _correlated_upstream_request_id(request_id: str, upstream_request_id: str = "") -> str:
+    if upstream_request_id:
+        return f"{request_id}|{upstream_request_id}"[:128]
+    return request_id[:128]
 
 
 def _mask_anthropic_sse_event_model(raw_event: str, display_model: str) -> str:
@@ -578,7 +651,7 @@ async def _consume_native_anthropic_sse_response(
     upstream: Any,
     *,
     display_model: str,
-) -> tuple[bytes, Dict[str, Any]]:
+) -> tuple[bytes, Dict[str, Any], bool]:
     state = _AnthropicStreamState()
     events: List[bytes] = []
     anthropic_event_lines: List[str] = []
@@ -624,9 +697,7 @@ async def _consume_native_anthropic_sse_response(
         )
 
     _flush_anthropic_event()
-    if not state.message_stopped and state.usage:
-        events.extend(_finalize_anthropic_stream(state, display_model=display_model))
-    return b"".join(events), state.usage
+    return b"".join(events), state.usage, state.message_stopped
 
 
 def _normalize_anthropic_stop_reason(finish_reason: str, saw_tool_call: bool) -> str:
@@ -1109,104 +1180,290 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
         else:
             openai_payload["messages"] = [{"role": "system", "content": cloak.strip()}] + messages
 
-    if is_native_anthropic_upstream:
-        upstream_url = ensure_claude_code_messages_url(
-            _append_request_query(build_anthropic_messages_url(used_cfg.upstream_url), request),
-            used_cfg,
-        )
-        headers = _build_anthropic_upstream_headers(used_cfg, request)
-        upstream_payload = _copy_anthropic_messages_payload(payload)
-        upstream_payload["model"] = _kiro_go_upstream_model(used_cfg.model_id) if is_kiro_go else used_cfg.model_id
-        upstream_payload["stream"] = bool(payload.get("stream"))
-    else:
-        upstream_url = f"{_normalize_openai_base_url(used_cfg.upstream_url)}/chat/completions"
-        headers = _build_anthropic_upstream_headers(used_cfg, request)
-        upstream_payload = openai_payload
-
+    client_request_id = generate_id("ccreq_")
+    endpoint_name = "messages:stream" if bool(payload.get("stream")) else "messages"
     request_t0 = time.monotonic()
-    if is_native_anthropic_upstream and upstream_payload.get("stream"):
-        response_headers = {
-            "cache-control": "no-cache",
-            "x-accel-buffering": "no",
-            "content-type": "text/event-stream; charset=utf-8",
-        }
 
-        async def iter_bytes():
-            stream_state = _AnthropicStreamState()
-            upstream = None
-            reader_task: Optional[asyncio.Task] = None
-            stream_failed = False
-            upstream_request_id = ""
-            anthropic_event_lines: List[str] = []
-            saw_anthropic_event = False
+    def _build_attempt(cfg: Any) -> _AnthropicUpstreamAttempt:
+        return _build_anthropic_upstream_attempt(
+            cfg,
+            request=request,
+            client_payload=payload,
+            openai_payload=openai_payload,
+            is_kiro_go=is_kiro_go,
+        )
 
-            try:
-                stream_client = await get_stream_client()
-                req = stream_client.build_request(
-                    "POST",
-                    upstream_url,
-                    json=upstream_payload,
-                    headers=headers,
-                    timeout=_kiro_go_bridge_timeout(),
+    def _select_fallback(cfg: Any, reason: str) -> Any:
+        return _next_channel_fallback_config(
+            public_model,
+            cfg,
+            "chat/completions",
+            reason=reason,
+        )
+
+    async def _record_failed_attempt(
+        cfg: Any,
+        *,
+        route_reason: str,
+        status_code: int,
+        reason: str,
+        terminal: bool,
+        upstream_request_id: str = "",
+    ) -> None:
+        if status_code:
+            _record_channel_failure(cfg, status_code=status_code)
+        else:
+            _record_channel_failure(cfg, error_code=reason)
+        try:
+            schedule_user_upstream_failure(
+                UpstreamFailureBurstAlert(
+                    endpoint=endpoint_name,
+                    model=display_model,
+                    channel_id=str(getattr(cfg, "channel_id", "") or ""),
+                    status_code=status_code,
+                    reason=reason,
+                    provider_platform=str(getattr(cfg, "provider_platform", "") or ""),
+                    request_id=client_request_id,
                 )
+            )
+        except Exception:
+            logger.warning("upstream failure alert scheduling failed", exc_info=True)
+        await usage_buffer.add(
+            user.id,
+            api_key_id=api_key_id,
+            input_tokens=0,
+            output_tokens=0,
+            cache_read_tokens=0,
+            cache_creation_tokens=0,
+            requests=1 if terminal else 0,
+            endpoint=endpoint_name,
+            model=display_model,
+            customer_model_alias=display_model,
+            provider_model=cfg.model_id or _effective_provider_model,
+            route_reason=route_reason,
+            duration_ms=_elapsed_ms_since(request_t0),
+            status_code=status_code or 502,
+            price_input_per_million=price_input_per_million,
+            price_output_per_million=price_output_per_million,
+            usage_unit_type="tokens",
+            usage_unit_count=0,
+            billable_sku=public_model.billable_sku or display_model,
+            upstream_request_id=_correlated_upstream_request_id(client_request_id, upstream_request_id),
+            cost_cents_override=0.0,
+            wholesale_cost_cents_override=0.0,
+            retail_charge_cents_override=0.0,
+            request_log_only=not terminal,
+            **_channel_usage_kwargs(cfg),
+            **usage_pricing_kwargs(
+                public_model,
+                station_model,
+                user_cache_read_multiplier_override=user_cache_read_multiplier_override,
+            ),
+        )
+
+    def _fallback_reason(reason: str) -> str:
+        return _channel_fallback_route_reason(reason)
+
+    if payload.get("stream"):
+        stream_client = await get_stream_client()
+        upstream = None
+        upstream_request_id = ""
+        attempt = _build_attempt(used_cfg)
+
+        while True:
+            attempt = _build_attempt(used_cfg)
+            request_kwargs: Dict[str, Any] = {
+                "json": attempt.payload,
+                "headers": attempt.headers,
+            }
+            if attempt.is_native:
+                request_kwargs["timeout"] = _kiro_go_bridge_timeout()
+            req = stream_client.build_request("POST", attempt.upstream_url, **request_kwargs)
+            try:
                 upstream = await stream_client.send(req, stream=True)
-                upstream_request_id = extract_upstream_request_id(upstream.headers)
+            except (httpx.TimeoutException, httpx.RequestError):
+                fallback_cfg = _select_fallback(used_cfg, "upstream_unreachable")
+                await _record_failed_attempt(
+                    used_cfg,
+                    route_reason=used_route_reason,
+                    status_code=502,
+                    reason="upstream_unreachable",
+                    terminal=fallback_cfg is None,
+                )
+                if fallback_cfg is None:
+                    return _anthropic_temporary_error(client_request_id, status_code=502)
+                used_cfg = fallback_cfg
+                used_route_reason = _fallback_reason("upstream_unreachable")
+                continue
 
-                if upstream.status_code >= 400:
-                    error_type = "api_error"
-                    message = "Upstream request failed"
-                    content_type = upstream.headers.get("content-type", "")
-                    if "application/json" in content_type:
+            upstream_request_id = extract_upstream_request_id(upstream.headers)
+            if upstream.status_code >= 400:
+                status_code = int(upstream.status_code)
+                fallback_cfg = (
+                    _select_fallback(used_cfg, str(status_code))
+                    if status_code in _MESSAGES_FALLBACK_STATUSES
+                    else None
+                )
+                await _record_failed_attempt(
+                    used_cfg,
+                    route_reason=used_route_reason,
+                    status_code=status_code,
+                    reason=str(status_code),
+                    terminal=fallback_cfg is None,
+                    upstream_request_id=upstream_request_id,
+                )
+                await upstream.aclose()
+                if fallback_cfg is not None:
+                    used_cfg = fallback_cfg
+                    used_route_reason = _fallback_reason(str(status_code))
+                    continue
+                if status_code in _MESSAGES_FALLBACK_STATUSES or status_code >= 500:
+                    return _anthropic_temporary_error(client_request_id, status_code=status_code)
+                return anthropic_error(
+                    f"Upstream request failed. Request ID: {client_request_id}",
+                    error_type="api_error",
+                    status_code=status_code,
+                    request_id=client_request_id,
+                )
+            break
+
+        stream_headers = filter_headers(dict(upstream.headers))
+        stream_headers.pop("content-length", None)
+        stream_headers.setdefault("cache-control", "no-cache")
+        stream_headers.setdefault("x-accel-buffering", "no")
+        stream_headers["content-type"] = "text/event-stream; charset=utf-8"
+        stream_headers["request-id"] = client_request_id
+        final_cfg = used_cfg
+        final_route_reason = used_route_reason
+        final_attempt = attempt
+        final_upstream_request_id = upstream_request_id
+
+        if final_attempt.is_native:
+            async def iter_native_bytes():
+                stream_state = _AnthropicStreamState()
+                reader_task: Optional[asyncio.Task] = None
+                stream_failed = False
+                anthropic_event_lines: List[str] = []
+                saw_anthropic_event = False
+
+                try:
+                    queue: asyncio.Queue = asyncio.Queue()
+
+                    async def _pump_lines() -> None:
                         try:
-                            data = json.loads((await upstream.aread()).decode("utf-8"))
-                        except Exception:
-                            data = None
-                        if isinstance(data, dict) and isinstance(data.get("error"), dict):
-                            error_info = data["error"]
-                            error_type = _sanitize_upstream_error_text(str(error_info.get("type") or error_type), max_length=100)
-                            message = _sanitize_upstream_error_text(str(error_info.get("message") or message))
-                    yield _anthropic_stream_error_bytes(message, error_type=error_type)
-                    stream_failed = True
-                    return
+                            async for line in upstream.aiter_lines():
+                                await queue.put(("line", line))
+                            await queue.put(("eof", None))
+                        except Exception as exc:
+                            await queue.put(("error", exc))
 
-                queue: asyncio.Queue = asyncio.Queue()
+                    reader_task = asyncio.create_task(_pump_lines())
 
-                async def _pump_lines() -> None:
-                    try:
-                        async for line in upstream.aiter_lines():
-                            await queue.put(("line", line))
-                        await queue.put(("eof", None))
-                    except Exception as exc:
-                        await queue.put(("error", exc))
+                    while True:
+                        try:
+                            item_type, item_value = await asyncio.wait_for(
+                                queue.get(),
+                                timeout=_kiro_go_bridge_ping_interval(),
+                            )
+                        except asyncio.TimeoutError:
+                            if not stream_state.message_started and not saw_anthropic_event:
+                                for event in _ensure_anthropic_message_start(
+                                    stream_state,
+                                    display_model=display_model,
+                                    response_id="",
+                                ):
+                                    yield event
+                            yield _anthropic_ping_bytes()
+                            continue
 
-                reader_task = asyncio.create_task(_pump_lines())
-
-                while True:
-                    try:
-                        item_type, item_value = await asyncio.wait_for(
-                            queue.get(),
-                            timeout=_kiro_go_bridge_ping_interval(),
-                        )
-                    except asyncio.TimeoutError:
-                        if not stream_state.message_started and not saw_anthropic_event:
-                            for event in _ensure_anthropic_message_start(
+                        if item_type == "line":
+                            raw_line = str(item_value or "")
+                            if anthropic_event_lines or raw_line.startswith("event:"):
+                                if raw_line.startswith("event:"):
+                                    saw_anthropic_event = True
+                                if raw_line == "":
+                                    raw_event = "\n".join(anthropic_event_lines)
+                                    event_type, payload_dict = _parse_anthropic_sse_event(raw_event)
+                                    if event_type and payload_dict is not None:
+                                        if event_type == "error":
+                                            await _record_failed_attempt(
+                                                final_cfg,
+                                                route_reason=final_route_reason,
+                                                status_code=502,
+                                                reason="upstream_stream_error",
+                                                terminal=True,
+                                                upstream_request_id=final_upstream_request_id,
+                                            )
+                                            yield _anthropic_stream_error_bytes(
+                                                f"Upstream service temporarily unavailable. Request ID: {client_request_id}",
+                                                request_id=client_request_id,
+                                            )
+                                            stream_failed = True
+                                            return
+                                        should_forward_event = not (
+                                            event_type == "message_start" and stream_state.message_started
+                                        )
+                                        _update_state_from_anthropic_event(
+                                            stream_state,
+                                            event_type=event_type,
+                                            event_payload=payload_dict,
+                                        )
+                                        if should_forward_event:
+                                            raw_event = _mask_anthropic_sse_event_model(raw_event, display_model)
+                                            yield (raw_event + "\n\n").encode("utf-8")
+                                    anthropic_event_lines.clear()
+                                    continue
+                                anthropic_event_lines.append(raw_line)
+                                continue
+                            if raw_line == "":
+                                continue
+                            if saw_anthropic_event:
+                                continue
+                            for event in _translate_openai_chunk_to_anthropic_events(
                                 stream_state,
                                 display_model=display_model,
-                                response_id="",
+                                raw_line=raw_line,
                             ):
                                 yield event
-                        yield _anthropic_ping_bytes()
-                        continue
+                            continue
 
-                    if item_type == "line":
-                        raw_line = str(item_value or "")
-                        if anthropic_event_lines or raw_line.startswith("event:"):
-                            if raw_line.startswith("event:"):
-                                saw_anthropic_event = True
-                            if raw_line == "":
+                        if item_type == "error":
+                            anthropic_event_lines.clear()
+                            await _record_failed_attempt(
+                                final_cfg,
+                                route_reason=final_route_reason,
+                                status_code=502,
+                                reason="upstream_stream_error",
+                                terminal=True,
+                                upstream_request_id=final_upstream_request_id,
+                            )
+                            yield _anthropic_stream_error_bytes(
+                                f"Upstream service temporarily unavailable. Request ID: {client_request_id}",
+                                request_id=client_request_id,
+                            )
+                            stream_failed = True
+                            return
+
+                        if item_type == "eof":
+                            if anthropic_event_lines:
                                 raw_event = "\n".join(anthropic_event_lines)
                                 event_type, payload_dict = _parse_anthropic_sse_event(raw_event)
                                 if event_type and payload_dict is not None:
+                                    if event_type == "error":
+                                        await _record_failed_attempt(
+                                            final_cfg,
+                                            route_reason=final_route_reason,
+                                            status_code=502,
+                                            reason="upstream_stream_error",
+                                            terminal=True,
+                                            upstream_request_id=final_upstream_request_id,
+                                        )
+                                        yield _anthropic_stream_error_bytes(
+                                            f"Upstream service temporarily unavailable. Request ID: {client_request_id}",
+                                            request_id=client_request_id,
+                                        )
+                                        stream_failed = True
+                                        return
                                     should_forward_event = not (
                                         event_type == "message_start" and stream_state.message_started
                                     )
@@ -1219,144 +1476,105 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                                         raw_event = _mask_anthropic_sse_event_model(raw_event, display_model)
                                         yield (raw_event + "\n\n").encode("utf-8")
                                 anthropic_event_lines.clear()
-                                continue
-                            anthropic_event_lines.append(raw_line)
-                            continue
-                        if raw_line == "":
-                            continue
-                        if saw_anthropic_event:
-                            continue
-                        for event in _translate_openai_chunk_to_anthropic_events(
-                            stream_state,
-                            display_model=display_model,
-                            raw_line=raw_line,
-                        ):
-                            yield event
-                        continue
-
-                    if item_type == "error":
-                        if anthropic_event_lines:
-                            anthropic_event_lines.clear()
-                        yield _anthropic_stream_error_bytes("Upstream request failed")
-                        stream_failed = True
-                        return
-
-                    if item_type == "eof":
-                        if anthropic_event_lines:
-                            raw_event = "\n".join(anthropic_event_lines)
-                            event_type, payload_dict = _parse_anthropic_sse_event(raw_event)
-                            if event_type and payload_dict is not None:
-                                should_forward_event = not (
-                                    event_type == "message_start" and stream_state.message_started
-                                )
-                                _update_state_from_anthropic_event(
-                                    stream_state,
-                                    event_type=event_type,
-                                    event_payload=payload_dict,
-                                )
-                                if should_forward_event:
-                                    raw_event = _mask_anthropic_sse_event_model(raw_event, display_model)
-                                    yield (raw_event + "\n\n").encode("utf-8")
-                            anthropic_event_lines.clear()
-                        break
-            except (httpx.TimeoutException, httpx.RequestError):
-                _record_channel_failure(used_cfg, error_code="upstream_unreachable")
-                yield _anthropic_stream_error_bytes("Upstream request failed")
-                stream_failed = True
-                return
-            except Exception:
-                _record_channel_failure(used_cfg, error_code="upstream_stream_error")
-                yield _anthropic_stream_error_bytes("Upstream request failed")
-                stream_failed = True
-                return
-            finally:
-                if reader_task is not None and not reader_task.done():
-                    reader_task.cancel()
-                    try:
-                        await reader_task
-                    except asyncio.CancelledError:
-                        pass
-                if upstream is not None:
+                            break
+                except (httpx.TimeoutException, httpx.RequestError):
+                    await _record_failed_attempt(
+                        final_cfg,
+                        route_reason=final_route_reason,
+                        status_code=502,
+                        reason="upstream_stream_error",
+                        terminal=True,
+                        upstream_request_id=final_upstream_request_id,
+                    )
+                    yield _anthropic_stream_error_bytes(
+                        f"Upstream service temporarily unavailable. Request ID: {client_request_id}",
+                        request_id=client_request_id,
+                    )
+                    stream_failed = True
+                    return
+                except Exception:
+                    await _record_failed_attempt(
+                        final_cfg,
+                        route_reason=final_route_reason,
+                        status_code=502,
+                        reason="upstream_stream_error",
+                        terminal=True,
+                        upstream_request_id=final_upstream_request_id,
+                    )
+                    yield _anthropic_stream_error_bytes(
+                        f"Upstream service temporarily unavailable. Request ID: {client_request_id}",
+                        request_id=client_request_id,
+                    )
+                    stream_failed = True
+                    return
+                finally:
+                    if reader_task is not None and not reader_task.done():
+                        reader_task.cancel()
+                        try:
+                            await reader_task
+                        except asyncio.CancelledError:
+                            pass
                     await upstream.aclose()
 
-            if not stream_failed and not stream_state.message_stopped and stream_state.usage:
-                for event in _finalize_anthropic_stream(stream_state, display_model=display_model):
-                    yield event
+                if not stream_failed and not stream_state.message_stopped:
+                    await _record_failed_attempt(
+                        final_cfg,
+                        route_reason=final_route_reason,
+                        status_code=502,
+                        reason="upstream_stream_error",
+                        terminal=True,
+                        upstream_request_id=final_upstream_request_id,
+                    )
+                    yield _anthropic_stream_error_bytes(
+                        f"Upstream service temporarily unavailable. Request ID: {client_request_id}",
+                        request_id=client_request_id,
+                    )
+                    stream_failed = True
 
-            if stream_failed or not stream_state.usage:
-                return
+                if stream_failed or not stream_state.usage:
+                    return
 
-            duration_ms = _elapsed_ms_since(request_t0)
-            _record_channel_success(used_cfg, duration_ms=duration_ms)
-            schedule_usage_add(
-                user.id,
-                api_key_id=api_key_id,
-                input_tokens=extract_total_input_tokens(stream_state.usage),
-                output_tokens=int(stream_state.usage.get("completion_tokens") or stream_state.usage.get("output_tokens") or 0),
-                cache_read_tokens=extract_cache_read_tokens(stream_state.usage),
-                cache_creation_tokens=extract_cache_creation_tokens(stream_state.usage),
-                requests=1,
-                endpoint="messages",
-                model=display_model,
-                customer_model_alias=display_model,
-                provider_model=used_cfg.model_id or _effective_provider_model,
-                route_reason=used_route_reason,
-                duration_ms=duration_ms,
-                status_code=upstream.status_code if upstream is not None else 200,
-                price_input_per_million=price_input_per_million,
-                price_output_per_million=price_output_per_million,
-                usage_unit_type="tokens",
-                billable_sku=public_model.billable_sku or display_model,
-                upstream_request_id=upstream_request_id,
-                **_channel_usage_kwargs(used_cfg),
-                **usage_pricing_kwargs(
-                    public_model,
-                    station_model,
-                    user_cache_read_multiplier_override=user_cache_read_multiplier_override,
-                ),
+                duration_ms = _elapsed_ms_since(request_t0)
+                _record_channel_success(final_cfg, duration_ms=duration_ms)
+                schedule_usage_add(
+                    user.id,
+                    api_key_id=api_key_id,
+                    input_tokens=extract_total_input_tokens(stream_state.usage),
+                    output_tokens=int(stream_state.usage.get("completion_tokens") or stream_state.usage.get("output_tokens") or 0),
+                    cache_read_tokens=extract_cache_read_tokens(stream_state.usage),
+                    cache_creation_tokens=extract_cache_creation_tokens(stream_state.usage),
+                    requests=1,
+                    endpoint=endpoint_name,
+                    model=display_model,
+                    customer_model_alias=display_model,
+                    provider_model=final_cfg.model_id or _effective_provider_model,
+                    route_reason=final_route_reason,
+                    duration_ms=duration_ms,
+                    status_code=upstream.status_code,
+                    price_input_per_million=price_input_per_million,
+                    price_output_per_million=price_output_per_million,
+                    usage_unit_type="tokens",
+                    billable_sku=public_model.billable_sku or display_model,
+                    upstream_request_id=final_upstream_request_id,
+                    **_channel_usage_kwargs(final_cfg),
+                    **usage_pricing_kwargs(
+                        public_model,
+                        station_model,
+                        user_cache_read_multiplier_override=user_cache_read_multiplier_override,
+                    ),
+                )
+
+            return StreamingResponse(
+                iter_native_bytes(),
+                status_code=200,
+                headers=stream_headers,
+                media_type="text/event-stream",
             )
-
-        return StreamingResponse(
-            iter_bytes(),
-            status_code=200,
-            headers=response_headers,
-            media_type="text/event-stream",
-        )
-
-    if upstream_payload.get("stream"):
-        stream_client = await get_stream_client()
-        req = stream_client.build_request("POST", upstream_url, json=upstream_payload, headers=headers)
-        try:
-            upstream = await stream_client.send(req, stream=True)
-        except (httpx.TimeoutException, httpx.RequestError):
-            _record_channel_failure(used_cfg, error_code="upstream_unreachable")
-            return anthropic_error("Upstream request failed", error_type="api_error", status_code=502)
-        upstream_request_id = extract_upstream_request_id(upstream.headers)
-        if upstream.status_code >= 400:
-            error_type = "api_error"
-            message = "Upstream request failed"
-            content_type = upstream.headers.get("content-type", "")
-            if "application/json" in content_type:
-                try:
-                    data = json.loads((await upstream.aread()).decode("utf-8"))
-                except Exception:
-                    data = None
-                if isinstance(data, dict) and isinstance(data.get("error"), dict):
-                    error_info = data["error"]
-                    error_type = _sanitize_upstream_error_text(str(error_info.get("type") or error_type), max_length=100)
-                    message = _sanitize_upstream_error_text(str(error_info.get("message") or message))
-            _record_channel_failure(used_cfg, status_code=upstream.status_code)
-            await upstream.aclose()
-            return anthropic_error(message, error_type=error_type, status_code=upstream.status_code)
-        stream_headers = filter_headers(dict(upstream.headers))
-        stream_headers.pop("content-length", None)
-        stream_headers.setdefault("cache-control", "no-cache")
-        stream_headers.setdefault("x-accel-buffering", "no")
-        stream_headers["content-type"] = "text/event-stream; charset=utf-8"
 
         stream_state = _AnthropicStreamState()
 
-        async def iter_bytes():
+        async def iter_openai_bytes():
+            stream_failed = False
             try:
                 async for line in upstream.aiter_lines():
                     for event in _translate_openai_chunk_to_anthropic_events(
@@ -1365,13 +1583,38 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                         raw_line=line,
                     ):
                         yield event
+            except Exception:
+                await _record_failed_attempt(
+                    final_cfg,
+                    route_reason=final_route_reason,
+                    status_code=502,
+                    reason="upstream_stream_error",
+                    terminal=True,
+                    upstream_request_id=final_upstream_request_id,
+                )
+                yield _anthropic_stream_error_bytes(
+                    f"Upstream service temporarily unavailable. Request ID: {client_request_id}",
+                    request_id=client_request_id,
+                )
+                stream_failed = True
             finally:
-                if not stream_state.message_stopped:
-                    for event in _finalize_anthropic_stream(stream_state, display_model=display_model):
-                        yield event
+                if not stream_failed and not stream_state.message_stopped:
+                    await _record_failed_attempt(
+                        final_cfg,
+                        route_reason=final_route_reason,
+                        status_code=502,
+                        reason="upstream_stream_error",
+                        terminal=True,
+                        upstream_request_id=final_upstream_request_id,
+                    )
+                    yield _anthropic_stream_error_bytes(
+                        f"Upstream service temporarily unavailable. Request ID: {client_request_id}",
+                        request_id=client_request_id,
+                    )
+                    stream_failed = True
                 duration_ms = _elapsed_ms_since(request_t0)
-                if stream_state.usage:
-                    _record_channel_success(used_cfg, duration_ms=duration_ms)
+                if not stream_failed and stream_state.usage:
+                    _record_channel_success(final_cfg, duration_ms=duration_ms)
                     schedule_usage_add(
                         user.id,
                         api_key_id=api_key_id,
@@ -1380,61 +1623,131 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                         cache_read_tokens=extract_cache_read_tokens(stream_state.usage),
                         cache_creation_tokens=extract_cache_creation_tokens(stream_state.usage),
                         requests=1,
-                        endpoint="messages",
+                        endpoint=endpoint_name,
                         model=display_model,
                         customer_model_alias=display_model,
-                        provider_model=used_cfg.model_id or _effective_provider_model,
-                        route_reason=used_route_reason,
+                        provider_model=final_cfg.model_id or _effective_provider_model,
+                        route_reason=final_route_reason,
                         duration_ms=duration_ms,
                         status_code=upstream.status_code,
                         price_input_per_million=price_input_per_million,
                         price_output_per_million=price_output_per_million,
                         usage_unit_type="tokens",
                         billable_sku=public_model.billable_sku or display_model,
-                        upstream_request_id=upstream_request_id,
-                        **_channel_usage_kwargs(used_cfg),
+                        upstream_request_id=final_upstream_request_id,
+                        **_channel_usage_kwargs(final_cfg),
                         **usage_pricing_kwargs(
                             public_model,
                             station_model,
                             user_cache_read_multiplier_override=user_cache_read_multiplier_override,
                         ),
                     )
-                elif upstream.status_code >= 400:
-                    _record_channel_failure(used_cfg, status_code=upstream.status_code)
                 await upstream.aclose()
 
         return StreamingResponse(
-            iter_bytes(),
-            status_code=upstream.status_code,
+            iter_openai_bytes(),
+            status_code=200,
             headers=stream_headers,
             media_type="text/event-stream",
         )
 
     client = await get_http_client()
-    try:
-        upstream = await client.post(upstream_url, json=upstream_payload, headers=headers)
-    except (httpx.TimeoutException, httpx.RequestError):
-        _record_channel_failure(used_cfg, error_code="upstream_unreachable")
-        return anthropic_error("Upstream request failed", error_type="api_error", status_code=502)
+    upstream = None
+    upstream_request_id = ""
+    attempt = _build_attempt(used_cfg)
+    buffered_native_body: Optional[bytes] = None
+    buffered_native_usage: Dict[str, Any] = {}
+
+    while True:
+        attempt = _build_attempt(used_cfg)
+        try:
+            upstream = await client.post(
+                attempt.upstream_url,
+                json=attempt.payload,
+                headers=attempt.headers,
+            )
+        except (httpx.TimeoutException, httpx.RequestError):
+            fallback_cfg = _select_fallback(used_cfg, "upstream_unreachable")
+            await _record_failed_attempt(
+                used_cfg,
+                route_reason=used_route_reason,
+                status_code=502,
+                reason="upstream_unreachable",
+                terminal=fallback_cfg is None,
+            )
+            if fallback_cfg is None:
+                return _anthropic_temporary_error(client_request_id, status_code=502)
+            used_cfg = fallback_cfg
+            used_route_reason = _fallback_reason("upstream_unreachable")
+            continue
+
+        upstream_request_id = extract_upstream_request_id(upstream.headers)
+        if upstream.status_code >= 400:
+            status_code = int(upstream.status_code)
+            fallback_cfg = (
+                _select_fallback(used_cfg, str(status_code))
+                if status_code in _MESSAGES_FALLBACK_STATUSES
+                else None
+            )
+            await _record_failed_attempt(
+                used_cfg,
+                route_reason=used_route_reason,
+                status_code=status_code,
+                reason=str(status_code),
+                terminal=fallback_cfg is None,
+                upstream_request_id=upstream_request_id,
+            )
+            if fallback_cfg is not None:
+                used_cfg = fallback_cfg
+                used_route_reason = _fallback_reason(str(status_code))
+                continue
+            if status_code in _MESSAGES_FALLBACK_STATUSES or status_code >= 500:
+                return _anthropic_temporary_error(client_request_id, status_code=status_code)
+            return anthropic_error(
+                f"Upstream request failed. Request ID: {client_request_id}",
+                error_type="api_error",
+                status_code=status_code,
+                request_id=client_request_id,
+            )
+        attempt_content_type = upstream.headers.get("content-type", "application/json")
+        if attempt.is_native and "text/event-stream" in attempt_content_type:
+            try:
+                buffered_native_body, buffered_native_usage, stream_completed = (
+                    await _consume_native_anthropic_sse_response(
+                        upstream,
+                        display_model=display_model,
+                    )
+                )
+                if not stream_completed:
+                    raise httpx.ReadError("upstream stream ended before message_stop")
+            except Exception:
+                fallback_cfg = _select_fallback(used_cfg, "upstream_stream_error")
+                await _record_failed_attempt(
+                    used_cfg,
+                    route_reason=used_route_reason,
+                    status_code=502,
+                    reason="upstream_stream_error",
+                    terminal=fallback_cfg is None,
+                    upstream_request_id=upstream_request_id,
+                )
+                await upstream.aclose()
+                if fallback_cfg is None:
+                    return _anthropic_temporary_error(client_request_id, status_code=502)
+                used_cfg = fallback_cfg
+                used_route_reason = _fallback_reason("upstream_stream_error")
+                continue
+        break
+
     duration_ms = _elapsed_ms_since(request_t0)
     response_headers = filter_headers(dict(upstream.headers))
     response_headers.pop("content-length", None)
-    upstream_request_id = extract_upstream_request_id(upstream.headers)
-
+    response_headers["request-id"] = client_request_id
     content_type = upstream.headers.get("content-type", "application/json")
+
     if "application/json" not in content_type:
-        if is_native_anthropic_upstream and "text/event-stream" in content_type:
-            body, usage = await _consume_native_anthropic_sse_response(
-                upstream,
-                display_model=display_model,
-            )
-            if upstream.status_code >= 400:
-                _record_channel_failure(used_cfg, status_code=upstream.status_code)
-                return anthropic_error(
-                    _sanitize_upstream_error_text(body.decode("utf-8", errors="replace") or "Upstream request failed"),
-                    error_type="api_error",
-                    status_code=upstream.status_code,
-                )
+        if attempt.is_native and "text/event-stream" in content_type:
+            body = buffered_native_body or b""
+            usage = buffered_native_usage
             if usage:
                 _record_channel_success(used_cfg, duration_ms=duration_ms)
                 await usage_buffer.add(
@@ -1445,7 +1758,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                     cache_read_tokens=extract_cache_read_tokens(usage),
                     cache_creation_tokens=extract_cache_creation_tokens(usage),
                     requests=1,
-                    endpoint="messages",
+                    endpoint=endpoint_name,
                     model=display_model,
                     customer_model_alias=display_model,
                     provider_model=used_cfg.model_id or _effective_provider_model,
@@ -1464,47 +1777,36 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                         user_cache_read_multiplier_override=user_cache_read_multiplier_override,
                     ),
                 )
-            return Response(content=body, status_code=upstream.status_code, headers=response_headers, media_type=content_type)
-        body = await upstream.aread()
-        if upstream.status_code >= 400:
-            _record_channel_failure(used_cfg, status_code=upstream.status_code)
-            return anthropic_error(
-                _sanitize_upstream_error_text(body.decode("utf-8", errors="replace") or "Upstream request failed"),
-                error_type="api_error",
+            return Response(
+                content=body,
                 status_code=upstream.status_code,
+                headers=response_headers,
+                media_type=content_type,
             )
-        return Response(content=body, status_code=upstream.status_code, headers=response_headers, media_type=content_type)
+        body = await upstream.aread()
+        return Response(
+            content=body,
+            status_code=upstream.status_code,
+            headers=response_headers,
+            media_type=content_type,
+        )
 
     try:
         data = upstream.json()
     except Exception:
-        _record_channel_failure(used_cfg, error_code="upstream_invalid_json")
-        return anthropic_error("Upstream returned invalid JSON", error_type="api_error", status_code=502)
+        await _record_failed_attempt(
+            used_cfg,
+            route_reason=used_route_reason,
+            status_code=502,
+            reason="upstream_invalid_json",
+            terminal=True,
+            upstream_request_id=upstream_request_id,
+        )
+        return _anthropic_temporary_error(client_request_id, status_code=502)
 
-    if upstream.status_code >= 400:
-        _record_channel_failure(used_cfg, status_code=upstream.status_code)
-        if isinstance(data, dict) and "error" in data:
-            error_info = data["error"]
-            sanitized_error = _sanitize_upstream_error_payload(error_info)
-            message = sanitized_error.get("message") if isinstance(sanitized_error, dict) else str(sanitized_error)
-            error_type = sanitized_error.get("type") if isinstance(sanitized_error, dict) else "api_error"
-            return anthropic_error(message or "Upstream request failed", error_type=error_type or "api_error", status_code=upstream.status_code)
-        return anthropic_error("Upstream request failed", error_type="api_error", status_code=upstream.status_code)
-
-    if is_native_anthropic_upstream and _looks_like_anthropic_message_response(data):
+    if attempt.is_native and _looks_like_anthropic_message_response(data):
         response_body = _mask_anthropic_message_model(data, display_model)
         usage = response_body.get("usage") if isinstance(response_body.get("usage"), dict) else {}
-    elif is_native_anthropic_upstream:
-        content_blocks = _extract_anthropic_content_from_openai_chat_response(data)
-        usage = _extract_usage_from_openai_chat_response(data)
-        stop_reason = _extract_anthropic_stop_reason_from_openai_chat_response(data)
-        response_body = _build_anthropic_response(
-            display_model=display_model,
-            message_content=content_blocks,
-            stop_reason=stop_reason,
-            usage=usage,
-            response_id=str(data.get("id") or ""),
-        )
     else:
         content_blocks = _extract_anthropic_content_from_openai_chat_response(data)
         usage = _extract_usage_from_openai_chat_response(data)
@@ -1526,7 +1828,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
         cache_read_tokens=extract_cache_read_tokens(usage),
         cache_creation_tokens=extract_cache_creation_tokens(usage),
         requests=1,
-        endpoint="messages",
+        endpoint=endpoint_name,
         model=display_model,
         customer_model_alias=display_model,
         provider_model=used_cfg.model_id or _effective_provider_model,

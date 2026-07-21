@@ -39,6 +39,7 @@ from .webhook import router as webhook_router
 from .payment import router as payment_router
 from .config import settings
 from .db import Base, engine
+from .fallback_alerts import shutdown_fallback_alerts
 from .model_alias_overrides import get_model_alias_override_db_state, refresh_model_alias_registry_from_db
 from .model_pricing_overrides import get_model_pricing_override_db_state, refresh_model_pricing_registry_from_db
 from .provider_channels import get_provider_channel_db_state, refresh_provider_channel_router_from_db
@@ -1093,6 +1094,7 @@ async def lifespan(app: FastAPI):
         if image_job_task is not None:
             image_job_task.cancel()
         await flush_once()
+        await shutdown_fallback_alerts()
         await close_http_client()
         await close_redis_client()
         logging.info("CoinCoin Proxy stopped")
