@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import time
+import asyncio
 from typing import Any, Dict, Iterable, Tuple
 
 from sqlalchemy import select
@@ -23,6 +23,7 @@ ALERT_RUNTIME_SETTING_KEYS = frozenset(
     }
 )
 SUPPORTED_RUNTIME_SETTING_KEYS = frozenset({CLAUDE_COMPAT_PROVIDER_KEY, *ALERT_RUNTIME_SETTING_KEYS})
+_RUNTIME_SYSTEM_SETTINGS_LOCK = asyncio.Lock()
 
 
 def _apply_alert_runtime_settings(runtime_settings: Dict[str, str]) -> None:
@@ -61,26 +62,21 @@ async def get_runtime_system_settings_db_state(db: AsyncSession) -> Tuple[Tuple[
 
 
 async def refresh_runtime_system_settings_from_db(db: AsyncSession) -> None:
-    runtime_settings, version = await load_runtime_system_settings_from_db(db)
-    apply_runtime_system_settings(
-        runtime_settings,
-        replace=True,
-        version=version,
-    )
+    async with _RUNTIME_SYSTEM_SETTINGS_LOCK:
+        runtime_settings, version = await load_runtime_system_settings_from_db(db)
+        _apply_runtime_system_settings(
+            runtime_settings,
+            replace=True,
+            version=version,
+        )
 
 
-def apply_runtime_system_settings(
+def _apply_runtime_system_settings(
     runtime_settings: Dict[str, Any],
     *,
     replace: bool = False,
     version: int | None = None,
-) -> bool:
-    current_version = int(
-        getattr(model_registry, "_runtime_system_settings_version", 0) or 0
-    )
-    if version is not None and int(version) < current_version:
-        return False
-
+) -> None:
     merged_settings = {} if replace else model_registry.current_system_settings()
     merged_settings.update(
         {
@@ -89,18 +85,22 @@ def apply_runtime_system_settings(
             if key in SUPPORTED_RUNTIME_SETTING_KEYS
         }
     )
-    next_version = (
-        int(version)
+    next_version = int(
+        version
         if version is not None
-        else max(int(time.time() * 1_000_000), current_version + 1)
+        else getattr(model_registry, "_runtime_system_settings_version", 0) or 0
     )
     _apply_alert_runtime_settings(merged_settings)
     model_registry.set_runtime_system_settings(merged_settings, version=next_version)
     model_registry.init_from_settings()
-    return True
 
 
-def apply_runtime_system_setting(setting_key: str, setting_value: str) -> None:
+async def apply_runtime_system_settings(runtime_settings: Dict[str, Any]) -> None:
+    async with _RUNTIME_SYSTEM_SETTINGS_LOCK:
+        _apply_runtime_system_settings(runtime_settings)
+
+
+async def apply_runtime_system_setting(setting_key: str, setting_value: str) -> None:
     if setting_key not in SUPPORTED_RUNTIME_SETTING_KEYS:
         return
-    apply_runtime_system_settings({setting_key: setting_value})
+    await apply_runtime_system_settings({setting_key: setting_value})

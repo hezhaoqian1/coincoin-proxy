@@ -5,7 +5,7 @@ from pathlib import Path
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .admin import router as admin_router
@@ -1121,6 +1121,21 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def normalize_alert_config_response(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path != "/admin/alerts/config":
+        return response
+    if response.status_code == 422:
+        return JSONResponse(
+            {"detail": "invalid alert config"},
+            status_code=422,
+            headers={"Cache-Control": "no-store"},
+        )
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 app.include_router(proxy_router)
 app.include_router(anthropic_router)

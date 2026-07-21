@@ -59,10 +59,13 @@ def _raise_config_validation_error(detail: str) -> None:
 def _validated_webhook_url(value: str) -> str:
     if not value.strip():
         return ""
-    parsed = urlsplit(value)
-    access_tokens = parse_qs(parsed.query, keep_blank_values=True).get(
-        "access_token", []
-    )
+    try:
+        parsed = urlsplit(value)
+        access_tokens = parse_qs(parsed.query, keep_blank_values=True).get(
+            "access_token", []
+        )
+    except ValueError:
+        _raise_config_validation_error("Invalid DingTalk alert webhook URL")
     if (
         value != value.strip()
         or parsed.scheme != "https"
@@ -157,7 +160,7 @@ async def update_alert_config(
     )
     await db.execute(statement)
     await db.commit()
-    apply_runtime_system_settings(values)
+    await apply_runtime_system_settings(values)
     return await _config_payload(db)
 
 

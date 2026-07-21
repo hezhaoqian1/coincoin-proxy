@@ -2915,7 +2915,7 @@ async def update_claude_compat_settings(payload: AdminClaudeCompatSettingsUpdate
     existing.setting_value = provider
     existing.updated_by = "admin"
     await db.commit()
-    apply_runtime_system_setting(CLAUDE_COMPAT_PROVIDER_KEY, provider)
+    await apply_runtime_system_setting(CLAUDE_COMPAT_PROVIDER_KEY, provider)
     return _claude_compat_settings_payload()
 
 
