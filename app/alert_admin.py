@@ -6,6 +6,7 @@ from typing import Any, Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import func, select
+from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .admin import admin_guard
@@ -96,13 +97,22 @@ async def update_alert_config(payload: AlertPolicyUpdate, db: AsyncSession = Dep
         POLICY_SETTING_KEYS["dedup_seconds"]: str(payload.dedup_seconds),
         POLICY_SETTING_KEYS["max_pending_tasks"]: str(payload.max_pending_tasks),
     }
-    for setting_key, setting_value in values.items():
-        row = await db.get(SystemSetting, setting_key)
-        if row is None:
-            row = SystemSetting(setting_key=setting_key, setting_value=setting_value)
-            db.add(row)
-        row.setting_value = setting_value
-        row.updated_by = "admin"
+    statement = mysql_insert(SystemSetting).values(
+        [
+            {
+                "setting_key": setting_key,
+                "setting_value": setting_value,
+                "updated_by": "admin",
+            }
+            for setting_key, setting_value in values.items()
+        ]
+    )
+    statement = statement.on_duplicate_key_update(
+        setting_value=statement.inserted.setting_value,
+        updated_by=statement.inserted.updated_by,
+        updated_at=func.now(),
+    )
+    await db.execute(statement)
     await db.commit()
     set_runtime_alert_settings(values)
     return await _config_payload(db)

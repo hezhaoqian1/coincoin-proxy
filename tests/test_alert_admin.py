@@ -9,9 +9,11 @@ import httpx
 os.environ.setdefault("COINCOIN_DATABASE_URL", "mysql://test@127.0.0.1:3306/test")
 
 import app.alert_admin as alert_admin
+import app.system_settings as system_settings
 from app.config import settings
 from app.fallback_alerts import reset_fallback_alert_state
 from app.main import app
+from app.models import AlertEvent
 
 
 class _RowsResult:
@@ -40,6 +42,9 @@ class _FakeDB:
         self.items[item.setting_key] = item
 
     async def execute(self, statement):
+        if not hasattr(self, "queries"):
+            self.queries = []
+        self.queries.append(statement)
         return self.execute_results.pop(0) if self.execute_results else _RowsResult([])
 
 
@@ -118,7 +123,7 @@ class AlertAdminApiTests(unittest.IsolatedAsyncioTestCase):
             response = await client.patch("/admin/alerts/config", json=body)
 
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(len(fake_db.added), 6)
+        self.assertIn("ON DUPLICATE KEY UPDATE", str(fake_db.queries[0]))
         fake_db.commit.assert_awaited_once()
         self.assertEqual(response.json()["availability_threshold"], 8)
         self.assertEqual(alert_admin.current_alert_policy().max_pending_tasks, 64)
@@ -197,6 +202,39 @@ class AlertAdminApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["events"][0]["request_id"], "ccreq_1")
         self.assertEqual(too_large.status_code, 422, too_large.text)
+
+    async def test_runtime_setting_state_changes_when_value_changes_in_same_second(self) -> None:
+        updated_at = datetime(2026, 7, 21, 12, 0, 0)
+        first = SimpleNamespace(
+            setting_key="upstream_failure_alert_threshold",
+            setting_value="5",
+            updated_at=updated_at,
+        )
+        second = SimpleNamespace(
+            setting_key="upstream_failure_alert_threshold",
+            setting_value="8",
+            updated_at=updated_at,
+        )
+
+        first_state = await system_settings.get_runtime_system_settings_db_state(
+            _FakeDB(execute_results=[_RowsResult([first])])
+        )
+        second_state = await system_settings.get_runtime_system_settings_db_state(
+            _FakeDB(execute_results=[_RowsResult([second])])
+        )
+
+        self.assertNotEqual(first_state, second_state)
+
+    def test_alert_event_indexes_cover_polling_filter_and_sort_shapes(self) -> None:
+        indexes = {
+            tuple(column.name for column in index.columns)
+            for index in AlertEvent.__table__.indexes
+        }
+
+        self.assertIn(("delivery_status", "completed_at"), indexes)
+        self.assertIn(("category", "created_at"), indexes)
+        self.assertIn(("delivery_status", "created_at"), indexes)
+        self.assertIn(("category", "delivery_status", "created_at"), indexes)
 
 
 if __name__ == "__main__":

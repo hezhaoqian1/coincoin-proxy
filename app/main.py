@@ -1017,7 +1017,7 @@ async def runtime_system_settings_refresh_loop(interval_seconds: int):
                 if state != last_state:
                     await refresh_runtime_system_settings_from_db(db)
                     last_state = state
-                    logger.info("refreshed runtime system settings from database count=%s", state[0])
+                    logger.info("refreshed runtime system settings from database count=%s", len(state))
         except Exception as exc:
             logger.warning("failed to refresh runtime system settings from database: %s", exc)
         await asyncio.sleep(max(1, int(interval_seconds or 10)))

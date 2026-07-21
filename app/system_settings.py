@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from typing import Any, Dict, Iterable, Tuple
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import SystemSetting
@@ -53,13 +53,10 @@ async def load_runtime_system_settings_from_db(db: AsyncSession) -> Tuple[Dict[s
     return system_setting_rows_to_snapshot(result.scalars().all())
 
 
-async def get_runtime_system_settings_db_state(db: AsyncSession) -> Tuple[int, int]:
-    result = await db.execute(select(func.count(SystemSetting.setting_key), func.max(SystemSetting.updated_at)))
-    row = result.first()
-    if not row:
-        return (0, 0)
-    count, updated_at = row
-    return (int(count or 0), _timestamp_us(updated_at))
+async def get_runtime_system_settings_db_state(db: AsyncSession) -> Tuple[Tuple[str, str], ...]:
+    result = await db.execute(select(SystemSetting))
+    snapshot, _ = system_setting_rows_to_snapshot(result.scalars().all())
+    return tuple(sorted(snapshot.items()))
 
 
 async def refresh_runtime_system_settings_from_db(db: AsyncSession) -> None:

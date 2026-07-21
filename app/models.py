@@ -149,9 +149,20 @@ Index("ix_request_logs_user_key_created", RequestLog.user_id, RequestLog.api_key
 class AlertEvent(Base):
     """Durable audit record for an outbound operator alert attempt."""
     __tablename__ = "coincoin_alert_events"
+    __table_args__ = (
+        Index("ix_alert_events_delivery_completed", "delivery_status", "completed_at"),
+        Index("ix_alert_events_category_created", "category", "created_at"),
+        Index("ix_alert_events_delivery_created", "delivery_status", "created_at"),
+        Index(
+            "ix_alert_events_category_delivery_created",
+            "category",
+            "delivery_status",
+            "created_at",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
-    category: Mapped[str] = mapped_column(String(32), default="", index=True)
+    category: Mapped[str] = mapped_column(String(32), default="")
     severity: Mapped[str] = mapped_column(String(16), default="warning")
     alert_type: Mapped[str] = mapped_column(String(64), default="")
     endpoint: Mapped[str] = mapped_column(String(64), default="")
@@ -162,7 +173,7 @@ class AlertEvent(Base):
     window_seconds: Mapped[int] = mapped_column(BigInteger, default=0)
     request_id: Mapped[str] = mapped_column(String(128), default="")
     destination_type: Mapped[str] = mapped_column(String(32), default="dingtalk")
-    delivery_status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    delivery_status: Mapped[str] = mapped_column(String(16), default="pending")
     response_status: Mapped[int] = mapped_column(BigInteger, default=0)
     error_summary: Mapped[str] = mapped_column(String(255), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)

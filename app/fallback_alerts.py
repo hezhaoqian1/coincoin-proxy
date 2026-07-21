@@ -20,6 +20,7 @@ _UPSTREAM_FAILURE_DEDUP: Dict[str, float] = {}
 _UPSTREAM_FAILURE_LOCK = asyncio.Lock()
 _UPSTREAM_FAILURE_TASKS: Set[asyncio.Task] = set()
 _RUNTIME_ALERT_SETTINGS: Dict[str, str] = {}
+_ALERT_HISTORY_TIMEOUT_SECONDS = 0.25
 
 _REDIS_FAILURE_BURST_SCRIPT = """
 local bucket_key = KEYS[1]
@@ -50,6 +51,41 @@ def _track_alert_task(task: Any) -> None:
         return
     _UPSTREAM_FAILURE_TASKS.add(task)
     task.add_done_callback(_finish_upstream_failure_task)
+
+
+def _alert_task_capacity_available(max_pending: Optional[int] = None) -> bool:
+    limit = max_pending if max_pending is not None else current_alert_policy().max_pending_tasks
+    if len(_UPSTREAM_FAILURE_TASKS) < max(1, int(limit or 1)):
+        return True
+    logger.warning("alert background task queue full pending=%s", len(_UPSTREAM_FAILURE_TASKS))
+    return False
+
+
+async def _create_alert_event_bounded(**fields: Any) -> Optional[str]:
+    try:
+        return await asyncio.wait_for(
+            create_alert_event(**fields),
+            timeout=_ALERT_HISTORY_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        logger.warning("pending alert event persistence timed out")
+    except Exception as exc:
+        logger.warning("pending alert event persistence failed error=%s", type(exc).__name__)
+    return None
+
+
+async def _complete_alert_event_bounded(event_id: Optional[str], **fields: Any) -> None:
+    if not event_id:
+        return
+    try:
+        await asyncio.wait_for(
+            complete_alert_event(event_id, **fields),
+            timeout=_ALERT_HISTORY_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        logger.warning("alert event completion persistence timed out id=%s", event_id)
+    except Exception as exc:
+        logger.warning("alert event completion persistence failed id=%s error=%s", event_id, type(exc).__name__)
 
 
 @dataclass(frozen=True)
@@ -295,9 +331,11 @@ def _dingtalk_delivery_result(response: Any) -> Tuple[bool, str]:
     try:
         payload = response.json()
     except Exception:
-        payload = {}
-    errcode = payload.get("errcode") if isinstance(payload, dict) else None
-    if errcode not in (None, 0, "0"):
+        return False, "DingTalk invalid response"
+    if not isinstance(payload, dict) or "errcode" not in payload:
+        return False, "DingTalk invalid response"
+    errcode = payload.get("errcode")
+    if errcode not in (0, "0"):
         return False, f"DingTalk errcode {str(errcode)[:32]}"
     return True, ""
 
@@ -307,7 +345,7 @@ async def _send_dingtalk_alert(alert: FallbackExhaustedAlert) -> bool:
     if not webhook_url:
         return False
     payload = build_dingtalk_text_payload(alert)
-    event_id = await create_alert_event(
+    event_id = await _create_alert_event_bounded(
         category="fallback_exhausted",
         severity="critical",
         alert_type="fallback_exhausted",
@@ -322,7 +360,7 @@ async def _send_dingtalk_alert(alert: FallbackExhaustedAlert) -> bool:
         async with httpx.AsyncClient(timeout=5.0) as client:
             response = await client.post(webhook_url, json=payload)
         delivered, error_summary = _dingtalk_delivery_result(response)
-        await complete_alert_event(
+        await _complete_alert_event_bounded(
             event_id,
             delivery_status="sent" if delivered else "failed",
             response_status=int(response.status_code or 0),
@@ -332,13 +370,13 @@ async def _send_dingtalk_alert(alert: FallbackExhaustedAlert) -> bool:
             logger.warning("dingtalk fallback alert failed status=%s", response.status_code)
         return delivered
     except Exception as exc:
-        await complete_alert_event(
+        await _complete_alert_event_bounded(
             event_id,
             delivery_status="failed",
             response_status=0,
             error_summary=f"DingTalk delivery {type(exc).__name__}",
         )
-        logger.warning("dingtalk fallback alert send failed", exc_info=True)
+        logger.warning("dingtalk fallback alert send failed error=%s", type(exc).__name__)
         return False
 
 
@@ -348,7 +386,7 @@ async def _send_upstream_failure_burst_alert(notification: UpstreamFailureBurstN
         return False
     payload = build_upstream_failure_burst_payload(notification)
     alert = notification.alert
-    event_id = await create_alert_event(
+    event_id = await _create_alert_event_bounded(
         category=notification.category,
         severity="warning" if notification.category == "rate_limit" else "critical",
         alert_type="upstream_failure_burst",
@@ -365,7 +403,7 @@ async def _send_upstream_failure_burst_alert(notification: UpstreamFailureBurstN
         async with httpx.AsyncClient(timeout=5.0) as client:
             response = await client.post(webhook_url, json=payload)
         delivered, error_summary = _dingtalk_delivery_result(response)
-        await complete_alert_event(
+        await _complete_alert_event_bounded(
             event_id,
             delivery_status="sent" if delivered else "failed",
             response_status=int(response.status_code or 0),
@@ -375,13 +413,13 @@ async def _send_upstream_failure_burst_alert(notification: UpstreamFailureBurstN
             logger.warning("dingtalk upstream failure alert failed status=%s", response.status_code)
         return delivered
     except Exception as exc:
-        await complete_alert_event(
+        await _complete_alert_event_bounded(
             event_id,
             delivery_status="failed",
             response_status=0,
             error_summary=f"DingTalk delivery {type(exc).__name__}",
         )
-        logger.warning("dingtalk upstream failure alert send failed", exc_info=True)
+        logger.warning("dingtalk upstream failure alert send failed error=%s", type(exc).__name__)
         return False
 
 
@@ -389,7 +427,7 @@ async def send_dingtalk_configuration_test() -> Dict[str, Any]:
     webhook_url = (settings.fallback_alert_webhook_url or "").strip()
     if not webhook_url:
         return {"sent": False, "event_id": None}
-    event_id = await create_alert_event(
+    event_id = await _create_alert_event_bounded(
         category="configuration_test",
         severity="info",
         alert_type="configuration_test",
@@ -400,7 +438,7 @@ async def send_dingtalk_configuration_test() -> Dict[str, Any]:
         async with httpx.AsyncClient(timeout=5.0) as client:
             response = await client.post(webhook_url, json=build_configuration_test_payload())
         delivered, error_summary = _dingtalk_delivery_result(response)
-        await complete_alert_event(
+        await _complete_alert_event_bounded(
             event_id,
             delivery_status="sent" if delivered else "failed",
             response_status=int(response.status_code or 0),
@@ -410,17 +448,19 @@ async def send_dingtalk_configuration_test() -> Dict[str, Any]:
             logger.warning("dingtalk configuration test failed status=%s", response.status_code)
         return {"sent": delivered, "event_id": event_id}
     except Exception as exc:
-        await complete_alert_event(
+        await _complete_alert_event_bounded(
             event_id,
             delivery_status="failed",
             response_status=0,
             error_summary=f"DingTalk delivery {type(exc).__name__}",
         )
-        logger.warning("dingtalk configuration test send failed", exc_info=True)
+        logger.warning("dingtalk configuration test send failed error=%s", type(exc).__name__)
         return {"sent": False, "event_id": event_id}
 
 
 def notify_fallback_exhausted(alert: FallbackExhaustedAlert) -> bool:
+    if not _alert_task_capacity_available():
+        return False
     if not _should_send(alert):
         return False
     try:
@@ -433,6 +473,8 @@ def notify_fallback_exhausted(alert: FallbackExhaustedAlert) -> bool:
 
 
 def notify_upstream_failure_burst(notification: UpstreamFailureBurstNotification) -> bool:
+    if not _alert_task_capacity_available():
+        return False
     try:
         task = asyncio.create_task(_send_upstream_failure_burst_alert(notification))
         _track_alert_task(task)
@@ -554,7 +596,7 @@ async def record_user_upstream_failure(alert: UpstreamFailureBurstAlert, *, now:
         count=count,
         window_seconds=window_seconds,
     )
-    notify_upstream_failure_burst(notification)
+    await _send_upstream_failure_burst_alert(notification)
     return True
 
 
@@ -574,8 +616,7 @@ def schedule_user_upstream_failure(alert: UpstreamFailureBurstAlert) -> bool:
     if not policy.enabled or not (settings.fallback_alert_webhook_url or "").strip() or not _failure_category(alert):
         return False
     max_pending = policy.max_pending_tasks
-    if len(_UPSTREAM_FAILURE_TASKS) >= max_pending:
-        logger.warning("upstream failure alert tracking queue full pending=%s", len(_UPSTREAM_FAILURE_TASKS))
+    if not _alert_task_capacity_available(max_pending):
         return False
     try:
         task = asyncio.create_task(record_user_upstream_failure(alert))
