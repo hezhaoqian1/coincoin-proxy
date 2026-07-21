@@ -24,7 +24,7 @@ _UPSTREAM_FAILURE_TASKS: Set[asyncio.Task] = set()
 _RUNTIME_ALERT_SETTINGS: Dict[str, str] = {}
 _ALERT_HISTORY_TIMEOUT_SECONDS = 0.25
 _DINGTALK_LOG_URL_PATTERN = re.compile(
-    r"https://oapi\.dingtalk\.com/robot/send\?[^\s\"]+",
+    r"https://oapi\.dingtalk\.com/robot/send\?[^\s]+",
     re.IGNORECASE,
 )
 

@@ -590,6 +590,26 @@ class UpstreamFailureBurstAlertTests(unittest.IsolatedAsyncioTestCase):
                 ("after-note-secret",),
                 "note='&access_token=[REDACTED]",
             ),
+            (
+                'https://oapi.dingtalk.com/robot/send?access_token=prefix"suffix',
+                ("prefix", "suffix"),
+                "access_token=[REDACTED]",
+            ),
+            (
+                'https://oapi.dingtalk.com/robot/send?note="&access_token=double-after-secret',
+                ("double-after-secret",),
+                'note="&access_token=[REDACTED]',
+            ),
+            (
+                "https://oapi.dingtalk.com/robot/send?%61ccess_token=encoded-key-secret&note=keep",
+                ("encoded-key-secret",),
+                "%61ccess_token=[REDACTED]&note=keep",
+            ),
+            (
+                "https://oapi.dingtalk.com/robot/send?access_token=fragment-secret#delivery",
+                ("fragment-secret",),
+                "access_token=[REDACTED]#delivery",
+            ),
         )
         transport = httpx.MockTransport(
             lambda request: httpx.Response(200, json={"errcode": 0})
@@ -633,12 +653,15 @@ class UpstreamFailureBurstAlertTests(unittest.IsolatedAsyncioTestCase):
                         for secret_fragment in secret_fragments:
                             self.assertNotIn(secret_fragment, rendered_messages)
                         self.assertIn(expected_url, rendered_messages)
+                        self.assertIn("HTTP/1.1", rendered_messages)
 
                 messages.clear()
                 unrelated_url = "https://example.com/path?note='&safe=value"
                 async with real_async_client(transport=transport) as client:
                     await client.get(unrelated_url)
-                self.assertIn(unrelated_url, "\n".join(messages))
+                unrelated_messages = "\n".join(messages)
+                self.assertIn(unrelated_url, unrelated_messages)
+                self.assertIn("HTTP/1.1", unrelated_messages)
         finally:
             httpx_logger.removeHandler(handler)
             httpx_logger.setLevel(original_level)
