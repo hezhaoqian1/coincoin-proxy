@@ -1,6 +1,6 @@
 # Claude Code Upstream Runbook
 
-Updated: 2026-07-02
+Updated: 2026-07-21
 
 This runbook documents the runtime setup for Claude Code-only upstreams in CoinCoin. It intentionally does not include upstream API keys or admin tokens.
 
@@ -48,6 +48,32 @@ The Claude Code family is exposed through public `claude-*` model ids. The Sonne
 - `status`: `active`
 
 Claude public models should remain route-only for Claude Code upstream coverage. Do not silently fall back to GPT-backed Claude aliases for these models.
+
+## Runtime Fallback and Failure Records
+
+Both non-streaming and streaming `POST /v1/messages` requests immediately try the next active provider-channel route when the current channel returns `429`, `502`, or `503`, or when the initial upstream connection times out or fails. The retry keeps the public CoinCoin model id and changes only the selected channel and provider model. A stream is never replayed after response events have already been emitted because replaying partial output can duplicate text or tool calls.
+
+Every failed upstream attempt is written to `coincoin_request_logs`, including attempts with no token usage. Buffered log rows receive stable ids before the database flush, are retried after transient database failures, and use idempotent inserts so an ambiguous commit cannot create duplicates. Failed attempts have zero token usage and zero retail/wholesale charge. Intermediate failed attempts do not increment aggregate request totals; the final success or terminal failure increments the logical request exactly once. Streaming requests use endpoint `messages:stream`; non-streaming requests use `messages`.
+
+Terminal upstream failures return a short CoinCoin error rather than the provider or Cloudflare response body. The response body and `request-id` header include a generated `ccreq_*` id. The same id is stored at the start of `upstream_request_id` in the failed RequestLog so support can trace the client-visible error without exposing the upstream hostname, Cloudflare Ray id, API key, or raw HTML.
+
+## User-path Upstream Failure Alerts
+
+The gateway counts only failures observed while handling authenticated user `/v1/messages` traffic. Provider discovery, channel monitors, health probes, and admin connection tests call their own upstream paths and do not enter these counters.
+
+Failures are grouped per channel and endpoint into availability (`5xx` and connection errors), capacity (`429`), and authentication (`401`/`403`) categories. The default policy alerts after 5 availability/capacity failures or 3 authentication failures in a rolling 60-second window, then deduplicates that category key for 300 seconds. Configure it with:
+
+```bash
+COINCOIN_FALLBACK_ALERT_WEBHOOK_URL=https://oapi.dingtalk.com/robot/send?access_token=...
+COINCOIN_FALLBACK_ALERT_KEYWORD=CoinCoinAlert
+COINCOIN_FALLBACK_ALERT_MAX_PENDING_TASKS=256
+COINCOIN_UPSTREAM_FAILURE_ALERT_THRESHOLD=5
+COINCOIN_UPSTREAM_AUTH_ALERT_THRESHOLD=3
+COINCOIN_UPSTREAM_FAILURE_ALERT_WINDOW_SECONDS=60
+COINCOIN_UPSTREAM_FAILURE_ALERT_DEDUP_SECONDS=300
+```
+
+When `COINCOIN_REDIS_URL` is configured, the rolling counter and deduplication are shared across replicas. Without Redis, the gateway uses a process-local counter; this remains non-blocking but each replica counts independently. Counter work runs off the request path, is bounded by `COINCOIN_FALLBACK_ALERT_MAX_PENDING_TASKS`, and in-flight DingTalk deliveries are drained during graceful shutdown. Alert delivery failures never fail the user request.
 
 ## Pricing Multiplier Policy
 

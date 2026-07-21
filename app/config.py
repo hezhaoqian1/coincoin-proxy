@@ -46,6 +46,11 @@ class Settings(BaseSettings):
     fallback_alert_webhook_url: str = ""
     fallback_alert_keyword: str = ""
     fallback_alert_dedup_seconds: int = 900
+    fallback_alert_max_pending_tasks: int = 256
+    upstream_failure_alert_threshold: int = 5
+    upstream_auth_alert_threshold: int = 3
+    upstream_failure_alert_window_seconds: int = 60
+    upstream_failure_alert_dedup_seconds: int = 300
 
     # Gateway-backed public models (legacy/internal OpenAI-compatible gateway)
     gateway_base_url: str = ""

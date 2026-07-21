@@ -303,6 +303,7 @@ class UsageBuffer:
         effective_cache_creation_input_per_million: float = 0.0,
         reservation_id: str = "",
         server_side_tool_usage_details: Optional[dict] = None,
+        request_log_only: bool = False,
     ) -> None:
         """添加使用量（高性能，不阻塞请求）
         
@@ -330,6 +331,7 @@ class UsageBuffer:
             and video_count == 0
             and usage_unit_count == 0
             and not cost_cents_override
+            and not request_log_only
         ):
             return
         
@@ -385,7 +387,7 @@ class UsageBuffer:
             wholesale_cost_cents = 0.0
 
         retail_charge_cents = float(retail_charge_cents_override) if retail_charge_cents_override is not None else cost_cents
-        resolved_reservation_id = (reservation_id or current_quota_reservation_id() or "")[:64]
+        resolved_reservation_id = "" if request_log_only else (reservation_id or current_quota_reservation_id() or "")[:64]
 
         resolved_usage_unit_type = (usage_unit_type or "tokens").strip() or "tokens"
         resolved_usage_unit_count = int(
@@ -403,27 +405,29 @@ class UsageBuffer:
         # 使用分片锁，减少竞争
         lock = self._get_shard_lock(user_id)
         async with lock:
-            # 每日统计
-            bucket = self._daily[(user_id, day)]
-            bucket["input_tokens"] += int(input_tokens)
-            bucket["output_tokens"] += int(output_tokens)
-            bucket["images_total"] += int(image_count or 0)
-            bucket["videos_total"] += int(video_count or 0)
-            bucket["requests"] += int(requests)
-            bucket["cost_cents_f"] += cost_cents  # 保留浮点精度
-            
-            # 用户累计
-            user_bucket = self._usage_by_user[user_id]
-            user_bucket["input_tokens"] += int(input_tokens)
-            user_bucket["output_tokens"] += int(output_tokens)
-            user_bucket["images_total"] += int(image_count or 0)
-            user_bucket["videos_total"] += int(video_count or 0)
-            user_bucket["cost_cents_f"] += cost_cents  # 保留浮点精度
-            if api_key_id:
-                self._cost_by_api_key[(api_key_id or "")[:32]] += cost_cents
+            if not request_log_only:
+                # 每日统计
+                bucket = self._daily[(user_id, day)]
+                bucket["input_tokens"] += int(input_tokens)
+                bucket["output_tokens"] += int(output_tokens)
+                bucket["images_total"] += int(image_count or 0)
+                bucket["videos_total"] += int(video_count or 0)
+                bucket["requests"] += int(requests)
+                bucket["cost_cents_f"] += cost_cents  # 保留浮点精度
+
+                # 用户累计
+                user_bucket = self._usage_by_user[user_id]
+                user_bucket["input_tokens"] += int(input_tokens)
+                user_bucket["output_tokens"] += int(output_tokens)
+                user_bucket["images_total"] += int(image_count or 0)
+                user_bucket["videos_total"] += int(video_count or 0)
+                user_bucket["cost_cents_f"] += cost_cents  # 保留浮点精度
+                if api_key_id:
+                    self._cost_by_api_key[(api_key_id or "")[:32]] += cost_cents
             
             # 请求日志（append 到 list，纳秒级）
             request_log = {
+                "id": generate_id("rl_"),
                 "user_id": user_id,
                 "api_key_id": (api_key_id or "")[:32],
                 "endpoint": endpoint,
@@ -471,11 +475,12 @@ class UsageBuffer:
                 "duration_ms": int(duration_ms),
                 "status_code": int(status_code),
                 "route_reason": (route_reason or "")[:128],
+                "requests": int(requests or 0),
                 "created_at": datetime.utcnow(),
             }
             self._request_logs.append(request_log)
 
-        if resolved_reservation_id:
+        if resolved_reservation_id and not request_log_only:
             await commit_current_quota_reservation(round(cost_cents))
         schedule_usage_event_shadow(request_log)
 
@@ -534,7 +539,7 @@ class UsageBuffer:
                     lock.release()
         return daily, usage_by_user, request_logs
 
-    async def requeue(self, daily, usage_by_user) -> None:
+    async def requeue(self, daily, usage_by_user, request_logs=None) -> None:
         """重新入队（刷新失败时）
         
         使用全局锁保证原子性
@@ -558,6 +563,8 @@ class UsageBuffer:
                     user_bucket["images_total"] += int(usage.get("images_total", 0))
                     user_bucket["videos_total"] += int(usage.get("videos_total", 0))
                     user_bucket["cost_cents_f"] += float(usage.get("cost_cents_f", 0))
+                if request_logs:
+                    self._request_logs[0:0] = list(request_logs)
             finally:
                 for lock in self._locks:
                     lock.release()
@@ -567,13 +574,67 @@ usage_buffer = UsageBuffer()
 
 
 def schedule_usage_add(*args, **kwargs) -> asyncio.Task:
-    if not kwargs.get("reservation_id"):
+    if not kwargs.get("request_log_only") and not kwargs.get("reservation_id"):
         reservation_id = current_quota_reservation_id()
         if reservation_id:
             kwargs["reservation_id"] = reservation_id
     task = asyncio.create_task(usage_buffer.add(*args, **kwargs))
     register_current_quota_usage_task(task)
     return task
+
+
+def _request_log_insert_values(log: dict) -> dict:
+    return {
+        "id": log.get("id") or generate_id("rl_"),
+        "user_id": log["user_id"],
+        "api_key_id": log.get("api_key_id") or None,
+        "endpoint": log["endpoint"],
+        "model": log["model"],
+        "input_tokens": log["input_tokens"],
+        "output_tokens": log["output_tokens"],
+        "cached_tokens": log.get("cached_tokens", 0),
+        "cache_read_tokens": log.get("cache_read_tokens", log.get("cached_tokens", 0)),
+        "cache_creation_tokens": log.get("cache_creation_tokens", 0),
+        "server_side_tool_usage_details": log.get("server_side_tool_usage_details") or None,
+        "image_count": log.get("image_count", 0),
+        "video_count": log.get("video_count", 0),
+        "provider_model": log.get("provider_model", ""),
+        "customer_model_alias": log.get("customer_model_alias", ""),
+        "usage_unit_type": log.get("usage_unit_type", "tokens"),
+        "usage_unit_count": log.get("usage_unit_count", 0),
+        "billable_sku": log.get("billable_sku", ""),
+        "upstream_request_id": log.get("upstream_request_id", ""),
+        "reservation_id": log.get("reservation_id", ""),
+        "channel_id": log.get("channel_id", ""),
+        "channel_type": log.get("channel_type", ""),
+        "provider_platform": log.get("provider_platform", ""),
+        "provider_account_fingerprint": log.get("provider_account_fingerprint", ""),
+        "fallback_from_channel_id": log.get("fallback_from_channel_id", ""),
+        "route_attempt": log.get("route_attempt", 0),
+        "station_id": log.get("station_id", ""),
+        "station_alias": log.get("station_alias", ""),
+        "resolved_public_model": log.get("resolved_public_model", ""),
+        "wholesale_cost_cents": log.get("wholesale_cost_cents", 0),
+        "retail_charge_cents": log.get("retail_charge_cents", log["cost_cents"]),
+        "price_version": log.get("price_version", 0),
+        "pricing_mode": log.get("pricing_mode", ""),
+        "model_multiplier": log.get("model_multiplier", 1.0),
+        "output_multiplier": log.get("output_multiplier", 1.0),
+        "cache_read_multiplier": log.get("cache_read_multiplier", 0.0),
+        "image_multiplier": log.get("image_multiplier", 1.0),
+        "video_multiplier": log.get("video_multiplier", 1.0),
+        "base_price_input_per_million": log.get("base_price_input_per_million", 0),
+        "base_price_output_per_million": log.get("base_price_output_per_million", 0),
+        "base_price_per_image_cents": log.get("base_price_per_image_cents", 0.0),
+        "base_price_per_video_cents": log.get("base_price_per_video_cents", 0.0),
+        "price_per_video_cents": log.get("price_per_video_cents", 0.0),
+        "effective_cached_input_per_million": log.get("effective_cached_input_per_million", 0.0),
+        "cost_cents": log["cost_cents"],
+        "duration_ms": log["duration_ms"],
+        "status_code": log["status_code"],
+        "route_reason": log.get("route_reason", ""),
+        "created_at": log["created_at"],
+    }
 
 
 async def flush_once() -> None:
@@ -652,66 +713,18 @@ async def flush_once() -> None:
 
             # 批量插入请求日志
             if request_logs:
-                session.add_all([
-                    RequestLog(
-                        id=generate_id("rl_"),
-                        user_id=log["user_id"],
-                        api_key_id=log.get("api_key_id") or None,
-                        endpoint=log["endpoint"],
-                        model=log["model"],
-                        input_tokens=log["input_tokens"],
-                        output_tokens=log["output_tokens"],
-                        cached_tokens=log.get("cached_tokens", 0),
-                        cache_read_tokens=log.get("cache_read_tokens", log.get("cached_tokens", 0)),
-                        cache_creation_tokens=log.get("cache_creation_tokens", 0),
-                        server_side_tool_usage_details=log.get("server_side_tool_usage_details") or None,
-                        image_count=log.get("image_count", 0),
-                        video_count=log.get("video_count", 0),
-                        provider_model=log.get("provider_model", ""),
-                        customer_model_alias=log.get("customer_model_alias", ""),
-                        usage_unit_type=log.get("usage_unit_type", "tokens"),
-                        usage_unit_count=log.get("usage_unit_count", 0),
-                        billable_sku=log.get("billable_sku", ""),
-                        upstream_request_id=log.get("upstream_request_id", ""),
-                        reservation_id=log.get("reservation_id", ""),
-                        channel_id=log.get("channel_id", ""),
-                        channel_type=log.get("channel_type", ""),
-                        provider_platform=log.get("provider_platform", ""),
-                        provider_account_fingerprint=log.get("provider_account_fingerprint", ""),
-                        fallback_from_channel_id=log.get("fallback_from_channel_id", ""),
-                        route_attempt=log.get("route_attempt", 0),
-                        station_id=log.get("station_id", ""),
-                        station_alias=log.get("station_alias", ""),
-                        resolved_public_model=log.get("resolved_public_model", ""),
-                        wholesale_cost_cents=log.get("wholesale_cost_cents", 0),
-                        retail_charge_cents=log.get("retail_charge_cents", log["cost_cents"]),
-                        price_version=log.get("price_version", 0),
-                        pricing_mode=log.get("pricing_mode", ""),
-                        model_multiplier=log.get("model_multiplier", 1.0),
-                        output_multiplier=log.get("output_multiplier", 1.0),
-                        cache_read_multiplier=log.get("cache_read_multiplier", 0.0),
-                        image_multiplier=log.get("image_multiplier", 1.0),
-                        video_multiplier=log.get("video_multiplier", 1.0),
-                        base_price_input_per_million=log.get("base_price_input_per_million", 0),
-                        base_price_output_per_million=log.get("base_price_output_per_million", 0),
-                        base_price_per_image_cents=log.get("base_price_per_image_cents", 0.0),
-                        base_price_per_video_cents=log.get("base_price_per_video_cents", 0.0),
-                        price_per_video_cents=log.get("price_per_video_cents", 0.0),
-                        effective_cached_input_per_million=log.get("effective_cached_input_per_million", 0.0),
-                        cost_cents=log["cost_cents"],
-                        duration_ms=log["duration_ms"],
-                        status_code=log["status_code"],
-                        route_reason=log.get("route_reason", ""),
-                        created_at=log["created_at"],
-                    )
-                    for log in request_logs
+                request_log_stmt = mysql_insert(RequestLog).values([
+                    _request_log_insert_values(log) for log in request_logs
                 ])
+                request_log_stmt = request_log_stmt.on_duplicate_key_update(
+                    id=request_log_stmt.inserted.id,
+                )
+                await session.execute(request_log_stmt)
 
             await session.commit()
     except Exception:
         logger.exception("usage flush failed; re-queueing")
-        await usage_buffer.requeue(daily, usage_by_user)
-        # 请求日志丢失可接受，不 requeue（避免无限重试）
+        await usage_buffer.requeue(daily, usage_by_user, request_logs)
 
 
 async def flush_loop(interval_seconds: int) -> None:
