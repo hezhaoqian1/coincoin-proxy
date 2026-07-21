@@ -121,3 +121,5 @@ Entries are workspace records, not authoritative runtime decisions.
 | 2026-07-22 | artifact | docs/aegis/work/2026-07-21-admin-alert-center/evidence-bundle-draft-final-pre-ship-verification.json | 2026-07-21-admin-alert-center evidence final-pre-ship-verification |
 | 2026-07-22 | artifact | docs/aegis/work/2026-07-21-admin-alert-center/gate-input-pack.json | 2026-07-21-admin-alert-center gate input pack |
 | 2026-07-22 | work | docs/aegis/work/2026-07-21-admin-alert-center/proof-bundle.md | 2026-07-21-admin-alert-center proof bundle |
+| 2026-07-22 | spec | docs/aegis/specs/2026-07-22-alert-webhook-management-brief.md | Alert Webhook Management Brief |
+| 2026-07-22 | plan | docs/aegis/plans/2026-07-22-alert-webhook-management.md | Alert Webhook Management Implementation Plan |
