@@ -121,3 +121,23 @@ Entries are workspace records, not authoritative runtime decisions.
 | 2026-07-22 | artifact | docs/aegis/work/2026-07-21-admin-alert-center/evidence-bundle-draft-final-pre-ship-verification.json | 2026-07-21-admin-alert-center evidence final-pre-ship-verification |
 | 2026-07-22 | artifact | docs/aegis/work/2026-07-21-admin-alert-center/gate-input-pack.json | 2026-07-21-admin-alert-center gate input pack |
 | 2026-07-22 | work | docs/aegis/work/2026-07-21-admin-alert-center/proof-bundle.md | 2026-07-21-admin-alert-center proof bundle |
+| 2026-07-22 | spec | docs/aegis/specs/2026-07-22-alert-webhook-management-brief.md | Alert Webhook Management Brief |
+| 2026-07-22 | plan | docs/aegis/plans/2026-07-22-alert-webhook-management.md | Alert Webhook Management Implementation Plan |
+| 2026-07-22 | work | docs/aegis/work/2026-07-22-alert-webhook-management/10-intent.md | Alert Webhook Management intent |
+| 2026-07-22 | work | docs/aegis/work/2026-07-22-alert-webhook-management/20-checkpoint.md | Alert Webhook Management checkpoint |
+| 2026-07-22 | work | docs/aegis/work/2026-07-22-alert-webhook-management/90-evidence.md | Alert Webhook Management evidence |
+| 2026-07-22 | work | docs/aegis/work/2026-07-22-alert-webhook-management/99-reflection.md | Alert Webhook Management reflection |
+| 2026-07-22 | artifact | docs/aegis/work/2026-07-22-alert-webhook-management/task-intent-draft.json | Alert Webhook Management task intent draft |
+| 2026-07-22 | artifact | docs/aegis/work/2026-07-22-alert-webhook-management/baseline-read-set-hint.json | Alert Webhook Management baseline read-set hint |
+| 2026-07-22 | artifact | docs/aegis/work/2026-07-22-alert-webhook-management/baseline-usage-draft.json | Alert Webhook Management baseline usage draft |
+| 2026-07-22 | artifact | docs/aegis/work/2026-07-22-alert-webhook-management/impact-statement-draft.json | Alert Webhook Management impact statement draft |
+| 2026-07-22 | artifact | docs/aegis/work/2026-07-22-alert-webhook-management/todo-checkpoint-draft.json | Alert Webhook Management todo checkpoint draft |
+| 2026-07-22 | artifact | docs/aegis/work/2026-07-22-alert-webhook-management/drift-check-draft.json | Alert Webhook Management drift check draft |
+| 2026-07-22 | artifact | docs/aegis/work/2026-07-22-alert-webhook-management/evidence-bundle-draft-backend-runtime-red-green-review.json | 2026-07-22-alert-webhook-management evidence backend-runtime-red-green-review |
+| 2026-07-22 | artifact | docs/aegis/work/2026-07-22-alert-webhook-management/resume-state-hint.json | 2026-07-22-alert-webhook-management resume state hint |
+| 2026-07-22 | adr | docs/aegis/adr/ADR-0004-admin-managed-alert-webhook.md | ADR-0004 - Make SystemSetting the primary alert webhook owner |
+| 2026-07-22 | artifact | docs/aegis/work/2026-07-22-alert-webhook-management/evidence-bundle-draft-admin-ui-shared-validator-review.json | 2026-07-22-alert-webhook-management evidence admin-ui-shared-validator-review |
+| 2026-07-22 | artifact | docs/aegis/work/2026-07-22-alert-webhook-management/evidence-bundle-draft-final-prelanding-runtime-security-review.json | 2026-07-22-alert-webhook-management evidence final-prelanding-runtime-security-review |
+| 2026-07-22 | artifact | docs/aegis/work/2026-07-22-alert-webhook-management/evidence-bundle-draft-full-suite-baseline-differential.json | 2026-07-22-alert-webhook-management evidence full-suite-baseline-differential |
+| 2026-07-22 | artifact | docs/aegis/work/2026-07-22-alert-webhook-management/gate-input-pack.json | 2026-07-22-alert-webhook-management gate input pack |
+| 2026-07-22 | work | docs/aegis/work/2026-07-22-alert-webhook-management/proof-bundle.md | 2026-07-22-alert-webhook-management proof bundle |

@@ -3,30 +3,71 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field, model_validator
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import func, select
-from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .admin import admin_guard
-from .config import settings
 from .db import get_db
 from .fallback_alerts import (
     current_alert_policy,
+    current_alert_webhook_url,
+    current_sendable_alert_webhook_url,
+    is_valid_dingtalk_webhook_url,
     send_dingtalk_configuration_test,
-    set_runtime_alert_settings,
 )
-from .models import AlertEvent, SystemSetting
+from .models import AlertEvent
+from .system_settings import (
+    RuntimeSystemSettingsPersistenceError,
+    persist_runtime_system_settings,
+)
+
+
+class AlertAdminRoute(APIRoute):
+    def get_route_handler(self):
+        route_handler = super().get_route_handler()
+        if self.path != "/admin/alerts/config":
+            return route_handler
+
+        async def config_safe_handler(request: Request):
+            try:
+                response = await route_handler(request)
+            except RequestValidationError:
+                response = JSONResponse(
+                    {"detail": "invalid alert config"},
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                )
+            except StarletteHTTPException as exc:
+                detail = (
+                    "invalid alert config"
+                    if exc.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+                    else exc.detail
+                )
+                response = JSONResponse(
+                    {"detail": detail},
+                    status_code=exc.status_code,
+                    headers=dict(exc.headers or {}),
+                )
+            response.headers["Cache-Control"] = "no-store"
+            return response
+
+        return config_safe_handler
 
 
 router = APIRouter(
     prefix="/admin/alerts",
     tags=["admin-alerts"],
     dependencies=[Depends(admin_guard)],
+    route_class=AlertAdminRoute,
 )
 
 POLICY_SETTING_KEYS = {
+    "webhook_url": "fallback_alert_webhook_url",
     "enabled": "fallback_alert_enabled",
     "availability_threshold": "upstream_failure_alert_threshold",
     "authentication_threshold": "upstream_auth_alert_threshold",
@@ -37,6 +78,7 @@ POLICY_SETTING_KEYS = {
 
 
 class AlertPolicyUpdate(BaseModel):
+    webhook_url: str
     enabled: bool
     availability_threshold: int = Field(ge=1, le=1000)
     authentication_threshold: int = Field(ge=1, le=1000)
@@ -44,11 +86,26 @@ class AlertPolicyUpdate(BaseModel):
     dedup_seconds: int = Field(ge=1, le=86400)
     max_pending_tasks: int = Field(ge=1, le=4096)
 
-    @model_validator(mode="after")
-    def validate_dedup_window(self) -> "AlertPolicyUpdate":
-        if self.dedup_seconds < self.window_seconds:
-            raise ValueError("dedup_seconds must be greater than or equal to window_seconds")
-        return self
+
+def _raise_config_validation_error(detail: str) -> None:
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail=detail,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+def _validated_webhook_url(value: str) -> str:
+    if not value.strip():
+        if any(
+            ord(character) < 0x20 or ord(character) == 0x7F
+            for character in value
+        ):
+            _raise_config_validation_error("Invalid DingTalk alert webhook URL")
+        return ""
+    if not is_valid_dingtalk_webhook_url(value):
+        _raise_config_validation_error("Invalid DingTalk alert webhook URL")
+    return value
 
 
 def _iso(value: Any) -> Optional[str]:
@@ -70,9 +127,11 @@ async def _latest_delivery_times(db: AsyncSession) -> dict[str, Optional[str]]:
 
 async def _config_payload(db: AsyncSession) -> dict[str, Any]:
     policy = current_alert_policy()
+    webhook_url = current_alert_webhook_url()
     return {
         "enabled": policy.enabled,
-        "webhook_configured": bool((settings.fallback_alert_webhook_url or "").strip()),
+        "webhook_url": webhook_url,
+        "webhook_configured": bool(current_sendable_alert_webhook_url()),
         "availability_threshold": policy.availability_threshold,
         "authentication_threshold": policy.authentication_threshold,
         "window_seconds": policy.window_seconds,
@@ -88,8 +147,21 @@ async def get_alert_config(db: AsyncSession = Depends(get_db)):
 
 
 @router.patch("/config")
-async def update_alert_config(payload: AlertPolicyUpdate, db: AsyncSession = Depends(get_db)):
+async def update_alert_config(
+    raw_payload: Any = Body(...),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        payload = AlertPolicyUpdate.model_validate(raw_payload)
+    except ValidationError:
+        _raise_config_validation_error("Invalid alert configuration")
+    webhook_url = _validated_webhook_url(payload.webhook_url)
+    if payload.dedup_seconds < payload.window_seconds:
+        _raise_config_validation_error(
+            "dedup_seconds must be greater than or equal to window_seconds"
+        )
     values = {
+        POLICY_SETTING_KEYS["webhook_url"]: webhook_url,
         POLICY_SETTING_KEYS["enabled"]: "true" if payload.enabled else "false",
         POLICY_SETTING_KEYS["availability_threshold"]: str(payload.availability_threshold),
         POLICY_SETTING_KEYS["authentication_threshold"]: str(payload.authentication_threshold),
@@ -97,30 +169,19 @@ async def update_alert_config(payload: AlertPolicyUpdate, db: AsyncSession = Dep
         POLICY_SETTING_KEYS["dedup_seconds"]: str(payload.dedup_seconds),
         POLICY_SETTING_KEYS["max_pending_tasks"]: str(payload.max_pending_tasks),
     }
-    statement = mysql_insert(SystemSetting).values(
-        [
-            {
-                "setting_key": setting_key,
-                "setting_value": setting_value,
-                "updated_by": "admin",
-            }
-            for setting_key, setting_value in values.items()
-        ]
-    )
-    statement = statement.on_duplicate_key_update(
-        setting_value=statement.inserted.setting_value,
-        updated_by=statement.inserted.updated_by,
-        updated_at=func.now(),
-    )
-    await db.execute(statement)
-    await db.commit()
-    set_runtime_alert_settings(values)
+    try:
+        await persist_runtime_system_settings(db, values)
+    except RuntimeSystemSettingsPersistenceError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to save alert configuration",
+        ) from None
     return await _config_payload(db)
 
 
 @router.post("/test")
 async def test_alert_destination():
-    if not (settings.fallback_alert_webhook_url or "").strip():
+    if not current_sendable_alert_webhook_url():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="DingTalk alert webhook is not configured",

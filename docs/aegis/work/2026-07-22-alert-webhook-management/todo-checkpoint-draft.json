@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "2026-07-22-alert-webhook-management",
+  "currentTodo": "Ship, verify Railway, and initialize the production Webhook.",
+  "completedTodos": [
+    "Tasks 1 and 2 implementation, architecture records, focused verification, full-suite differential, and pre-landing review."
+  ],
+  "activeSlice": "Task 3 release and live initialization from docs/aegis/plans/2026-07-22-alert-webhook-management.md",
+  "evidenceRefs": [
+    "docs/aegis/work/2026-07-22-alert-webhook-management/evidence-bundle-draft-final-prelanding-runtime-security-review.json",
+    "docs/aegis/work/2026-07-22-alert-webhook-management/evidence-bundle-draft-full-suite-baseline-differential.json"
+  ],
+  "blockedOn": null,
+  "nextStep": "Push feature branch, create and merge PR, verify Railway and health, then write and test the supplied Webhook through the protected API.",
+  "updatedAt": "2026-07-22"
+}

@@ -181,6 +181,7 @@
 }
 
 .sr-alert-policy-grid input[type='number'],
+.sr-alert-policy-grid input[type='url'],
 .sr-alert-filters select {
   background: var(--sr-surface);
   border: 1px solid var(--sr-border);
@@ -189,6 +190,20 @@
   font: inherit;
   min-height: 36px;
   padding: 7px 9px;
+}
+
+.sr-alert-webhook-field {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+.sr-alert-webhook-field input {
+  width: 100%;
+}
+
+.sr-alert-webhook-field small {
+  color: var(--sr-muted);
+  font-size: 10px;
 }
 
 .sr-alert-policy-grid input:focus,

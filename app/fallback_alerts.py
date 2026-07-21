@@ -1,10 +1,12 @@
 import asyncio
 import hashlib
 import logging
+import re
 import time
 from collections import deque
 from dataclasses import dataclass
 from typing import Any, Deque, Dict, Optional, Set, Tuple
+from urllib.parse import parse_qs, unquote_plus, urlsplit
 
 import httpx
 
@@ -21,6 +23,10 @@ _UPSTREAM_FAILURE_LOCK = asyncio.Lock()
 _UPSTREAM_FAILURE_TASKS: Set[asyncio.Task] = set()
 _RUNTIME_ALERT_SETTINGS: Dict[str, str] = {}
 _ALERT_HISTORY_TIMEOUT_SECONDS = 0.25
+_DINGTALK_LOG_URL_PATTERN = re.compile(
+    r"https://oapi\.dingtalk\.com/robot/send\?[^\s]+",
+    re.IGNORECASE,
+)
 
 _REDIS_FAILURE_BURST_SCRIPT = """
 local bucket_key = KEYS[1]
@@ -148,6 +154,7 @@ def _int_setting(key: str, default: int, minimum: int, maximum: int) -> int:
 
 def set_runtime_alert_settings(runtime_settings: Dict[str, Any]) -> None:
     keys = {
+        "fallback_alert_webhook_url",
         "fallback_alert_enabled",
         "upstream_failure_alert_threshold",
         "upstream_auth_alert_threshold",
@@ -163,6 +170,46 @@ def set_runtime_alert_settings(runtime_settings: Dict[str, Any]) -> None:
             if key in keys
         }
     )
+
+
+def current_alert_webhook_url() -> str:
+    if "fallback_alert_webhook_url" in _RUNTIME_ALERT_SETTINGS:
+        return _RUNTIME_ALERT_SETTINGS["fallback_alert_webhook_url"]
+    return str(settings.fallback_alert_webhook_url or "").strip()
+
+
+def is_valid_dingtalk_webhook_url(value: str) -> bool:
+    if not value or any(
+        ord(character) < 0x20 or ord(character) == 0x7F
+        for character in value
+    ):
+        return False
+    try:
+        parsed = urlsplit(value)
+        access_tokens = parse_qs(parsed.query, keep_blank_values=True).get(
+            "access_token", []
+        )
+    except ValueError:
+        return False
+    return not (
+        value != value.strip()
+        or parsed.scheme != "https"
+        or parsed.netloc != "oapi.dingtalk.com"
+        or parsed.path != "/robot/send"
+        or len(access_tokens) != 1
+        or not access_tokens[0]
+        or any(
+            ord(character) < 0x20
+            or ord(character) == 0x7F
+            or character.isspace()
+            for character in access_tokens[0]
+        )
+    )
+
+
+def current_sendable_alert_webhook_url() -> str:
+    webhook_url = current_alert_webhook_url()
+    return webhook_url if is_valid_dingtalk_webhook_url(webhook_url) else ""
 
 
 def current_alert_policy() -> AlertPolicy:
@@ -218,7 +265,7 @@ def _dedup_key(alert: FallbackExhaustedAlert) -> str:
 def _should_send(alert: FallbackExhaustedAlert, now: Optional[float] = None) -> bool:
     if not current_alert_policy().enabled:
         return False
-    webhook_url = (settings.fallback_alert_webhook_url or "").strip()
+    webhook_url = current_sendable_alert_webhook_url()
     if not webhook_url:
         return False
     if int(alert.route_attempt or 0) <= 0 and not (alert.route_reason or "").startswith(("channel_fallback:", "system_fallback:")):
@@ -340,8 +387,68 @@ def _dingtalk_delivery_result(response: Any) -> Tuple[bool, str]:
     return True, ""
 
 
+def _redact_dingtalk_access_token(value: str) -> str:
+    def redact_url(match: re.Match[str]) -> str:
+        url = match.group(0)
+        query_start = url.index("?") + 1
+        fragment_start = url.find("#", query_start)
+        query_end = fragment_start if fragment_start >= 0 else len(url)
+        query_parts = url[query_start:query_end].split("&")
+        for index, query_part in enumerate(query_parts):
+            name, separator, _ = query_part.partition("=")
+            if separator and unquote_plus(name) == "access_token":
+                query_parts[index] = f"{name}=[REDACTED]"
+        return "".join(
+            (
+                url[:query_start],
+                "&".join(query_parts),
+                url[query_end:],
+            )
+        )
+
+    return _DINGTALK_LOG_URL_PATTERN.sub(redact_url, value)
+
+
+class _DingTalkAccessTokenLogFilter(logging.Filter):
+    _coincoin_dingtalk_token_filter = True
+
+    @staticmethod
+    def _redact_value(value: Any) -> Any:
+        rendered = str(value)
+        redacted = _redact_dingtalk_access_token(rendered)
+        return redacted if redacted != rendered else value
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.msg, str):
+            record.msg = _redact_dingtalk_access_token(record.msg)
+        if isinstance(record.args, tuple):
+            record.args = tuple(self._redact_value(value) for value in record.args)
+        elif isinstance(record.args, dict):
+            record.args = {
+                key: self._redact_value(value) for key, value in record.args.items()
+            }
+        return True
+
+
+_HTTPX_DINGTALK_TOKEN_FILTER = _DingTalkAccessTokenLogFilter()
+
+
+def _install_httpx_dingtalk_token_filter() -> None:
+    httpx_logger = logging.getLogger("httpx")
+    if not any(
+        getattr(installed_filter, "_coincoin_dingtalk_token_filter", False)
+        for installed_filter in httpx_logger.filters
+    ):
+        httpx_logger.addFilter(_HTTPX_DINGTALK_TOKEN_FILTER)
+
+
+def _dingtalk_http_client() -> httpx.AsyncClient:
+    _install_httpx_dingtalk_token_filter()
+    return httpx.AsyncClient(timeout=5.0)
+
+
 async def _send_dingtalk_alert(alert: FallbackExhaustedAlert) -> bool:
-    webhook_url = (settings.fallback_alert_webhook_url or "").strip()
+    webhook_url = current_sendable_alert_webhook_url()
     if not webhook_url:
         return False
     payload = build_dingtalk_text_payload(alert)
@@ -357,7 +464,7 @@ async def _send_dingtalk_alert(alert: FallbackExhaustedAlert) -> bool:
         delivery_status="pending",
     )
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with _dingtalk_http_client() as client:
             response = await client.post(webhook_url, json=payload)
         delivered, error_summary = _dingtalk_delivery_result(response)
         await _complete_alert_event_bounded(
@@ -381,7 +488,7 @@ async def _send_dingtalk_alert(alert: FallbackExhaustedAlert) -> bool:
 
 
 async def _send_upstream_failure_burst_alert(notification: UpstreamFailureBurstNotification) -> bool:
-    webhook_url = (settings.fallback_alert_webhook_url or "").strip()
+    webhook_url = current_sendable_alert_webhook_url()
     if not webhook_url:
         return False
     payload = build_upstream_failure_burst_payload(notification)
@@ -400,7 +507,7 @@ async def _send_upstream_failure_burst_alert(notification: UpstreamFailureBurstN
         delivery_status="pending",
     )
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with _dingtalk_http_client() as client:
             response = await client.post(webhook_url, json=payload)
         delivered, error_summary = _dingtalk_delivery_result(response)
         await _complete_alert_event_bounded(
@@ -424,7 +531,7 @@ async def _send_upstream_failure_burst_alert(notification: UpstreamFailureBurstN
 
 
 async def send_dingtalk_configuration_test() -> Dict[str, Any]:
-    webhook_url = (settings.fallback_alert_webhook_url or "").strip()
+    webhook_url = current_sendable_alert_webhook_url()
     if not webhook_url:
         return {"sent": False, "event_id": None}
     event_id = await _create_alert_event_bounded(
@@ -435,7 +542,7 @@ async def send_dingtalk_configuration_test() -> Dict[str, Any]:
         delivery_status="pending",
     )
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with _dingtalk_http_client() as client:
             response = await client.post(webhook_url, json=build_configuration_test_payload())
         delivered, error_summary = _dingtalk_delivery_result(response)
         await _complete_alert_event_bounded(
@@ -545,7 +652,7 @@ async def _record_upstream_failure_redis(
 
 async def record_user_upstream_failure(alert: UpstreamFailureBurstAlert, *, now: Optional[float] = None) -> bool:
     policy = current_alert_policy()
-    if not policy.enabled or not (settings.fallback_alert_webhook_url or "").strip():
+    if not policy.enabled or not current_sendable_alert_webhook_url():
         return False
     category = _failure_category(alert)
     if not category:
@@ -613,7 +720,7 @@ def _finish_upstream_failure_task(task: asyncio.Task) -> None:
 def schedule_user_upstream_failure(alert: UpstreamFailureBurstAlert) -> bool:
     """Track alert bursts without delaying the channel fallback request path."""
     policy = current_alert_policy()
-    if not policy.enabled or not (settings.fallback_alert_webhook_url or "").strip() or not _failure_category(alert):
+    if not policy.enabled or not current_sendable_alert_webhook_url() or not _failure_category(alert):
         return False
     max_pending = policy.max_pending_tasks
     if not _alert_task_capacity_available(max_pending):

@@ -47,3 +47,10 @@ No runtime path is retired. The design explicitly rejects duplicate failure pers
 ## Boundary
 
 This ADR is an advisory Aegis Method Pack record. It does not grant completion authority or replace project-authoritative architecture sources.
+
+## Superseded By
+
+- Status: superseded
+- Date: 2026-07-22
+- ADR: docs/aegis/adr/ADR-0004-admin-managed-alert-webhook.md
+- Reason: ADR-0003 deliberately rejected database-backed webhook ownership; the implemented administrator-managed SystemSetting contract replaces that portion while retaining its request-failure and delivery-audit separation.

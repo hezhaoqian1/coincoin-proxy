@@ -478,15 +478,33 @@ $Block | Set-Content $Config -Encoding UTF8
 
 grok`
 
-        const claudeUnixCommand = `CLAUDE_DIR="\${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+        const claudeUnixCommand = `set -eu
+
+CLAUDE_DIR="\${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 SETTINGS_FILE="$CLAUDE_DIR/settings.json"
+
+PYTHON_BIN=""
+for candidate in /usr/bin/python3 python3; do
+  resolved="$(command -v "$candidate" 2>/dev/null || true)"
+  [ -n "$resolved" ] || continue
+  probe="$("$resolved" -c 'import sys; print("COINCOIN_PYTHON_OK" if sys.version_info >= (3, 8) else "")' 2>/dev/null || true)"
+  if [ "$probe" = "COINCOIN_PYTHON_OK" ]; then
+    PYTHON_BIN="$resolved"
+    break
+  fi
+done
+
+if [ -z "$PYTHON_BIN" ]; then
+  echo "Unable to find a working Python 3.8+ interpreter." >&2
+  exit 1
+fi
 
 mkdir -p "$CLAUDE_DIR"
 if [ -f "$SETTINGS_FILE" ]; then
   cp "$SETTINGS_FILE" "$SETTINGS_FILE.bak.$(date +%Y%m%d%H%M%S)"
 fi
 
-SETTINGS_FILE="$SETTINGS_FILE" python3 <<'EOF'
+SETTINGS_FILE="$SETTINGS_FILE" "$PYTHON_BIN" <<'EOF'
 import json
 import os
 from pathlib import Path
@@ -513,7 +531,26 @@ env.update({
 })
 data["env"] = env
 
-path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\\n", encoding="utf-8")
+serialized = json.dumps(data, indent=2, ensure_ascii=False) + "\\n"
+temporary_path = path.with_name(f".{path.name}.coincoin.tmp")
+try:
+    temporary_path.write_text(serialized, encoding="utf-8")
+    os.chmod(temporary_path, 0o600)
+    os.replace(temporary_path, path)
+finally:
+    if temporary_path.exists():
+        temporary_path.unlink()
+
+saved = json.loads(path.read_text(encoding="utf-8"))
+saved_env = saved.get("env") if isinstance(saved, dict) else None
+if not isinstance(saved_env, dict):
+    raise SystemExit("Claude Code settings verification failed: env is missing.")
+if saved_env.get("ANTHROPIC_BASE_URL") != "${SITE_ROOT}":
+    raise SystemExit("Claude Code settings verification failed: base URL mismatch.")
+if saved_env.get("ANTHROPIC_AUTH_TOKEN") != "${snippetKey}":
+    raise SystemExit("Claude Code settings verification failed: token mismatch.")
+
+print("Claude Code settings verified; existing settings were preserved.")
 EOF
 
 claude`
@@ -939,7 +976,7 @@ Write-Host "saved $Output"`
                     {
                         title: 'macOS / Linux 一键配置',
                         platform: 'macOS / Linux',
-                        summary: '按 Claude Code 官方 `~/.claude/settings.json` 机制写入 URL 和 Key；旧文件先备份，再保留其他设置。',
+                        summary: '按 Claude Code 官方 `~/.claude/settings.json` 机制写入 URL 和 Key；旧文件先备份，保留其他设置，回读验证成功后才启动 Claude。',
                         code: claudeUnixCommand,
                     },
                     {

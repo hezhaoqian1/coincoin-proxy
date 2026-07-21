@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "baselineRefs": [
+    "docs/aegis/adr/ADR-0004-admin-managed-alert-webhook.md",
+    "docs/aegis/baseline/service-reliability.md"
+  ],
+  "impactStatement": "docs/aegis/work/2026-07-22-alert-webhook-management/impact-statement-draft.json",
+  "compatPlan": "Public APIs, routing, billing, RequestLog, alert counters, and AlertEvent semantics remain unchanged.",
+  "retirementPlan": "Railway-only ownership is retired while the absent-key Railway fallback remains intentionally active.",
+  "evidenceBundle": [
+    "docs/aegis/work/2026-07-22-alert-webhook-management/evidence-bundle-draft-admin-ui-shared-validator-review.json",
+    "docs/aegis/work/2026-07-22-alert-webhook-management/evidence-bundle-draft-backend-runtime-red-green-review.json",
+    "docs/aegis/work/2026-07-22-alert-webhook-management/evidence-bundle-draft-final-prelanding-runtime-security-review.json",
+    "docs/aegis/work/2026-07-22-alert-webhook-management/evidence-bundle-draft-full-suite-baseline-differential.json"
+  ]
+}

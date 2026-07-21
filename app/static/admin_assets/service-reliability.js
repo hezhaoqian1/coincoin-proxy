@@ -4,6 +4,8 @@
   let pollTimer = null;
   let loading = false;
   let alertPolicyDirty = false;
+  let alertEditRevision = 0;
+  let alertConfigLoadGeneration = 0;
   let alertActionRunning = false;
   const runningMonitors = new Set();
 
@@ -99,6 +101,7 @@
 
     if (!alertPolicyDirty) {
       document.getElementById('serviceReliabilityAlertEnabled').checked = enabled;
+      document.getElementById('serviceReliabilityAlertWebhookUrl').value = payload.webhook_url ?? '';
       document.getElementById('serviceReliabilityAlertAvailabilityThreshold').value = payload.availability_threshold ?? '';
       document.getElementById('serviceReliabilityAlertAuthenticationThreshold').value = payload.authentication_threshold ?? '';
       document.getElementById('serviceReliabilityAlertWindowSeconds').value = payload.window_seconds ?? '';
@@ -136,6 +139,7 @@
 
   async function loadServiceReliabilityAlerts() {
     if (!pageIsActive()) return;
+    const loadGeneration = ++alertConfigLoadGeneration;
     const category = document.getElementById('serviceReliabilityAlertCategoryFilter')?.value || '';
     const deliveryStatus = document.getElementById('serviceReliabilityAlertStatusFilter')?.value || '';
     const params = new URLSearchParams({ limit: '50' });
@@ -147,20 +151,61 @@
         fetch(`/admin/alerts/events?${params.toString()}`, { cache: 'no-store', headers: window.adminHeaders() }),
       ]);
       const [config, events] = await Promise.all([configResponse.json(), eventsResponse.json()]);
+      if (loadGeneration !== alertConfigLoadGeneration) return;
       if (!configResponse.ok) throw new Error(config.detail || '告警配置加载失败');
       if (!eventsResponse.ok) throw new Error(events.detail || '告警历史加载失败');
       renderAlertConfig(config);
       renderAlertEvents(events);
     } catch (error) {
+      if (loadGeneration !== alertConfigLoadGeneration) return;
       console.error(error);
       const body = document.getElementById('serviceReliabilityAlertEventsBody');
       if (body) body.innerHTML = `<tr><td colspan="8"><div class="sr-error">${html(error.message || '告警数据加载失败')}</div></td></tr>`;
     }
   }
 
+  function pythonIsSpaceCodePoint(codePoint) {
+    return (codePoint >= 0x0009 && codePoint <= 0x000d)
+      || (codePoint >= 0x001c && codePoint <= 0x0020)
+      || codePoint === 0x0085
+      || codePoint === 0x00a0
+      || codePoint === 0x1680
+      || (codePoint >= 0x2000 && codePoint <= 0x200a)
+      || (codePoint >= 0x2028 && codePoint <= 0x2029)
+      || codePoint === 0x202f
+      || codePoint === 0x205f
+      || codePoint === 0x3000;
+  }
+
+  function validDingTalkWebhookUrl(value) {
+    if (/[\u0000-\u001f\u007f]/.test(value)) return false;
+    const rawUrlMatch = value.match(
+      /^([A-Za-z][A-Za-z0-9+.-]*):\/\/([^/?#]+)([^?#]*)(?:\?[^#]*)?(?:#[\s\S]*)?$/,
+    );
+    if (
+      !rawUrlMatch
+      || rawUrlMatch[1].toLowerCase() !== 'https'
+      || rawUrlMatch[2] !== 'oapi.dingtalk.com'
+      || rawUrlMatch[3] !== '/robot/send'
+    ) return false;
+    try {
+      const webhookUrl = new URL(value);
+      const accessTokens = webhookUrl.searchParams.getAll('access_token');
+      return accessTokens.length === 1
+        && accessTokens[0] !== ''
+        && !Array.from(accessTokens[0]).some(character => {
+          const codePoint = character.codePointAt(0);
+          return codePoint < 0x20 || codePoint === 0x7f || pythonIsSpaceCodePoint(codePoint);
+        });
+    } catch (_error) {
+      return false;
+    }
+  }
+
   function alertPolicyPayload() {
     return {
       enabled: document.getElementById('serviceReliabilityAlertEnabled').checked,
+      webhook_url: document.getElementById('serviceReliabilityAlertWebhookUrl').value.trim(),
       availability_threshold: Number(document.getElementById('serviceReliabilityAlertAvailabilityThreshold').value),
       authentication_threshold: Number(document.getElementById('serviceReliabilityAlertAuthenticationThreshold').value),
       window_seconds: Number(document.getElementById('serviceReliabilityAlertWindowSeconds').value),
@@ -171,8 +216,16 @@
 
   async function saveServiceReliabilityAlertConfig() {
     if (alertActionRunning) return;
+    const submittedRevision = alertEditRevision;
     const payload = alertPolicyPayload();
-    if (Object.entries(payload).some(([key, value]) => key !== 'enabled' && (!Number.isInteger(value) || value < 1))) {
+    const numericPolicyFields = [
+      'availability_threshold',
+      'authentication_threshold',
+      'window_seconds',
+      'dedup_seconds',
+      'max_pending_tasks',
+    ];
+    if (numericPolicyFields.some(key => !Number.isInteger(payload[key]) || payload[key] < 1)) {
       if (typeof window.toast === 'function') window.toast('告警策略必须填写有效的正整数', 'error');
       return;
     }
@@ -180,6 +233,11 @@
       if (typeof window.toast === 'function') window.toast('去重时间不能短于统计窗口', 'error');
       return;
     }
+    if (payload.webhook_url && !validDingTalkWebhookUrl(payload.webhook_url)) {
+      if (typeof window.toast === 'function') window.toast('Webhook 地址必须是有效的钉钉机器人地址', 'error');
+      return;
+    }
+    alertConfigLoadGeneration += 1;
     alertActionRunning = true;
     document.getElementById('serviceReliabilityAlertSave').disabled = true;
     document.getElementById('serviceReliabilityAlertTest').disabled = true;
@@ -191,9 +249,10 @@
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.detail || '告警策略保存失败');
-      alertPolicyDirty = false;
+      alertConfigLoadGeneration += 1;
+      if (alertEditRevision === submittedRevision) alertPolicyDirty = false;
       renderAlertConfig(result);
-      if (typeof window.toast === 'function') window.toast('告警策略已保存并在当前实例生效', 'success');
+      if (typeof window.toast === 'function') window.toast('告警配置已保存', 'success');
     } catch (error) {
       console.error(error);
       if (typeof window.toast === 'function') window.toast(error.message || '告警策略保存失败', 'error');
@@ -446,7 +505,10 @@
   });
 
   document.querySelectorAll('[data-sr-alert-policy]').forEach(control => {
-    control.addEventListener('input', () => { alertPolicyDirty = true; });
+    control.addEventListener('input', () => {
+      alertEditRevision += 1;
+      alertPolicyDirty = true;
+    });
   });
   document.getElementById('serviceReliabilityAlertSave')?.addEventListener('click', saveServiceReliabilityAlertConfig);
   document.getElementById('serviceReliabilityAlertTest')?.addEventListener('click', testServiceReliabilityAlertDestination);
