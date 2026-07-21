@@ -74,7 +74,12 @@ def _validated_webhook_url(value: str) -> str:
         or parsed.path != "/robot/send"
         or len(access_tokens) != 1
         or not access_tokens[0]
-        or any(character.isspace() for character in access_tokens[0])
+        or any(
+            ord(character) < 0x20
+            or ord(character) == 0x7F
+            or character.isspace()
+            for character in access_tokens[0]
+        )
     ):
         _raise_config_validation_error("Invalid DingTalk alert webhook URL")
     return value

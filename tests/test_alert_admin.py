@@ -340,6 +340,10 @@ class AlertAdminApiTests(unittest.IsolatedAsyncioTestCase):
             "https://oapi.dingtalk.com/robot/send?access_token=must%0Anot-echo",
             "https://oapi.dingtalk.com/robot/send?access_token=must%20not-echo",
             "https://oapi.dingtalk.com/robot/send?access_token=must-not-echo\x7f",
+            "https://oapi.dingtalk.com/robot/send?access_token=must%00not-echo",
+            "https://oapi.dingtalk.com/robot/send?access_token=must%01not-echo",
+            "https://oapi.dingtalk.com/robot/send?access_token=must%1Bnot-echo",
+            "https://oapi.dingtalk.com/robot/send?access_token=must%7Fnot-echo",
         )
         for webhook_url in invalid_urls:
             with self.subTest(webhook_url=webhook_url):
@@ -356,11 +360,20 @@ class AlertAdminApiTests(unittest.IsolatedAsyncioTestCase):
                 }
 
                 async with await self._client() as client:
-                    response = await client.patch("/admin/alerts/config", json=body)
+                    response = await client.patch(
+                        "/admin/alerts/config",
+                        json=body,
+                        headers={"origin": "https://admin.example"},
+                    )
 
                 self.assertEqual(response.status_code, 422, response.text)
+                self.assertEqual(
+                    response.json(),
+                    {"detail": "invalid alert config"},
+                )
                 self.assertNotIn("must-not-echo", response.text)
                 self.assertEqual(response.headers["cache-control"], "no-store")
+                self.assertEqual(response.headers["access-control-allow-origin"], "*")
                 fake_db.commit.assert_not_awaited()
 
     async def test_patch_sanitizes_webhook_url_parser_errors(self) -> None:
