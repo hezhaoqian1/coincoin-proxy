@@ -167,9 +167,9 @@ Impact/compatibility: documentation only after implementation behavior is final.
 - [x] Run focused backend tests, frontend/static tests, compile checks, and
   `git diff --check`.
 - [x] Run an independent pre-landing review and fix concrete findings.
-- [ ] Push the feature branch, create a PR, merge to `master`, and remove the
+- [x] Push the feature branch, create a PR, merge to `master`, and remove the
   remote feature branch.
-- [ ] Confirm Railway deployment success and `GET https://coincoin.ai/health`.
+- [x] Confirm Railway deployment success and `GET https://coincoin.ai/health`.
 
 ## Execution Readiness View
 
