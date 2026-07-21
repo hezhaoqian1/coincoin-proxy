@@ -94,7 +94,7 @@ from .reliability import invalidate_reliability_cache
 from .model_pricing_overrides import refresh_model_pricing_registry_from_db
 from .system_settings import (
     CLAUDE_COMPAT_PROVIDER_KEY,
-    apply_runtime_system_setting,
+    persist_runtime_system_settings,
     refresh_runtime_system_settings_from_db,
 )
 from .config import settings as _settings
@@ -2906,16 +2906,10 @@ async def update_claude_compat_settings(payload: AdminClaudeCompatSettingsUpdate
         if not str(getattr(_settings, "claude_compat_base_url", "") or "").strip():
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="COINCOIN_CLAUDE_COMPAT_BASE_URL is not configured")
 
-    existing = (
-        await db.execute(select(SystemSetting).where(SystemSetting.setting_key == CLAUDE_COMPAT_PROVIDER_KEY))
-    ).scalar_one_or_none()
-    if existing is None:
-        existing = SystemSetting(setting_key=CLAUDE_COMPAT_PROVIDER_KEY)
-        db.add(existing)
-    existing.setting_value = provider
-    existing.updated_by = "admin"
-    await db.commit()
-    await apply_runtime_system_setting(CLAUDE_COMPAT_PROVIDER_KEY, provider)
+    await persist_runtime_system_settings(
+        db,
+        {CLAUDE_COMPAT_PROVIDER_KEY: provider},
+    )
     return _claude_compat_settings_payload()
 
 

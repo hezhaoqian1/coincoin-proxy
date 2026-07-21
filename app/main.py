@@ -1129,10 +1129,16 @@ async def normalize_alert_config_response(request: Request, call_next):
     if request.url.path != "/admin/alerts/config":
         return response
     if response.status_code == 422:
+        headers = {
+            key: value
+            for key, value in response.headers.items()
+            if key.lower() not in {"content-length", "content-type"}
+        }
+        headers["cache-control"] = "no-store"
         return JSONResponse(
             {"detail": "invalid alert config"},
             status_code=422,
-            headers={"Cache-Control": "no-store"},
+            headers=headers,
         )
     response.headers["Cache-Control"] = "no-store"
     return response

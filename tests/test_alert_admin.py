@@ -62,6 +62,7 @@ class AlertAdminApiTests(unittest.IsolatedAsyncioTestCase):
         )
         settings.admin_token = "admin-secret"
         settings.fallback_alert_webhook_url = "https://oapi.dingtalk.example/robot?access_token=top-secret"
+        system_settings._RUNTIME_SYSTEM_SETTINGS_LOCK = asyncio.Lock()
         model_registry.clear_runtime_system_settings()
         reset_fallback_alert_state()
 
@@ -94,6 +95,74 @@ class AlertAdminApiTests(unittest.IsolatedAsyncioTestCase):
 
         app.dependency_overrides[alert_admin.get_db] = fake_get_db
 
+    async def _assert_concurrent_patch_last_commit_wins(self, final_webhook_url: str):
+        canonical_db = {"webhook_url": None}
+        first_committed = asyncio.Event()
+        release_first_commit = asyncio.Event()
+
+        class _CommitOrderDB(_FakeDB):
+            def __init__(self, webhook_url, *, delay_commit_return=False):
+                super().__init__()
+                self.webhook_url = webhook_url
+                self.delay_commit_return = delay_commit_return
+                self.commit = AsyncMock(side_effect=self._commit)
+
+            async def _commit(self):
+                canonical_db["webhook_url"] = self.webhook_url
+                if self.delay_commit_return:
+                    first_committed.set()
+                    await release_first_commit.wait()
+
+        first_url = "https://oapi.dingtalk.com/robot/send?access_token=first-test-token"
+        databases = iter(
+            (
+                _CommitOrderDB(first_url, delay_commit_return=True),
+                _CommitOrderDB(final_webhook_url),
+            )
+        )
+
+        async def fake_get_db():
+            yield next(databases)
+
+        app.dependency_overrides[alert_admin.get_db] = fake_get_db
+
+        def body(webhook_url):
+            return {
+                "webhook_url": webhook_url,
+                "enabled": True,
+                "availability_threshold": 5,
+                "authentication_threshold": 3,
+                "window_seconds": 60,
+                "dedup_seconds": 300,
+                "max_pending_tasks": 64,
+            }
+
+        async def patch_config(webhook_url):
+            async with await self._client() as client:
+                return await client.patch(
+                    "/admin/alerts/config",
+                    json=body(webhook_url),
+                )
+
+        first_task = asyncio.create_task(patch_config(first_url))
+        await asyncio.wait_for(first_committed.wait(), timeout=0.1)
+        second_task = asyncio.create_task(patch_config(final_webhook_url))
+        try:
+            with self.assertRaises(asyncio.TimeoutError):
+                await asyncio.wait_for(asyncio.shield(second_task), timeout=0.01)
+        finally:
+            release_first_commit.set()
+        first_response, second_response = await asyncio.gather(first_task, second_task)
+
+        self.assertEqual(first_response.status_code, 200, first_response.text)
+        self.assertEqual(second_response.status_code, 200, second_response.text)
+        self.assertEqual(canonical_db["webhook_url"], final_webhook_url)
+        self.assertEqual(alert_admin.current_alert_webhook_url(), final_webhook_url)
+        self.assertEqual(
+            model_registry.current_system_settings()["fallback_alert_webhook_url"],
+            final_webhook_url,
+        )
+
     async def test_config_requires_admin_token(self) -> None:
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://testserver"
@@ -108,9 +177,15 @@ class AlertAdminApiTests(unittest.IsolatedAsyncioTestCase):
             {},
             {
                 "content": b'{"webhook_url":"must-not-echo-malformed"',
-                "headers": {"content-type": "application/json"},
+                "headers": {
+                    "content-type": "application/json",
+                    "origin": "https://admin.example",
+                },
             },
-            {"json": ["must-not-echo-non-object"]},
+            {
+                "json": ["must-not-echo-non-object"],
+                "headers": {"origin": "https://admin.example"},
+            },
         )
         self._override_db(_FakeDB())
 
@@ -129,6 +204,11 @@ class AlertAdminApiTests(unittest.IsolatedAsyncioTestCase):
                     )
                     self.assertNotIn("must-not-echo", response.text)
                     self.assertEqual(response.headers["cache-control"], "no-store")
+                    if "headers" in request_kwargs:
+                        self.assertEqual(
+                            response.headers["access-control-allow-origin"],
+                            "*",
+                        )
 
     async def test_config_returns_complete_effective_webhook_without_caching(self) -> None:
         fake_db = _FakeDB(
@@ -255,6 +335,11 @@ class AlertAdminApiTests(unittest.IsolatedAsyncioTestCase):
             "https://oapi.dingtalk.com/robot/send?access_token=must-not-echo&access_token=",
             "https://oapi.dingtalk.com/robot/send?access_token=%20must-not-echo%20",
             "https://oapi.dingtalk.com:not-a-port/robot/send?access_token=must-not-echo",
+            "\x00https://oapi.dingtalk.com/robot/send?access_token=must-not-echo",
+            "https://oapi.ding\ntalk.com/robot/send?access_token=must-not-echo",
+            "https://oapi.dingtalk.com/robot/send?access_token=must%0Anot-echo",
+            "https://oapi.dingtalk.com/robot/send?access_token=must%20not-echo",
+            "https://oapi.dingtalk.com/robot/send?access_token=must-not-echo\x7f",
         )
         for webhook_url in invalid_urls:
             with self.subTest(webhook_url=webhook_url):
@@ -292,13 +377,26 @@ class AlertAdminApiTests(unittest.IsolatedAsyncioTestCase):
         }
 
         async with await self._client(raise_app_exceptions=False) as client:
-            response = await client.patch("/admin/alerts/config", json=body)
+            response = await client.patch(
+                "/admin/alerts/config",
+                json=body,
+                headers={"origin": "https://admin.example"},
+            )
 
         self.assertEqual(response.status_code, 422, response.text)
         self.assertEqual(response.json(), {"detail": "invalid alert config"})
         self.assertNotIn("must-not-echo-parser", response.text)
         self.assertEqual(response.headers["cache-control"], "no-store")
+        self.assertEqual(response.headers["access-control-allow-origin"], "*")
         fake_db.commit.assert_not_awaited()
+
+    async def test_concurrent_patch_last_nonempty_commit_wins(self) -> None:
+        await self._assert_concurrent_patch_last_commit_wins(
+            "https://oapi.dingtalk.com/robot/send?access_token=second-test-token"
+        )
+
+    async def test_concurrent_patch_last_empty_commit_disables_webhook(self) -> None:
+        await self._assert_concurrent_patch_last_commit_wins("")
 
     async def test_patch_rejects_dedup_shorter_than_window(self) -> None:
         self._override_db(_FakeDB())
@@ -463,15 +561,15 @@ class AlertAdminApiTests(unittest.IsolatedAsyncioTestCase):
                 return await client.patch("/admin/alerts/config", json=body)
 
         patch_task = asyncio.create_task(patch_config())
-        await asyncio.wait_for(patch_committed.wait(), timeout=0.1)
         try:
             with self.assertRaises(asyncio.TimeoutError):
-                await asyncio.wait_for(asyncio.shield(patch_task), timeout=0.01)
+                await asyncio.wait_for(patch_committed.wait(), timeout=0.01)
         finally:
             release_refresh.set()
         response, _ = await asyncio.gather(patch_task, refresh_task)
 
         self.assertEqual(response.status_code, 200, response.text)
+        self.assertTrue(patch_committed.is_set())
         self.assertEqual(alert_admin.current_alert_webhook_url(), newer_url)
         self.assertEqual(
             model_registry.current_system_settings()["fallback_alert_webhook_url"],

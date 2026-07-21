@@ -7,7 +7,6 @@ from urllib.parse import parse_qs, urlsplit
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import func, select
-from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .admin import admin_guard
@@ -17,8 +16,8 @@ from .fallback_alerts import (
     current_alert_webhook_url,
     send_dingtalk_configuration_test,
 )
-from .models import AlertEvent, SystemSetting
-from .system_settings import apply_runtime_system_settings
+from .models import AlertEvent
+from .system_settings import persist_runtime_system_settings
 
 
 router = APIRouter(
@@ -57,6 +56,8 @@ def _raise_config_validation_error(detail: str) -> None:
 
 
 def _validated_webhook_url(value: str) -> str:
+    if any(ord(character) < 0x20 or ord(character) == 0x7F for character in value):
+        _raise_config_validation_error("Invalid DingTalk alert webhook URL")
     if not value.strip():
         return ""
     try:
@@ -73,7 +74,7 @@ def _validated_webhook_url(value: str) -> str:
         or parsed.path != "/robot/send"
         or len(access_tokens) != 1
         or not access_tokens[0]
-        or access_tokens[0] != access_tokens[0].strip()
+        or any(character.isspace() for character in access_tokens[0])
     ):
         _raise_config_validation_error("Invalid DingTalk alert webhook URL")
     return value
@@ -143,24 +144,7 @@ async def update_alert_config(
         POLICY_SETTING_KEYS["dedup_seconds"]: str(payload.dedup_seconds),
         POLICY_SETTING_KEYS["max_pending_tasks"]: str(payload.max_pending_tasks),
     }
-    statement = mysql_insert(SystemSetting).values(
-        [
-            {
-                "setting_key": setting_key,
-                "setting_value": setting_value,
-                "updated_by": "admin",
-            }
-            for setting_key, setting_value in values.items()
-        ]
-    )
-    statement = statement.on_duplicate_key_update(
-        setting_value=statement.inserted.setting_value,
-        updated_by=statement.inserted.updated_by,
-        updated_at=func.now(),
-    )
-    await db.execute(statement)
-    await db.commit()
-    await apply_runtime_system_settings(values)
+    await persist_runtime_system_settings(db, values)
     return await _config_payload(db)
 
 

@@ -4537,9 +4537,10 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response.status_code, 200, response.text)
             payload = response.json()
             self.assertEqual(payload["provider"], "kiro_go")
-            self.assertEqual(len(fake_db.added), 1)
-            self.assertEqual(fake_db.added[0].setting_key, "claude_compat_provider")
-            self.assertEqual(fake_db.added[0].setting_value, "kiro_go")
+            self.assertEqual(len(fake_db.added), 0)
+            statement_params = fake_db.queries[0].compile().params.values()
+            self.assertIn("claude_compat_provider", statement_params)
+            self.assertIn("kiro_go", statement_params)
             self.assertEqual(fake_db.commits, 1)
             self.assertEqual(model_registry.current_claude_compat_provider(), "kiro_go")
         finally:
