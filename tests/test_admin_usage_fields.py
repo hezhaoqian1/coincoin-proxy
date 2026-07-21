@@ -14,6 +14,7 @@ from fastapi import HTTPException
 from app.main import app
 import app.main as main_module
 import app.admin as admin_module
+import app.alert_admin as alert_admin_module
 import app.billing as billing_module
 import app.epay as epay_module
 import app.payment as payment_module
@@ -509,14 +510,16 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("alertConfigLoadGeneration", reliability_js)
         self.assertIn("document.getElementById('serviceReliabilityAlertWebhookUrl').value = payload.webhook_url ?? '';", reliability_js)
         self.assertIn("webhook_url: document.getElementById('serviceReliabilityAlertWebhookUrl').value.trim()", reliability_js)
-        self.assertIn("if (payload.webhook_url && !validDingTalkWebhookUrl(rawWebhookUrl))", reliability_js)
+        self.assertIn("if (payload.webhook_url && !validDingTalkWebhookUrl(payload.webhook_url))", reliability_js)
         self.assertIn("webhookUrl.protocol === 'https:'", reliability_js)
         self.assertIn("webhookUrl.host === 'oapi.dingtalk.com'", reliability_js)
         self.assertIn("webhookUrl.pathname === '/robot/send'", reliability_js)
         self.assertIn("webhookUrl.searchParams.getAll('access_token')", reliability_js)
         self.assertIn("accessTokens.length === 1", reliability_js)
         self.assertIn("accessTokens[0] !== ''", reliability_js)
-        self.assertIn("/[\\s\\u0000-\\u001f\\u007f]/.test(accessTokens[0])", reliability_js)
+        self.assertIn("pythonIsSpaceCodePoint", reliability_js)
+        self.assertIn("Array.from(accessTokens[0]).some", reliability_js)
+        self.assertNotIn("/[\\s\\u0000-\\u001f\\u007f]/", reliability_js)
         self.assertIn("Webhook 地址必须是有效的钉钉机器人地址", reliability_js)
         self.assertIn("payload.webhook_configured === true", reliability_js)
         self.assertIn("alertActionRunning || !configured", reliability_js)
@@ -525,7 +528,7 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('data-page="alerts"', admin_html)
         self.assertNotIn('id="page-alerts"', admin_html)
 
-    def _run_service_reliability_node_probe(self, probe: str) -> None:
+    def _run_service_reliability_node_probe(self, probe: str, payload=None) -> None:
         reliability_js = Path(admin_module.__file__).parent / "static" / "admin_assets" / "service-reliability.js"
         harness = r"""
 const assert = require('assert').strict;
@@ -628,8 +631,11 @@ function createApp(fetchImpl) {
   return { window, element };
 }
 """
+        command = ["node", "-e", harness + probe, str(reliability_js)]
+        if payload is not None:
+            command.append(json.dumps(payload))
         result = subprocess.run(
-            ["node", "-e", harness + probe, str(reliability_js)],
+            command,
             check=False,
             capture_output=True,
             text=True,
@@ -704,27 +710,65 @@ function createApp(fetchImpl) {
         )
 
     def test_service_reliability_webhook_validation_matches_backend_contract(self) -> None:
+        unchanged_cases = [
+            ("https://oapi.dingtalk.com/robot/send?access_token=synthetic-token", True),
+            ("https://oapi.dingtalk.com/robot/send?access_token=synthetic-token#delivery", True),
+            ("HTTPS://oapi.dingtalk.com/robot/send?access_token=synthetic-token", True),
+            ("https://OAPI.DINGTALK.COM/robot/send?access_token=synthetic-token", False),
+            ("https://oapi.dingtalk.com:443/robot/send?access_token=synthetic-token", False),
+            ("https://user@oapi.dingtalk.com/robot/send?access_token=synthetic-token", False),
+            ("https://oapi.dingtalk.com/not-robot/send?access_token=synthetic-token", False),
+            ("https://oapi.dingtalk.com/robot/send?access_token=abc%00def", False),
+            ("https://oapi.dingtalk.com/robot/send?access_token=abc%0Adef", False),
+            ("https://oapi.dingtalk.com/robot/send?access_token=abc%20def", False),
+            ("https://oapi.dingtalk.com/robot/send?access_token=synthetic%C2%85token", False),
+            ("https://oapi.dingtalk.com/robot/send?access_token=synthetic%EF%BB%BFtoken", True),
+            ("https://oapi.dingtalk.com/robot/send?access_token=first&access_token=second", False),
+            ("https://oapi.dingtalk.com/robot/send?access_token=", False),
+            ("https://oapi.dingtalk.com/robot/send?access_token=abc\x00def", False),
+            ("https://oapi.dingtalk.com/robot/send?access_token=abc\x7fdef", False),
+        ]
+        valid_url = "https://oapi.dingtalk.com/robot/send?access_token=synthetic-token"
+        cases = [(value, value, expected) for value, expected in unchanged_cases]
+        cases.append((f"  {valid_url}  ", valid_url, True))
+        backend_results = []
+        for _raw_value, submitted_value, _expected in cases:
+            try:
+                alert_admin_module._validated_webhook_url(submitted_value)
+            except HTTPException:
+                backend_results.append(False)
+            else:
+                backend_results.append(True)
+        self.assertEqual(backend_results, [expected for _raw, _submitted, expected in cases])
+
         self._run_service_reliability_node_probe(
             r"""
-const app = createApp(async url => { throw new Error(`unexpected request: ${url}`); });
-const valid = app.window.__hooks.validDingTalkWebhookUrl;
-const cases = [
-  [webhook('synthetic-token'), true],
-  [`${webhook('synthetic-token')}#delivery`, true],
-  ['https://OAPI.DINGTALK.COM/robot/send?access_token=synthetic-token', false],
-  ['https://oapi.dingtalk.com:443/robot/send?access_token=synthetic-token', false],
-  ['https://user@oapi.dingtalk.com/robot/send?access_token=synthetic-token', false],
-  ['https://oapi.dingtalk.com/robot/send?access_token=abc%00def', false],
-  ['https://oapi.dingtalk.com/robot/send?access_token=abc%0Adef', false],
-  ['https://oapi.dingtalk.com/robot/send?access_token=abc%20def', false],
-  ['https://oapi.dingtalk.com/robot/send?access_token=first&access_token=second', false],
-  ['https://oapi.dingtalk.com/robot/send?access_token=', false],
-  [`https://oapi.dingtalk.com/robot/send?access_token=abc${String.fromCharCode(0)}def`, false],
-  [`https://oapi.dingtalk.com/robot/send?access_token=abc${String.fromCharCode(127)}def`, false],
-];
-const mismatches = cases.flatMap(([value, expected], index) => valid(value) === expected ? [] : [index]);
-assert.deepEqual(mismatches, []);
-"""
+(async () => {
+  const validatorApp = createApp(async url => { throw new Error(`unexpected request: ${url}`); });
+  const valid = validatorApp.window.__hooks.validDingTalkWebhookUrl;
+  const cases = JSON.parse(process.argv[2]);
+  const mismatches = cases.flatMap(([rawValue, submittedValue, expected], index) => (
+    rawValue.trim() === submittedValue && valid(submittedValue) === expected ? [] : [index]
+  ));
+  assert.deepEqual(mismatches, []);
+
+  const [rawValue, submittedValue] = cases.find(([raw, submitted]) => raw !== submitted);
+  let patchPayload = null;
+  const saveApp = createApp(async (url, options = {}) => {
+    if (options.method === 'PATCH') {
+      patchPayload = JSON.parse(options.body);
+      return response(config(submittedValue));
+    }
+    if (url === '/admin/alerts/config') return response(config(submittedValue));
+    if (String(url).startsWith('/admin/alerts/events?')) return response({ events: [] });
+    throw new Error(`unexpected request: ${url}`);
+  });
+  saveApp.element('serviceReliabilityAlertWebhookUrl').value = rawValue;
+  await saveApp.window.saveServiceReliabilityAlertConfig();
+  assert.equal(patchPayload.webhook_url, submittedValue);
+})().catch(error => { console.error(error); process.exitCode = 1; });
+""",
+            cases,
         )
 
     async def test_reliability_reconcile_failure_rolls_back_without_escaping(self) -> None:

@@ -164,9 +164,22 @@
     }
   }
 
+  function pythonIsSpaceCodePoint(codePoint) {
+    return (codePoint >= 0x0009 && codePoint <= 0x000d)
+      || (codePoint >= 0x001c && codePoint <= 0x0020)
+      || codePoint === 0x0085
+      || codePoint === 0x00a0
+      || codePoint === 0x1680
+      || (codePoint >= 0x2000 && codePoint <= 0x200a)
+      || (codePoint >= 0x2028 && codePoint <= 0x2029)
+      || codePoint === 0x202f
+      || codePoint === 0x205f
+      || codePoint === 0x3000;
+  }
+
   function validDingTalkWebhookUrl(value) {
     if (/[\u0000-\u001f\u007f]/.test(value)) return false;
-    const authorityMatch = value.match(/^https:\/\/([^/?#]+)(?:[/?#]|$)/);
+    const authorityMatch = value.match(/^https:\/\/([^/?#]+)(?:[/?#]|$)/i);
     if (!authorityMatch || authorityMatch[1] !== 'oapi.dingtalk.com') return false;
     try {
       const webhookUrl = new URL(value);
@@ -178,7 +191,10 @@
         && webhookUrl.password === ''
         && accessTokens.length === 1
         && accessTokens[0] !== ''
-        && !/[\s\u0000-\u001f\u007f]/.test(accessTokens[0]);
+        && !Array.from(accessTokens[0]).some(character => {
+          const codePoint = character.codePointAt(0);
+          return codePoint < 0x20 || codePoint === 0x7f || pythonIsSpaceCodePoint(codePoint);
+        });
     } catch (_error) {
       return false;
     }
@@ -199,7 +215,6 @@
   async function saveServiceReliabilityAlertConfig() {
     if (alertActionRunning) return;
     const submittedRevision = alertEditRevision;
-    const rawWebhookUrl = document.getElementById('serviceReliabilityAlertWebhookUrl').value;
     const payload = alertPolicyPayload();
     const numericPolicyFields = [
       'availability_threshold',
@@ -216,7 +231,7 @@
       if (typeof window.toast === 'function') window.toast('去重时间不能短于统计窗口', 'error');
       return;
     }
-    if (payload.webhook_url && !validDingTalkWebhookUrl(rawWebhookUrl)) {
+    if (payload.webhook_url && !validDingTalkWebhookUrl(payload.webhook_url)) {
       if (typeof window.toast === 'function') window.toast('Webhook 地址必须是有效的钉钉机器人地址', 'error');
       return;
     }
