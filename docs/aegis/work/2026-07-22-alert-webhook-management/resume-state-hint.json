@@ -2,9 +2,10 @@
   "schemaVersion": "aegis.schema.v0",
   "taskId": "2026-07-22-alert-webhook-management",
   "lastCheckpointRef": "docs/aegis/work/2026-07-22-alert-webhook-management/todo-checkpoint-draft.json",
-  "resumeInstruction": "Resume from ship on codex/alert-webhook-management; production URL/admin token stay out of Git, PR bodies, and logs.",
+  "resumeInstruction": "Treat the task as complete unless a new production symptom is reported.",
   "knownPartialWork": [
-    "Tasks 1 and 2 implementation, architecture records, focused verification, full-suite differential, and pre-landing review."
+    "Merged PR #19 and verified Railway deployment fingerprint and health.",
+    "Persisted the effective production Webhook through the protected API and verified a sent configuration_test AlertEvent."
   ],
   "mustReadBeforeContinuing": [
     "docs/aegis/work/2026-07-22-alert-webhook-management/10-intent.md",
@@ -12,6 +13,6 @@
     "docs/aegis/work/2026-07-22-alert-webhook-management/todo-checkpoint-draft.json"
   ],
   "unsafeToAssume": [
-    "Do not claim deployment, SystemSetting initialization, or DingTalk delivery until each live check succeeds."
+    "Do not print or copy the persisted Webhook or admin credential into logs or documentation."
   ]
 }

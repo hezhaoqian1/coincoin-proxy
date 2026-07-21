@@ -33,3 +33,11 @@ No evidence has been recorded yet.
 - Source: full pytest suite on final HEAD compared with unchanged origin/master video paths
 - Summary: Final full suite: 714 passed, 5 skipped, 195 subtests passed. The only failures are the three existing video RequestLog effective_cache_creation_input_per_million keyword failures; app/video_jobs.py, app/models.py, and tests/test_video_jobs.py are unchanged from origin/master.
 - Verifier: python -m pytest -q; git diff --quiet origin/master -- app/video_jobs.py app/models.py tests/test_video_jobs.py
+
+## EvidenceBundleDraft
+
+- Artifact key: production-deploy-webhook-test
+- Type: live-canary
+- Source: GitHub PR #19, Railway /health, protected /admin/alerts/config, /admin/alerts/test, and /admin/alerts/events
+- Summary: PR #19 merged as c11b760; Railway exposed the new complete no-store config contract; the effective Webhook was persisted through PATCH without printing it; reload matched; the labelled configuration test was delivered and recorded sent with HTTP 200; health returned 200.
+- Verifier: PR merged; config GET/PATCH/GET 200; webhook_configured true; no-store true; configuration_test sent; AlertEvent sent; health 200

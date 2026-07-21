@@ -70,3 +70,24 @@
 - Production deployment, database initialization, and real DingTalk configuration test still require live verification.
 - Three unrelated origin/master video tests remain red and were not changed in this task.
 - Advisory decision: needs-verification
+
+## Checkpoint Update
+
+- Current todo: Close out the deployed administrator-managed alert Webhook task.
+- Active slice: Task 3 deployment, live initialization, and closeout.
+- Completed todos:
+- Merged PR #19 and verified Railway deployment fingerprint and health.
+- Persisted the effective production Webhook through the protected API and verified a sent configuration_test AlertEvent.
+- Evidence refs:
+- docs/aegis/work/2026-07-22-alert-webhook-management/evidence-bundle-draft-production-deploy-webhook-test.json
+- Blocked on: none
+- Next step: No task work remains; continue routine reliability monitoring.
+
+## DriftCheckDraft
+
+- Scope status: The shipped implementation and live initialization stayed within the authorized administrator-managed alert Webhook and Claude tutorial repair scope.
+- Compatibility status: Database value is active; absent-row Railway fallback remains; public APIs and customer request performance are unchanged.
+- Retirement status: Railway-only ownership is retired; absent-row environment fallback remains intentionally active for recovery.
+- New risk signals:
+- none
+- Advisory decision: continue
