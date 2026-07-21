@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     provider_channel_monitor_history_retention_days: int = 35
     fallback_alert_webhook_url: str = ""
     fallback_alert_keyword: str = ""
+    fallback_alert_enabled: bool = True
     fallback_alert_dedup_seconds: int = 900
     fallback_alert_max_pending_tasks: int = 256
     upstream_failure_alert_threshold: int = 5

@@ -471,6 +471,34 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("method: 'POST'", reliability_js)
         self.assertNotIn("/models", reliability_js)
 
+    def test_service_reliability_embeds_alert_policy_and_delivery_history(self) -> None:
+        static_dir = Path(admin_module.__file__).parent / "static"
+        admin_html = (static_dir / "admin.html").read_text()
+        reliability_js = (static_dir / "admin_assets" / "service-reliability.js").read_text()
+        reliability_css = (static_dir / "admin_assets" / "service-reliability.css").read_text()
+
+        self.assertIn('id="serviceReliabilityAlertsTitle"', admin_html)
+        self.assertIn('id="serviceReliabilityAlertEnabled"', admin_html)
+        self.assertIn('id="serviceReliabilityAlertWebhookState"', admin_html)
+        self.assertIn('id="serviceReliabilityAlertSave"', admin_html)
+        self.assertIn('id="serviceReliabilityAlertTest"', admin_html)
+        self.assertIn('id="serviceReliabilityAlertEventsBody"', admin_html)
+        self.assertIn('id="serviceReliabilityAlertCategoryFilter"', admin_html)
+        self.assertIn('id="serviceReliabilityAlertStatusFilter"', admin_html)
+        self.assertIn("Webhook 密钥仅由 Railway 环境变量管理", admin_html)
+
+        self.assertIn("/admin/alerts/config", reliability_js)
+        self.assertIn("/admin/alerts/events", reliability_js)
+        self.assertIn("/admin/alerts/test", reliability_js)
+        self.assertIn("method: 'PATCH'", reliability_js)
+        self.assertIn("method: 'POST'", reliability_js)
+        self.assertIn("pageIsActive()", reliability_js)
+        self.assertIn("sr-alert-policy-grid", reliability_css)
+        self.assertNotIn("webhook_url", reliability_js)
+
+        self.assertNotIn('data-page="alerts"', admin_html)
+        self.assertNotIn('id="page-alerts"', admin_html)
+
     async def test_reliability_reconcile_failure_rolls_back_without_escaping(self) -> None:
         db = _FakeDB()
 

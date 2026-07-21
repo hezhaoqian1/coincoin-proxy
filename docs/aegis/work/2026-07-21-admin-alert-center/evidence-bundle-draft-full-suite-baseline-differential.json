@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "artifactKey": "full-suite-baseline-differential",
+  "type": "pytest",
+  "source": "full repository suite and origin/master differential",
+  "summary": "Full suite after review fixes: 686 passed, 5 skipped, 166 subtests passed, with only the same 3 pre-existing video RequestLog field failures; video paths are unchanged from origin/master.",
+  "verifier": "pytest -q; git diff --exit-code origin/master -- app/video_jobs.py tests/test_video_jobs.py"
+}

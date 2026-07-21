@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "2026-07-21-admin-alert-center",
+  "lastCheckpointRef": "docs/aegis/work/2026-07-21-admin-alert-center/todo-checkpoint-draft.json",
+  "resumeInstruction": "Use gstack ship from this branch, then confirm merged commit deployment success and coincoin.ai health.",
+  "knownPartialWork": [
+    "Runtime policy and AlertEvent persistence implemented and verified.",
+    "Protected alert admin API implemented and verified.",
+    "Existing Service Reliability UI extended and verified.",
+    "Documentation, ADR, full differential verification, and independent review completed."
+  ],
+  "mustReadBeforeContinuing": [
+    "docs/aegis/work/2026-07-21-admin-alert-center/10-intent.md",
+    "docs/aegis/work/2026-07-21-admin-alert-center/20-checkpoint.md",
+    "docs/aegis/work/2026-07-21-admin-alert-center/todo-checkpoint-draft.json"
+  ],
+  "unsafeToAssume": [
+    "Do not claim deployment until Railway and production health are observed."
+  ]
+}

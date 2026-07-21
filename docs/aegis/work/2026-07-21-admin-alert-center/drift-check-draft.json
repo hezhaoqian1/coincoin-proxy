@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "2026-07-21-admin-alert-center",
+  "taskIntentRef": "docs/aegis/work/2026-07-21-admin-alert-center/task-intent-draft.json",
+  "baselineRefs": [
+    "docs/aegis/specs/2026-07-21-admin-alert-center-brief.md",
+    "docs/aegis/baseline/service-reliability.md"
+  ],
+  "scopeStatus": "All implementation, review fixes, docs, ADR, and verification remain within the approved alert-center scope.",
+  "compatStatus": "No public request contract changed; request-path no-awaited-I/O, secret boundary, and bounded task invariants have direct tests and independent review evidence.",
+  "retirementStatus": "No old path retired; no duplicate failure store, alert page, or webhook secret owner introduced.",
+  "newRiskSignals": [],
+  "decision": "continue"
+}

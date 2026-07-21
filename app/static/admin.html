@@ -2161,6 +2161,65 @@
         <div id="serviceReliabilitySummary" class="sr-summary-strip" aria-live="polite"></div>
         <div id="serviceReliabilityIncidents" class="sr-incident-band" hidden></div>
 
+        <section class="sr-section" aria-labelledby="serviceReliabilityAlertsTitle">
+          <div class="sr-section-header">
+            <div>
+              <h2 id="serviceReliabilityAlertsTitle">告警策略与推送历史</h2>
+              <p>管理非敏感阈值并核对钉钉实际送达结果。Webhook 密钥仅由 Railway 环境变量管理，后台不会显示或保存原值。</p>
+            </div>
+            <div class="sr-alert-state-row">
+              <span id="serviceReliabilityAlertState" class="sr-status sr-status-pending">等待加载</span>
+              <span id="serviceReliabilityAlertWebhookState" class="sr-status sr-status-pending">Webhook 未知</span>
+            </div>
+          </div>
+          <div class="sr-alert-body">
+            <div class="sr-alert-policy-grid">
+              <label class="sr-alert-toggle">
+                <input id="serviceReliabilityAlertEnabled" data-sr-alert-policy type="checkbox">
+                <span><strong>启用告警</strong><small>关闭后不再统计或推送新的故障告警</small></span>
+              </label>
+              <label><span>可用性 / 429 阈值</span><input id="serviceReliabilityAlertAvailabilityThreshold" data-sr-alert-policy type="number" min="1" max="1000"></label>
+              <label><span>401 / 403 阈值</span><input id="serviceReliabilityAlertAuthenticationThreshold" data-sr-alert-policy type="number" min="1" max="1000"></label>
+              <label><span>统计窗口（秒）</span><input id="serviceReliabilityAlertWindowSeconds" data-sr-alert-policy type="number" min="1" max="3600"></label>
+              <label><span>去重时间（秒）</span><input id="serviceReliabilityAlertDedupSeconds" data-sr-alert-policy type="number" min="1" max="86400"></label>
+              <label><span>最大后台任务数</span><input id="serviceReliabilityAlertMaxPendingTasks" data-sr-alert-policy type="number" min="1" max="4096"></label>
+            </div>
+            <div class="sr-alert-actions">
+              <div id="serviceReliabilityAlertDeliverySummary" class="sr-alert-delivery-summary">最近成功：- · 最近失败：-</div>
+              <button id="serviceReliabilityAlertTest" class="btn btn-secondary btn-sm" type="button">发送配置测试</button>
+              <button id="serviceReliabilityAlertSave" class="btn btn-primary btn-sm" type="button">保存告警策略</button>
+            </div>
+          </div>
+          <div class="sr-alert-history-header">
+            <div>
+              <strong>最近推送尝试</strong>
+              <span>这里只记录真正发起的钉钉推送；每次上游失败仍以 RequestLog 为准。</span>
+            </div>
+            <div class="sr-alert-filters">
+              <select id="serviceReliabilityAlertCategoryFilter" aria-label="告警类别">
+                <option value="">全部类别</option>
+                <option value="availability">可用性</option>
+                <option value="rate_limit">429 限流</option>
+                <option value="authentication">鉴权</option>
+                <option value="fallback_exhausted">Fallback 全部失败</option>
+                <option value="configuration_test">配置测试</option>
+              </select>
+              <select id="serviceReliabilityAlertStatusFilter" aria-label="推送状态">
+                <option value="">全部状态</option>
+                <option value="pending">发送中</option>
+                <option value="sent">已送达</option>
+                <option value="failed">失败</option>
+              </select>
+            </div>
+          </div>
+          <div class="sr-table-wrap">
+            <table class="sr-table sr-alert-table">
+              <thead><tr><th>时间</th><th>类别</th><th>状态</th><th>模型 / Endpoint</th><th>通道</th><th>触发</th><th>Request ID</th><th>结果</th></tr></thead>
+              <tbody id="serviceReliabilityAlertEventsBody"><tr><td colspan="8"><div class="sr-loading">等待加载告警历史</div></td></tr></tbody>
+            </table>
+          </div>
+        </section>
+
         <section class="sr-section" aria-labelledby="serviceReliabilityChannelsTitle">
           <div class="sr-section-header">
             <div>

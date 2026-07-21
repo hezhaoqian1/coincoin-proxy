@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "artifactKey": "prelanding-review-fixes",
+  "type": "review-and-pytest",
+  "source": "independent prelanding review plus focused regression",
+  "summary": "Four review findings were fixed: single-slot sender starvation, unbounded audit persistence delay, same-second replica refresh miss, and polling index mismatch. Focused suite passed 171 tests after fixes.",
+  "verifier": "pytest tests/test_fallback_alerts.py tests/test_alert_admin.py tests/test_admin_usage_fields.py tests/test_reliability.py -q"
+}

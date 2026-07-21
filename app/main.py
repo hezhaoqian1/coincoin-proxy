@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .admin import router as admin_router
+from .alert_admin import router as alert_admin_router
 from .admin_timing import AdminTimingASGIMiddleware
 from .anthropic_compat import router as anthropic_router
 from .auth import router as auth_router
@@ -1016,7 +1017,7 @@ async def runtime_system_settings_refresh_loop(interval_seconds: int):
                 if state != last_state:
                     await refresh_runtime_system_settings_from_db(db)
                     last_state = state
-                    logger.info("refreshed runtime system settings from database count=%s", state[0])
+                    logger.info("refreshed runtime system settings from database count=%s", len(state))
         except Exception as exc:
             logger.warning("failed to refresh runtime system settings from database: %s", exc)
         await asyncio.sleep(max(1, int(interval_seconds or 10)))
@@ -1131,6 +1132,7 @@ app.include_router(video_jobs_openai_router)
 app.include_router(media_artifacts_router)
 app.include_router(keys_router)
 app.include_router(admin_router)
+app.include_router(alert_admin_router)
 app.include_router(admin_monitoring_router)
 app.include_router(reliability_router)
 app.include_router(webhook_router)

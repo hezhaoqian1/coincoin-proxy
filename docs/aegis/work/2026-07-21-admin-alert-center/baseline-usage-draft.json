@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "2026-07-21-admin-alert-center",
+  "requiredBaselineRefs": [
+    "docs/aegis/specs/2026-07-21-admin-alert-center-brief.md",
+    "docs/aegis/baseline/service-reliability.md",
+    "docs/architecture/claude-code-upstream-runbook.md"
+  ],
+  "deliveredContextRefs": [],
+  "acknowledgedBeforePlanRefs": [
+    "docs/aegis/specs/2026-07-21-admin-alert-center-brief.md",
+    "docs/aegis/baseline/service-reliability.md",
+    "docs/architecture/claude-code-upstream-runbook.md"
+  ],
+  "citedInPlanRefs": [
+    "docs/aegis/plans/2026-07-21-admin-alert-center.md"
+  ],
+  "missingRefs": [],
+  "decision": "continue"
+}

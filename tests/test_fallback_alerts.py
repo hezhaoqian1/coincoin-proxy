@@ -1,7 +1,10 @@
 import asyncio
 import os
 import unittest
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
+
+import httpx
 
 os.environ.setdefault("COINCOIN_DATABASE_URL", "mysql://test@127.0.0.1:3306/test")
 
@@ -14,6 +17,8 @@ class UpstreamFailureBurstAlertTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self._originals = {
             "fallback_alert_webhook_url": settings.fallback_alert_webhook_url,
+            "fallback_alert_enabled": settings.fallback_alert_enabled,
+            "fallback_alert_keyword": settings.fallback_alert_keyword,
             "fallback_alert_max_pending_tasks": settings.fallback_alert_max_pending_tasks,
             "upstream_failure_alert_threshold": settings.upstream_failure_alert_threshold,
             "upstream_auth_alert_threshold": settings.upstream_auth_alert_threshold,
@@ -22,6 +27,8 @@ class UpstreamFailureBurstAlertTests(unittest.IsolatedAsyncioTestCase):
             "redis_url": settings.redis_url,
         }
         settings.fallback_alert_webhook_url = "https://dingtalk.example/robot"
+        settings.fallback_alert_enabled = True
+        settings.fallback_alert_keyword = "CoinCoin"
         settings.fallback_alert_max_pending_tasks = 256
         settings.upstream_failure_alert_threshold = 5
         settings.upstream_auth_alert_threshold = 3
@@ -53,7 +60,7 @@ class UpstreamFailureBurstAlertTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_fifth_availability_failure_within_one_minute_alerts_once(self) -> None:
-        with patch.object(fallback_alerts, "notify_upstream_failure_burst", return_value=True) as notify:
+        with patch.object(fallback_alerts, "_send_upstream_failure_burst_alert", AsyncMock(return_value=True)) as notify:
             statuses = (502, 503, 500, 504, 529)
             results = [
                 await fallback_alerts.record_user_upstream_failure(
@@ -76,7 +83,7 @@ class UpstreamFailureBurstAlertTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sent.window_seconds, 60)
 
     async def test_connection_errors_share_availability_counter(self) -> None:
-        with patch.object(fallback_alerts, "notify_upstream_failure_burst", return_value=True) as notify:
+        with patch.object(fallback_alerts, "_send_upstream_failure_burst_alert", AsyncMock(return_value=True)) as notify:
             for index in range(5):
                 await fallback_alerts.record_user_upstream_failure(
                     self._alert(
@@ -90,7 +97,7 @@ class UpstreamFailureBurstAlertTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(notify.call_args.args[0].category, "availability")
 
     async def test_rate_limit_has_separate_capacity_counter(self) -> None:
-        with patch.object(fallback_alerts, "notify_upstream_failure_burst", return_value=True) as notify:
+        with patch.object(fallback_alerts, "_send_upstream_failure_burst_alert", AsyncMock(return_value=True)) as notify:
             for index in range(5):
                 await fallback_alerts.record_user_upstream_failure(
                     self._alert(f"ccreq_429_{index}", status_code=429, reason="429"),
@@ -100,7 +107,7 @@ class UpstreamFailureBurstAlertTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(notify.call_args.args[0].category, "rate_limit")
 
     async def test_third_auth_failure_alerts(self) -> None:
-        with patch.object(fallback_alerts, "notify_upstream_failure_burst", return_value=True) as notify:
+        with patch.object(fallback_alerts, "_send_upstream_failure_burst_alert", AsyncMock(return_value=True)) as notify:
             results = [
                 await fallback_alerts.record_user_upstream_failure(
                     self._alert(f"ccreq_auth_{index}", status_code=status, reason=str(status)),
@@ -113,7 +120,7 @@ class UpstreamFailureBurstAlertTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(notify.call_args.args[0].category, "authentication")
 
     async def test_untracked_client_error_does_not_enter_counter(self) -> None:
-        with patch.object(fallback_alerts, "notify_upstream_failure_burst", return_value=True) as notify:
+        with patch.object(fallback_alerts, "_send_upstream_failure_burst_alert", AsyncMock(return_value=True)) as notify:
             result = await fallback_alerts.record_user_upstream_failure(
                 self._alert("ccreq_400", status_code=400, reason="400"),
                 now=1000,
@@ -123,7 +130,7 @@ class UpstreamFailureBurstAlertTests(unittest.IsolatedAsyncioTestCase):
         notify.assert_not_called()
 
     async def test_failures_outside_window_do_not_trigger(self) -> None:
-        with patch.object(fallback_alerts, "notify_upstream_failure_burst", return_value=True) as notify:
+        with patch.object(fallback_alerts, "_send_upstream_failure_burst_alert", AsyncMock(return_value=True)) as notify:
             for index, now in enumerate((1000, 1001, 1002, 1003, 1061), start=1):
                 await fallback_alerts.record_user_upstream_failure(self._alert(f"ccreq_{index}"), now=now)
 
@@ -138,7 +145,7 @@ class UpstreamFailureBurstAlertTests(unittest.IsolatedAsyncioTestCase):
                 return_value=(5, True),
             ) as redis_counter,
             patch.object(fallback_alerts, "_record_upstream_failure_local") as local_counter,
-            patch.object(fallback_alerts, "notify_upstream_failure_burst", return_value=True) as notify,
+            patch.object(fallback_alerts, "_send_upstream_failure_burst_alert", AsyncMock(return_value=True)) as notify,
         ):
             result = await fallback_alerts.record_user_upstream_failure(self._alert("ccreq_redis"))
 
@@ -160,7 +167,7 @@ class UpstreamFailureBurstAlertTests(unittest.IsolatedAsyncioTestCase):
                 "_record_upstream_failure_local",
                 return_value=(5, True),
             ) as local_counter,
-            patch.object(fallback_alerts, "notify_upstream_failure_burst", return_value=True),
+            patch.object(fallback_alerts, "_send_upstream_failure_burst_alert", AsyncMock(return_value=True)),
         ):
             result = await fallback_alerts.record_user_upstream_failure(self._alert("ccreq_local_fallback"))
 
@@ -186,6 +193,252 @@ class UpstreamFailureBurstAlertTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0)
 
         self.assertFalse(fallback_alerts._UPSTREAM_FAILURE_TASKS)
+
+    async def test_runtime_policy_override_disables_scheduling_without_io(self) -> None:
+        fallback_alerts.set_runtime_alert_settings({"fallback_alert_enabled": "false"})
+
+        with (
+            patch.object(asyncio, "create_task") as create_task,
+            patch.object(fallback_alerts, "record_user_upstream_failure", AsyncMock()) as record,
+        ):
+            scheduled = fallback_alerts.schedule_user_upstream_failure(self._alert("ccreq_disabled"))
+
+        self.assertFalse(scheduled)
+        create_task.assert_not_called()
+        record.assert_not_called()
+
+    def test_runtime_policy_database_values_override_environment_defaults(self) -> None:
+        settings.upstream_failure_alert_threshold = 5
+        settings.upstream_auth_alert_threshold = 3
+        fallback_alerts.set_runtime_alert_settings(
+            {
+                "upstream_failure_alert_threshold": "9",
+                "upstream_auth_alert_threshold": "4",
+                "upstream_failure_alert_window_seconds": "120",
+                "upstream_failure_alert_dedup_seconds": "600",
+                "fallback_alert_max_pending_tasks": "32",
+            }
+        )
+
+        policy = fallback_alerts.current_alert_policy()
+
+        self.assertEqual(policy.availability_threshold, 9)
+        self.assertEqual(policy.authentication_threshold, 4)
+        self.assertEqual(policy.window_seconds, 120)
+        self.assertEqual(policy.dedup_seconds, 600)
+        self.assertEqual(policy.max_pending_tasks, 32)
+
+    async def test_successful_burst_delivery_records_sanitized_event_lifecycle(self) -> None:
+        notification = fallback_alerts.UpstreamFailureBurstNotification(
+            alert=self._alert("ccreq_delivery"),
+            category="availability",
+            count=5,
+            window_seconds=60,
+        )
+        response = SimpleNamespace(status_code=200, json=lambda: {"errcode": 0, "errmsg": "ok"})
+        client = AsyncMock()
+        client.post.return_value = response
+        client.__aenter__.return_value = client
+        client.__aexit__.return_value = False
+
+        with (
+            patch.object(fallback_alerts.httpx, "AsyncClient", return_value=client),
+            patch.object(fallback_alerts, "create_alert_event", AsyncMock(return_value="alert_123")) as create_event,
+            patch.object(fallback_alerts, "complete_alert_event", AsyncMock()) as complete_event,
+        ):
+            delivered = await fallback_alerts._send_upstream_failure_burst_alert(notification)
+
+        self.assertTrue(delivered)
+        create_event.assert_awaited_once()
+        fields = create_event.call_args.kwargs
+        self.assertEqual(fields["request_id"], "ccreq_delivery")
+        self.assertEqual(fields["delivery_status"], "pending")
+        self.assertNotIn("webhook", fields)
+        complete_event.assert_awaited_once_with(
+            "alert_123",
+            delivery_status="sent",
+            response_status=200,
+            error_summary="",
+        )
+
+    async def test_failed_burst_delivery_records_status_without_raw_body(self) -> None:
+        notification = fallback_alerts.UpstreamFailureBurstNotification(
+            alert=self._alert("ccreq_failed_delivery"),
+            category="availability",
+            count=5,
+            window_seconds=60,
+        )
+        response = SimpleNamespace(
+            status_code=502,
+            text="cloudflare secret diagnostic body",
+            json=lambda: {"errcode": 500, "errmsg": "sensitive upstream response"},
+        )
+        client = AsyncMock()
+        client.post.return_value = response
+        client.__aenter__.return_value = client
+        client.__aexit__.return_value = False
+
+        with (
+            patch.object(fallback_alerts.httpx, "AsyncClient", return_value=client),
+            patch.object(fallback_alerts, "create_alert_event", AsyncMock(return_value="alert_456")),
+            patch.object(fallback_alerts, "complete_alert_event", AsyncMock()) as complete_event,
+        ):
+            delivered = await fallback_alerts._send_upstream_failure_burst_alert(notification)
+
+        self.assertFalse(delivered)
+        completion = complete_event.call_args.kwargs
+        self.assertEqual(completion["delivery_status"], "failed")
+        self.assertEqual(completion["response_status"], 502)
+        self.assertNotIn("cloudflare", completion["error_summary"].lower())
+        self.assertNotIn("sensitive", completion["error_summary"].lower())
+
+    async def test_http_200_without_dingtalk_result_is_not_marked_sent(self) -> None:
+        notification = fallback_alerts.UpstreamFailureBurstNotification(
+            alert=self._alert("ccreq_invalid_dingtalk"),
+            category="availability",
+            count=5,
+            window_seconds=60,
+        )
+        response = SimpleNamespace(status_code=200, json=lambda: {"unexpected": "html edge response"})
+        client = AsyncMock()
+        client.post.return_value = response
+        client.__aenter__.return_value = client
+        client.__aexit__.return_value = False
+
+        with (
+            patch.object(fallback_alerts.httpx, "AsyncClient", return_value=client),
+            patch.object(fallback_alerts, "create_alert_event", AsyncMock(return_value="alert_invalid")),
+            patch.object(fallback_alerts, "complete_alert_event", AsyncMock()) as complete_event,
+        ):
+            delivered = await fallback_alerts._send_upstream_failure_burst_alert(notification)
+
+        self.assertFalse(delivered)
+        complete_event.assert_awaited_once_with(
+            "alert_invalid",
+            delivery_status="failed",
+            response_status=200,
+            error_summary="DingTalk invalid response",
+        )
+
+    async def test_delivery_exception_log_does_not_render_webhook_url(self) -> None:
+        notification = fallback_alerts.UpstreamFailureBurstNotification(
+            alert=self._alert("ccreq_secret_log"),
+            category="availability",
+            count=5,
+            window_seconds=60,
+        )
+        secret_url = "https://oapi.dingtalk.example/robot?access_token=must-not-log"
+        settings.fallback_alert_webhook_url = secret_url
+        client = AsyncMock()
+        client.post.side_effect = httpx.ConnectError(
+            "connection failed",
+            request=httpx.Request("POST", secret_url),
+        )
+        client.__aenter__.return_value = client
+        client.__aexit__.return_value = False
+
+        with (
+            patch.object(fallback_alerts.httpx, "AsyncClient", return_value=client),
+            patch.object(fallback_alerts, "create_alert_event", AsyncMock(return_value="alert_exception")),
+            patch.object(fallback_alerts, "complete_alert_event", AsyncMock()),
+            patch.object(fallback_alerts.logger, "warning") as warning,
+        ):
+            delivered = await fallback_alerts._send_upstream_failure_burst_alert(notification)
+
+        self.assertFalse(delivered)
+        self.assertNotIn("must-not-log", " ".join(str(value) for value in warning.call_args.args))
+        self.assertFalse(warning.call_args.kwargs.get("exc_info", False))
+
+    async def test_hanging_audit_insert_cannot_suppress_dingtalk_delivery(self) -> None:
+        notification = fallback_alerts.UpstreamFailureBurstNotification(
+            alert=self._alert("ccreq_audit_timeout"),
+            category="availability",
+            count=5,
+            window_seconds=60,
+        )
+        never = asyncio.Event()
+
+        async def hanging_insert(**fields):
+            await never.wait()
+
+        response = SimpleNamespace(status_code=200, json=lambda: {"errcode": 0})
+        client = AsyncMock()
+        client.post.return_value = response
+        client.__aenter__.return_value = client
+        client.__aexit__.return_value = False
+
+        with (
+            patch.object(fallback_alerts, "_ALERT_HISTORY_TIMEOUT_SECONDS", 0.01),
+            patch.object(fallback_alerts, "create_alert_event", side_effect=hanging_insert),
+            patch.object(fallback_alerts, "complete_alert_event", AsyncMock()),
+            patch.object(fallback_alerts.httpx, "AsyncClient", return_value=client),
+        ):
+            delivered = await asyncio.wait_for(
+                fallback_alerts._send_upstream_failure_burst_alert(notification),
+                timeout=0.1,
+            )
+
+        self.assertTrue(delivered)
+        client.post.assert_awaited_once()
+
+    async def test_hanging_audit_completion_is_bounded_after_delivery(self) -> None:
+        notification = fallback_alerts.UpstreamFailureBurstNotification(
+            alert=self._alert("ccreq_completion_timeout"),
+            category="availability",
+            count=5,
+            window_seconds=60,
+        )
+        never = asyncio.Event()
+
+        async def hanging_completion(event_id, **fields):
+            await never.wait()
+
+        response = SimpleNamespace(status_code=200, json=lambda: {"errcode": 0})
+        client = AsyncMock()
+        client.post.return_value = response
+        client.__aenter__.return_value = client
+        client.__aexit__.return_value = False
+
+        with (
+            patch.object(fallback_alerts, "_ALERT_HISTORY_TIMEOUT_SECONDS", 0.01),
+            patch.object(fallback_alerts, "create_alert_event", AsyncMock(return_value="alert_completion_timeout")),
+            patch.object(fallback_alerts, "complete_alert_event", side_effect=hanging_completion),
+            patch.object(fallback_alerts.httpx, "AsyncClient", return_value=client),
+        ):
+            delivered = await asyncio.wait_for(
+                fallback_alerts._send_upstream_failure_burst_alert(notification),
+                timeout=0.1,
+            )
+
+        self.assertTrue(delivered)
+        client.post.assert_awaited_once()
+
+    async def test_configuration_test_is_labelled_and_records_delivery_event(self) -> None:
+        response = SimpleNamespace(status_code=200, json=lambda: {"errcode": 0})
+        client = AsyncMock()
+        client.post.return_value = response
+        client.__aenter__.return_value = client
+        client.__aexit__.return_value = False
+
+        with (
+            patch.object(fallback_alerts.httpx, "AsyncClient", return_value=client),
+            patch.object(fallback_alerts, "create_alert_event", AsyncMock(return_value="alt_test")) as create_event,
+            patch.object(fallback_alerts, "complete_alert_event", AsyncMock()) as complete_event,
+        ):
+            result = await fallback_alerts.send_dingtalk_configuration_test()
+
+        self.assertEqual(result, {"sent": True, "event_id": "alt_test"})
+        content = client.post.call_args.kwargs["json"]["text"]["content"]
+        self.assertIn("CoinCoin", content)
+        self.assertIn("配置测试", content)
+        create_event.assert_awaited_once()
+        self.assertEqual(create_event.call_args.kwargs["category"], "configuration_test")
+        complete_event.assert_awaited_once_with(
+            "alt_test",
+            delivery_status="sent",
+            response_status=200,
+            error_summary="",
+        )
 
     async def test_shutdown_waits_for_inflight_dingtalk_delivery(self) -> None:
         started = asyncio.Event()
@@ -254,6 +507,67 @@ class UpstreamFailureBurstAlertTests(unittest.IsolatedAsyncioTestCase):
             fallback_alerts._UPSTREAM_FAILURE_TASKS.discard(blocker)
             blocker.cancel()
             await asyncio.gather(blocker, return_exceptions=True)
+
+    async def test_delivery_scheduler_uses_same_pending_task_limit(self) -> None:
+        settings.fallback_alert_max_pending_tasks = 1
+        blocker = asyncio.create_task(asyncio.Event().wait())
+        fallback_alerts._UPSTREAM_FAILURE_TASKS.add(blocker)
+        notification = fallback_alerts.UpstreamFailureBurstNotification(
+            alert=self._alert("ccreq_delivery_overflow"),
+            category="availability",
+            count=5,
+            window_seconds=60,
+        )
+        try:
+            with patch.object(fallback_alerts, "_send_upstream_failure_burst_alert", AsyncMock()) as send:
+                scheduled = fallback_alerts.notify_upstream_failure_burst(notification)
+
+            self.assertFalse(scheduled)
+            send.assert_not_called()
+        finally:
+            fallback_alerts._UPSTREAM_FAILURE_TASKS.discard(blocker)
+            blocker.cancel()
+            await asyncio.gather(blocker, return_exceptions=True)
+
+    async def test_fallback_exhausted_scheduler_uses_same_pending_task_limit(self) -> None:
+        settings.fallback_alert_max_pending_tasks = 1
+        blocker = asyncio.create_task(asyncio.Event().wait())
+        fallback_alerts._UPSTREAM_FAILURE_TASKS.add(blocker)
+        alert = fallback_alerts.FallbackExhaustedAlert(
+            endpoint="messages",
+            model="claude-sonnet-4-6",
+            status_code=503,
+            reason="503",
+            route_reason="channel_fallback:all_failed",
+            route_attempt=2,
+        )
+        try:
+            with patch.object(fallback_alerts, "_send_dingtalk_alert", AsyncMock()) as send:
+                scheduled = fallback_alerts.notify_fallback_exhausted(alert)
+
+            self.assertFalse(scheduled)
+            send.assert_not_called()
+        finally:
+            fallback_alerts._UPSTREAM_FAILURE_TASKS.discard(blocker)
+            blocker.cancel()
+            await asyncio.gather(blocker, return_exceptions=True)
+
+    async def test_single_task_capacity_can_count_and_deliver_threshold_alert(self) -> None:
+        settings.fallback_alert_max_pending_tasks = 1
+        settings.upstream_failure_alert_threshold = 1
+        delivered = asyncio.Event()
+
+        async def delivery(notification):
+            delivered.set()
+            return True
+
+        with patch.object(fallback_alerts, "_send_upstream_failure_burst_alert", side_effect=delivery) as send:
+            scheduled = fallback_alerts.schedule_user_upstream_failure(self._alert("ccreq_one_slot"))
+            self.assertTrue(scheduled)
+            await asyncio.wait_for(delivered.wait(), timeout=0.1)
+            await fallback_alerts.shutdown_fallback_alerts(timeout_seconds=0.1)
+
+        send.assert_awaited_once()
 
     def test_burst_payload_describes_real_user_messages_failures(self) -> None:
         alert = self._alert("ccreq_trace", status_code=503, reason="503")
