@@ -146,6 +146,29 @@ Index("ix_request_logs_user_created", RequestLog.user_id, RequestLog.created_at.
 Index("ix_request_logs_user_key_created", RequestLog.user_id, RequestLog.api_key_id, RequestLog.created_at.desc())
 
 
+class AlertEvent(Base):
+    """Durable audit record for an outbound operator alert attempt."""
+    __tablename__ = "coincoin_alert_events"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    category: Mapped[str] = mapped_column(String(32), default="", index=True)
+    severity: Mapped[str] = mapped_column(String(16), default="warning")
+    alert_type: Mapped[str] = mapped_column(String(64), default="")
+    endpoint: Mapped[str] = mapped_column(String(64), default="")
+    model: Mapped[str] = mapped_column(String(128), default="")
+    channel_id: Mapped[str] = mapped_column(String(32), default="")
+    status_code: Mapped[int] = mapped_column(BigInteger, default=0)
+    failure_count: Mapped[int] = mapped_column(BigInteger, default=0)
+    window_seconds: Mapped[int] = mapped_column(BigInteger, default=0)
+    request_id: Mapped[str] = mapped_column(String(128), default="")
+    destination_type: Mapped[str] = mapped_column(String(32), default="dingtalk")
+    delivery_status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    response_status: Mapped[int] = mapped_column(BigInteger, default=0)
+    error_summary: Mapped[str] = mapped_column(String(255), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class MediaArtifact(Base):
     """Previewable media outputs for the user workbench."""
     __tablename__ = "coincoin_media_artifacts"
