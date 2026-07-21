@@ -571,6 +571,37 @@ class AlertAdminApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.json(), {"sent": True, "event_id": "alt_test"})
         self.assertNotIn("top-secret", response.text)
 
+    async def test_configuration_test_rejects_unsendable_effective_webhooks(self) -> None:
+        cases = (
+            ("empty", ""),
+            (
+                "malformed",
+                "https://internal.example/robot/send?access_token=legacy-token",
+            ),
+        )
+
+        for label, webhook_url in cases:
+            with self.subTest(case=label):
+                system_settings._apply_runtime_system_settings(
+                    {"fallback_alert_webhook_url": webhook_url},
+                    replace=True,
+                )
+                sender = AsyncMock(return_value={"sent": True, "event_id": "unused"})
+                with patch.object(
+                    alert_admin,
+                    "send_dingtalk_configuration_test",
+                    sender,
+                ):
+                    async with await self._client() as client:
+                        response = await client.post("/admin/alerts/test")
+
+                self.assertEqual(response.status_code, 400, response.text)
+                self.assertEqual(
+                    response.json(),
+                    {"detail": "DingTalk alert webhook is not configured"},
+                )
+                sender.assert_not_awaited()
+
     async def test_configuration_test_reports_failed_attempt_for_history(self) -> None:
         self._override_db(_FakeDB())
         with patch.object(

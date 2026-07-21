@@ -537,8 +537,8 @@ const fs = require('fs');
 const vm = require('vm');
 const source = fs.readFileSync(process.argv[1], 'utf8');
 
-function response(payload) {
-  return { ok: true, json: async () => payload };
+function response(payload, ok = true) {
+  return { ok, status: ok ? 200 : 500, json: async () => payload };
 }
 
 function config(webhookUrl) {
@@ -568,6 +568,7 @@ function deferred() {
 
 function createApp(fetchImpl) {
   const elements = new Map();
+  const toasts = [];
   const element = id => {
     if (!elements.has(id)) {
       const listeners = new Map();
@@ -606,7 +607,7 @@ function createApp(fetchImpl) {
   };
   const window = {
     adminHeaders: () => ({}),
-    toast: () => {},
+    toast: (...args) => { toasts.push(args); },
     setTimeout: () => 0,
     clearTimeout: () => {},
   };
@@ -621,6 +622,13 @@ function createApp(fetchImpl) {
     decodeURIComponent,
   };
   vm.createContext(context);
+  vm.runInContext(`
+    if (typeof String.prototype.replaceAll !== 'function') {
+      String.prototype.replaceAll = function replaceAll(search, replacement) {
+        return this.split(search).join(replacement);
+      };
+    }
+  `, context);
   const instrumented = source.replace(
     /\}\)\(\);\s*$/,
     'window.__hooks = { validDingTalkWebhookUrl, loadServiceReliabilityAlerts };\n})();',
@@ -629,7 +637,7 @@ function createApp(fetchImpl) {
   policyIds.slice(2).forEach(id => { element(id).value = '1'; });
   element('serviceReliabilityAlertWindowSeconds').value = '60';
   element('serviceReliabilityAlertDedupSeconds').value = '120';
-  return { window, element };
+  return { window, element, toasts };
 }
 """
         command = ["node", "-e", harness + probe, str(reliability_js)]
@@ -785,6 +793,232 @@ function createApp(fetchImpl) {
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """,
             cases,
+        )
+
+    def test_service_reliability_alert_save_blocks_invalid_policy_values(self) -> None:
+        self._run_service_reliability_node_probe(
+            r"""
+(async () => {
+  const cases = [
+    {
+      label: 'invalid numeric policy',
+      mutate: app => { app.element('serviceReliabilityAlertAvailabilityThreshold').value = 'not-a-number'; },
+      message: '告警策略必须填写有效的正整数',
+    },
+    {
+      label: 'dedup shorter than window',
+      mutate: app => {
+        app.element('serviceReliabilityAlertWindowSeconds').value = '120';
+        app.element('serviceReliabilityAlertDedupSeconds').value = '60';
+      },
+      message: '去重时间不能短于统计窗口',
+    },
+    {
+      label: 'invalid webhook',
+      mutate: app => { app.element('serviceReliabilityAlertWebhookUrl').value = 'https://example.com/hook'; },
+      message: 'Webhook 地址必须是有效的钉钉机器人地址',
+    },
+  ];
+
+  for (const testCase of cases) {
+    let patchCount = 0;
+    const app = createApp(async (url, options = {}) => {
+      if (options.method === 'PATCH') {
+        patchCount += 1;
+        return response(config(webhook('unexpected')));
+      }
+      throw new Error(`unexpected request for ${testCase.label}: ${url}`);
+    });
+    testCase.mutate(app);
+    await app.window.saveServiceReliabilityAlertConfig();
+    assert.equal(patchCount, 0, `${testCase.label} issued PATCH`);
+    assert.deepEqual(app.toasts, [[testCase.message, 'error']]);
+  }
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+        )
+
+    def test_service_reliability_clearing_webhook_disables_test_control(self) -> None:
+        self._run_service_reliability_node_probe(
+            r"""
+(async () => {
+  let patchPayload = null;
+  const app = createApp(async (url, options = {}) => {
+    if (options.method === 'PATCH') {
+      patchPayload = JSON.parse(options.body);
+      return response(config(''));
+    }
+    if (url === '/admin/alerts/config') return response(config(''));
+    if (String(url).startsWith('/admin/alerts/events?')) return response({ events: [] });
+    throw new Error(`unexpected request: ${url}`);
+  });
+  const input = app.element('serviceReliabilityAlertWebhookUrl');
+  input.value = webhook('configured-before-clear');
+  input.dispatch('input');
+  input.value = '';
+  input.dispatch('input');
+
+  await app.window.saveServiceReliabilityAlertConfig();
+
+  assert.equal(patchPayload.webhook_url, '');
+  assert.equal(input.value, '');
+  assert.equal(app.element('serviceReliabilityAlertWebhookState').textContent, 'Webhook 未配置');
+  assert.equal(app.element('serviceReliabilityAlertTest').disabled, true);
+  assert.equal(app.element('serviceReliabilityAlertSave').disabled, false);
+  assert.deepEqual(app.toasts, [['告警配置已保存', 'success']]);
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+        )
+
+    def test_service_reliability_configuration_test_outcomes_and_repeat_guard(self) -> None:
+        self._run_service_reliability_node_probe(
+            r"""
+(async () => {
+  const cases = [
+    {
+      label: 'sent',
+      post: async () => response({ sent: true }),
+      toast: ['钉钉配置测试已送达', 'success'],
+    },
+    {
+      label: 'not sent',
+      post: async () => response({ sent: false }),
+      toast: ['钉钉配置测试未送达，请查看推送历史', 'warning'],
+    },
+    {
+      label: 'HTTP error',
+      post: async () => response({ detail: 'configuration rejected' }, false),
+      toast: ['configuration rejected', 'error'],
+    },
+    {
+      label: 'network error',
+      post: async () => { throw new Error('network unavailable'); },
+      toast: ['network unavailable', 'error'],
+    },
+  ];
+
+  for (const testCase of cases) {
+    let postCount = 0;
+    const app = createApp(async (url, options = {}) => {
+      if (url === '/admin/alerts/test' && options.method === 'POST') {
+        postCount += 1;
+        return testCase.post();
+      }
+      if (url === '/admin/alerts/config') return response(config(webhook('configured')));
+      if (String(url).startsWith('/admin/alerts/events?')) return response({ events: [] });
+      throw new Error(`unexpected request for ${testCase.label}: ${url}`);
+    });
+
+    await app.window.testServiceReliabilityAlertDestination();
+
+    assert.equal(postCount, 1, `${testCase.label} did not issue exactly one POST`);
+    assert.deepEqual(app.toasts, [testCase.toast]);
+    assert.equal(app.element('serviceReliabilityAlertSave').disabled, false);
+    assert.equal(app.element('serviceReliabilityAlertTest').disabled, false);
+  }
+
+  const pendingPost = deferred();
+  let rapidPostCount = 0;
+  const rapidApp = createApp(async (url, options = {}) => {
+    if (url === '/admin/alerts/test' && options.method === 'POST') {
+      rapidPostCount += 1;
+      return pendingPost.promise;
+    }
+    if (url === '/admin/alerts/config') return response(config(webhook('configured')));
+    if (String(url).startsWith('/admin/alerts/events?')) return response({ events: [] });
+    throw new Error(`unexpected request: ${url}`);
+  });
+  const first = rapidApp.window.testServiceReliabilityAlertDestination();
+  const repeated = rapidApp.window.testServiceReliabilityAlertDestination();
+  await Promise.resolve();
+  assert.equal(rapidPostCount, 1, 'rapid repeat bypassed the in-flight guard');
+  assert.equal(rapidApp.element('serviceReliabilityAlertSave').disabled, true);
+  assert.equal(rapidApp.element('serviceReliabilityAlertTest').disabled, true);
+  pendingPost.resolve(response({ sent: true }));
+  await Promise.all([first, repeated]);
+  assert.equal(rapidApp.element('serviceReliabilityAlertSave').disabled, false);
+  assert.equal(rapidApp.element('serviceReliabilityAlertTest').disabled, false);
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+        )
+
+    def test_service_reliability_alert_load_failures_and_stale_failure_guard(self) -> None:
+        self._run_service_reliability_node_probe(
+            r"""
+(async () => {
+  const cases = [
+    {
+      label: 'config HTTP error',
+      fetch: async url => url === '/admin/alerts/config'
+        ? response({ detail: 'config HTTP failed' }, false)
+        : response({ events: [] }),
+      message: 'config HTTP failed',
+    },
+    {
+      label: 'events HTTP error',
+      fetch: async url => url === '/admin/alerts/config'
+        ? response(config(webhook('configured')))
+        : response({ detail: 'events HTTP failed' }, false),
+      message: 'events HTTP failed',
+    },
+    {
+      label: 'config network error',
+      fetch: async url => {
+        if (url === '/admin/alerts/config') throw new Error('config network failed');
+        return response({ events: [] });
+      },
+      message: 'config network failed',
+    },
+    {
+      label: 'events network error',
+      fetch: async url => {
+        if (url === '/admin/alerts/config') return response(config(webhook('configured')));
+        throw new Error('events network failed');
+      },
+      message: 'events network failed',
+    },
+  ];
+
+  for (const testCase of cases) {
+    const app = createApp(testCase.fetch);
+    await app.window.__hooks.loadServiceReliabilityAlerts();
+    const rendered = app.element('serviceReliabilityAlertEventsBody').innerHTML;
+    assert.ok(rendered.includes(testCase.message), `${testCase.label} did not render its error`);
+  }
+
+  const staleConfig = deferred();
+  let phase = 'initial';
+  const app = createApp(async url => {
+    if (phase === 'initial') {
+      if (url === '/admin/alerts/config') return response(config(webhook('current')));
+      return response({ events: [] });
+    }
+    if (phase === 'stale') {
+      if (url === '/admin/alerts/config') return staleConfig.promise;
+      return response({ events: [] });
+    }
+    if (url === '/admin/alerts/config') return response(config(webhook('newer')));
+    return response({ detail: 'current events failure' }, false);
+  });
+  await app.window.__hooks.loadServiceReliabilityAlerts();
+  assert.equal(app.element('serviceReliabilityAlertWebhookUrl').value, webhook('current'));
+
+  phase = 'stale';
+  const staleLoad = app.window.__hooks.loadServiceReliabilityAlerts();
+  phase = 'current-failure';
+  await app.window.__hooks.loadServiceReliabilityAlerts();
+  const currentError = app.element('serviceReliabilityAlertEventsBody').innerHTML;
+  assert.ok(currentError.includes('current events failure'));
+  assert.equal(app.element('serviceReliabilityAlertWebhookUrl').value, webhook('current'));
+
+  staleConfig.resolve(response({ detail: 'stale config failure' }, false));
+  await staleLoad;
+  const finalError = app.element('serviceReliabilityAlertEventsBody').innerHTML;
+  assert.ok(finalError.includes('current events failure'));
+  assert.ok(!finalError.includes('stale config failure'));
+  assert.equal(app.element('serviceReliabilityAlertWebhookUrl').value, webhook('current'));
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
         )
 
     async def test_reliability_reconcile_failure_rolls_back_without_escaping(self) -> None:
