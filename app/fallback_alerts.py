@@ -347,6 +347,13 @@ def _dingtalk_delivery_result(response: Any) -> Tuple[bool, str]:
     return True, ""
 
 
+def _dingtalk_http_client() -> httpx.AsyncClient:
+    httpx_logger = logging.getLogger("httpx")
+    if httpx_logger.getEffectiveLevel() < logging.WARNING:
+        httpx_logger.setLevel(logging.WARNING)
+    return httpx.AsyncClient(timeout=5.0)
+
+
 async def _send_dingtalk_alert(alert: FallbackExhaustedAlert) -> bool:
     webhook_url = current_alert_webhook_url()
     if not webhook_url:
@@ -364,7 +371,7 @@ async def _send_dingtalk_alert(alert: FallbackExhaustedAlert) -> bool:
         delivery_status="pending",
     )
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with _dingtalk_http_client() as client:
             response = await client.post(webhook_url, json=payload)
         delivered, error_summary = _dingtalk_delivery_result(response)
         await _complete_alert_event_bounded(
@@ -407,7 +414,7 @@ async def _send_upstream_failure_burst_alert(notification: UpstreamFailureBurstN
         delivery_status="pending",
     )
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with _dingtalk_http_client() as client:
             response = await client.post(webhook_url, json=payload)
         delivered, error_summary = _dingtalk_delivery_result(response)
         await _complete_alert_event_bounded(
@@ -442,7 +449,7 @@ async def send_dingtalk_configuration_test() -> Dict[str, Any]:
         delivery_status="pending",
     )
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with _dingtalk_http_client() as client:
             response = await client.post(webhook_url, json=build_configuration_test_payload())
         delivered, error_summary = _dingtalk_delivery_result(response)
         await _complete_alert_event_bounded(

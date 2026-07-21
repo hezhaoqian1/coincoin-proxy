@@ -14,6 +14,7 @@ from app.config import settings
 from app.fallback_alerts import reset_fallback_alert_state
 from app.main import app
 from app.models import AlertEvent
+from app.router import registry as model_registry
 
 
 class _RowsResult:
@@ -52,14 +53,28 @@ class AlertAdminApiTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.original_admin_token = settings.admin_token
         self.original_webhook = settings.fallback_alert_webhook_url
+        self.original_registry_settings = getattr(
+            model_registry, "_runtime_system_settings", None
+        )
+        self.original_registry_version = getattr(
+            model_registry, "_runtime_system_settings_version", 0
+        )
         settings.admin_token = "admin-secret"
         settings.fallback_alert_webhook_url = "https://oapi.dingtalk.example/robot?access_token=top-secret"
+        model_registry.clear_runtime_system_settings()
         reset_fallback_alert_state()
 
     def tearDown(self) -> None:
         app.dependency_overrides.clear()
         settings.admin_token = self.original_admin_token
         settings.fallback_alert_webhook_url = self.original_webhook
+        if self.original_registry_settings is None:
+            model_registry.clear_runtime_system_settings()
+        else:
+            model_registry.set_runtime_system_settings(
+                self.original_registry_settings,
+                version=self.original_registry_version,
+            )
         reset_fallback_alert_state()
 
     async def _client(self):
@@ -164,13 +179,49 @@ class AlertAdminApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(alert_admin.current_alert_webhook_url(), "")
         self.assertIn("", fake_db.queries[0].compile().params.values())
 
+    async def test_patch_empty_webhook_survives_other_runtime_setting_apply(self) -> None:
+        fake_db = _FakeDB()
+        self._override_db(fake_db)
+        body = {
+            "webhook_url": "",
+            "enabled": True,
+            "availability_threshold": 5,
+            "authentication_threshold": 3,
+            "window_seconds": 60,
+            "dedup_seconds": 300,
+            "max_pending_tasks": 64,
+        }
+
+        async with await self._client() as client:
+            response = await client.patch("/admin/alerts/config", json=body)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(
+            model_registry.current_system_settings()["fallback_alert_webhook_url"],
+            "",
+        )
+
+        system_settings.apply_runtime_system_setting(
+            system_settings.CLAUDE_COMPAT_PROVIDER_KEY,
+            "kiro_go",
+        )
+
+        self.assertEqual(alert_admin.current_alert_webhook_url(), "")
+        self.assertEqual(
+            model_registry.current_system_settings()["fallback_alert_webhook_url"],
+            "",
+        )
+
     async def test_patch_rejects_non_dingtalk_webhook_urls(self) -> None:
         invalid_urls = (
-            "http://oapi.dingtalk.com/robot/send?access_token=test-token",
-            "https://example.com/robot/send?access_token=test-token",
-            "https://oapi.dingtalk.com/not-robot/send?access_token=test-token",
+            "http://oapi.dingtalk.com/robot/send?access_token=must-not-echo",
+            "https://example.com/robot/send?access_token=must-not-echo",
+            "https://oapi.dingtalk.com/not-robot/send?access_token=must-not-echo",
             "https://oapi.dingtalk.com/robot/send",
             "https://oapi.dingtalk.com/robot/send?access_token=",
+            "https://oapi.dingtalk.com/robot/send?access_token=&access_token=must-not-echo",
+            "https://oapi.dingtalk.com/robot/send?access_token=must-not-echo&access_token=",
+            "https://oapi.dingtalk.com/robot/send?access_token=%20must-not-echo%20",
         )
         for webhook_url in invalid_urls:
             with self.subTest(webhook_url=webhook_url):
@@ -190,6 +241,8 @@ class AlertAdminApiTests(unittest.IsolatedAsyncioTestCase):
                     response = await client.patch("/admin/alerts/config", json=body)
 
                 self.assertEqual(response.status_code, 422, response.text)
+                self.assertNotIn("must-not-echo", response.text)
+                self.assertEqual(response.headers["cache-control"], "no-store")
                 fake_db.commit.assert_not_awaited()
 
     async def test_patch_rejects_dedup_shorter_than_window(self) -> None:
@@ -208,6 +261,8 @@ class AlertAdminApiTests(unittest.IsolatedAsyncioTestCase):
             response = await client.patch("/admin/alerts/config", json=body)
 
         self.assertEqual(response.status_code, 422, response.text)
+        self.assertNotIn("test-token", response.text)
+        self.assertEqual(response.headers["cache-control"], "no-store")
 
     async def test_configuration_test_returns_delivery_result_without_webhook(self) -> None:
         self._override_db(_FakeDB())
@@ -302,6 +357,71 @@ class AlertAdminApiTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(alert_admin.current_alert_webhook_url(), "")
+
+    async def test_stale_runtime_refresh_cannot_override_newer_webhook(self) -> None:
+        older_url = "https://oapi.dingtalk.com/robot/send?access_token=old-test-token"
+        older_row = SimpleNamespace(
+            setting_key="fallback_alert_webhook_url",
+            setting_value=older_url,
+            updated_at=datetime(2026, 7, 21, 12, 0, 0),
+        )
+        await system_settings.refresh_runtime_system_settings_from_db(
+            _FakeDB(execute_results=[_RowsResult([older_row])])
+        )
+        newer_url = "https://oapi.dingtalk.com/robot/send?access_token=new-test-token"
+        body = {
+            "webhook_url": newer_url,
+            "enabled": True,
+            "availability_threshold": 5,
+            "authentication_threshold": 3,
+            "window_seconds": 60,
+            "dedup_seconds": 300,
+            "max_pending_tasks": 64,
+        }
+        self._override_db(_FakeDB())
+
+        async with await self._client() as client:
+            response = await client.patch("/admin/alerts/config", json=body)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        await system_settings.refresh_runtime_system_settings_from_db(
+            _FakeDB(execute_results=[_RowsResult([older_row])])
+        )
+
+        self.assertEqual(alert_admin.current_alert_webhook_url(), newer_url)
+        self.assertEqual(
+            model_registry.current_system_settings()["fallback_alert_webhook_url"],
+            newer_url,
+        )
+
+    async def test_runtime_refresh_accepts_changed_content_at_same_version(self) -> None:
+        updated_at = datetime(2026, 7, 21, 12, 0, 2)
+        first = SimpleNamespace(
+            setting_key="fallback_alert_webhook_url",
+            setting_value="https://first.example/webhook",
+            updated_at=updated_at,
+        )
+        second = SimpleNamespace(
+            setting_key="fallback_alert_webhook_url",
+            setting_value="https://second.example/webhook",
+            updated_at=updated_at,
+        )
+
+        await system_settings.refresh_runtime_system_settings_from_db(
+            _FakeDB(execute_results=[_RowsResult([first])])
+        )
+        await system_settings.refresh_runtime_system_settings_from_db(
+            _FakeDB(execute_results=[_RowsResult([second])])
+        )
+
+        self.assertEqual(
+            alert_admin.current_alert_webhook_url(),
+            "https://second.example/webhook",
+        )
+        self.assertEqual(
+            model_registry.current_system_settings()["fallback_alert_webhook_url"],
+            alert_admin.current_alert_webhook_url(),
+        )
 
     def test_alert_event_indexes_cover_polling_filter_and_sort_shapes(self) -> None:
         indexes = {

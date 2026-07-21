@@ -62,17 +62,45 @@ async def get_runtime_system_settings_db_state(db: AsyncSession) -> Tuple[Tuple[
 
 async def refresh_runtime_system_settings_from_db(db: AsyncSession) -> None:
     runtime_settings, version = await load_runtime_system_settings_from_db(db)
-    _apply_alert_runtime_settings(runtime_settings)
-    model_registry.set_runtime_system_settings(runtime_settings, version=version)
+    apply_runtime_system_settings(
+        runtime_settings,
+        replace=True,
+        version=version,
+    )
+
+
+def apply_runtime_system_settings(
+    runtime_settings: Dict[str, Any],
+    *,
+    replace: bool = False,
+    version: int | None = None,
+) -> bool:
+    current_version = int(
+        getattr(model_registry, "_runtime_system_settings_version", 0) or 0
+    )
+    if version is not None and int(version) < current_version:
+        return False
+
+    merged_settings = {} if replace else model_registry.current_system_settings()
+    merged_settings.update(
+        {
+            key: str(value or "").strip()
+            for key, value in (runtime_settings or {}).items()
+            if key in SUPPORTED_RUNTIME_SETTING_KEYS
+        }
+    )
+    next_version = (
+        int(version)
+        if version is not None
+        else max(int(time.time() * 1_000_000), current_version + 1)
+    )
+    _apply_alert_runtime_settings(merged_settings)
+    model_registry.set_runtime_system_settings(merged_settings, version=next_version)
     model_registry.init_from_settings()
+    return True
 
 
 def apply_runtime_system_setting(setting_key: str, setting_value: str) -> None:
     if setting_key not in SUPPORTED_RUNTIME_SETTING_KEYS:
         return
-    runtime_settings = model_registry.current_system_settings()
-    runtime_settings[setting_key] = str(setting_value or "").strip()
-    _apply_alert_runtime_settings(runtime_settings)
-    version = max(int(time.time() * 1_000_000), getattr(model_registry, "_runtime_system_settings_version", 0) + 1)
-    model_registry.set_runtime_system_settings(runtime_settings, version=version)
-    model_registry.init_from_settings()
+    apply_runtime_system_settings({setting_key: setting_value})

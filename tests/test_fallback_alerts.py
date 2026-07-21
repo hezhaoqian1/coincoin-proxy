@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import unittest
 from types import SimpleNamespace
@@ -400,6 +401,70 @@ class UpstreamFailureBurstAlertTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(delivered)
         self.assertNotIn("must-not-log", " ".join(str(value) for value in warning.call_args.args))
         self.assertFalse(warning.call_args.kwargs.get("exc_info", False))
+
+    async def test_httpx_request_logs_do_not_render_webhook_token_for_any_sender(self) -> None:
+        secret_token = "must-not-appear-in-httpx-logs"
+        webhook_url = (
+            "https://oapi.dingtalk.com/robot/send?access_token=" + secret_token
+        )
+        fallback_alerts.set_runtime_alert_settings(
+            {"fallback_alert_webhook_url": webhook_url}
+        )
+        transport = httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"errcode": 0})
+        )
+        real_async_client = httpx.AsyncClient
+
+        def real_client_with_mock_transport(**kwargs):
+            return real_async_client(transport=transport, **kwargs)
+
+        messages = []
+        handler = logging.Handler()
+        handler.emit = lambda record: messages.append(record.getMessage())
+        httpx_logger = logging.getLogger("httpx")
+        original_level = httpx_logger.level
+        httpx_logger.addHandler(handler)
+        httpx_logger.setLevel(logging.INFO)
+        try:
+            with (
+                patch.object(
+                    fallback_alerts.httpx,
+                    "AsyncClient",
+                    side_effect=real_client_with_mock_transport,
+                ),
+                patch.object(
+                    fallback_alerts,
+                    "create_alert_event",
+                    AsyncMock(return_value=None),
+                ),
+            ):
+                fallback_result = await fallback_alerts._send_dingtalk_alert(
+                    fallback_alerts.FallbackExhaustedAlert(
+                        endpoint="messages",
+                        model="claude-sonnet-4-6",
+                        status_code=503,
+                        reason="503",
+                        route_reason="channel_fallback:all_failed",
+                        route_attempt=2,
+                    )
+                )
+                burst_result = await fallback_alerts._send_upstream_failure_burst_alert(
+                    fallback_alerts.UpstreamFailureBurstNotification(
+                        alert=self._alert("ccreq_httpx_log"),
+                        category="availability",
+                        count=5,
+                        window_seconds=60,
+                    )
+                )
+                test_result = await fallback_alerts.send_dingtalk_configuration_test()
+        finally:
+            httpx_logger.removeHandler(handler)
+            httpx_logger.setLevel(original_level)
+
+        self.assertTrue(fallback_result)
+        self.assertTrue(burst_result)
+        self.assertTrue(test_result["sent"])
+        self.assertNotIn(secret_token, "\n".join(messages))
 
     async def test_hanging_audit_insert_cannot_suppress_dingtalk_delivery(self) -> None:
         notification = fallback_alerts.UpstreamFailureBurstNotification(

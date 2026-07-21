@@ -4,8 +4,8 @@ from datetime import datetime
 from typing import Any, Literal, Optional
 from urllib.parse import parse_qs, urlsplit
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from pydantic import BaseModel, Field, field_validator, model_validator
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response, status
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,9 +16,9 @@ from .fallback_alerts import (
     current_alert_policy,
     current_alert_webhook_url,
     send_dingtalk_configuration_test,
-    set_runtime_alert_settings,
 )
 from .models import AlertEvent, SystemSetting
+from .system_settings import apply_runtime_system_settings
 
 
 router = APIRouter(
@@ -47,30 +47,33 @@ class AlertPolicyUpdate(BaseModel):
     dedup_seconds: int = Field(ge=1, le=86400)
     max_pending_tasks: int = Field(ge=1, le=4096)
 
-    @field_validator("webhook_url")
-    @classmethod
-    def validate_webhook_url(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
-            return ""
-        parsed = urlsplit(value)
-        access_tokens = parse_qs(parsed.query, keep_blank_values=True).get(
-            "access_token", []
-        )
-        if (
-            parsed.scheme != "https"
-            or parsed.netloc != "oapi.dingtalk.com"
-            or parsed.path != "/robot/send"
-            or not any(token.strip() for token in access_tokens)
-        ):
-            raise ValueError("webhook_url must be a DingTalk robot HTTPS URL")
-        return value
 
-    @model_validator(mode="after")
-    def validate_dedup_window(self) -> "AlertPolicyUpdate":
-        if self.dedup_seconds < self.window_seconds:
-            raise ValueError("dedup_seconds must be greater than or equal to window_seconds")
-        return self
+def _raise_config_validation_error(detail: str) -> None:
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail=detail,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+def _validated_webhook_url(value: str) -> str:
+    if not value.strip():
+        return ""
+    parsed = urlsplit(value)
+    access_tokens = parse_qs(parsed.query, keep_blank_values=True).get(
+        "access_token", []
+    )
+    if (
+        value != value.strip()
+        or parsed.scheme != "https"
+        or parsed.netloc != "oapi.dingtalk.com"
+        or parsed.path != "/robot/send"
+        or len(access_tokens) != 1
+        or not access_tokens[0]
+        or access_tokens[0] != access_tokens[0].strip()
+    ):
+        _raise_config_validation_error("Invalid DingTalk alert webhook URL")
+    return value
 
 
 def _iso(value: Any) -> Optional[str]:
@@ -114,13 +117,22 @@ async def get_alert_config(response: Response, db: AsyncSession = Depends(get_db
 
 @router.patch("/config")
 async def update_alert_config(
-    payload: AlertPolicyUpdate,
     response: Response,
+    raw_payload: Any = Body(...),
     db: AsyncSession = Depends(get_db),
 ):
     response.headers["Cache-Control"] = "no-store"
+    try:
+        payload = AlertPolicyUpdate.model_validate(raw_payload)
+    except ValidationError:
+        _raise_config_validation_error("Invalid alert configuration")
+    webhook_url = _validated_webhook_url(payload.webhook_url)
+    if payload.dedup_seconds < payload.window_seconds:
+        _raise_config_validation_error(
+            "dedup_seconds must be greater than or equal to window_seconds"
+        )
     values = {
-        POLICY_SETTING_KEYS["webhook_url"]: payload.webhook_url,
+        POLICY_SETTING_KEYS["webhook_url"]: webhook_url,
         POLICY_SETTING_KEYS["enabled"]: "true" if payload.enabled else "false",
         POLICY_SETTING_KEYS["availability_threshold"]: str(payload.availability_threshold),
         POLICY_SETTING_KEYS["authentication_threshold"]: str(payload.authentication_threshold),
@@ -145,7 +157,7 @@ async def update_alert_config(
     )
     await db.execute(statement)
     await db.commit()
-    set_runtime_alert_settings(values)
+    apply_runtime_system_settings(values)
     return await _config_payload(db)
 
 
