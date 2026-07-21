@@ -137,3 +137,5 @@ Entries are workspace records, not authoritative runtime decisions.
 | 2026-07-22 | artifact | docs/aegis/work/2026-07-22-alert-webhook-management/resume-state-hint.json | 2026-07-22-alert-webhook-management resume state hint |
 | 2026-07-22 | adr | docs/aegis/adr/ADR-0004-admin-managed-alert-webhook.md | ADR-0004 - Make SystemSetting the primary alert webhook owner |
 | 2026-07-22 | artifact | docs/aegis/work/2026-07-22-alert-webhook-management/evidence-bundle-draft-admin-ui-shared-validator-review.json | 2026-07-22-alert-webhook-management evidence admin-ui-shared-validator-review |
+| 2026-07-22 | artifact | docs/aegis/work/2026-07-22-alert-webhook-management/evidence-bundle-draft-final-prelanding-runtime-security-review.json | 2026-07-22-alert-webhook-management evidence final-prelanding-runtime-security-review |
+| 2026-07-22 | artifact | docs/aegis/work/2026-07-22-alert-webhook-management/evidence-bundle-draft-full-suite-baseline-differential.json | 2026-07-22-alert-webhook-management evidence full-suite-baseline-differential |

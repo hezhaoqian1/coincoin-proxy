@@ -2,10 +2,9 @@
   "schemaVersion": "aegis.schema.v0",
   "taskId": "2026-07-22-alert-webhook-management",
   "lastCheckpointRef": "docs/aegis/work/2026-07-22-alert-webhook-management/todo-checkpoint-draft.json",
-  "resumeInstruction": "Resume from Task 3 verification in the alert-webhook-management worktree; do not put the real URL or admin token in Git or logs.",
+  "resumeInstruction": "Resume from ship on codex/alert-webhook-management; production URL/admin token stay out of Git, PR bodies, and logs.",
   "knownPartialWork": [
-    "Task 1 backend runtime owner, persistence, validation, no-store, logging hygiene, and concurrency behavior.",
-    "Task 2 administrator page Webhook view/edit/clear flow, stale-response protection, shared validator parity, and independent reviews."
+    "Tasks 1 and 2 implementation, architecture records, focused verification, full-suite differential, and pre-landing review."
   ],
   "mustReadBeforeContinuing": [
     "docs/aegis/work/2026-07-22-alert-webhook-management/10-intent.md",
@@ -13,6 +12,6 @@
     "docs/aegis/work/2026-07-22-alert-webhook-management/todo-checkpoint-draft.json"
   ],
   "unsafeToAssume": [
-    "Do not assume production deployment or database initialization until Railway and protected API checks pass."
+    "Do not claim deployment, SystemSetting initialization, or DingTalk delivery until each live check succeeds."
   ]
 }

@@ -48,3 +48,25 @@
 - Plaintext SystemSetting and complete protected admin response are the user-approved credential boundary.
 - Production initialization and DingTalk delivery remain unverified until deployment.
 - Advisory decision: needs-verification
+
+## Checkpoint Update
+
+- Current todo: Ship, verify Railway, and initialize the production Webhook.
+- Active slice: Task 3 release and live initialization from docs/aegis/plans/2026-07-22-alert-webhook-management.md
+- Completed todos:
+- Tasks 1 and 2 implementation, architecture records, focused verification, full-suite differential, and pre-landing review.
+- Evidence refs:
+- docs/aegis/work/2026-07-22-alert-webhook-management/evidence-bundle-draft-final-prelanding-runtime-security-review.json
+- docs/aegis/work/2026-07-22-alert-webhook-management/evidence-bundle-draft-full-suite-baseline-differential.json
+- Blocked on: none
+- Next step: Push feature branch, create and merge PR, verify Railway and health, then write and test the supplied Webhook through the protected API.
+
+## DriftCheckDraft
+
+- Scope status: Implementation, architecture records, tests, and review stayed within the administrator-managed alert Webhook contract.
+- Compatibility status: Absent DB row falls back to Railway; present empty disables; valid values converge across replicas; malformed stored values remain visible but cannot send.
+- Retirement status: Railway-only ownership is retired while the absent-key Railway fallback remains intentionally active.
+- New risk signals:
+- Production deployment, database initialization, and real DingTalk configuration test still require live verification.
+- Three unrelated origin/master video tests remain red and were not changed in this task.
+- Advisory decision: needs-verification

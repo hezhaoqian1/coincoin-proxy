@@ -3,15 +3,15 @@
   "taskId": "2026-07-22-alert-webhook-management",
   "taskIntentRef": "docs/aegis/work/2026-07-22-alert-webhook-management/task-intent-draft.json",
   "baselineRefs": [
-    "docs/aegis/baseline/service-reliability.md",
-    "docs/aegis/adr/ADR-0004-admin-managed-alert-webhook.md"
+    "docs/aegis/adr/ADR-0004-admin-managed-alert-webhook.md",
+    "docs/aegis/baseline/service-reliability.md"
   ],
-  "scopeStatus": "Tasks 1 and 2 stayed within the existing alert API, runtime settings owner, Service Reliability page, and focused tests.",
-  "compatStatus": "Database key presence wins including empty; absent-key Railway fallback and customer-path no-I/O remain covered.",
-  "retirementStatus": "Railway-only ownership is superseded; the environment variable remains a documented compatibility fallback.",
+  "scopeStatus": "Implementation, architecture records, tests, and review stayed within the administrator-managed alert Webhook contract.",
+  "compatStatus": "Absent DB row falls back to Railway; present empty disables; valid values converge across replicas; malformed stored values remain visible but cannot send.",
+  "retirementStatus": "Railway-only ownership is retired while the absent-key Railway fallback remains intentionally active.",
   "newRiskSignals": [
-    "Plaintext SystemSetting and complete protected admin response are the user-approved credential boundary.",
-    "Production initialization and DingTalk delivery remain unverified until deployment."
+    "Production deployment, database initialization, and real DingTalk configuration test still require live verification.",
+    "Three unrelated origin/master video tests remain red and were not changed in this task."
   ],
   "decision": "needs-verification"
 }

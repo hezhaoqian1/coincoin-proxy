@@ -149,8 +149,8 @@ Why: keep the deliberate plaintext/source-of-truth reversal discoverable.
 Impact/compatibility: documentation must never include the real URL or token.
 
 - [x] Update the ADR, baseline, runbook, and Aegis index with the implemented contract.
-- [ ] Run focused tests, compile/static checks, docs checks, and diff checks.
-- [ ] Run pre-landing review and fix any concrete issues.
+- [x] Run focused tests, compile/static checks, docs checks, and diff checks.
+- [x] Run pre-landing review and fix any concrete issues.
 - [ ] Push, create a PR, merge to `master`, and verify Railway deployments/health.
 - [ ] Write the production URL through the protected API, send one labelled test,
   and verify the database-backed value plus successful AlertEvent history.
