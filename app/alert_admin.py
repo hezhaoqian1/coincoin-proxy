@@ -4,10 +4,14 @@ from datetime import datetime
 from typing import Any, Literal, Optional
 from urllib.parse import parse_qs, urlsplit
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .admin import admin_guard
 from .db import get_db
@@ -20,10 +24,42 @@ from .models import AlertEvent
 from .system_settings import persist_runtime_system_settings
 
 
+class AlertAdminRoute(APIRoute):
+    def get_route_handler(self):
+        route_handler = super().get_route_handler()
+        if self.path != "/admin/alerts/config":
+            return route_handler
+
+        async def config_safe_handler(request: Request):
+            try:
+                response = await route_handler(request)
+            except RequestValidationError:
+                response = JSONResponse(
+                    {"detail": "invalid alert config"},
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                )
+            except StarletteHTTPException as exc:
+                detail = (
+                    "invalid alert config"
+                    if exc.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+                    else exc.detail
+                )
+                response = JSONResponse(
+                    {"detail": detail},
+                    status_code=exc.status_code,
+                    headers=dict(exc.headers or {}),
+                )
+            response.headers["Cache-Control"] = "no-store"
+            return response
+
+        return config_safe_handler
+
+
 router = APIRouter(
     prefix="/admin/alerts",
     tags=["admin-alerts"],
     dependencies=[Depends(admin_guard)],
+    route_class=AlertAdminRoute,
 )
 
 POLICY_SETTING_KEYS = {
@@ -119,18 +155,15 @@ async def _config_payload(db: AsyncSession) -> dict[str, Any]:
 
 
 @router.get("/config")
-async def get_alert_config(response: Response, db: AsyncSession = Depends(get_db)):
-    response.headers["Cache-Control"] = "no-store"
+async def get_alert_config(db: AsyncSession = Depends(get_db)):
     return await _config_payload(db)
 
 
 @router.patch("/config")
 async def update_alert_config(
-    response: Response,
     raw_payload: Any = Body(...),
     db: AsyncSession = Depends(get_db),
 ):
-    response.headers["Cache-Control"] = "no-store"
     try:
         payload = AlertPolicyUpdate.model_validate(raw_payload)
     except ValidationError:
