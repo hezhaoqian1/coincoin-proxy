@@ -578,6 +578,71 @@ class UpstreamFailureBurstAlertTests(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertEqual(len(installed_filters), 1)
 
+    async def test_httpx_request_log_redaction_handles_quotes_without_changing_other_urls(self) -> None:
+        cases = (
+            (
+                "https://oapi.dingtalk.com/robot/send?access_token=prefix'suffix",
+                ("prefix", "suffix"),
+                "access_token=[REDACTED]",
+            ),
+            (
+                "https://oapi.dingtalk.com/robot/send?note='&access_token=after-note-secret",
+                ("after-note-secret",),
+                "note='&access_token=[REDACTED]",
+            ),
+        )
+        transport = httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"errcode": 0})
+        )
+        real_async_client = httpx.AsyncClient
+
+        def real_client_with_mock_transport(**kwargs):
+            return real_async_client(transport=transport, **kwargs)
+
+        messages = []
+        handler = logging.Handler()
+        handler.emit = lambda record: messages.append(record.getMessage())
+        httpx_logger = logging.getLogger("httpx")
+        original_level = httpx_logger.level
+        httpx_logger.addHandler(handler)
+        httpx_logger.setLevel(logging.INFO)
+        try:
+            with (
+                patch.object(
+                    fallback_alerts.httpx,
+                    "AsyncClient",
+                    side_effect=real_client_with_mock_transport,
+                ),
+                patch.object(
+                    fallback_alerts,
+                    "create_alert_event",
+                    AsyncMock(return_value=None),
+                ),
+            ):
+                for webhook_url, secret_fragments, expected_url in cases:
+                    with self.subTest(webhook_url=webhook_url):
+                        messages.clear()
+                        fallback_alerts.set_runtime_alert_settings(
+                            {"fallback_alert_webhook_url": webhook_url}
+                        )
+
+                        result = await fallback_alerts.send_dingtalk_configuration_test()
+
+                        self.assertTrue(result["sent"])
+                        rendered_messages = "\n".join(messages)
+                        for secret_fragment in secret_fragments:
+                            self.assertNotIn(secret_fragment, rendered_messages)
+                        self.assertIn(expected_url, rendered_messages)
+
+                messages.clear()
+                unrelated_url = "https://example.com/path?note='&safe=value"
+                async with real_async_client(transport=transport) as client:
+                    await client.get(unrelated_url)
+                self.assertIn(unrelated_url, "\n".join(messages))
+        finally:
+            httpx_logger.removeHandler(handler)
+            httpx_logger.setLevel(original_level)
+
     async def test_hanging_audit_insert_cannot_suppress_dingtalk_delivery(self) -> None:
         notification = fallback_alerts.UpstreamFailureBurstNotification(
             alert=self._alert("ccreq_audit_timeout"),

@@ -6,7 +6,7 @@ import time
 from collections import deque
 from dataclasses import dataclass
 from typing import Any, Deque, Dict, Optional, Set, Tuple
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote_plus, urlsplit
 
 import httpx
 
@@ -23,8 +23,8 @@ _UPSTREAM_FAILURE_LOCK = asyncio.Lock()
 _UPSTREAM_FAILURE_TASKS: Set[asyncio.Task] = set()
 _RUNTIME_ALERT_SETTINGS: Dict[str, str] = {}
 _ALERT_HISTORY_TIMEOUT_SECONDS = 0.25
-_DINGTALK_ACCESS_TOKEN_PATTERN = re.compile(
-    r"(https://oapi\.dingtalk\.com/robot/send\?(?:[^&\s\"'#]*&)*access_token=)[^&\s\"'#]*",
+_DINGTALK_LOG_URL_PATTERN = re.compile(
+    r"https://oapi\.dingtalk\.com/robot/send\?[^\s\"]+",
     re.IGNORECASE,
 )
 
@@ -388,7 +388,25 @@ def _dingtalk_delivery_result(response: Any) -> Tuple[bool, str]:
 
 
 def _redact_dingtalk_access_token(value: str) -> str:
-    return _DINGTALK_ACCESS_TOKEN_PATTERN.sub(r"\1[REDACTED]", value)
+    def redact_url(match: re.Match[str]) -> str:
+        url = match.group(0)
+        query_start = url.index("?") + 1
+        fragment_start = url.find("#", query_start)
+        query_end = fragment_start if fragment_start >= 0 else len(url)
+        query_parts = url[query_start:query_end].split("&")
+        for index, query_part in enumerate(query_parts):
+            name, separator, _ = query_part.partition("=")
+            if separator and unquote_plus(name) == "access_token":
+                query_parts[index] = f"{name}=[REDACTED]"
+        return "".join(
+            (
+                url[:query_start],
+                "&".join(query_parts),
+                url[query_end:],
+            )
+        )
+
+    return _DINGTALK_LOG_URL_PATTERN.sub(redact_url, value)
 
 
 class _DingTalkAccessTokenLogFilter(logging.Filter):
