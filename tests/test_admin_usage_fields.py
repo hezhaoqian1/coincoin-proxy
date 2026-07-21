@@ -1,5 +1,6 @@
 import asyncio
 import json
+import subprocess
 import tempfile
 import unittest
 from datetime import date, datetime, timedelta
@@ -504,15 +505,18 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("sr-alert-webhook-field", reliability_css)
         self.assertIn("grid-column: 1 / -1", reliability_css)
         self.assertIn("if (!alertPolicyDirty)", reliability_js)
+        self.assertIn("alertEditRevision", reliability_js)
+        self.assertIn("alertConfigLoadGeneration", reliability_js)
         self.assertIn("document.getElementById('serviceReliabilityAlertWebhookUrl').value = payload.webhook_url ?? '';", reliability_js)
         self.assertIn("webhook_url: document.getElementById('serviceReliabilityAlertWebhookUrl').value.trim()", reliability_js)
-        self.assertIn("if (payload.webhook_url && !validDingTalkWebhookUrl(payload.webhook_url))", reliability_js)
+        self.assertIn("if (payload.webhook_url && !validDingTalkWebhookUrl(rawWebhookUrl))", reliability_js)
         self.assertIn("webhookUrl.protocol === 'https:'", reliability_js)
         self.assertIn("webhookUrl.host === 'oapi.dingtalk.com'", reliability_js)
         self.assertIn("webhookUrl.pathname === '/robot/send'", reliability_js)
         self.assertIn("webhookUrl.searchParams.getAll('access_token')", reliability_js)
         self.assertIn("accessTokens.length === 1", reliability_js)
-        self.assertIn("accessTokens[0].trim() !== ''", reliability_js)
+        self.assertIn("accessTokens[0] !== ''", reliability_js)
+        self.assertIn("/[\\s\\u0000-\\u001f\\u007f]/.test(accessTokens[0])", reliability_js)
         self.assertIn("Webhook 地址必须是有效的钉钉机器人地址", reliability_js)
         self.assertIn("payload.webhook_configured === true", reliability_js)
         self.assertIn("alertActionRunning || !configured", reliability_js)
@@ -520,6 +524,208 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertNotIn('data-page="alerts"', admin_html)
         self.assertNotIn('id="page-alerts"', admin_html)
+
+    def _run_service_reliability_node_probe(self, probe: str) -> None:
+        reliability_js = Path(admin_module.__file__).parent / "static" / "admin_assets" / "service-reliability.js"
+        harness = r"""
+const assert = require('assert').strict;
+const fs = require('fs');
+const vm = require('vm');
+const source = fs.readFileSync(process.argv[1], 'utf8');
+
+function response(payload) {
+  return { ok: true, json: async () => payload };
+}
+
+function config(webhookUrl) {
+  return {
+    enabled: true,
+    webhook_url: webhookUrl,
+    webhook_configured: Boolean(webhookUrl),
+    availability_threshold: 3,
+    authentication_threshold: 2,
+    window_seconds: 60,
+    dedup_seconds: 120,
+    max_pending_tasks: 8,
+    last_success_at: null,
+    last_failure_at: null,
+  };
+}
+
+function webhook(token) {
+  return `https://oapi.dingtalk.com/robot/send?access_token=${token}`;
+}
+
+function deferred() {
+  let resolve;
+  const promise = new Promise(done => { resolve = done; });
+  return { promise, resolve };
+}
+
+function createApp(fetchImpl) {
+  const elements = new Map();
+  const element = id => {
+    if (!elements.has(id)) {
+      const listeners = new Map();
+      elements.set(id, {
+        id,
+        value: '',
+        checked: false,
+        disabled: false,
+        hidden: false,
+        className: '',
+        textContent: '',
+        innerHTML: '',
+        dataset: {},
+        classList: { contains: () => true, remove: () => {}, toggle: () => {} },
+        addEventListener(type, listener) { listeners.set(type, listener); },
+        dispatch(type) { listeners.get(type)?.({ target: this }); },
+        querySelectorAll: () => [],
+      });
+    }
+    return elements.get(id);
+  };
+  const policyIds = [
+    'serviceReliabilityAlertEnabled',
+    'serviceReliabilityAlertWebhookUrl',
+    'serviceReliabilityAlertAvailabilityThreshold',
+    'serviceReliabilityAlertAuthenticationThreshold',
+    'serviceReliabilityAlertWindowSeconds',
+    'serviceReliabilityAlertDedupSeconds',
+    'serviceReliabilityAlertMaxPendingTasks',
+  ];
+  const document = {
+    hidden: true,
+    getElementById: element,
+    querySelectorAll: selector => selector === '[data-sr-alert-policy]' ? policyIds.map(element) : [],
+    addEventListener: () => {},
+  };
+  const window = {
+    adminHeaders: () => ({}),
+    toast: () => {},
+    setTimeout: () => 0,
+    clearTimeout: () => {},
+  };
+  const context = {
+    window,
+    document,
+    fetch: (...args) => fetchImpl(...args),
+    console,
+    URL,
+    URLSearchParams,
+    encodeURIComponent,
+    decodeURIComponent,
+  };
+  vm.createContext(context);
+  const instrumented = source.replace(
+    /\}\)\(\);\s*$/,
+    'window.__hooks = { validDingTalkWebhookUrl, loadServiceReliabilityAlerts };\n})();',
+  );
+  vm.runInContext(instrumented, context);
+  policyIds.slice(2).forEach(id => { element(id).value = '1'; });
+  element('serviceReliabilityAlertWindowSeconds').value = '60';
+  element('serviceReliabilityAlertDedupSeconds').value = '120';
+  return { window, element };
+}
+"""
+        result = subprocess.run(
+            ["node", "-e", harness + probe, str(reliability_js)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+
+    def test_service_reliability_alert_save_preserves_newer_edits_and_ignores_stale_loads(self) -> None:
+        self._run_service_reliability_node_probe(
+            r"""
+(async () => {
+  {
+    const patchResponse = deferred();
+    const app = createApp(async (url, options = {}) => {
+      if (options.method === 'PATCH') return patchResponse.promise;
+      if (url === '/admin/alerts/config') return response(config(webhook('submitted')));
+      if (String(url).startsWith('/admin/alerts/events?')) return response({ events: [] });
+      throw new Error(`unexpected request: ${url}`);
+    });
+    const input = app.element('serviceReliabilityAlertWebhookUrl');
+    input.value = webhook('submitted');
+    const savePromise = app.window.saveServiceReliabilityAlertConfig();
+    await Promise.resolve();
+    input.value = webhook('newer-edit');
+    input.dispatch('input');
+    patchResponse.resolve(response(config(webhook('submitted'))));
+    await savePromise;
+    assert.equal(input.value, webhook('newer-edit'), 'save response overwrote a newer edit');
+  }
+
+  {
+    const oldConfigResponse = deferred();
+    let configLoads = 0;
+    const app = createApp(async (url, options = {}) => {
+      if (options.method === 'PATCH') return response(config(webhook('saved')));
+      if (url === '/admin/alerts/config') {
+        configLoads += 1;
+        return configLoads === 1 ? oldConfigResponse.promise : response(config(webhook('saved')));
+      }
+      if (String(url).startsWith('/admin/alerts/events?')) return response({ events: [] });
+      throw new Error(`unexpected request: ${url}`);
+    });
+    const oldLoad = app.window.__hooks.loadServiceReliabilityAlerts();
+    const input = app.element('serviceReliabilityAlertWebhookUrl');
+    input.value = webhook('submitted');
+    input.dispatch('input');
+    await app.window.saveServiceReliabilityAlertConfig();
+    assert.equal(input.value, webhook('saved'));
+    oldConfigResponse.resolve(response(config(webhook('stale'))));
+    await oldLoad;
+    assert.equal(input.value, webhook('saved'), 'stale load overwrote the saved value');
+  }
+
+  {
+    let latest = webhook('canonical');
+    const app = createApp(async (url, options = {}) => {
+      if (options.method === 'PATCH') return response(config(latest));
+      if (url === '/admin/alerts/config') return response(config(latest));
+      if (String(url).startsWith('/admin/alerts/events?')) return response({ events: [] });
+      throw new Error(`unexpected request: ${url}`);
+    });
+    const input = app.element('serviceReliabilityAlertWebhookUrl');
+    input.value = webhook('submitted');
+    input.dispatch('input');
+    await app.window.saveServiceReliabilityAlertConfig();
+    assert.equal(input.value, webhook('canonical'), 'ordinary save did not render its response');
+    latest = webhook('later-refresh');
+    await app.window.__hooks.loadServiceReliabilityAlerts();
+    assert.equal(input.value, webhook('later-refresh'), 'ordinary save did not clear dirty state');
+  }
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+        )
+
+    def test_service_reliability_webhook_validation_matches_backend_contract(self) -> None:
+        self._run_service_reliability_node_probe(
+            r"""
+const app = createApp(async url => { throw new Error(`unexpected request: ${url}`); });
+const valid = app.window.__hooks.validDingTalkWebhookUrl;
+const cases = [
+  [webhook('synthetic-token'), true],
+  [`${webhook('synthetic-token')}#delivery`, true],
+  ['https://OAPI.DINGTALK.COM/robot/send?access_token=synthetic-token', false],
+  ['https://oapi.dingtalk.com:443/robot/send?access_token=synthetic-token', false],
+  ['https://user@oapi.dingtalk.com/robot/send?access_token=synthetic-token', false],
+  ['https://oapi.dingtalk.com/robot/send?access_token=abc%00def', false],
+  ['https://oapi.dingtalk.com/robot/send?access_token=abc%0Adef', false],
+  ['https://oapi.dingtalk.com/robot/send?access_token=abc%20def', false],
+  ['https://oapi.dingtalk.com/robot/send?access_token=first&access_token=second', false],
+  ['https://oapi.dingtalk.com/robot/send?access_token=', false],
+  [`https://oapi.dingtalk.com/robot/send?access_token=abc${String.fromCharCode(0)}def`, false],
+  [`https://oapi.dingtalk.com/robot/send?access_token=abc${String.fromCharCode(127)}def`, false],
+];
+const mismatches = cases.flatMap(([value, expected], index) => valid(value) === expected ? [] : [index]);
+assert.deepEqual(mismatches, []);
+"""
+        )
 
     async def test_reliability_reconcile_failure_rolls_back_without_escaping(self) -> None:
         db = _FakeDB()
