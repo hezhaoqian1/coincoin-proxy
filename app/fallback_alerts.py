@@ -269,6 +269,25 @@ def build_upstream_failure_burst_payload(notification: UpstreamFailureBurstNotif
     return {"msgtype": "text", "text": {"content": "\n".join(lines)}}
 
 
+def build_configuration_test_payload() -> Dict[str, Any]:
+    title = "CoinCoin 告警配置测试"
+    keyword = (settings.fallback_alert_keyword or "").strip()
+    if keyword and keyword not in title:
+        title = f"{keyword} {title}"
+    return {
+        "msgtype": "text",
+        "text": {
+            "content": "\n".join(
+                [
+                    title,
+                    "配置测试",
+                    "说明: 这是管理员主动发起的钉钉告警配置测试，不代表线上请求发生故障。",
+                ]
+            )
+        },
+    }
+
+
 def _dingtalk_delivery_result(response: Any) -> Tuple[bool, str]:
     status_code = int(getattr(response, "status_code", 0) or 0)
     if status_code >= 400:
@@ -364,6 +383,41 @@ async def _send_upstream_failure_burst_alert(notification: UpstreamFailureBurstN
         )
         logger.warning("dingtalk upstream failure alert send failed", exc_info=True)
         return False
+
+
+async def send_dingtalk_configuration_test() -> Dict[str, Any]:
+    webhook_url = (settings.fallback_alert_webhook_url or "").strip()
+    if not webhook_url:
+        return {"sent": False, "event_id": None}
+    event_id = await create_alert_event(
+        category="configuration_test",
+        severity="info",
+        alert_type="configuration_test",
+        destination_type="dingtalk",
+        delivery_status="pending",
+    )
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.post(webhook_url, json=build_configuration_test_payload())
+        delivered, error_summary = _dingtalk_delivery_result(response)
+        await complete_alert_event(
+            event_id,
+            delivery_status="sent" if delivered else "failed",
+            response_status=int(response.status_code or 0),
+            error_summary=error_summary,
+        )
+        if not delivered:
+            logger.warning("dingtalk configuration test failed status=%s", response.status_code)
+        return {"sent": delivered, "event_id": event_id}
+    except Exception as exc:
+        await complete_alert_event(
+            event_id,
+            delivery_status="failed",
+            response_status=0,
+            error_summary=f"DingTalk delivery {type(exc).__name__}",
+        )
+        logger.warning("dingtalk configuration test send failed", exc_info=True)
+        return {"sent": False, "event_id": event_id}
 
 
 def notify_fallback_exhausted(alert: FallbackExhaustedAlert) -> bool:

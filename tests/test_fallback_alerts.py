@@ -16,6 +16,7 @@ class UpstreamFailureBurstAlertTests(unittest.IsolatedAsyncioTestCase):
         self._originals = {
             "fallback_alert_webhook_url": settings.fallback_alert_webhook_url,
             "fallback_alert_enabled": settings.fallback_alert_enabled,
+            "fallback_alert_keyword": settings.fallback_alert_keyword,
             "fallback_alert_max_pending_tasks": settings.fallback_alert_max_pending_tasks,
             "upstream_failure_alert_threshold": settings.upstream_failure_alert_threshold,
             "upstream_auth_alert_threshold": settings.upstream_auth_alert_threshold,
@@ -25,6 +26,7 @@ class UpstreamFailureBurstAlertTests(unittest.IsolatedAsyncioTestCase):
         }
         settings.fallback_alert_webhook_url = "https://dingtalk.example/robot"
         settings.fallback_alert_enabled = True
+        settings.fallback_alert_keyword = "CoinCoin"
         settings.fallback_alert_max_pending_tasks = 256
         settings.upstream_failure_alert_threshold = 5
         settings.upstream_auth_alert_threshold = 3
@@ -287,6 +289,33 @@ class UpstreamFailureBurstAlertTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(completion["response_status"], 502)
         self.assertNotIn("cloudflare", completion["error_summary"].lower())
         self.assertNotIn("sensitive", completion["error_summary"].lower())
+
+    async def test_configuration_test_is_labelled_and_records_delivery_event(self) -> None:
+        response = SimpleNamespace(status_code=200, json=lambda: {"errcode": 0})
+        client = AsyncMock()
+        client.post.return_value = response
+        client.__aenter__.return_value = client
+        client.__aexit__.return_value = False
+
+        with (
+            patch.object(fallback_alerts.httpx, "AsyncClient", return_value=client),
+            patch.object(fallback_alerts, "create_alert_event", AsyncMock(return_value="alt_test")) as create_event,
+            patch.object(fallback_alerts, "complete_alert_event", AsyncMock()) as complete_event,
+        ):
+            result = await fallback_alerts.send_dingtalk_configuration_test()
+
+        self.assertEqual(result, {"sent": True, "event_id": "alt_test"})
+        content = client.post.call_args.kwargs["json"]["text"]["content"]
+        self.assertIn("CoinCoin", content)
+        self.assertIn("配置测试", content)
+        create_event.assert_awaited_once()
+        self.assertEqual(create_event.call_args.kwargs["category"], "configuration_test")
+        complete_event.assert_awaited_once_with(
+            "alt_test",
+            delivery_status="sent",
+            response_status=200,
+            error_summary="",
+        )
 
     async def test_shutdown_waits_for_inflight_dingtalk_delivery(self) -> None:
         started = asyncio.Event()
