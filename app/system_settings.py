@@ -13,6 +13,7 @@ from .router import registry as model_registry
 CLAUDE_COMPAT_PROVIDER_KEY = "claude_compat_provider"
 ALERT_RUNTIME_SETTING_KEYS = frozenset(
     {
+        "fallback_alert_webhook_url",
         "fallback_alert_enabled",
         "upstream_failure_alert_threshold",
         "upstream_auth_alert_threshold",

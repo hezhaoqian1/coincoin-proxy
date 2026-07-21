@@ -228,6 +228,58 @@ class UpstreamFailureBurstAlertTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(policy.dedup_seconds, 600)
         self.assertEqual(policy.max_pending_tasks, 32)
 
+    def test_runtime_webhook_database_value_overrides_environment_default(self) -> None:
+        settings.fallback_alert_webhook_url = "https://environment.example/webhook"
+        runtime_url = "https://runtime.example/webhook"
+
+        fallback_alerts.set_runtime_alert_settings(
+            {"fallback_alert_webhook_url": runtime_url}
+        )
+
+        self.assertEqual(fallback_alerts.current_alert_webhook_url(), runtime_url)
+
+    def test_runtime_empty_webhook_shadows_environment_default(self) -> None:
+        settings.fallback_alert_webhook_url = "https://environment.example/webhook"
+
+        fallback_alerts.set_runtime_alert_settings(
+            {"fallback_alert_webhook_url": ""}
+        )
+
+        self.assertEqual(fallback_alerts.current_alert_webhook_url(), "")
+        with patch.object(asyncio, "create_task") as create_task:
+            scheduled = fallback_alerts.schedule_user_upstream_failure(
+                self._alert("ccreq_runtime_disabled")
+            )
+        self.assertFalse(scheduled)
+        create_task.assert_not_called()
+
+    async def test_sender_uses_runtime_webhook_without_database_lookup(self) -> None:
+        notification = fallback_alerts.UpstreamFailureBurstNotification(
+            alert=self._alert("ccreq_runtime_webhook"),
+            category="availability",
+            count=5,
+            window_seconds=60,
+        )
+        runtime_url = "https://runtime.example/webhook"
+        fallback_alerts.set_runtime_alert_settings(
+            {"fallback_alert_webhook_url": runtime_url}
+        )
+        response = SimpleNamespace(status_code=200, json=lambda: {"errcode": 0})
+        client = AsyncMock()
+        client.post.return_value = response
+        client.__aenter__.return_value = client
+        client.__aexit__.return_value = False
+
+        with (
+            patch.object(fallback_alerts.httpx, "AsyncClient", return_value=client),
+            patch.object(fallback_alerts, "create_alert_event", AsyncMock(return_value=None)),
+        ):
+            delivered = await fallback_alerts._send_upstream_failure_burst_alert(notification)
+
+        self.assertTrue(delivered)
+        client.post.assert_awaited_once()
+        self.assertEqual(client.post.call_args.args[0], runtime_url)
+
     async def test_successful_burst_delivery_records_sanitized_event_lifecycle(self) -> None:
         notification = fallback_alerts.UpstreamFailureBurstNotification(
             alert=self._alert("ccreq_delivery"),

@@ -83,7 +83,7 @@ class AlertAdminApiTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 401, response.text)
 
-    async def test_config_masks_webhook_and_returns_latest_delivery_times(self) -> None:
+    async def test_config_returns_complete_effective_webhook_without_caching(self) -> None:
         fake_db = _FakeDB(
             execute_results=[
                 _RowsResult(
@@ -102,8 +102,11 @@ class AlertAdminApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
         self.assertTrue(payload["webhook_configured"])
-        self.assertNotIn("webhook_url", payload)
-        self.assertNotIn("top-secret", response.text)
+        self.assertEqual(
+            payload["webhook_url"],
+            "https://oapi.dingtalk.example/robot?access_token=top-secret",
+        )
+        self.assertEqual(response.headers["cache-control"], "no-store")
         self.assertEqual(payload["last_success_at"], "2026-07-21T10:00:00")
         self.assertEqual(payload["last_failure_at"], "2026-07-21T11:00:00")
 
@@ -111,6 +114,7 @@ class AlertAdminApiTests(unittest.IsolatedAsyncioTestCase):
         fake_db = _FakeDB()
         self._override_db(fake_db)
         body = {
+            "webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=test-token",
             "enabled": True,
             "availability_threshold": 8,
             "authentication_threshold": 4,
@@ -124,13 +128,74 @@ class AlertAdminApiTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         self.assertIn("ON DUPLICATE KEY UPDATE", str(fake_db.queries[0]))
+        self.assertIn(
+            "fallback_alert_webhook_url",
+            fake_db.queries[0].compile().params.values(),
+        )
+        self.assertIn(
+            body["webhook_url"],
+            fake_db.queries[0].compile().params.values(),
+        )
         fake_db.commit.assert_awaited_once()
         self.assertEqual(response.json()["availability_threshold"], 8)
+        self.assertEqual(response.json()["webhook_url"], body["webhook_url"])
+        self.assertEqual(response.headers["cache-control"], "no-store")
         self.assertEqual(alert_admin.current_alert_policy().max_pending_tasks, 64)
+
+    async def test_patch_empty_webhook_explicitly_shadows_environment_default(self) -> None:
+        fake_db = _FakeDB()
+        self._override_db(fake_db)
+        body = {
+            "webhook_url": "",
+            "enabled": True,
+            "availability_threshold": 5,
+            "authentication_threshold": 3,
+            "window_seconds": 60,
+            "dedup_seconds": 300,
+            "max_pending_tasks": 64,
+        }
+
+        async with await self._client() as client:
+            response = await client.patch("/admin/alerts/config", json=body)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["webhook_url"], "")
+        self.assertFalse(response.json()["webhook_configured"])
+        self.assertEqual(alert_admin.current_alert_webhook_url(), "")
+        self.assertIn("", fake_db.queries[0].compile().params.values())
+
+    async def test_patch_rejects_non_dingtalk_webhook_urls(self) -> None:
+        invalid_urls = (
+            "http://oapi.dingtalk.com/robot/send?access_token=test-token",
+            "https://example.com/robot/send?access_token=test-token",
+            "https://oapi.dingtalk.com/not-robot/send?access_token=test-token",
+            "https://oapi.dingtalk.com/robot/send",
+            "https://oapi.dingtalk.com/robot/send?access_token=",
+        )
+        for webhook_url in invalid_urls:
+            with self.subTest(webhook_url=webhook_url):
+                fake_db = _FakeDB()
+                self._override_db(fake_db)
+                body = {
+                    "webhook_url": webhook_url,
+                    "enabled": True,
+                    "availability_threshold": 5,
+                    "authentication_threshold": 3,
+                    "window_seconds": 60,
+                    "dedup_seconds": 300,
+                    "max_pending_tasks": 64,
+                }
+
+                async with await self._client() as client:
+                    response = await client.patch("/admin/alerts/config", json=body)
+
+                self.assertEqual(response.status_code, 422, response.text)
+                fake_db.commit.assert_not_awaited()
 
     async def test_patch_rejects_dedup_shorter_than_window(self) -> None:
         self._override_db(_FakeDB())
         body = {
+            "webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=test-token",
             "enabled": True,
             "availability_threshold": 5,
             "authentication_threshold": 3,
@@ -224,6 +289,19 @@ class AlertAdminApiTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertNotEqual(first_state, second_state)
+
+    async def test_runtime_refresh_preserves_explicit_empty_webhook_override(self) -> None:
+        row = SimpleNamespace(
+            setting_key="fallback_alert_webhook_url",
+            setting_value="",
+            updated_at=datetime(2026, 7, 21, 12, 0, 0),
+        )
+
+        await system_settings.refresh_runtime_system_settings_from_db(
+            _FakeDB(execute_results=[_RowsResult([row])])
+        )
+
+        self.assertEqual(alert_admin.current_alert_webhook_url(), "")
 
     def test_alert_event_indexes_cover_polling_filter_and_sort_shapes(self) -> None:
         indexes = {

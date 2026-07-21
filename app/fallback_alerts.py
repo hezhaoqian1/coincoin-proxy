@@ -148,6 +148,7 @@ def _int_setting(key: str, default: int, minimum: int, maximum: int) -> int:
 
 def set_runtime_alert_settings(runtime_settings: Dict[str, Any]) -> None:
     keys = {
+        "fallback_alert_webhook_url",
         "fallback_alert_enabled",
         "upstream_failure_alert_threshold",
         "upstream_auth_alert_threshold",
@@ -163,6 +164,12 @@ def set_runtime_alert_settings(runtime_settings: Dict[str, Any]) -> None:
             if key in keys
         }
     )
+
+
+def current_alert_webhook_url() -> str:
+    if "fallback_alert_webhook_url" in _RUNTIME_ALERT_SETTINGS:
+        return _RUNTIME_ALERT_SETTINGS["fallback_alert_webhook_url"]
+    return str(settings.fallback_alert_webhook_url or "").strip()
 
 
 def current_alert_policy() -> AlertPolicy:
@@ -218,7 +225,7 @@ def _dedup_key(alert: FallbackExhaustedAlert) -> str:
 def _should_send(alert: FallbackExhaustedAlert, now: Optional[float] = None) -> bool:
     if not current_alert_policy().enabled:
         return False
-    webhook_url = (settings.fallback_alert_webhook_url or "").strip()
+    webhook_url = current_alert_webhook_url()
     if not webhook_url:
         return False
     if int(alert.route_attempt or 0) <= 0 and not (alert.route_reason or "").startswith(("channel_fallback:", "system_fallback:")):
@@ -341,7 +348,7 @@ def _dingtalk_delivery_result(response: Any) -> Tuple[bool, str]:
 
 
 async def _send_dingtalk_alert(alert: FallbackExhaustedAlert) -> bool:
-    webhook_url = (settings.fallback_alert_webhook_url or "").strip()
+    webhook_url = current_alert_webhook_url()
     if not webhook_url:
         return False
     payload = build_dingtalk_text_payload(alert)
@@ -381,7 +388,7 @@ async def _send_dingtalk_alert(alert: FallbackExhaustedAlert) -> bool:
 
 
 async def _send_upstream_failure_burst_alert(notification: UpstreamFailureBurstNotification) -> bool:
-    webhook_url = (settings.fallback_alert_webhook_url or "").strip()
+    webhook_url = current_alert_webhook_url()
     if not webhook_url:
         return False
     payload = build_upstream_failure_burst_payload(notification)
@@ -424,7 +431,7 @@ async def _send_upstream_failure_burst_alert(notification: UpstreamFailureBurstN
 
 
 async def send_dingtalk_configuration_test() -> Dict[str, Any]:
-    webhook_url = (settings.fallback_alert_webhook_url or "").strip()
+    webhook_url = current_alert_webhook_url()
     if not webhook_url:
         return {"sent": False, "event_id": None}
     event_id = await _create_alert_event_bounded(
@@ -545,7 +552,7 @@ async def _record_upstream_failure_redis(
 
 async def record_user_upstream_failure(alert: UpstreamFailureBurstAlert, *, now: Optional[float] = None) -> bool:
     policy = current_alert_policy()
-    if not policy.enabled or not (settings.fallback_alert_webhook_url or "").strip():
+    if not policy.enabled or not current_alert_webhook_url():
         return False
     category = _failure_category(alert)
     if not category:
@@ -613,7 +620,7 @@ def _finish_upstream_failure_task(task: asyncio.Task) -> None:
 def schedule_user_upstream_failure(alert: UpstreamFailureBurstAlert) -> bool:
     """Track alert bursts without delaying the channel fallback request path."""
     policy = current_alert_policy()
-    if not policy.enabled or not (settings.fallback_alert_webhook_url or "").strip() or not _failure_category(alert):
+    if not policy.enabled or not current_alert_webhook_url() or not _failure_category(alert):
         return False
     max_pending = policy.max_pending_tasks
     if not _alert_task_capacity_available(max_pending):

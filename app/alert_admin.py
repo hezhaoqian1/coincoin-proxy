@@ -2,18 +2,19 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Literal, Optional
+from urllib.parse import parse_qs, urlsplit
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field, model_validator
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .admin import admin_guard
-from .config import settings
 from .db import get_db
 from .fallback_alerts import (
     current_alert_policy,
+    current_alert_webhook_url,
     send_dingtalk_configuration_test,
     set_runtime_alert_settings,
 )
@@ -27,6 +28,7 @@ router = APIRouter(
 )
 
 POLICY_SETTING_KEYS = {
+    "webhook_url": "fallback_alert_webhook_url",
     "enabled": "fallback_alert_enabled",
     "availability_threshold": "upstream_failure_alert_threshold",
     "authentication_threshold": "upstream_auth_alert_threshold",
@@ -37,12 +39,32 @@ POLICY_SETTING_KEYS = {
 
 
 class AlertPolicyUpdate(BaseModel):
+    webhook_url: str
     enabled: bool
     availability_threshold: int = Field(ge=1, le=1000)
     authentication_threshold: int = Field(ge=1, le=1000)
     window_seconds: int = Field(ge=1, le=3600)
     dedup_seconds: int = Field(ge=1, le=86400)
     max_pending_tasks: int = Field(ge=1, le=4096)
+
+    @field_validator("webhook_url")
+    @classmethod
+    def validate_webhook_url(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            return ""
+        parsed = urlsplit(value)
+        access_tokens = parse_qs(parsed.query, keep_blank_values=True).get(
+            "access_token", []
+        )
+        if (
+            parsed.scheme != "https"
+            or parsed.netloc != "oapi.dingtalk.com"
+            or parsed.path != "/robot/send"
+            or not any(token.strip() for token in access_tokens)
+        ):
+            raise ValueError("webhook_url must be a DingTalk robot HTTPS URL")
+        return value
 
     @model_validator(mode="after")
     def validate_dedup_window(self) -> "AlertPolicyUpdate":
@@ -70,9 +92,11 @@ async def _latest_delivery_times(db: AsyncSession) -> dict[str, Optional[str]]:
 
 async def _config_payload(db: AsyncSession) -> dict[str, Any]:
     policy = current_alert_policy()
+    webhook_url = current_alert_webhook_url()
     return {
         "enabled": policy.enabled,
-        "webhook_configured": bool((settings.fallback_alert_webhook_url or "").strip()),
+        "webhook_url": webhook_url,
+        "webhook_configured": bool(webhook_url),
         "availability_threshold": policy.availability_threshold,
         "authentication_threshold": policy.authentication_threshold,
         "window_seconds": policy.window_seconds,
@@ -83,13 +107,20 @@ async def _config_payload(db: AsyncSession) -> dict[str, Any]:
 
 
 @router.get("/config")
-async def get_alert_config(db: AsyncSession = Depends(get_db)):
+async def get_alert_config(response: Response, db: AsyncSession = Depends(get_db)):
+    response.headers["Cache-Control"] = "no-store"
     return await _config_payload(db)
 
 
 @router.patch("/config")
-async def update_alert_config(payload: AlertPolicyUpdate, db: AsyncSession = Depends(get_db)):
+async def update_alert_config(
+    payload: AlertPolicyUpdate,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
+    response.headers["Cache-Control"] = "no-store"
     values = {
+        POLICY_SETTING_KEYS["webhook_url"]: payload.webhook_url,
         POLICY_SETTING_KEYS["enabled"]: "true" if payload.enabled else "false",
         POLICY_SETTING_KEYS["availability_threshold"]: str(payload.availability_threshold),
         POLICY_SETTING_KEYS["authentication_threshold"]: str(payload.authentication_threshold),
@@ -120,7 +151,7 @@ async def update_alert_config(payload: AlertPolicyUpdate, db: AsyncSession = Dep
 
 @router.post("/test")
 async def test_alert_destination():
-    if not (settings.fallback_alert_webhook_url or "").strip():
+    if not current_alert_webhook_url():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="DingTalk alert webhook is not configured",
