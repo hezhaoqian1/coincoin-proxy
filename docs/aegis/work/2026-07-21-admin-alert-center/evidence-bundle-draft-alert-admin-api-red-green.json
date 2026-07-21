@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "artifactKey": "alert-admin-api-red-green",
+  "type": "pytest",
+  "source": "tests/test_alert_admin.py",
+  "summary": "Protected alert config, validation, test-send, and capped history API suite passed with fallback regression: 25 tests.",
+  "verifier": "pytest tests/test_alert_admin.py tests/test_fallback_alerts.py -q"
+}

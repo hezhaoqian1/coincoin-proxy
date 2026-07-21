@@ -1,0 +1,21 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "requestedOutcome": "Implement, test, ship, merge, and deploy admin alert policy controls and DingTalk delivery history without adding request-path latency.",
+  "goal": "Implement, test, ship, merge, and deploy admin alert policy controls and DingTalk delivery history without adding request-path latency.",
+  "successEvidence": [],
+  "stopCondition": "Stop when success evidence is satisfied or a blocker/risk requires pause.",
+  "nonGoals": [
+    "Webhook editing or viewing.",
+    "Historical retry and acknowledgement workflows."
+  ],
+  "scope": "Runtime non-secret policy overrides, AlertEvent delivery audit, protected admin APIs, existing Service Reliability UI, documentation, tests, review, merge, and deploy verification.",
+  "changeKinds": [
+    "source",
+    "persistence",
+    "admin-ui"
+  ],
+  "riskHints": [
+    "No database, Redis, or DingTalk await may enter the customer request coroutine.",
+    "Webhook and raw provider/upstream bodies must never be exposed or persisted."
+  ]
+}

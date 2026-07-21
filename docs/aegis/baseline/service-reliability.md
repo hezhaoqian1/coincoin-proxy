@@ -1,8 +1,9 @@
 # Service Reliability Baseline
 
 Status: `current-state-snapshot`
-Date: `2026-07-15`
+Date: `2026-07-21`
 Decision: `docs/aegis/adr/ADR-0002-route-derived-reliability-observation.md`
+Alert decision: `docs/aegis/adr/ADR-0003-alert-delivery-audit-boundary.md`
 
 ## Ownership Map
 
@@ -13,6 +14,7 @@ Decision: `docs/aegis/adr/ADR-0002-route-derived-reliability-observation.md`
 - `app/reliability.py` owns the bounded admin read model and its 10-second in-process cache.
 - `app/channel_router.py` remains the sole request-selection, fallback, failure-threshold, and cooldown authority.
 - The provider-channel modal owns representative selection. `app/static/admin_assets/service-reliability.js` owns channel-first reliability polling, rendering, route detail, and explicit probe actions.
+- `app/fallback_alerts.py` owns user-path burst detection, bounded task scheduling, and DingTalk delivery. `RequestLog` owns every upstream-failure attempt; `AlertEvent` owns only actual outbound notification attempts. `app/alert_admin.py` owns the protected non-secret alert policy, configuration-test, and bounded history API. Railway remains the sole webhook-secret owner.
 
 ## Representative Selection
 
@@ -46,14 +48,17 @@ Decision: `docs/aegis/adr/ADR-0002-route-derived-reliability-observation.md`
 2. The reliability page polls every 15 seconds only while active and visible. Channels and channel incidents render before public-model routing and real-traffic health.
 3. The provider-channel modal displays automatic selection, current exact manual selection, invalid manual state, active supported choices, and reset to automatic.
 4. An explicit operator action calls the retained monitor run endpoint and invalidates the overview cache after completion.
+5. While the same page is active, `GET /admin/alerts/config` and `GET /admin/alerts/events` load masked destination state, runtime policy, latest success/failure times, and at most 100 indexed delivery records. Saving writes a complete validated non-secret policy to `SystemSetting`; the configuration-test action sends one labelled message and records the attempt.
 
 ## Performance Boundary
 
-- No reliability database, Redis, webhook, or network await is imported into customer request-path modules.
+- No reliability database, Redis, webhook, or network await executes in the customer request coroutine.
 - Dashboard reads use six bounded read-only queries and a 10-second in-process cache.
 - Route reconciliation runs only in the admin control plane and the existing background monitor loop.
 - Probe claims use `FOR UPDATE SKIP LOCKED` only in the background loop, release the database lock before network I/O, and expire automatically if a worker exits before recording results. The scheduled probe's wall-clock timeout is always shorter than its lease.
 - Active probe support is limited to one representative `responses` or `chat/completions` target per provider channel; image, video, and embedding routes remain traffic-observed without automatic active probes.
+- Successful customer requests execute no alert work. Failed requests retain only the existing synchronous classification, bounded in-memory queue check, and `asyncio.create_task` scheduling. Redis, `AlertEvent` database writes, and DingTalk network awaits occur only inside tracked background tasks after scheduling. A threshold alert is delivered by its existing counter task rather than a nested task, and each best-effort audit write is capped at 250 ms.
+- Dedup-suppressed failures create no `AlertEvent` write; they remain visible through `RequestLog`. Admin alert reads run only while the reliability page is active, use indexed event fields, and cap each history query at 100 rows.
 
 ## Compatibility Boundary
 
@@ -65,6 +70,7 @@ Decision: `docs/aegis/adr/ADR-0002-route-derived-reliability-observation.md`
 - `fallback_from_channel_id` remains `VARCHAR(32)` in the SQLAlchemy model, create-table DDL, and buffered writer. No hot-table width migration runs during application startup; a wider multi-hop audit contract requires a separately operated migration outside the service health-check path.
 - A channel with routes or monitor history is disabled instead of hard-deleted; an unreferenced channel still hard-deletes.
 - Monitor configurations without probe history are deleted with an otherwise unreferenced channel.
+- The webhook value remains environment-only and is never returned or persisted. Alert history never contains webhook/API keys, raw upstream/Cloudflare content, or raw DingTalk response bodies.
 
 ## Reliability States
 

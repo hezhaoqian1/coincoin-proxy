@@ -99,3 +99,25 @@ Entries are workspace records, not authoritative runtime decisions.
 | 2026-07-17 | artifact | docs/aegis/work/2026-07-17-admin-performance-optimization/evidence-bundle-draft-master-integration.json | 2026-07-17-admin-performance-optimization evidence master-integration |
 | 2026-07-17 | artifact | docs/aegis/work/2026-07-17-admin-performance-optimization/evidence-bundle-draft-final-master-ship-gate.json | 2026-07-17-admin-performance-optimization evidence final-master-ship-gate |
 | 2026-07-17 | artifact | docs/aegis/work/2026-07-17-admin-performance-optimization/evidence-bundle-draft-pre-landing-review-fixes.json | 2026-07-17-admin-performance-optimization evidence pre-landing-review-fixes |
+| 2026-07-21 | spec | docs/aegis/specs/2026-07-21-admin-alert-center-brief.md | Admin Alert Center Brief |
+| 2026-07-21 | plan | docs/aegis/plans/2026-07-21-admin-alert-center.md | Admin Alert Center Implementation Plan |
+| 2026-07-21 | work | docs/aegis/work/2026-07-21-admin-alert-center/10-intent.md | Admin Alert Center intent |
+| 2026-07-21 | work | docs/aegis/work/2026-07-21-admin-alert-center/20-checkpoint.md | Admin Alert Center checkpoint |
+| 2026-07-21 | work | docs/aegis/work/2026-07-21-admin-alert-center/90-evidence.md | Admin Alert Center evidence |
+| 2026-07-21 | work | docs/aegis/work/2026-07-21-admin-alert-center/99-reflection.md | Admin Alert Center reflection |
+| 2026-07-21 | artifact | docs/aegis/work/2026-07-21-admin-alert-center/task-intent-draft.json | Admin Alert Center task intent draft |
+| 2026-07-21 | artifact | docs/aegis/work/2026-07-21-admin-alert-center/baseline-read-set-hint.json | Admin Alert Center baseline read-set hint |
+| 2026-07-21 | artifact | docs/aegis/work/2026-07-21-admin-alert-center/baseline-usage-draft.json | Admin Alert Center baseline usage draft |
+| 2026-07-21 | artifact | docs/aegis/work/2026-07-21-admin-alert-center/impact-statement-draft.json | Admin Alert Center impact statement draft |
+| 2026-07-21 | artifact | docs/aegis/work/2026-07-21-admin-alert-center/todo-checkpoint-draft.json | Admin Alert Center todo checkpoint draft |
+| 2026-07-21 | artifact | docs/aegis/work/2026-07-21-admin-alert-center/drift-check-draft.json | Admin Alert Center drift check draft |
+| 2026-07-21 | artifact | docs/aegis/work/2026-07-21-admin-alert-center/evidence-bundle-draft-runtime-policy-alert-history-red-green.json | 2026-07-21-admin-alert-center evidence runtime-policy-alert-history-red-green |
+| 2026-07-21 | artifact | docs/aegis/work/2026-07-21-admin-alert-center/resume-state-hint.json | 2026-07-21-admin-alert-center resume state hint |
+| 2026-07-22 | artifact | docs/aegis/work/2026-07-21-admin-alert-center/evidence-bundle-draft-alert-admin-api-red-green.json | 2026-07-21-admin-alert-center evidence alert-admin-api-red-green |
+| 2026-07-22 | artifact | docs/aegis/work/2026-07-21-admin-alert-center/evidence-bundle-draft-alert-ui-focused-regression.json | 2026-07-21-admin-alert-center evidence alert-ui-focused-regression |
+| 2026-07-21 | adr | docs/aegis/adr/ADR-0003-alert-delivery-audit-boundary.md | ADR-0003 - Separate request failures from alert delivery audit |
+| 2026-07-22 | artifact | docs/aegis/work/2026-07-21-admin-alert-center/evidence-bundle-draft-prelanding-review-fixes.json | 2026-07-21-admin-alert-center evidence prelanding-review-fixes |
+| 2026-07-22 | artifact | docs/aegis/work/2026-07-21-admin-alert-center/evidence-bundle-draft-full-suite-baseline-differential.json | 2026-07-21-admin-alert-center evidence full-suite-baseline-differential |
+| 2026-07-22 | artifact | docs/aegis/work/2026-07-21-admin-alert-center/evidence-bundle-draft-final-pre-ship-verification.json | 2026-07-21-admin-alert-center evidence final-pre-ship-verification |
+| 2026-07-22 | artifact | docs/aegis/work/2026-07-21-admin-alert-center/gate-input-pack.json | 2026-07-21-admin-alert-center gate input pack |
+| 2026-07-22 | work | docs/aegis/work/2026-07-21-admin-alert-center/proof-bundle.md | 2026-07-21-admin-alert-center proof bundle |

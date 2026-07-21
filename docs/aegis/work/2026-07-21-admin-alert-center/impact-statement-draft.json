@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "affectedLayers": [
+    "backend",
+    "database",
+    "admin-ui"
+  ],
+  "owners": [
+    "app/fallback_alerts.py",
+    "app/alert_history.py",
+    "app/alert_admin.py"
+  ],
+  "invariants": [
+    "Customer request path performs no new awaited I/O.",
+    "Webhook remains environment-only."
+  ],
+  "compatBoundary": "No public API, routing, fallback order, billing, or RequestLog semantics change.",
+  "nonGoals": [
+    "Webhook editing or viewing.",
+    "Historical retry and acknowledgement workflows."
+  ]
+}

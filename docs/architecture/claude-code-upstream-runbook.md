@@ -66,6 +66,7 @@ Failures are grouped per channel and endpoint into availability (`5xx` and conne
 ```bash
 COINCOIN_FALLBACK_ALERT_WEBHOOK_URL=https://oapi.dingtalk.com/robot/send?access_token=...
 COINCOIN_FALLBACK_ALERT_KEYWORD=CoinCoinAlert
+COINCOIN_FALLBACK_ALERT_ENABLED=true
 COINCOIN_FALLBACK_ALERT_MAX_PENDING_TASKS=256
 COINCOIN_UPSTREAM_FAILURE_ALERT_THRESHOLD=5
 COINCOIN_UPSTREAM_AUTH_ALERT_THRESHOLD=3
@@ -73,7 +74,11 @@ COINCOIN_UPSTREAM_FAILURE_ALERT_WINDOW_SECONDS=60
 COINCOIN_UPSTREAM_FAILURE_ALERT_DEDUP_SECONDS=300
 ```
 
-When `COINCOIN_REDIS_URL` is configured, the rolling counter and deduplication are shared across replicas. Without Redis, the gateway uses a process-local counter; this remains non-blocking but each replica counts independently. Counter work runs off the request path, is bounded by `COINCOIN_FALLBACK_ALERT_MAX_PENDING_TASKS`, and in-flight DingTalk deliveries are drained during graceful shutdown. Alert delivery failures never fail the user request.
+The environment variables are safe startup defaults. An administrator can change the non-secret enable switch, availability/rate-limit threshold, authentication threshold, rolling window, deduplication period, and maximum pending task count in the existing **Service Reliability** page. The complete validated policy is stored in `coincoin_system_settings`, applies immediately on the current replica, and propagates to other replicas through the existing runtime-settings refresh loop. The full webhook remains exclusively in `COINCOIN_FALLBACK_ALERT_WEBHOOK_URL`; the admin API and page expose only whether it is configured.
+
+The same page can send one clearly labelled `配置测试` message and lists the latest 50 delivery attempts by default, with category/status filters and a hard API limit of 100. `coincoin_alert_events` records only actual DingTalk delivery attempts (`pending`, `sent`, or `failed`) and sanitized response status/error summaries. It never stores the webhook, API keys, upstream/Cloudflare response bodies, or raw DingTalk response bodies. `coincoin_request_logs` remains the source of truth for each upstream failure, including failures suppressed by burst deduplication.
+
+When `COINCOIN_REDIS_URL` is configured, the rolling counter and deduplication are shared across replicas. Without Redis, the gateway uses a process-local counter; this remains non-blocking but each replica counts independently. The customer request coroutine only performs bounded in-memory checks and schedules a tracked task. That same tracked task counts the failure and directly delivers a threshold alert, so the configured task cap cannot starve a nested sender. Redis counting, `AlertEvent` writes, and DingTalk delivery all run inside controlled background tasks, bounded by `COINCOIN_FALLBACK_ALERT_MAX_PENDING_TASKS`; each best-effort audit write is capped at 250 ms so a slow database cannot suppress the DingTalk request. In-flight tasks are drained during graceful shutdown. Alert persistence or delivery failures never fail or delay the user response.
 
 ## Pricing Multiplier Policy
 
@@ -130,6 +135,20 @@ Check model pricing:
 ```bash
 curl -fsS -H "Authorization: Bearer $COINCOIN_ADMIN_TOKEN" \
   "https://clawfather.up.railway.app/admin/model-pricing/claude-sonnet-5"
+```
+
+Check the active alert policy without revealing the webhook:
+
+```bash
+curl -fsS -H "Authorization: Bearer $COINCOIN_ADMIN_TOKEN" \
+  "https://coincoin.ai/admin/alerts/config"
+```
+
+List recent DingTalk delivery attempts:
+
+```bash
+curl -fsS -H "Authorization: Bearer $COINCOIN_ADMIN_TOKEN" \
+  "https://coincoin.ai/admin/alerts/events?limit=50"
 ```
 
 List recent request logs for the user that owns a Claude Code key:
