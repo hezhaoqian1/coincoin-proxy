@@ -49,3 +49,11 @@ Release evidence is recorded below.
 - Source: focused tests, full-suite differential, static checks, independent re-review
 - Summary: Final focused suite passed 173 tests; JS syntax, Python compileall, both diff checks, secret scan, MySQL UPSERT compile, runtime probes, and independent re-review passed. Full suite remained 686 passed with only 3 base-branch video failures.
 - Verifier: pytest focused files; pytest -q; node --check; compileall; git diff --check; independent prelanding re-review
+
+## EvidenceBundleDraft
+
+- Artifact key: merged-production-deployment
+- Type: release-verification
+- Source: GitHub PR #17, GitHub deployment statuses, public and protected production endpoints
+- Summary: PR #17 squash-merged as `eea795a2edeeac40f7c4cb2932d06e4d585cee1f`; both Railway production deployments succeeded; public health and protected alert configuration checks returned HTTP 200.
+- Verifier: GitHub PR/deployment APIs; GET https://coincoin.ai/health; GET /admin/alerts/config with the administrator credential
