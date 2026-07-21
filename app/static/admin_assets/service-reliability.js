@@ -3,6 +3,8 @@
   let latestOverview = null;
   let pollTimer = null;
   let loading = false;
+  let alertPolicyDirty = false;
+  let alertActionRunning = false;
   const runningMonitors = new Set();
 
   function html(value) {
@@ -65,6 +67,166 @@
     pollTimer = null;
     if (document.hidden || !pageIsActive()) return;
     pollTimer = window.setTimeout(() => loadServiceReliability(), POLL_INTERVAL_MS);
+  }
+
+  function alertCategoryLabel(category) {
+    return {
+      availability: '可用性',
+      rate_limit: '429 限流',
+      authentication: '鉴权',
+      fallback_exhausted: 'Fallback 全部失败',
+      configuration_test: '配置测试',
+    }[String(category || '')] || String(category || '-');
+  }
+
+  function alertDeliveryBadge(deliveryStatus) {
+    const normalized = String(deliveryStatus || 'pending');
+    const mappedStatus = normalized === 'sent' ? 'operational' : normalized;
+    const labels = { pending: '发送中', sent: '已送达', failed: '失败' };
+    return `<span class="sr-status sr-status-${html(mappedStatus)}">${html(labels[normalized] || normalized)}</span>`;
+  }
+
+  function renderAlertConfig(payload) {
+    const state = document.getElementById('serviceReliabilityAlertState');
+    const webhookState = document.getElementById('serviceReliabilityAlertWebhookState');
+    const enabled = payload.enabled === true;
+    const configured = payload.webhook_configured === true;
+    state.className = `sr-status sr-status-${enabled ? 'operational' : 'disabled'}`;
+    state.textContent = enabled ? '告警已启用' : '告警已停用';
+    webhookState.className = `sr-status sr-status-${configured ? 'operational' : 'unconfigured'}`;
+    webhookState.textContent = configured ? 'Webhook 已配置' : 'Webhook 未配置';
+    document.getElementById('serviceReliabilityAlertTest').disabled = alertActionRunning || !configured;
+
+    if (!alertPolicyDirty) {
+      document.getElementById('serviceReliabilityAlertEnabled').checked = enabled;
+      document.getElementById('serviceReliabilityAlertAvailabilityThreshold').value = payload.availability_threshold ?? '';
+      document.getElementById('serviceReliabilityAlertAuthenticationThreshold').value = payload.authentication_threshold ?? '';
+      document.getElementById('serviceReliabilityAlertWindowSeconds').value = payload.window_seconds ?? '';
+      document.getElementById('serviceReliabilityAlertDedupSeconds').value = payload.dedup_seconds ?? '';
+      document.getElementById('serviceReliabilityAlertMaxPendingTasks').value = payload.max_pending_tasks ?? '';
+    }
+    document.getElementById('serviceReliabilityAlertDeliverySummary').textContent =
+      `最近成功：${dateTime(payload.last_success_at)} · 最近失败：${dateTime(payload.last_failure_at)}`;
+  }
+
+  function renderAlertEvents(payload) {
+    const events = payload.events || [];
+    const body = document.getElementById('serviceReliabilityAlertEventsBody');
+    body.innerHTML = events.length ? events.map(item => {
+      const trigger = item.failure_count
+        ? `${number(item.failure_count)} 次 / ${number(item.window_seconds)} 秒`
+        : '-';
+      const result = item.delivery_status === 'failed'
+        ? (item.error_summary || `HTTP ${number(item.response_status)}`)
+        : (item.response_status ? `HTTP ${number(item.response_status)}` : '-');
+      return `
+        <tr>
+          <td>${dateTime(item.created_at)}</td>
+          <td><div class="sr-primary">${html(alertCategoryLabel(item.category))}</div><div class="sr-secondary">${html(item.alert_type || '-')}</div></td>
+          <td>${alertDeliveryBadge(item.delivery_status)}</td>
+          <td><div class="sr-primary">${html(item.model || '-')}</div><div class="sr-secondary">${html(item.endpoint || '-')} · HTTP ${number(item.status_code)}</div></td>
+          <td>${html(item.channel_id || '-')}</td>
+          <td>${html(trigger)}</td>
+          <td><span class="sr-alert-request-id">${html(item.request_id || '-')}</span></td>
+          <td><div>${html(result)}</div><div class="sr-secondary">${dateTime(item.completed_at)}</div></td>
+        </tr>
+      `;
+    }).join('') : '<tr><td colspan="8"><div class="sr-empty">当前筛选条件下还没有推送记录</div></td></tr>';
+  }
+
+  async function loadServiceReliabilityAlerts() {
+    if (!pageIsActive()) return;
+    const category = document.getElementById('serviceReliabilityAlertCategoryFilter')?.value || '';
+    const deliveryStatus = document.getElementById('serviceReliabilityAlertStatusFilter')?.value || '';
+    const params = new URLSearchParams({ limit: '50' });
+    if (category) params.set('category', category);
+    if (deliveryStatus) params.set('delivery_status', deliveryStatus);
+    try {
+      const [configResponse, eventsResponse] = await Promise.all([
+        fetch('/admin/alerts/config', { cache: 'no-store', headers: window.adminHeaders() }),
+        fetch(`/admin/alerts/events?${params.toString()}`, { cache: 'no-store', headers: window.adminHeaders() }),
+      ]);
+      const [config, events] = await Promise.all([configResponse.json(), eventsResponse.json()]);
+      if (!configResponse.ok) throw new Error(config.detail || '告警配置加载失败');
+      if (!eventsResponse.ok) throw new Error(events.detail || '告警历史加载失败');
+      renderAlertConfig(config);
+      renderAlertEvents(events);
+    } catch (error) {
+      console.error(error);
+      const body = document.getElementById('serviceReliabilityAlertEventsBody');
+      if (body) body.innerHTML = `<tr><td colspan="8"><div class="sr-error">${html(error.message || '告警数据加载失败')}</div></td></tr>`;
+    }
+  }
+
+  function alertPolicyPayload() {
+    return {
+      enabled: document.getElementById('serviceReliabilityAlertEnabled').checked,
+      availability_threshold: Number(document.getElementById('serviceReliabilityAlertAvailabilityThreshold').value),
+      authentication_threshold: Number(document.getElementById('serviceReliabilityAlertAuthenticationThreshold').value),
+      window_seconds: Number(document.getElementById('serviceReliabilityAlertWindowSeconds').value),
+      dedup_seconds: Number(document.getElementById('serviceReliabilityAlertDedupSeconds').value),
+      max_pending_tasks: Number(document.getElementById('serviceReliabilityAlertMaxPendingTasks').value),
+    };
+  }
+
+  async function saveServiceReliabilityAlertConfig() {
+    if (alertActionRunning) return;
+    const payload = alertPolicyPayload();
+    if (Object.entries(payload).some(([key, value]) => key !== 'enabled' && (!Number.isInteger(value) || value < 1))) {
+      if (typeof window.toast === 'function') window.toast('告警策略必须填写有效的正整数', 'error');
+      return;
+    }
+    if (payload.dedup_seconds < payload.window_seconds) {
+      if (typeof window.toast === 'function') window.toast('去重时间不能短于统计窗口', 'error');
+      return;
+    }
+    alertActionRunning = true;
+    document.getElementById('serviceReliabilityAlertSave').disabled = true;
+    document.getElementById('serviceReliabilityAlertTest').disabled = true;
+    try {
+      const response = await fetch('/admin/alerts/config', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...window.adminHeaders() },
+        body: JSON.stringify(payload),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.detail || '告警策略保存失败');
+      alertPolicyDirty = false;
+      renderAlertConfig(result);
+      if (typeof window.toast === 'function') window.toast('告警策略已保存并在当前实例生效', 'success');
+    } catch (error) {
+      console.error(error);
+      if (typeof window.toast === 'function') window.toast(error.message || '告警策略保存失败', 'error');
+    } finally {
+      alertActionRunning = false;
+      document.getElementById('serviceReliabilityAlertSave').disabled = false;
+      await loadServiceReliabilityAlerts();
+    }
+  }
+
+  async function testServiceReliabilityAlertDestination() {
+    if (alertActionRunning) return;
+    alertActionRunning = true;
+    document.getElementById('serviceReliabilityAlertSave').disabled = true;
+    document.getElementById('serviceReliabilityAlertTest').disabled = true;
+    try {
+      const response = await fetch('/admin/alerts/test', {
+        method: 'POST',
+        headers: window.adminHeaders(),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.detail || '配置测试发送失败');
+      if (typeof window.toast === 'function') {
+        window.toast(result.sent ? '钉钉配置测试已送达' : '钉钉配置测试未送达，请查看推送历史', result.sent ? 'success' : 'warning');
+      }
+    } catch (error) {
+      console.error(error);
+      if (typeof window.toast === 'function') window.toast(error.message || '配置测试发送失败', 'error');
+    } finally {
+      alertActionRunning = false;
+      document.getElementById('serviceReliabilityAlertSave').disabled = false;
+      await loadServiceReliabilityAlerts();
+    }
   }
 
   function renderSummary(payload) {
@@ -197,6 +359,7 @@
     if (!pageIsActive() && !force) return;
     if (loading) return;
     loading = true;
+    const alertLoad = loadServiceReliabilityAlerts();
     try {
       const response = await fetch('/admin/reliability/overview', {
         cache: 'no-store',
@@ -210,6 +373,7 @@
       renderLoadError(error.message);
       if (force && typeof window.toast === 'function') window.toast(error.message || '可靠性数据加载失败', 'error');
     } finally {
+      await alertLoad;
       loading = false;
       schedulePoll();
     }
@@ -281,7 +445,17 @@
     if (pageIsActive()) loadServiceReliability();
   });
 
+  document.querySelectorAll('[data-sr-alert-policy]').forEach(control => {
+    control.addEventListener('input', () => { alertPolicyDirty = true; });
+  });
+  document.getElementById('serviceReliabilityAlertSave')?.addEventListener('click', saveServiceReliabilityAlertConfig);
+  document.getElementById('serviceReliabilityAlertTest')?.addEventListener('click', testServiceReliabilityAlertDestination);
+  document.getElementById('serviceReliabilityAlertCategoryFilter')?.addEventListener('change', loadServiceReliabilityAlerts);
+  document.getElementById('serviceReliabilityAlertStatusFilter')?.addEventListener('change', loadServiceReliabilityAlerts);
+
   window.loadServiceReliability = loadServiceReliability;
   window.openServiceReliabilityRoutes = openServiceReliabilityRoutes;
   window.runServiceReliabilityProbe = runServiceReliabilityProbe;
+  window.saveServiceReliabilityAlertConfig = saveServiceReliabilityAlertConfig;
+  window.testServiceReliabilityAlertDestination = testServiceReliabilityAlertDestination;
 })();
