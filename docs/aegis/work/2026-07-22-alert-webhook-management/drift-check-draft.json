@@ -3,15 +3,11 @@
   "taskId": "2026-07-22-alert-webhook-management",
   "taskIntentRef": "docs/aegis/work/2026-07-22-alert-webhook-management/task-intent-draft.json",
   "baselineRefs": [
-    "docs/aegis/adr/ADR-0004-admin-managed-alert-webhook.md",
-    "docs/aegis/baseline/service-reliability.md"
+    "docs/aegis/adr/ADR-0004-admin-managed-alert-webhook.md"
   ],
-  "scopeStatus": "Implementation, architecture records, tests, and review stayed within the administrator-managed alert Webhook contract.",
-  "compatStatus": "Absent DB row falls back to Railway; present empty disables; valid values converge across replicas; malformed stored values remain visible but cannot send.",
-  "retirementStatus": "Railway-only ownership is retired while the absent-key Railway fallback remains intentionally active.",
-  "newRiskSignals": [
-    "Production deployment, database initialization, and real DingTalk configuration test still require live verification.",
-    "Three unrelated origin/master video tests remain red and were not changed in this task."
-  ],
-  "decision": "needs-verification"
+  "scopeStatus": "The shipped implementation and live initialization stayed within the authorized administrator-managed alert Webhook and Claude tutorial repair scope.",
+  "compatStatus": "Database value is active; absent-row Railway fallback remains; public APIs and customer request performance are unchanged.",
+  "retirementStatus": "Railway-only ownership is retired; absent-row environment fallback remains intentionally active for recovery.",
+  "newRiskSignals": [],
+  "decision": "continue"
 }

@@ -22,10 +22,11 @@ This proof bundle is an advisory Aegis Method Pack record. It does not determine
 - docs/aegis/work/2026-07-22-alert-webhook-management/evidence-bundle-draft-backend-runtime-red-green-review.json
 - docs/aegis/work/2026-07-22-alert-webhook-management/evidence-bundle-draft-final-prelanding-runtime-security-review.json
 - docs/aegis/work/2026-07-22-alert-webhook-management/evidence-bundle-draft-full-suite-baseline-differential.json
+- docs/aegis/work/2026-07-22-alert-webhook-management/evidence-bundle-draft-production-deploy-webhook-test.json
 
 ## Drift Check
 
-- Scope status: Implementation, architecture records, tests, and review stayed within the administrator-managed alert Webhook contract.
-- Compatibility status: Absent DB row falls back to Railway; present empty disables; valid values converge across replicas; malformed stored values remain visible but cannot send.
-- Retirement status: Railway-only ownership is retired while the absent-key Railway fallback remains intentionally active.
-- Advisory decision: needs-verification
+- Scope status: The shipped implementation and live initialization stayed within the authorized administrator-managed alert Webhook and Claude tutorial repair scope.
+- Compatibility status: Database value is active; absent-row Railway fallback remains; public APIs and customer request performance are unchanged.
+- Retirement status: Railway-only ownership is retired; absent-row environment fallback remains intentionally active for recovery.
+- Advisory decision: continue
