@@ -511,9 +511,10 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("document.getElementById('serviceReliabilityAlertWebhookUrl').value = payload.webhook_url ?? '';", reliability_js)
         self.assertIn("webhook_url: document.getElementById('serviceReliabilityAlertWebhookUrl').value.trim()", reliability_js)
         self.assertIn("if (payload.webhook_url && !validDingTalkWebhookUrl(payload.webhook_url))", reliability_js)
-        self.assertIn("webhookUrl.protocol === 'https:'", reliability_js)
-        self.assertIn("webhookUrl.host === 'oapi.dingtalk.com'", reliability_js)
-        self.assertIn("webhookUrl.pathname === '/robot/send'", reliability_js)
+        self.assertIn("rawUrlMatch[1].toLowerCase() !== 'https'", reliability_js)
+        self.assertIn("rawUrlMatch[2] !== 'oapi.dingtalk.com'", reliability_js)
+        self.assertIn("rawUrlMatch[3] !== '/robot/send'", reliability_js)
+        self.assertNotIn("webhookUrl.pathname", reliability_js)
         self.assertIn("webhookUrl.searchParams.getAll('access_token')", reliability_js)
         self.assertIn("accessTokens.length === 1", reliability_js)
         self.assertIn("accessTokens[0] !== ''", reliability_js)
@@ -718,6 +719,21 @@ function createApp(fetchImpl) {
             ("https://oapi.dingtalk.com:443/robot/send?access_token=synthetic-token", False),
             ("https://user@oapi.dingtalk.com/robot/send?access_token=synthetic-token", False),
             ("https://oapi.dingtalk.com/not-robot/send?access_token=synthetic-token", False),
+            ("https://oapi.dingtalk.com/robot/./send?access_token=synthetic-token", False),
+            ("https://oapi.dingtalk.com/robot/x/../send?access_token=synthetic-token", False),
+            ("https://oapi.dingtalk.com/robot/%2e/send?access_token=synthetic-token", False),
+            ("https://oapi.dingtalk.com/robot/%2E/send?access_token=synthetic-token", False),
+            ("https://oapi.dingtalk.com/robot/x/%2e%2e/send?access_token=synthetic-token", False),
+            ("https://oapi.dingtalk.com/robot/x/.%2e/send?access_token=synthetic-token", False),
+            ("https://oapi.dingtalk.com/foo/../robot/send?access_token=synthetic-token", False),
+            ("https://oapi.dingtalk.com/%2e/robot/send?access_token=synthetic-token", False),
+            ("https://oapi.dingtalk.com/foo/%2e%2e/robot/send?access_token=synthetic-token", False),
+            ("https://oapi.dingtalk.com/robot%2fsend?access_token=synthetic-token", False),
+            ("https://oapi.dingtalk.com/robot%5csend?access_token=synthetic-token", False),
+            ("https://oapi.dingtalk.com/robot\\send?access_token=synthetic-token", False),
+            ("https://oapi.dingtalk.com/robot;/send?access_token=synthetic-token", False),
+            ("https://oapi.dingtalk.com//robot/send?access_token=synthetic-token", False),
+            ("https://oapi.dingtalk.com/robot//send?access_token=synthetic-token", False),
             ("https://oapi.dingtalk.com/robot/send?access_token=abc%00def", False),
             ("https://oapi.dingtalk.com/robot/send?access_token=abc%0Adef", False),
             ("https://oapi.dingtalk.com/robot/send?access_token=abc%20def", False),

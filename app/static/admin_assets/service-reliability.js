@@ -179,17 +179,19 @@
 
   function validDingTalkWebhookUrl(value) {
     if (/[\u0000-\u001f\u007f]/.test(value)) return false;
-    const authorityMatch = value.match(/^https:\/\/([^/?#]+)(?:[/?#]|$)/i);
-    if (!authorityMatch || authorityMatch[1] !== 'oapi.dingtalk.com') return false;
+    const rawUrlMatch = value.match(
+      /^([A-Za-z][A-Za-z0-9+.-]*):\/\/([^/?#]+)([^?#]*)(?:\?[^#]*)?(?:#[\s\S]*)?$/,
+    );
+    if (
+      !rawUrlMatch
+      || rawUrlMatch[1].toLowerCase() !== 'https'
+      || rawUrlMatch[2] !== 'oapi.dingtalk.com'
+      || rawUrlMatch[3] !== '/robot/send'
+    ) return false;
     try {
       const webhookUrl = new URL(value);
       const accessTokens = webhookUrl.searchParams.getAll('access_token');
-      return webhookUrl.protocol === 'https:'
-        && webhookUrl.host === 'oapi.dingtalk.com'
-        && webhookUrl.pathname === '/robot/send'
-        && webhookUrl.username === ''
-        && webhookUrl.password === ''
-        && accessTokens.length === 1
+      return accessTokens.length === 1
         && accessTokens[0] !== ''
         && !Array.from(accessTokens[0]).some(character => {
           const codePoint = character.codePointAt(0);
