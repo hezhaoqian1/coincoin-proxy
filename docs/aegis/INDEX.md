@@ -139,3 +139,5 @@ Entries are workspace records, not authoritative runtime decisions.
 | 2026-07-22 | artifact | docs/aegis/work/2026-07-22-alert-webhook-management/evidence-bundle-draft-admin-ui-shared-validator-review.json | 2026-07-22-alert-webhook-management evidence admin-ui-shared-validator-review |
 | 2026-07-22 | artifact | docs/aegis/work/2026-07-22-alert-webhook-management/evidence-bundle-draft-final-prelanding-runtime-security-review.json | 2026-07-22-alert-webhook-management evidence final-prelanding-runtime-security-review |
 | 2026-07-22 | artifact | docs/aegis/work/2026-07-22-alert-webhook-management/evidence-bundle-draft-full-suite-baseline-differential.json | 2026-07-22-alert-webhook-management evidence full-suite-baseline-differential |
+| 2026-07-22 | artifact | docs/aegis/work/2026-07-22-alert-webhook-management/gate-input-pack.json | 2026-07-22-alert-webhook-management gate input pack |
+| 2026-07-22 | work | docs/aegis/work/2026-07-22-alert-webhook-management/proof-bundle.md | 2026-07-22-alert-webhook-management proof bundle |
