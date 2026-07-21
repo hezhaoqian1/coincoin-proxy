@@ -5,7 +5,7 @@ Date: `2026-07-21`
 
 ## Source Evidence
 
-- Implemented runtime policy, AlertEvent persistence, protected admin API, and existing-page UI with 164 focused regression tests passing.
+- Implemented runtime policy, AlertEvent persistence, protected admin API, and existing-page UI with 173 focused regression tests passing.
 ## Context
 
 Operators need to know whether DingTalk received an alert without duplicating every upstream failure or moving the webhook secret into application-managed persistence.

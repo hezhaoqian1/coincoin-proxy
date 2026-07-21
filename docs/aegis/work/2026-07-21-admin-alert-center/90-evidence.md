@@ -1,6 +1,6 @@
 # Admin Alert Center - Evidence
 
-No evidence has been recorded yet.
+Release evidence is recorded below.
 
 ## EvidenceBundleDraft
 
