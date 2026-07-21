@@ -10,6 +10,8 @@ import httpx
 os.environ.setdefault("COINCOIN_DATABASE_URL", "mysql://test@127.0.0.1:3306/test")
 
 import app.alert_admin as alert_admin
+import app.db as db_module
+import app.main as main_module
 import app.system_settings as system_settings
 from app.config import settings
 from app.fallback_alerts import reset_fallback_alert_state
@@ -34,7 +36,9 @@ class _FakeDB:
         self.execute_results = list(execute_results or [])
         self.items = {}
         self.added = []
+        self.queries = []
         self.commit = AsyncMock()
+        self.rollback = AsyncMock()
 
     async def get(self, model, key):
         return self.items.get(key)
@@ -44,10 +48,25 @@ class _FakeDB:
         self.items[item.setting_key] = item
 
     async def execute(self, statement):
-        if not hasattr(self, "queries"):
-            self.queries = []
         self.queries.append(statement)
         return self.execute_results.pop(0) if self.execute_results else _RowsResult([])
+
+
+class _ObservedLock:
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+        self.attempts = 0
+        self.second_attempted = asyncio.Event()
+
+    async def __aenter__(self):
+        self.attempts += 1
+        if self.attempts == 2:
+            self.second_attempted.set()
+        await self._lock.acquire()
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        self._lock.release()
 
 
 class AlertAdminApiTests(unittest.IsolatedAsyncioTestCase):
@@ -61,7 +80,9 @@ class AlertAdminApiTests(unittest.IsolatedAsyncioTestCase):
             model_registry, "_runtime_system_settings_version", 0
         )
         settings.admin_token = "admin-secret"
-        settings.fallback_alert_webhook_url = "https://oapi.dingtalk.example/robot?access_token=top-secret"
+        settings.fallback_alert_webhook_url = (
+            "https://oapi.dingtalk.com/robot/send?access_token=top-secret"
+        )
         system_settings._RUNTIME_SYSTEM_SETTINGS_LOCK = asyncio.Lock()
         model_registry.clear_runtime_system_settings()
         reset_fallback_alert_state()
@@ -144,12 +165,14 @@ class AlertAdminApiTests(unittest.IsolatedAsyncioTestCase):
                     json=body(webhook_url),
                 )
 
+        observed_lock = _ObservedLock()
+        system_settings._RUNTIME_SYSTEM_SETTINGS_LOCK = observed_lock
         first_task = asyncio.create_task(patch_config(first_url))
         await asyncio.wait_for(first_committed.wait(), timeout=0.1)
         second_task = asyncio.create_task(patch_config(final_webhook_url))
         try:
-            with self.assertRaises(asyncio.TimeoutError):
-                await asyncio.wait_for(asyncio.shield(second_task), timeout=0.01)
+            await asyncio.wait_for(observed_lock.second_attempted.wait(), timeout=0.1)
+            self.assertFalse(second_task.done())
         finally:
             release_first_commit.set()
         first_response, second_response = await asyncio.gather(first_task, second_task)
@@ -171,6 +194,29 @@ class AlertAdminApiTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 401, response.text)
         self.assertEqual(response.headers["cache-control"], "no-store")
+
+    async def test_unauthenticated_patch_does_not_execute_database_work(self) -> None:
+        fake_db = _FakeDB()
+        self._override_db(fake_db)
+        body = {
+            "webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=must-not-save",
+            "enabled": True,
+            "availability_threshold": 5,
+            "authentication_threshold": 3,
+            "window_seconds": 60,
+            "dedup_seconds": 300,
+            "max_pending_tasks": 64,
+        }
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+        ) as client:
+            response = await client.patch("/admin/alerts/config", json=body)
+
+        self.assertEqual(response.status_code, 401, response.text)
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        self.assertEqual(fake_db.queries, [])
+        fake_db.commit.assert_not_awaited()
 
     async def test_config_body_validation_errors_are_sanitized_and_not_cached(self) -> None:
         cases = (
@@ -231,11 +277,28 @@ class AlertAdminApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(payload["webhook_configured"])
         self.assertEqual(
             payload["webhook_url"],
-            "https://oapi.dingtalk.example/robot?access_token=top-secret",
+            "https://oapi.dingtalk.com/robot/send?access_token=top-secret",
         )
         self.assertEqual(response.headers["cache-control"], "no-store")
         self.assertEqual(payload["last_success_at"], "2026-07-21T10:00:00")
         self.assertEqual(payload["last_failure_at"], "2026-07-21T11:00:00")
+
+    async def test_malformed_stored_webhook_remains_visible_but_is_not_configured(self) -> None:
+        malformed_url = "https://internal.example/robot/send?access_token=legacy-token"
+        system_settings._apply_runtime_system_settings(
+            {"fallback_alert_webhook_url": malformed_url},
+            replace=True,
+        )
+        fake_db = _FakeDB(execute_results=[_RowsResult([])])
+        self._override_db(fake_db)
+
+        async with await self._client() as client:
+            response = await client.get("/admin/alerts/config")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["webhook_url"], malformed_url)
+        self.assertFalse(response.json()["webhook_configured"])
+        self.assertEqual(response.headers["cache-control"], "no-store")
 
     async def test_patch_persists_complete_policy_and_applies_immediately(self) -> None:
         fake_db = _FakeDB()
@@ -268,6 +331,70 @@ class AlertAdminApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.json()["webhook_url"], body["webhook_url"])
         self.assertEqual(response.headers["cache-control"], "no-store")
         self.assertEqual(alert_admin.current_alert_policy().max_pending_tasks, 64)
+
+    async def test_patch_database_failures_are_sanitized_and_rolled_back(self) -> None:
+        body = {
+            "webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=synthetic-secret-token",
+            "enabled": True,
+            "availability_threshold": 8,
+            "authentication_threshold": 4,
+            "window_seconds": 90,
+            "dedup_seconds": 600,
+            "max_pending_tasks": 64,
+        }
+        for operation in ("execute", "commit"):
+            with self.subTest(operation=operation):
+                fake_db = _FakeDB()
+                failure = RuntimeError(
+                    f"SQL params include {body['webhook_url']}"
+                )
+                if operation == "execute":
+                    fake_db.execute = AsyncMock(side_effect=failure)
+                    fake_db.rollback.side_effect = RuntimeError(
+                        f"rollback also included {body['webhook_url']}"
+                    )
+                else:
+                    fake_db.commit.side_effect = failure
+                self._override_db(fake_db)
+
+                async with await self._client(raise_app_exceptions=False) as client:
+                    response = await client.patch("/admin/alerts/config", json=body)
+
+                self.assertEqual(response.status_code, 500, response.text)
+                self.assertEqual(
+                    response.headers.get("content-type"),
+                    "application/json",
+                )
+                self.assertEqual(
+                    response.json(),
+                    {"detail": "Unable to save alert configuration"},
+                )
+                self.assertNotIn("synthetic-secret-token", response.text)
+                self.assertEqual(response.headers["cache-control"], "no-store")
+                fake_db.rollback.assert_awaited_once()
+
+    def test_database_engine_hides_bound_parameters(self) -> None:
+        self.assertTrue(db_module.engine.sync_engine.hide_parameters)
+
+    async def test_persist_failure_raises_context_free_sanitized_error(self) -> None:
+        secret = "synthetic-persist-secret"
+        fake_db = _FakeDB()
+        fake_db.execute = AsyncMock(
+            side_effect=RuntimeError(f"database parameters contained {secret}")
+        )
+
+        with self.assertRaises(
+            system_settings.RuntimeSystemSettingsPersistenceError
+        ) as caught:
+            await system_settings.persist_runtime_system_settings(
+                fake_db,
+                {"fallback_alert_webhook_url": secret},
+            )
+
+        self.assertEqual(caught.exception.args, ())
+        self.assertIsNone(caught.exception.__context__)
+        self.assertNotIn(secret, str(caught.exception))
+        fake_db.rollback.assert_awaited_once()
 
     async def test_patch_empty_webhook_explicitly_shadows_environment_default(self) -> None:
         fake_db = _FakeDB()
@@ -528,6 +655,82 @@ class AlertAdminApiTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(alert_admin.current_alert_webhook_url(), "")
 
+    async def test_runtime_refresh_without_database_row_restores_environment_fallback(self) -> None:
+        environment_url = (
+            "https://oapi.dingtalk.com/robot/send?access_token=environment-token"
+        )
+        settings.fallback_alert_webhook_url = environment_url
+        system_settings._apply_runtime_system_settings(
+            {
+                "fallback_alert_webhook_url":
+                    "https://oapi.dingtalk.com/robot/send?access_token=database-token"
+            },
+            replace=True,
+        )
+
+        await system_settings.refresh_runtime_system_settings_from_db(
+            _FakeDB(execute_results=[_RowsResult([])])
+        )
+
+        self.assertEqual(alert_admin.current_alert_webhook_url(), environment_url)
+
+    async def test_runtime_poll_repairs_local_aba_change_when_database_state_is_unchanged(self) -> None:
+        database_url = "https://oapi.dingtalk.com/robot/send?access_token=database-b"
+        local_url = "https://oapi.dingtalk.com/robot/send?access_token=local-a"
+        database_state = (("fallback_alert_webhook_url", database_url),)
+        refresh_calls = 0
+        sleep_calls = 0
+
+        class _SessionContext:
+            async def __aenter__(self):
+                return object()
+
+            async def __aexit__(self, exc_type, exc, traceback):
+                return False
+
+        async def refresh_to_database(_db):
+            nonlocal refresh_calls
+            refresh_calls += 1
+            system_settings._apply_runtime_system_settings(
+                dict(database_state),
+                replace=True,
+            )
+
+        async def advance_loop(_seconds):
+            nonlocal sleep_calls
+            sleep_calls += 1
+            if sleep_calls == 1:
+                system_settings._apply_runtime_system_settings(
+                    {"fallback_alert_webhook_url": local_url},
+                    replace=True,
+                )
+                return
+            raise RuntimeError("stop deterministic refresh loop")
+
+        system_settings._apply_runtime_system_settings(
+            {"fallback_alert_webhook_url": local_url},
+            replace=True,
+        )
+        with (
+            patch.object(db_module, "SessionLocal", side_effect=lambda: _SessionContext()),
+            patch.object(
+                main_module,
+                "get_runtime_system_settings_db_state",
+                AsyncMock(return_value=database_state),
+            ),
+            patch.object(
+                main_module,
+                "refresh_runtime_system_settings_from_db",
+                side_effect=refresh_to_database,
+            ),
+            patch.object(main_module.asyncio, "sleep", side_effect=advance_loop),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "stop deterministic refresh loop"):
+                await main_module.runtime_system_settings_refresh_loop(1)
+
+        self.assertEqual(refresh_calls, 2)
+        self.assertEqual(alert_admin.current_alert_webhook_url(), database_url)
+
     async def test_inflight_old_refresh_cannot_finish_after_newer_patch(self) -> None:
         older_url = "https://oapi.dingtalk.com/robot/send?access_token=old-test-token"
         older_row = SimpleNamespace(
@@ -544,6 +747,8 @@ class AlertAdminApiTests(unittest.IsolatedAsyncioTestCase):
                 await release_refresh.wait()
                 return _RowsResult([older_row])
 
+        observed_lock = _ObservedLock()
+        system_settings._RUNTIME_SYSTEM_SETTINGS_LOCK = observed_lock
         refresh_task = asyncio.create_task(
             system_settings.refresh_runtime_system_settings_from_db(
                 _BlockingRefreshDB()
@@ -575,8 +780,8 @@ class AlertAdminApiTests(unittest.IsolatedAsyncioTestCase):
 
         patch_task = asyncio.create_task(patch_config())
         try:
-            with self.assertRaises(asyncio.TimeoutError):
-                await asyncio.wait_for(patch_committed.wait(), timeout=0.01)
+            await asyncio.wait_for(observed_lock.second_attempted.wait(), timeout=0.1)
+            self.assertFalse(patch_committed.is_set())
         finally:
             release_refresh.set()
         response, _ = await asyncio.gather(patch_task, refresh_task)

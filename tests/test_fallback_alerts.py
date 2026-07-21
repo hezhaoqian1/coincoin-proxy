@@ -27,7 +27,9 @@ class UpstreamFailureBurstAlertTests(unittest.IsolatedAsyncioTestCase):
             "upstream_failure_alert_dedup_seconds": settings.upstream_failure_alert_dedup_seconds,
             "redis_url": settings.redis_url,
         }
-        settings.fallback_alert_webhook_url = "https://dingtalk.example/robot"
+        settings.fallback_alert_webhook_url = (
+            "https://oapi.dingtalk.com/robot/send?access_token=environment-token"
+        )
         settings.fallback_alert_enabled = True
         settings.fallback_alert_keyword = "CoinCoin"
         settings.fallback_alert_max_pending_tasks = 256
@@ -254,6 +256,97 @@ class UpstreamFailureBurstAlertTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(scheduled)
         create_task.assert_not_called()
 
+    async def test_malformed_runtime_webhook_is_never_scheduled_or_sent(self) -> None:
+        malformed_url = "https://internal.example/robot/send?access_token=legacy-token"
+        fallback_alerts.set_runtime_alert_settings(
+            {"fallback_alert_webhook_url": malformed_url}
+        )
+        response = SimpleNamespace(status_code=200, json=lambda: {"errcode": 0})
+        client = AsyncMock()
+        client.post.return_value = response
+        client.__aenter__.return_value = client
+        client.__aexit__.return_value = False
+        fallback = fallback_alerts.FallbackExhaustedAlert(
+            endpoint="messages",
+            model="claude-sonnet-4-6",
+            status_code=503,
+            reason="503",
+            route_reason="channel_fallback:all_failed",
+            route_attempt=2,
+        )
+        notification = fallback_alerts.UpstreamFailureBurstNotification(
+            alert=self._alert("ccreq_malformed_runtime"),
+            category="availability",
+            count=5,
+            window_seconds=60,
+        )
+
+        with (
+            patch.object(asyncio, "create_task") as create_task,
+            patch.object(
+                fallback_alerts,
+                "record_user_upstream_failure",
+                new=lambda alert: None,
+            ),
+        ):
+            scheduled = fallback_alerts.schedule_user_upstream_failure(
+                self._alert("ccreq_malformed_schedule")
+            )
+
+        with (
+            patch.object(
+                fallback_alerts,
+                "_dingtalk_http_client",
+                return_value=client,
+            ) as client_factory,
+            patch.object(
+                fallback_alerts,
+                "create_alert_event",
+                AsyncMock(return_value=None),
+            ) as create_event,
+        ):
+            fallback_result = await fallback_alerts._send_dingtalk_alert(fallback)
+            burst_result = await fallback_alerts._send_upstream_failure_burst_alert(
+                notification
+            )
+            test_result = await fallback_alerts.send_dingtalk_configuration_test()
+
+        self.assertEqual(fallback_alerts.current_alert_webhook_url(), malformed_url)
+        self.assertFalse(scheduled)
+        create_task.assert_not_called()
+        self.assertFalse(fallback_result)
+        self.assertFalse(burst_result)
+        self.assertEqual(test_result, {"sent": False, "event_id": None})
+        client_factory.assert_not_called()
+        client.post.assert_not_awaited()
+        create_event.assert_not_awaited()
+        self.assertEqual(fallback_alerts.current_sendable_alert_webhook_url(), "")
+
+    def test_malformed_environment_webhook_is_not_scheduled(self) -> None:
+        fallback_alerts.reset_fallback_alert_state()
+        settings.fallback_alert_webhook_url = (
+            "https://internal.example/robot/send?access_token=environment-token"
+        )
+
+        with (
+            patch.object(asyncio, "create_task") as create_task,
+            patch.object(
+                fallback_alerts,
+                "record_user_upstream_failure",
+                new=lambda alert: None,
+            ),
+        ):
+            scheduled = fallback_alerts.schedule_user_upstream_failure(
+                self._alert("ccreq_malformed_environment")
+            )
+
+        self.assertEqual(
+            fallback_alerts.current_alert_webhook_url(),
+            settings.fallback_alert_webhook_url,
+        )
+        self.assertFalse(scheduled)
+        create_task.assert_not_called()
+
     async def test_sender_uses_runtime_webhook_without_database_lookup(self) -> None:
         notification = fallback_alerts.UpstreamFailureBurstNotification(
             alert=self._alert("ccreq_runtime_webhook"),
@@ -261,7 +354,7 @@ class UpstreamFailureBurstAlertTests(unittest.IsolatedAsyncioTestCase):
             count=5,
             window_seconds=60,
         )
-        runtime_url = "https://runtime.example/webhook"
+        runtime_url = "https://oapi.dingtalk.com/robot/send?access_token=runtime-token"
         fallback_alerts.set_runtime_alert_settings(
             {"fallback_alert_webhook_url": runtime_url}
         )
@@ -380,7 +473,7 @@ class UpstreamFailureBurstAlertTests(unittest.IsolatedAsyncioTestCase):
             count=5,
             window_seconds=60,
         )
-        secret_url = "https://oapi.dingtalk.example/robot?access_token=must-not-log"
+        secret_url = "https://oapi.dingtalk.com/robot/send?access_token=must-not-log"
         settings.fallback_alert_webhook_url = secret_url
         client = AsyncMock()
         client.post.side_effect = httpx.ConnectError(
@@ -425,6 +518,7 @@ class UpstreamFailureBurstAlertTests(unittest.IsolatedAsyncioTestCase):
         original_level = httpx_logger.level
         httpx_logger.addHandler(handler)
         httpx_logger.setLevel(logging.INFO)
+        configured_level = httpx_logger.level
         try:
             with (
                 patch.object(
@@ -457,6 +551,8 @@ class UpstreamFailureBurstAlertTests(unittest.IsolatedAsyncioTestCase):
                     )
                 )
                 test_result = await fallback_alerts.send_dingtalk_configuration_test()
+                httpx_logger.info("unrelated httpx info remains visible")
+                level_after_sends = httpx_logger.level
         finally:
             httpx_logger.removeHandler(handler)
             httpx_logger.setLevel(original_level)
@@ -464,7 +560,23 @@ class UpstreamFailureBurstAlertTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(fallback_result)
         self.assertTrue(burst_result)
         self.assertTrue(test_result["sent"])
-        self.assertNotIn(secret_token, "\n".join(messages))
+        rendered_messages = "\n".join(messages)
+        self.assertEqual(httpx_logger.level, original_level)
+        self.assertEqual(configured_level, logging.INFO)
+        self.assertEqual(level_after_sends, configured_level)
+        self.assertNotIn(secret_token, rendered_messages)
+        self.assertIn("access_token=[REDACTED]", rendered_messages)
+        self.assertIn("unrelated httpx info remains visible", rendered_messages)
+        installed_filters = [
+            installed_filter
+            for installed_filter in httpx_logger.filters
+            if getattr(
+                installed_filter,
+                "_coincoin_dingtalk_token_filter",
+                False,
+            )
+        ]
+        self.assertEqual(len(installed_filters), 1)
 
     async def test_hanging_audit_insert_cannot_suppress_dingtalk_delivery(self) -> None:
         notification = fallback_alerts.UpstreamFailureBurstNotification(

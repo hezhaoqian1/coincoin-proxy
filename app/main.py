@@ -44,7 +44,11 @@ from .fallback_alerts import shutdown_fallback_alerts
 from .model_alias_overrides import get_model_alias_override_db_state, refresh_model_alias_registry_from_db
 from .model_pricing_overrides import get_model_pricing_override_db_state, refresh_model_pricing_registry_from_db
 from .provider_channels import get_provider_channel_db_state, refresh_provider_channel_router_from_db
-from .system_settings import get_runtime_system_settings_db_state, refresh_runtime_system_settings_from_db
+from .system_settings import (
+    get_runtime_system_settings_db_state,
+    get_runtime_system_settings_runtime_state,
+    refresh_runtime_system_settings_from_db,
+)
 from .usage_buffer import flush_loop, flush_once
 from .redis_client import close_redis_client
 from .quota_lifecycle import QuotaReservationASGIMiddleware
@@ -1009,14 +1013,12 @@ async def runtime_system_settings_refresh_loop(interval_seconds: int):
     from .db import SessionLocal
 
     logger = logging.getLogger("coincoin.system_settings")
-    last_state = None
     while True:
         try:
             async with SessionLocal() as db:
                 state = await get_runtime_system_settings_db_state(db)
-                if state != last_state:
+                if state != get_runtime_system_settings_runtime_state():
                     await refresh_runtime_system_settings_from_db(db)
-                    last_state = state
                     logger.info("refreshed runtime system settings from database count=%s", len(state))
         except Exception as exc:
             logger.warning("failed to refresh runtime system settings from database: %s", exc)

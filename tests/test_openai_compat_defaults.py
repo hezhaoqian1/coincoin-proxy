@@ -1013,7 +1013,9 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(upstream_client.calls[0]["headers"]["authorization"], "Bearer root-key")
 
     async def test_fallback_alert_deduplicates_same_failure(self) -> None:
-        settings.fallback_alert_webhook_url = "https://dingtalk.example/robot"
+        settings.fallback_alert_webhook_url = (
+            "https://oapi.dingtalk.com/robot/send?access_token=dedup-test-token"
+        )
         settings.fallback_alert_keyword = "CoinCoinAlert"
         settings.fallback_alert_dedup_seconds = 900
         alert = FallbackExhaustedAlert(

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Literal, Optional
-from urllib.parse import parse_qs, urlsplit
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
 from fastapi.exceptions import RequestValidationError
@@ -18,10 +17,15 @@ from .db import get_db
 from .fallback_alerts import (
     current_alert_policy,
     current_alert_webhook_url,
+    current_sendable_alert_webhook_url,
+    is_valid_dingtalk_webhook_url,
     send_dingtalk_configuration_test,
 )
 from .models import AlertEvent
-from .system_settings import persist_runtime_system_settings
+from .system_settings import (
+    RuntimeSystemSettingsPersistenceError,
+    persist_runtime_system_settings,
+)
 
 
 class AlertAdminRoute(APIRoute):
@@ -92,31 +96,14 @@ def _raise_config_validation_error(detail: str) -> None:
 
 
 def _validated_webhook_url(value: str) -> str:
-    if any(ord(character) < 0x20 or ord(character) == 0x7F for character in value):
-        _raise_config_validation_error("Invalid DingTalk alert webhook URL")
     if not value.strip():
+        if any(
+            ord(character) < 0x20 or ord(character) == 0x7F
+            for character in value
+        ):
+            _raise_config_validation_error("Invalid DingTalk alert webhook URL")
         return ""
-    try:
-        parsed = urlsplit(value)
-        access_tokens = parse_qs(parsed.query, keep_blank_values=True).get(
-            "access_token", []
-        )
-    except ValueError:
-        _raise_config_validation_error("Invalid DingTalk alert webhook URL")
-    if (
-        value != value.strip()
-        or parsed.scheme != "https"
-        or parsed.netloc != "oapi.dingtalk.com"
-        or parsed.path != "/robot/send"
-        or len(access_tokens) != 1
-        or not access_tokens[0]
-        or any(
-            ord(character) < 0x20
-            or ord(character) == 0x7F
-            or character.isspace()
-            for character in access_tokens[0]
-        )
-    ):
+    if not is_valid_dingtalk_webhook_url(value):
         _raise_config_validation_error("Invalid DingTalk alert webhook URL")
     return value
 
@@ -144,7 +131,7 @@ async def _config_payload(db: AsyncSession) -> dict[str, Any]:
     return {
         "enabled": policy.enabled,
         "webhook_url": webhook_url,
-        "webhook_configured": bool(webhook_url),
+        "webhook_configured": bool(current_sendable_alert_webhook_url()),
         "availability_threshold": policy.availability_threshold,
         "authentication_threshold": policy.authentication_threshold,
         "window_seconds": policy.window_seconds,
@@ -182,13 +169,19 @@ async def update_alert_config(
         POLICY_SETTING_KEYS["dedup_seconds"]: str(payload.dedup_seconds),
         POLICY_SETTING_KEYS["max_pending_tasks"]: str(payload.max_pending_tasks),
     }
-    await persist_runtime_system_settings(db, values)
+    try:
+        await persist_runtime_system_settings(db, values)
+    except RuntimeSystemSettingsPersistenceError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to save alert configuration",
+        ) from None
     return await _config_payload(db)
 
 
 @router.post("/test")
 async def test_alert_destination():
-    if not current_alert_webhook_url():
+    if not current_sendable_alert_webhook_url():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="DingTalk alert webhook is not configured",

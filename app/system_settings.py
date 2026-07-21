@@ -27,6 +27,10 @@ SUPPORTED_RUNTIME_SETTING_KEYS = frozenset({CLAUDE_COMPAT_PROVIDER_KEY, *ALERT_R
 _RUNTIME_SYSTEM_SETTINGS_LOCK = asyncio.Lock()
 
 
+class RuntimeSystemSettingsPersistenceError(RuntimeError):
+    pass
+
+
 def _apply_alert_runtime_settings(runtime_settings: Dict[str, str]) -> None:
     from .fallback_alerts import set_runtime_alert_settings
 
@@ -59,6 +63,15 @@ async def load_runtime_system_settings_from_db(db: AsyncSession) -> Tuple[Dict[s
 async def get_runtime_system_settings_db_state(db: AsyncSession) -> Tuple[Tuple[str, str], ...]:
     result = await db.execute(select(SystemSetting))
     snapshot, _ = system_setting_rows_to_snapshot(result.scalars().all())
+    return tuple(sorted(snapshot.items()))
+
+
+def get_runtime_system_settings_runtime_state() -> Tuple[Tuple[str, str], ...]:
+    snapshot = {
+        key: str(value or "").strip()
+        for key, value in model_registry.current_system_settings().items()
+        if key in SUPPORTED_RUNTIME_SETTING_KEYS
+    }
     return tuple(sorted(snapshot.items()))
 
 
@@ -130,8 +143,18 @@ async def persist_runtime_system_settings(
         updated_at=func.now(),
     )
     async with _RUNTIME_SYSTEM_SETTINGS_LOCK:
-        await db.execute(statement)
-        await db.commit()
+        persistence_failed = False
+        try:
+            await db.execute(statement)
+            await db.commit()
+        except Exception:
+            persistence_failed = True
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+        if persistence_failed:
+            raise RuntimeSystemSettingsPersistenceError() from None
         _apply_runtime_system_settings(values)
 
 
