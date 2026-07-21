@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "2026-07-22-alert-webhook-management",
+  "lastCheckpointRef": "docs/aegis/work/2026-07-22-alert-webhook-management/todo-checkpoint-draft.json",
+  "resumeInstruction": "Resume from Task 3 verification in the alert-webhook-management worktree; do not put the real URL or admin token in Git or logs.",
+  "knownPartialWork": [
+    "Task 1 backend runtime owner, persistence, validation, no-store, logging hygiene, and concurrency behavior.",
+    "Task 2 administrator page Webhook view/edit/clear flow, stale-response protection, shared validator parity, and independent reviews."
+  ],
+  "mustReadBeforeContinuing": [
+    "docs/aegis/work/2026-07-22-alert-webhook-management/10-intent.md",
+    "docs/aegis/work/2026-07-22-alert-webhook-management/20-checkpoint.md",
+    "docs/aegis/work/2026-07-22-alert-webhook-management/todo-checkpoint-draft.json"
+  ],
+  "unsafeToAssume": [
+    "Do not assume production deployment or database initialization until Railway and protected API checks pass."
+  ]
+}

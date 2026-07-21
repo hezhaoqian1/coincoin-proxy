@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "candidateDocs": [
+    "docs/aegis/specs/2026-07-22-alert-webhook-management-brief.md",
+    "docs/aegis/adr/ADR-0003-alert-delivery-audit-boundary.md",
+    "docs/aegis/baseline/service-reliability.md"
+  ],
+  "whyRelevant": "These refs define the approved behavior, old owner, runtime boundary, and existing admin surface.",
+  "missingAuthority": []
+}

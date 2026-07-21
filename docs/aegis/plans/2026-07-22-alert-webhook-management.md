@@ -111,13 +111,13 @@ adding request-path I/O.
 Impact/compatibility: row presence must shadow the environment even when empty;
 existing installations without a row keep current behavior.
 
-- [ ] Write failing tests for full GET, no-store headers, plaintext UPSERT,
+- [x] Write failing tests for full GET, no-store headers, plaintext UPSERT,
   validation, empty override, environment fallback, and sender resolution.
-- [ ] Run the focused tests and verify RED.
-- [ ] Add the supported setting key, presence-aware resolver, Pydantic validation,
+- [x] Run the focused tests and verify RED.
+- [x] Add the supported setting key, presence-aware resolver, Pydantic validation,
   atomic UPSERT, and immediate runtime apply at existing canonical owners.
-- [ ] Run focused tests and verify GREEN.
-- [ ] Commit backend behavior with its tests.
+- [x] Run focused tests and verify GREEN.
+- [x] Commit backend behavior with its tests.
 
 ## Task 2: Existing administrator page
 
@@ -131,12 +131,12 @@ Why: let the administrator view and change the complete value without another pa
 Impact/compatibility: polling remains active-page-only; saving one form updates the
 Webhook and policy atomically.
 
-- [ ] Write failing static contract tests for the URL field, payload, complete
+- [x] Write failing static contract tests for the URL field, payload, complete
   rendering, validation messaging, and removal of environment-only wording.
-- [ ] Run the static contract test and verify RED.
-- [ ] Add the URL field and wire it into render, dirty tracking, validation, and save.
-- [ ] Run static contract and JavaScript syntax checks and verify GREEN.
-- [ ] Commit the UI behavior with its test.
+- [x] Run the static contract test and verify RED.
+- [x] Add the URL field and wire it into render, dirty tracking, validation, and save.
+- [x] Run static contract and JavaScript syntax checks and verify GREEN.
+- [x] Commit the UI behavior with its test.
 
 ## Task 3: Architecture records and release verification
 
@@ -148,7 +148,7 @@ Why: keep the deliberate plaintext/source-of-truth reversal discoverable.
 
 Impact/compatibility: documentation must never include the real URL or token.
 
-- [ ] Update the ADR, baseline, runbook, and Aegis index with the implemented contract.
+- [x] Update the ADR, baseline, runbook, and Aegis index with the implemented contract.
 - [ ] Run focused tests, compile/static checks, docs checks, and diff checks.
 - [ ] Run pre-landing review and fix any concrete issues.
 - [ ] Push, create a PR, merge to `master`, and verify Railway deployments/health.

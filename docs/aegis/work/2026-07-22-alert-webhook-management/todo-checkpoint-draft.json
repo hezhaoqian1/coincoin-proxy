@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "2026-07-22-alert-webhook-management",
+  "currentTodo": "Complete architecture records and release verification.",
+  "completedTodos": [
+    "Task 1 backend runtime owner, persistence, validation, no-store, logging hygiene, and concurrency behavior.",
+    "Task 2 administrator page Webhook view/edit/clear flow, stale-response protection, shared validator parity, and independent reviews."
+  ],
+  "activeSlice": "Task 3 from docs/aegis/plans/2026-07-22-alert-webhook-management.md",
+  "evidenceRefs": [
+    "docs/aegis/work/2026-07-22-alert-webhook-management/evidence-bundle-draft-backend-runtime-red-green-review.json",
+    "docs/aegis/work/2026-07-22-alert-webhook-management/evidence-bundle-draft-admin-ui-shared-validator-review.json"
+  ],
+  "blockedOn": null,
+  "nextStep": "Commit architecture records, run full verification and pre-landing review, then ship and initialize production through the protected API.",
+  "updatedAt": "2026-07-22"
+}
