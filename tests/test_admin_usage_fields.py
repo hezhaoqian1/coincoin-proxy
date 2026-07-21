@@ -485,7 +485,14 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('id="serviceReliabilityAlertEventsBody"', admin_html)
         self.assertIn('id="serviceReliabilityAlertCategoryFilter"', admin_html)
         self.assertIn('id="serviceReliabilityAlertStatusFilter"', admin_html)
-        self.assertIn("Webhook 密钥仅由 Railway 环境变量管理", admin_html)
+        self.assertIn(
+            '<input id="serviceReliabilityAlertWebhookUrl" data-sr-alert-policy type="url" '
+            'maxlength="2048" autocomplete="off" spellcheck="false"',
+            admin_html,
+        )
+        self.assertIn("完整 Webhook 由管理员保存到系统设置", admin_html)
+        self.assertIn("留空会停用且不会回退 Railway", admin_html)
+        self.assertNotIn("Webhook 密钥仅由 Railway 环境变量管理", admin_html)
 
         self.assertIn("/admin/alerts/config", reliability_js)
         self.assertIn("/admin/alerts/events", reliability_js)
@@ -494,7 +501,22 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("method: 'POST'", reliability_js)
         self.assertIn("pageIsActive()", reliability_js)
         self.assertIn("sr-alert-policy-grid", reliability_css)
-        self.assertNotIn("webhook_url", reliability_js)
+        self.assertIn("sr-alert-webhook-field", reliability_css)
+        self.assertIn("grid-column: 1 / -1", reliability_css)
+        self.assertIn("if (!alertPolicyDirty)", reliability_js)
+        self.assertIn("document.getElementById('serviceReliabilityAlertWebhookUrl').value = payload.webhook_url ?? '';", reliability_js)
+        self.assertIn("webhook_url: document.getElementById('serviceReliabilityAlertWebhookUrl').value.trim()", reliability_js)
+        self.assertIn("if (payload.webhook_url && !validDingTalkWebhookUrl(payload.webhook_url))", reliability_js)
+        self.assertIn("webhookUrl.protocol === 'https:'", reliability_js)
+        self.assertIn("webhookUrl.host === 'oapi.dingtalk.com'", reliability_js)
+        self.assertIn("webhookUrl.pathname === '/robot/send'", reliability_js)
+        self.assertIn("webhookUrl.searchParams.getAll('access_token')", reliability_js)
+        self.assertIn("accessTokens.length === 1", reliability_js)
+        self.assertIn("accessTokens[0].trim() !== ''", reliability_js)
+        self.assertIn("Webhook 地址必须是有效的钉钉机器人地址", reliability_js)
+        self.assertIn("payload.webhook_configured === true", reliability_js)
+        self.assertIn("alertActionRunning || !configured", reliability_js)
+        self.assertNotIn("console.log", reliability_js)
 
         self.assertNotIn('data-page="alerts"', admin_html)
         self.assertNotIn('id="page-alerts"', admin_html)

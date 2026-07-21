@@ -99,6 +99,7 @@
 
     if (!alertPolicyDirty) {
       document.getElementById('serviceReliabilityAlertEnabled').checked = enabled;
+      document.getElementById('serviceReliabilityAlertWebhookUrl').value = payload.webhook_url ?? '';
       document.getElementById('serviceReliabilityAlertAvailabilityThreshold').value = payload.availability_threshold ?? '';
       document.getElementById('serviceReliabilityAlertAuthenticationThreshold').value = payload.authentication_threshold ?? '';
       document.getElementById('serviceReliabilityAlertWindowSeconds').value = payload.window_seconds ?? '';
@@ -158,9 +159,27 @@
     }
   }
 
+  function validDingTalkWebhookUrl(value) {
+    try {
+      const webhookUrl = new URL(value);
+      const accessTokens = webhookUrl.searchParams.getAll('access_token');
+      return webhookUrl.protocol === 'https:'
+        && webhookUrl.host === 'oapi.dingtalk.com'
+        && webhookUrl.pathname === '/robot/send'
+        && webhookUrl.username === ''
+        && webhookUrl.password === ''
+        && webhookUrl.hash === ''
+        && accessTokens.length === 1
+        && accessTokens[0].trim() !== '';
+    } catch (_error) {
+      return false;
+    }
+  }
+
   function alertPolicyPayload() {
     return {
       enabled: document.getElementById('serviceReliabilityAlertEnabled').checked,
+      webhook_url: document.getElementById('serviceReliabilityAlertWebhookUrl').value.trim(),
       availability_threshold: Number(document.getElementById('serviceReliabilityAlertAvailabilityThreshold').value),
       authentication_threshold: Number(document.getElementById('serviceReliabilityAlertAuthenticationThreshold').value),
       window_seconds: Number(document.getElementById('serviceReliabilityAlertWindowSeconds').value),
@@ -172,12 +191,23 @@
   async function saveServiceReliabilityAlertConfig() {
     if (alertActionRunning) return;
     const payload = alertPolicyPayload();
-    if (Object.entries(payload).some(([key, value]) => key !== 'enabled' && (!Number.isInteger(value) || value < 1))) {
+    const numericPolicyFields = [
+      'availability_threshold',
+      'authentication_threshold',
+      'window_seconds',
+      'dedup_seconds',
+      'max_pending_tasks',
+    ];
+    if (numericPolicyFields.some(key => !Number.isInteger(payload[key]) || payload[key] < 1)) {
       if (typeof window.toast === 'function') window.toast('告警策略必须填写有效的正整数', 'error');
       return;
     }
     if (payload.dedup_seconds < payload.window_seconds) {
       if (typeof window.toast === 'function') window.toast('去重时间不能短于统计窗口', 'error');
+      return;
+    }
+    if (payload.webhook_url && !validDingTalkWebhookUrl(payload.webhook_url)) {
+      if (typeof window.toast === 'function') window.toast('Webhook 地址必须是有效的钉钉机器人地址', 'error');
       return;
     }
     alertActionRunning = true;
@@ -193,7 +223,7 @@
       if (!response.ok) throw new Error(result.detail || '告警策略保存失败');
       alertPolicyDirty = false;
       renderAlertConfig(result);
-      if (typeof window.toast === 'function') window.toast('告警策略已保存并在当前实例生效', 'success');
+      if (typeof window.toast === 'function') window.toast('告警配置已保存', 'success');
     } catch (error) {
       console.error(error);
       if (typeof window.toast === 'function') window.toast(error.message || '告警策略保存失败', 'error');
