@@ -1,7 +1,7 @@
 # Service Reliability Baseline
 
 Status: `current-state-snapshot`
-Date: `2026-07-22`
+Date: `2026-07-23`
 Decision: `docs/aegis/adr/ADR-0002-route-derived-reliability-observation.md`
 Alert decision: `docs/aegis/adr/ADR-0003-alert-delivery-audit-boundary.md`
 Webhook decision: `docs/aegis/adr/ADR-0004-admin-managed-alert-webhook.md`
@@ -10,7 +10,7 @@ Webhook decision: `docs/aegis/adr/ADR-0004-admin-managed-alert-webhook.md`
 
 - Active `ModelChannelRoute` rows are the source of truth for supported representative probe targets and configured delivery paths.
 - `ProviderChannelMonitor` remains the persistence and API compatibility owner for representative selection, lease state, latest result, retained history, and daily rollups. At most one active representative monitor per provider channel is the canonical invariant.
-- `app/channel_monitoring.py` owns deterministic representative selection, reconciliation, background claims, single-request probe execution, retained history, and daily rollups.
+- `app/channel_monitoring.py` owns deterministic representative selection, reconciliation, background claims, single-request probe execution, retained history, and daily rollups. `app/channel_probe_contract.py` owns protocol-specific response-shape classification for those probes.
 - `app/admin.py` owns validation of exact administrator model and endpoint overrides and reset to automatic selection.
 - `app/reliability.py` owns the bounded admin read model and its 10-second in-process cache.
 - `app/channel_router.py` remains the sole request-selection, fallback, failure-threshold, and cooldown authority.
@@ -31,7 +31,7 @@ Webhook decision: `docs/aegis/adr/ADR-0004-admin-managed-alert-webhook.md`
 1. The background loop reconciles at most once per minute, claims one due monitor with a database lease, and executes one representative probe.
 2. A probe sends `Reply with OK.` as one minimal non-streaming generation request to the selected endpoint.
 3. A probe performs exactly one upstream `POST`, performs no `/models` preflight, and does not require the literal output `OK.`.
-4. A successful probe requires a 2xx response with structurally valid model output and no error payload. Timeout, request, response-shape, and non-2xx failures are recorded against the channel monitor.
+4. A successful probe requires a 2xx response with structurally valid model output and no error payload. Protocol-valid reasoning/thinking output that explicitly exhausts the 64-token probe budget before visible text is degraded rather than failed. Timeout, request, other response-shape, and non-2xx failures are recorded against the channel monitor.
 5. Page load, polling, reconciliation, and selection updates do not execute probes. Only the background schedule or explicit operator probe action performs upstream generation I/O.
 
 ## Reliability Semantics
