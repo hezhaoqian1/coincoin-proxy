@@ -591,7 +591,7 @@ class ChannelMonitoringTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client.calls[0][2]["authorization"], "Bearer sk-test")
         self.assertEqual(client.calls[0][3]["model"], "gpt-5.3-codex")
         self.assertEqual(client.calls[0][3]["input"], "Reply with OK.")
-        self.assertEqual(client.calls[0][3]["max_output_tokens"], 16)
+        self.assertEqual(client.calls[0][3]["max_output_tokens"], 64)
         self.assertFalse(client.calls[0][3]["store"])
         self.assertFalse(client.calls[0][3]["stream"])
         self.assertEqual(db.commits, 1)
@@ -703,7 +703,7 @@ class ChannelMonitoringTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(client.calls), 1)
         self.assertEqual(client.calls[0][1], "https://chat.example/v1/chat/completions")
         self.assertEqual(client.calls[0][3]["messages"], [{"role": "user", "content": "Reply with OK."}])
-        self.assertEqual(client.calls[0][3]["max_tokens"], 8)
+        self.assertEqual(client.calls[0][3]["max_tokens"], 64)
         self.assertFalse(client.calls[0][3]["stream"])
 
     async def test_anthropic_compatible_monitor_uses_messages_endpoint(self) -> None:
@@ -744,7 +744,7 @@ class ChannelMonitoringTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("authorization", client.calls[0][2])
         self.assertEqual(client.calls[0][3]["model"], "claude-fable-5")
         self.assertEqual(client.calls[0][3]["messages"], [{"role": "user", "content": "Reply with OK."}])
-        self.assertEqual(client.calls[0][3]["max_tokens"], 8)
+        self.assertEqual(client.calls[0][3]["max_tokens"], 64)
         self.assertEqual(monitor.last_status, "operational")
 
     async def test_claude_code_monitor_uses_claude_code_headers(self) -> None:

@@ -1,6 +1,6 @@
 # Claude Code Upstream Runbook
 
-Updated: 2026-07-22
+Updated: 2026-07-23
 
 This runbook documents the runtime setup for Claude Code-only upstreams in CoinCoin. It intentionally does not include upstream API keys or admin tokens.
 
@@ -114,6 +114,10 @@ When changing Claude Code pricing, update all public `claude-*` model overrides 
 ## Monitoring Caveat
 
 The provider-channel monitor can fail for Claude Code-only upstreams because it is a server-side probe. A monitor result such as `HTTP 503` does not by itself prove the channel is broken for real Claude Code clients.
+
+Text-generation probes allow up to 64 output tokens. A valid Anthropic `thinking`/`redacted_thinking`, OpenAI Responses `reasoning`, or Chat Completions `reasoning_content` result that explicitly stops because this probe budget was exhausted is recorded as `degraded: probe output truncated before visible text`, not as a failed empty response. A 2xx response that completes without assistant text and without this explicit token-exhaustion evidence remains `failed: response missing structured model output`.
+
+The same response-shape contract is shared by Claude and ChatGPT-compatible representative probes. This channel-health contract is separate from the DingTalk burst counter described above, which currently counts authenticated user `/v1/messages` failures only.
 
 Use real request logs as the source of truth for this channel:
 

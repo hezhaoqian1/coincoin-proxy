@@ -29,6 +29,7 @@ from .models import (
     ProviderChannelMonitorDailyRollup,
     ProviderChannelMonitorHistory,
 )
+from .channel_probe_contract import classify_probe_response, mask_probe_message
 from .security import decrypt_api_key, generate_id
 
 
@@ -36,6 +37,7 @@ logger = logging.getLogger("coincoin.channel_monitoring")
 
 MONITOR_OK_STATUSES = {"operational", "degraded"}
 MONITOR_FAILURE_STATUSES = {"failed", "error"}
+PROBE_MAX_OUTPUT_TOKENS = 64
 AUTO_MONITOR_CREATED_BY = "route-reconciler"
 MANUAL_MONITOR_CREATED_BY = "admin-override"
 INVALID_MANUAL_MONITOR_CREATED_BY = "admin-override-invalid"
@@ -330,80 +332,6 @@ async def reconcile_provider_channel_monitors(db: AsyncSession, *, commit: bool 
     return {"created": created, "updated": updated, "disabled": disabled}
 
 
-def _mask_message(message: str) -> str:
-    return str(message or "").replace("\n", " ").strip()[:512]
-
-
-def _has_structured_model_output(payload: Any, *, endpoint: str, channel_type: str) -> bool:
-    if not isinstance(payload, dict):
-        return False
-    if channel_type == "anthropic_compatible":
-        content = payload.get("content")
-        return isinstance(content, list) and any(
-            isinstance(item, dict)
-            and item.get("type") == "text"
-            and isinstance(item.get("text"), str)
-            and bool(item["text"].strip())
-            for item in content
-        )
-    if endpoint == "chat/completions":
-        choices = payload.get("choices")
-        if not isinstance(choices, list):
-            return False
-        for choice in choices:
-            message = choice.get("message") if isinstance(choice, dict) else None
-            if not isinstance(message, dict):
-                continue
-            content = message.get("content")
-            if isinstance(content, str) and content.strip():
-                return True
-            if isinstance(content, list) and any(
-                isinstance(item, dict)
-                and isinstance(item.get("text"), str)
-                and bool(item["text"].strip())
-                for item in content
-            ):
-                return True
-        return False
-    output = payload.get("output")
-    return isinstance(output, list) and any(
-        isinstance(item, dict)
-        and item.get("type") == "message"
-        and isinstance(item.get("content"), list)
-        and any(
-            isinstance(content, dict)
-            and content.get("type") in {"output_text", "text"}
-            and isinstance(content.get("text"), str)
-            and bool(content["text"].strip())
-            for content in item["content"]
-        )
-        for item in output
-    )
-
-
-def _status_for_response(
-    response: httpx.Response,
-    payload: Any,
-    latency_ms: int,
-    *,
-    endpoint: str,
-    channel_type: str,
-) -> tuple[str, str]:
-    if response.status_code in {408, 409, 429} or response.status_code >= 500:
-        return "failed", f"HTTP {response.status_code}"
-    if response.status_code < 200 or response.status_code >= 300:
-        return "error", f"HTTP {response.status_code}"
-    if isinstance(payload, dict) and payload.get("error"):
-        error = payload["error"]
-        message = error.get("message") if isinstance(error, dict) else str(error)
-        return "failed", _mask_message(message or f"HTTP {response.status_code}")
-    if not _has_structured_model_output(payload, endpoint=endpoint, channel_type=channel_type):
-        return "failed", "response missing structured model output"
-    if latency_ms >= 30_000:
-        return "degraded", f"slow response {latency_ms}ms"
-    return "operational", "ok"
-
-
 def _headers(channel: ProviderChannel, api_key: str) -> dict[str, str]:
     headers = {"content-type": "application/json"}
     auth_style = str(getattr(channel, "auth_style", "") or "bearer").strip().lower()
@@ -455,7 +383,7 @@ async def _probe_model(
         payload = {
             "model": model,
             "messages": [{"role": "user", "content": "Reply with OK."}],
-            "max_tokens": 8,
+            "max_tokens": PROBE_MAX_OUTPUT_TOKENS,
             "stream": False,
         }
     elif endpoint == "chat/completions":
@@ -463,7 +391,7 @@ async def _probe_model(
         payload = {
             "model": model,
             "messages": [{"role": "user", "content": "Reply with OK."}],
-            "max_tokens": 8,
+            "max_tokens": PROBE_MAX_OUTPUT_TOKENS,
             "stream": False,
         }
     else:
@@ -471,7 +399,7 @@ async def _probe_model(
         payload = {
             "model": model,
             "input": "Reply with OK.",
-            "max_output_tokens": 16,
+            "max_output_tokens": PROBE_MAX_OUTPUT_TOKENS,
             "store": False,
             "stream": False,
         }
@@ -484,7 +412,7 @@ async def _probe_model(
             data: Any = response.json()
         except ValueError:
             data = response.text
-        status, message = _status_for_response(
+        status, message = classify_probe_response(
             response,
             data,
             latency_ms,
@@ -502,13 +430,13 @@ async def _probe_model(
         )
     except httpx.TimeoutException as exc:
         latency_ms = int((time.monotonic() - started) * 1000)
-        return ProbeResult(model, "failed", latency_ms, ping_latency_ms, 0, _mask_message(str(exc) or "timeout"), checked_at)
+        return ProbeResult(model, "failed", latency_ms, ping_latency_ms, 0, mask_probe_message(str(exc) or "timeout"), checked_at)
     except httpx.RequestError as exc:
         latency_ms = int((time.monotonic() - started) * 1000)
-        return ProbeResult(model, "failed", latency_ms, ping_latency_ms, 0, _mask_message(str(exc) or "request error"), checked_at)
+        return ProbeResult(model, "failed", latency_ms, ping_latency_ms, 0, mask_probe_message(str(exc) or "request error"), checked_at)
     except Exception as exc:
         latency_ms = int((time.monotonic() - started) * 1000)
-        return ProbeResult(model, "error", latency_ms, ping_latency_ms, 0, _mask_message(str(exc) or "probe error"), checked_at)
+        return ProbeResult(model, "error", latency_ms, ping_latency_ms, 0, mask_probe_message(str(exc) or "probe error"), checked_at)
 
 
 async def run_provider_channel_monitor_once(
@@ -602,7 +530,7 @@ async def _record_monitor_results(
                 latency_ms=max(0, int(result.latency_ms or 0)),
                 ping_latency_ms=max(0, int(result.ping_latency_ms or 0)),
                 status_code=max(0, int(result.status_code or 0)),
-                message=_mask_message(result.message),
+                message=mask_probe_message(result.message),
                 checked_at=result.checked_at,
             )
         )
@@ -614,7 +542,7 @@ async def _record_monitor_results(
     monitor.last_status = primary_result.status
     monitor.last_latency_ms = max(0, int(primary_result.latency_ms or 0))
     monitor.last_ping_latency_ms = max(0, int(primary_result.ping_latency_ms or 0))
-    monitor.last_message = _mask_message(primary_result.message)
+    monitor.last_message = mask_probe_message(primary_result.message)
     monitor.claimed_until = None
 
 
