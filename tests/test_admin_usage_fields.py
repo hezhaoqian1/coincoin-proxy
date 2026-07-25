@@ -166,8 +166,6 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         app.dependency_overrides.pop(admin_module.admin_guard, None)
         admin_module._analytics_dashboard_cache.clear()
         admin_module._analytics_dashboard_locks.clear()
-        admin_module._provider_channel_total_cache.clear()
-        admin_module._provider_channel_total_locks.clear()
         app.dependency_overrides.pop(payment_module.get_db, None)
         app.dependency_overrides.pop(webhook_module.get_db, None)
         payment_module.settings.epay_api_url = ""
@@ -276,6 +274,8 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("card-collapse-btn", admin_html)
         self.assertIn("toggleCollapsibleCard('provider-channels')", admin_html)
         self.assertIn("toggleCollapsibleCard('model-channel-routes')", admin_html)
+        self.assertIn("24H ${formatMoney(billing.last_24h_cents || 0)}", admin_html)
+        self.assertNotIn("formatMoney(billing.total_cents", admin_html)
         self.assertNotIn("toggleCollapsibleCard('provider-channel-monitor')", admin_html)
         self.assertNotIn("toggleCollapsibleCard('provider-channel-stability')", admin_html)
         self.assertNotIn("toggleCollapsibleCard('default-provider-channels')", admin_html)
@@ -1169,7 +1169,6 @@ function createApp(fetchImpl) {
                 _FakeScalarsResult([]),
                 _FakeAllResult([]),
                 _FakeAllResult([]),
-                _FakeAllResult([]),
                 _FakeScalarsResult([]),
                 _FakeScalarsResult([]),
                 _FakeScalarsResult([]),
@@ -1234,8 +1233,8 @@ function createApp(fetchImpl) {
             last_1h_cents=123,
             last_4h_cents=456,
             today_cents=789,
+            last_24h_cents=3210,
         )
-        total_billing_row = SimpleNamespace(channel_id="ch_northstar", total_cents=3210)
         runtime_row = SimpleNamespace(
             channel_id="ch_northstar",
             fail_count=0,
@@ -1278,7 +1277,6 @@ function createApp(fetchImpl) {
                 _FakeScalarsResult([channel]),
                 _FakeAllResult([route_row]),
                 _FakeAllResult([billing_row]),
-                _FakeAllResult([total_billing_row]),
                 _FakeScalarsResult([runtime_row]),
                 _FakeScalarsResult(routes),
                 _FakeScalarsResult([monitor]),
@@ -1310,9 +1308,14 @@ function createApp(fetchImpl) {
                 "last_1h_cents": 123,
                 "last_4h_cents": 456,
                 "today_cents": 789,
-                "total_cents": 3210,
+                "last_24h_cents": 3210,
             },
         )
+        billing_query = str(fake_db.queries[2]).lower()
+        self.assertIn("coincoin_request_logs.created_at >=", billing_query)
+        self.assertIn("coincoin_request_logs.channel_id in", billing_query)
+        self.assertIn("last_24h_cents", billing_query)
+        self.assertNotIn("total_cents", billing_query)
         self.assertTrue(item["api_key_configured"])
         self.assertEqual(item["api_key_fingerprint"], "fp_test")
         self.assertEqual(
@@ -2648,59 +2651,6 @@ function createApp(fetchImpl) {
 
         self.assertEqual(builder.await_count, 2)
         self.assertFalse(recovered["cache"]["cache_hit"])
-
-    async def test_provider_channel_historical_totals_are_cached_between_page_loads(self) -> None:
-        admin_module._provider_channel_total_cache.clear()
-        admin_module._provider_channel_total_locks.clear()
-        frozen_now = datetime(2026, 7, 17, 17, 30, 0)
-
-        class FrozenDateTime(datetime):
-            @classmethod
-            def utcnow(cls):
-                return frozen_now
-
-        recent_row = SimpleNamespace(
-            channel_id="ch_primary",
-            last_1h_cents=10,
-            last_4h_cents=40,
-            today_cents=100,
-        )
-        total_row = SimpleNamespace(channel_id="ch_primary", total_cents=999)
-        fake_db = _FakeDB(
-            execute_results=[
-                _FakeScalarsResult([]),
-                _FakeAllResult([]),
-                _FakeAllResult([recent_row]),
-                _FakeAllResult([total_row]),
-                _FakeScalarsResult([]),
-                _FakeScalarsResult([]),
-                _FakeScalarsResult([]),
-                _FakeScalarsResult([]),
-                _FakeAllResult([]),
-                _FakeAllResult([recent_row]),
-                _FakeScalarsResult([]),
-                _FakeScalarsResult([]),
-                _FakeScalarsResult([]),
-            ]
-        )
-
-        with (
-            patch.object(admin_module, "datetime", FrozenDateTime),
-            patch.object(admin_module, "_system_default_channel_payloads", return_value=[]),
-        ):
-            await admin_module.list_provider_channels(db=fake_db)
-            await admin_module.list_provider_channels(db=fake_db)
-
-        self.assertEqual(len(fake_db.queries), 13)
-        first_recent_query = str(fake_db.queries[2].compile())
-        historical_query = str(fake_db.queries[3].compile())
-        second_recent_query = str(fake_db.queries[9].compile())
-        self.assertIn("created_at >=", first_recent_query)
-        self.assertNotIn("created_at >=", historical_query)
-        self.assertIn("created_at >=", second_recent_query)
-        first_recent_params = list(fake_db.queries[2].compile().params.values())
-        self.assertIn(frozen_now - timedelta(hours=4), first_recent_params)
-        self.assertEqual(admin_module.PROVIDER_CHANNEL_TOTAL_CACHE_TTL_SECONDS, 900)
 
     async def test_admin_analytics_top_users_today_uses_rolling_24h_request_logs(self) -> None:
         row = SimpleNamespace(

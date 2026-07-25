@@ -132,9 +132,6 @@ _analytics_balance_cache: dict[str, tuple[float, int]] = {}
 ANALYTICS_DASHBOARD_CACHE_TTL_SECONDS = 300
 _analytics_dashboard_cache: dict[str, tuple[float, dict]] = {}
 _analytics_dashboard_locks: dict[str, asyncio.Lock] = {}
-PROVIDER_CHANNEL_TOTAL_CACHE_TTL_SECONDS = 900
-_provider_channel_total_cache: dict[str, tuple[float, dict[str, dict[str, int]]]] = {}
-_provider_channel_total_locks: dict[str, asyncio.Lock] = {}
 
 
 def _configured(value: Optional[str]) -> bool:
@@ -602,7 +599,7 @@ def _provider_channel_payload(
             "last_1h_cents": int(billing_stats.get("last_1h_cents", 0) or 0),
             "last_4h_cents": int(billing_stats.get("last_4h_cents", 0) or 0),
             "today_cents": int(billing_stats.get("today_cents", 0) or 0),
-            "total_cents": int(billing_stats.get("total_cents", 0) or 0),
+            "last_24h_cents": int(billing_stats.get("last_24h_cents", 0) or 0),
         },
         "updated_by": row.updated_by,
         "created_at": row.created_at,
@@ -1506,38 +1503,9 @@ def _provider_channel_billing_stats_by_channel(rows, *, now: Optional[datetime] 
             "last_1h_cents": int(_row_value(row, "last_1h_cents", 0) or 0),
             "last_4h_cents": int(_row_value(row, "last_4h_cents", 0) or 0),
             "today_cents": int(_row_value(row, "today_cents", 0) or 0),
-            "total_cents": int(_row_value(row, "total_cents", 0) or 0),
+            "last_24h_cents": int(_row_value(row, "last_24h_cents", 0) or 0),
         }
     return results
-
-
-async def _provider_channel_total_billing_stats(db: AsyncSession) -> dict[str, dict[str, int]]:
-    cache_key = "all-time"
-    now_ts = time.time()
-    cached = _provider_channel_total_cache.get(cache_key)
-    if cached and now_ts - cached[0] < PROVIDER_CHANNEL_TOTAL_CACHE_TTL_SECONDS:
-        return cached[1]
-
-    lock = _provider_channel_total_locks.setdefault(cache_key, asyncio.Lock())
-    async with lock:
-        now_ts = time.time()
-        cached = _provider_channel_total_cache.get(cache_key)
-        if cached and now_ts - cached[0] < PROVIDER_CHANNEL_TOTAL_CACHE_TTL_SECONDS:
-            return cached[1]
-        request_charge = _request_user_charge_expr()
-        rows = (
-            await db.execute(
-                select(
-                    RequestLog.channel_id.label("channel_id"),
-                    func.coalesce(func.sum(request_charge), 0).label("total_cents"),
-                )
-                .where(RequestLog.channel_id != "")
-                .group_by(RequestLog.channel_id)
-            )
-        ).all()
-        totals = _provider_channel_billing_stats_by_channel(rows)
-        _provider_channel_total_cache[cache_key] = (now_ts, totals)
-        return totals
 
 
 def _billing_package_entry_types():
@@ -1981,10 +1949,11 @@ async def list_provider_channels(db: AsyncSession = Depends(get_db)):
     now = datetime.utcnow()
     since_1h = now - timedelta(hours=1)
     since_4h = now - timedelta(hours=4)
+    since_24h = now - timedelta(hours=24)
     china_day = (now + timedelta(hours=8)).date()
     today_start = datetime.combine(china_day, datetime.min.time()) - timedelta(hours=8)
-    recent_start = min(since_4h, today_start)
     request_charge = _request_user_charge_expr()
+    channel_ids = [row.id for row in channel_rows if row.id]
     billing_rows = (
         await db.execute(
             select(
@@ -1992,21 +1961,13 @@ async def list_provider_channels(db: AsyncSession = Depends(get_db)):
                 func.coalesce(func.sum(case((RequestLog.created_at >= since_1h, request_charge), else_=0)), 0).label("last_1h_cents"),
                 func.coalesce(func.sum(case((RequestLog.created_at >= since_4h, request_charge), else_=0)), 0).label("last_4h_cents"),
                 func.coalesce(func.sum(case((RequestLog.created_at >= today_start, request_charge), else_=0)), 0).label("today_cents"),
+                func.coalesce(func.sum(request_charge), 0).label("last_24h_cents"),
             )
-            .where(RequestLog.channel_id != "", RequestLog.created_at >= recent_start)
+            .where(RequestLog.channel_id.in_(channel_ids), RequestLog.created_at >= since_24h)
             .group_by(RequestLog.channel_id)
         )
     ).all()
-    recent_billing_by_channel = _provider_channel_billing_stats_by_channel(billing_rows)
-    total_billing_by_channel = await _provider_channel_total_billing_stats(db)
-    billing_by_channel = {}
-    for channel_id in set(recent_billing_by_channel) | set(total_billing_by_channel):
-        billing_by_channel[channel_id] = {
-            **recent_billing_by_channel.get(channel_id, {}),
-            "total_cents": int(
-                (total_billing_by_channel.get(channel_id) or {}).get("total_cents", 0) or 0
-            ),
-        }
+    billing_by_channel = _provider_channel_billing_stats_by_channel(billing_rows)
     runtime_rows = (await db.execute(select(ProviderChannelRuntimeState))).scalars().all()
     runtime_by_channel = {row.channel_id: row for row in runtime_rows}
     route_rows = (await db.execute(select(ModelChannelRoute))).scalars().all()
