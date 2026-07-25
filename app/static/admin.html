@@ -4754,7 +4754,7 @@
               <td><div>${escapeHtml(channel.provider_platform || '-')}</div><div class="text-sm text-muted">${escapeHtml(channel.channel_type || '-')} · ${channel.api_key_configured ? 'key ok' : 'missing key'}</div></td>
               <td><strong>${Number(channel.priority || 0)}</strong><div class="text-sm text-muted">weight ${Number(channel.weight || 1)} · fails ${Number(channel.allowed_fails || 0)} / ${Number(channel.cooldown_seconds || 0)}s</div></td>
               <td><div class="text-sm text-muted">${escapeHtml((channel.capabilities || []).join(', ') || '全部')}</div><div class="text-sm text-muted">${escapeHtml(channel.cost_tier || '')}</div></td>
-              <td><div><strong>1H ${formatMoney(billing.last_1h_cents || 0)}</strong> · 4H ${formatMoney(billing.last_4h_cents || 0)}</div><div class="text-sm text-muted">今天 ${formatMoney(billing.today_cents || 0)} · 总计 ${formatMoney(billing.total_cents || 0)}</div></td>
+              <td><div><strong>1H ${formatMoney(billing.last_1h_cents || 0)}</strong> · 4H ${formatMoney(billing.last_4h_cents || 0)}</div><div class="text-sm text-muted">今天 ${formatMoney(billing.today_cents || 0)} · 24H ${formatMoney(billing.last_24h_cents || 0)}</div></td>
               <td><div>${cooling ? `<span class="badge badge-warning">冷却 ${cooling}s</span>` : '<span class="badge badge-success">可调度</span>'}</div><div class="text-sm text-muted">${escapeHtml(channel.provider_account_fingerprint || runtime.memory_last_error_code || '-')}</div></td>
               <td><span class="badge ${channelBadgeClass(channel.status)}">${escapeHtml(channel.status || '-')}</span><div class="text-sm text-muted">${Number(channel.route_count || 0)} routes</div></td>
               <td>
