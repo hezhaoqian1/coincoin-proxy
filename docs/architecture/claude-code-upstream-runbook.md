@@ -1,6 +1,6 @@
 # Claude Code Upstream Runbook
 
-Updated: 2026-07-23
+Updated: 2026-07-26
 
 This runbook documents the runtime setup for Claude Code-only upstreams in CoinCoin. It intentionally does not include upstream API keys or admin tokens.
 
@@ -36,22 +36,24 @@ The channel is intended for Claude Code traffic. Ordinary OpenAI-compatible requ
 
 ## Public Claude Models
 
-The Claude Code family is exposed through public `claude-*` model ids. The Sonnet set includes:
+The Claude Code family is exposed through public `claude-*` model ids. Current generation models include:
 
+- `claude-opus-5`
 - `claude-sonnet-4`
 - `claude-sonnet-4-6`
 - `claude-sonnet-4.5`
 - `claude-sonnet-4.6`
 - `claude-sonnet-5`
 
-`claude-sonnet-5` must have an active route to the Sixoner channel:
+`claude-opus-5` must use the exact upstream model id and an Anthropic Messages transform:
 
-- `public_model_id`: `claude-sonnet-5`
+- `public_model_id`: `claude-opus-5`
 - `endpoint`: `chat/completions`
-- `channel_id`: `ch_360294872e2c6ef54b880615`
-- `upstream_model`: `claude-sonnet-5`
+- `upstream_model`: `claude-opus-5`
 - `transform_profile`: `anthropic_messages`
 - `status`: `active`
+
+As of 2026-07-26, upstream model discovery reports `claude-opus-5` on the Sixoner Claude Code and Zhangyu Claude MAX channels. The 86 CLAUDE channel does not advertise it and must not receive an Opus 5 route until a direct smoke test succeeds.
 
 Claude public models should remain route-only for Claude Code upstream coverage. Do not silently fall back to GPT-backed Claude aliases for these models.
 
@@ -102,6 +104,16 @@ The router computes effective prices as:
 - input price = `base_input * model_multiplier`
 - output price = `base_output * model_multiplier * output_multiplier`
 - cached input price = `effective_input * cache_read_multiplier`
+- cache creation price = `effective_input * cache_creation_multiplier`
+
+The checked-in base price for `claude-opus-5` matches Anthropic's standard API price:
+
+- input: `500` cents per 1M tokens
+- 5-minute cache write: `625` cents per 1M cache-creation tokens (`1.25x`)
+- cache hit: `50` cents per 1M cache-read tokens (`0.1x`)
+- output: `2500` cents per 1M tokens
+
+With the current `6.0x` production model multiplier, the effective retail prices are `3000` input, `3750` cache creation, `300` cache read, and `15000` output cents per 1M tokens.
 
 For `claude-sonnet-5`, the effective production prices are:
 
@@ -137,14 +149,14 @@ Check route status:
 
 ```bash
 curl -fsS -H "Authorization: Bearer $COINCOIN_ADMIN_TOKEN" \
-  "https://clawfather.up.railway.app/admin/model-channel-routes?public_model_id=claude-sonnet-5"
+  "https://clawfather.up.railway.app/admin/model-channel-routes?public_model_id=claude-opus-5"
 ```
 
 Check model pricing:
 
 ```bash
 curl -fsS -H "Authorization: Bearer $COINCOIN_ADMIN_TOKEN" \
-  "https://clawfather.up.railway.app/admin/model-pricing/claude-sonnet-5"
+  "https://clawfather.up.railway.app/admin/model-pricing/claude-opus-5"
 ```
 
 Check the active alert policy and complete webhook through the protected, non-cacheable admin response:

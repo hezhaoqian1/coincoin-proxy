@@ -136,6 +136,7 @@ CLAUDE_COMPAT_PROVIDERS = frozenset({
     CLAUDE_COMPAT_PROVIDER_KIRO_GO,
 })
 CLAUDE_COMPAT_KIRO_MODEL_MAP = {
+    "claude-opus-5": "claude-opus-5",
     "claude-opus-4-7": "claude-opus-4.7",
     "claude-opus-4.7": "claude-opus-4.7",
     "claude-opus-4.6": "claude-opus-4.6",

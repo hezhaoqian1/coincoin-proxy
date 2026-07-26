@@ -71,6 +71,7 @@ OFFICIAL_DEFAULT_TEXT_PRICES = {
     "gpt-5.6-terra": (250, 1500),
     "gpt-5.6-luna": (100, 600),
     "claude-fable-5": CLAUDE_FABLE_PRICE,
+    "claude-opus-5": CLAUDE_OPUS_PRICE,
     "claude-opus-4-8": CLAUDE_OPUS_PRICE,
     "claude-opus-4.8": CLAUDE_OPUS_PRICE,
     "claude-opus-4-7": CLAUDE_OPUS_PRICE,
@@ -248,6 +249,14 @@ class GatewayCatalogSyncTests(unittest.TestCase):
         self.assertEqual(fable.get("auth_style"), "x-api-key")
         self.assertEqual(fable.get("price_input_per_million"), CLAUDE_FABLE_INPUT_PRICE_PLACEHOLDER)
         self.assertEqual(fable.get("price_output_per_million"), CLAUDE_FABLE_OUTPUT_PRICE_PLACEHOLDER)
+
+        opus_5 = public_models["claude-opus-5"]
+        self.assertEqual(opus_5.get("provider_model"), "claude-opus-5")
+        self.assertEqual(opus_5.get("upstream_model"), "claude-opus-5")
+        self.assertEqual(opus_5.get("price_input_per_million"), CLAUDE_OPUS_INPUT_PRICE_PLACEHOLDER)
+        self.assertEqual(opus_5.get("price_output_per_million"), CLAUDE_OPUS_OUTPUT_PRICE_PLACEHOLDER)
+        self.assertEqual(opus_5.get("billable_sku"), "claude-code-compat-text")
+        self.assertEqual((opus_5.get("pricing") or {}).get("cache_creation_multiplier"), 1.25)
 
         for alias in CLAUDE_OPUS_ALIASES:
             with self.subTest(alias=alias):
