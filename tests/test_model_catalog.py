@@ -686,6 +686,47 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertEqual(resolved.public_model.cache_creation_multiplier, 1.25)
         self.assertEqual(resolved.public_model.effective_cache_creation_input_per_million, 312.5)
 
+    def test_checked_in_claude_opus_5_uses_official_model_and_pricing(self) -> None:
+        settings.model_catalog_json = ""
+        registry._initialized = False
+        registry.init_from_settings()
+
+        opus = registry.get_public_model("claude-opus-5")
+
+        self.assertIsNotNone(opus)
+        self.assertEqual(opus.owned_by, "anthropic")
+        self.assertEqual(opus.provider_model, "claude-opus-5")
+        self.assertEqual(opus.upstream_model, "claude-opus-5")
+        self.assertEqual(opus.routing_mode, "route_only")
+        self.assertEqual(opus.delivery_lane, "route_only")
+        self.assertEqual(opus.capabilities, ("chat/completions", "responses"))
+        self.assertEqual(opus.billable_sku, "claude-code-compat-text")
+        self.assertEqual(opus.price_input_per_million, 500)
+        self.assertEqual(opus.price_output_per_million, 2500)
+        self.assertEqual(opus.cache_creation_multiplier, 1.25)
+        self.assertEqual(opus.effective_cache_creation_input_per_million, 625.0)
+        self.assertEqual(opus.effective_cached_input_per_million, 50.0)
+        self.assertEqual(opus.metadata["context_length"], 1_000_000)
+        self.assertEqual(opus.metadata["max_completion_tokens"], 128_000)
+        self.assertEqual(opus.metadata["thinking"]["default"], "adaptive")
+        self.assertEqual(opus.metadata["thinking"]["levels"], ["low", "medium", "high", "xhigh", "max"])
+
+        with self.assertRaises(ModelCapabilityError):
+            registry.resolve_public_model("claude-opus-5", "chat/completions")
+
+    def test_checked_in_claude_opus_5_maps_to_kiro_go_when_enabled(self) -> None:
+        settings.model_catalog_json = ""
+        settings.claude_compat_provider = "kiro_go"
+        registry._initialized = False
+        registry.init_from_settings()
+
+        resolved = registry.resolve_public_model("claude-opus-5", "responses")
+
+        self.assertEqual(resolved.public_model.delivery_lane, "kiro_go")
+        self.assertEqual(resolved.backend.model_id, "claude-opus-5")
+        self.assertEqual(resolved.backend.upstream_url, "https://kiro-go.example")
+        self.assertEqual(resolved.route_reason, "catalog:claude-opus-5:kiro_go")
+
     def test_checked_in_grok_models_are_route_only_and_share_grok_4_5_upstream(self) -> None:
         settings.model_catalog_json = ""
         registry._initialized = False

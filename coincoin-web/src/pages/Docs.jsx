@@ -10,7 +10,7 @@ const SITE = typeof window !== 'undefined' ? window.location.origin : ''
 const CODEX_MODEL_ID = 'gpt-5.4'
 const CLAUDE_DEFAULT_ALIAS = 'sonnet'
 const CLAUDE_DEFAULT_MODEL_ID = 'claude-sonnet-4-6'
-const CLAUDE_OPUS_OPTIONAL_MODEL_ID = 'claude-opus-4-8'
+const CLAUDE_OPUS_OPTIONAL_MODEL_ID = 'claude-opus-5'
 const TABS = [
     {
         label: '快速开始',
@@ -328,7 +328,7 @@ function AudienceGuide() {
             title: 'Claude Code',
             tag: '推荐',
             desc: 'Claude Code 走 Anthropic 兼容入口。',
-            bullets: ['官方推荐用 ~/.claude/settings.json', 'ANTHROPIC_BASE_URL 填根域名', '默认先用 sonnet，重任务再试 claude-opus-4-8']
+            bullets: ['官方推荐用 ~/.claude/settings.json', 'ANTHROPIC_BASE_URL 填根域名', '默认先用 sonnet，重任务再试 claude-opus-5']
         },
         {
             title: 'OpenClaw',
@@ -502,7 +502,7 @@ claude`}</pre>
                         <td>Claude Code</td>
                         <td><span className="badge badge-success">一等支持</span></td>
                         <td><code>ANTHROPIC_BASE_URL=root</code></td>
-                        <td>官方 Claude CLI 直接走 Anthropic 兼容面，默认推荐 <code>sonnet</code>；需要更强模型时再显式切到 <code>claude-opus-4-8</code> 或 <code>opus</code>。</td>
+                        <td>官方 Claude CLI 直接走 Anthropic 兼容面，默认推荐 <code>sonnet</code>；需要更强模型时再显式切到 <code>claude-opus-5</code>。</td>
                     </tr>
                     <tr>
                         <td>Codex CLI</td>
@@ -545,7 +545,7 @@ claude`}</pre>
 
             <h3>切换模型时你要改什么？</h3>
             <ul className="doc-list">
-                <li>只需要把请求或客户端配置中的 <code>model</code> 改成目标模型，例如 <code>gpt-5.4</code>、<code>grok-4.5</code>、<code>sonnet</code> 或 <code>claude-opus-4-8</code>。</li>
+                <li>只需要把请求或客户端配置中的 <code>model</code> 改成目标模型，例如 <code>gpt-5.4</code>、<code>grok-4.5</code>、<code>sonnet</code> 或 <code>claude-opus-5</code>。</li>
                 <li>Base URL 和 API Key 不需要改，仍然走同一个 ClawFather 入口。</li>
                 <li>文本请求推荐走 <code>/v1/chat/completions</code> 或 <code>/v1/responses</code>，图片请求走 <code>/v1/images/generations</code> 或 <code>/v1/images/edits</code>，并使用 <code>{imageModelId}</code> 这类图片模型。</li>
                 <li>图片请求统一走 ClawFather 公开入口，不需要终端用户配置额外服务。</li>

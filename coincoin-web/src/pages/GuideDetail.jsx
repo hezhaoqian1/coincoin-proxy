@@ -11,7 +11,7 @@ const OPENAI_BASE_URL = SITE_ROOT ? `${SITE_ROOT}/v1` : '/v1'
 const CODEX_MODEL_ID = 'gpt-5.4'
 const CLAUDE_DEFAULT_ALIAS = 'sonnet'
 const CLAUDE_DEFAULT_MODEL_ID = 'claude-sonnet-4-6'
-const CLAUDE_OPUS_OPTIONAL_MODEL_ID = 'claude-opus-4-8'
+const CLAUDE_OPUS_OPTIONAL_MODEL_ID = 'claude-opus-5'
 
 function CopyButton({ text, idleLabel = '复制', doneLabel = '已复制', className = '', icon = false }) {
     const [copied, setCopied] = useState(false)
