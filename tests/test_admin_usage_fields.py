@@ -290,6 +290,165 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("inherits channel", admin_html)
         self.assertIn("留空时继承渠道本身的优先级和权重", admin_html)
 
+    def test_admin_ui_bounds_provider_channel_route_rendering(self) -> None:
+        admin_html = (Path(admin_module.__file__).parent / "static" / "admin.html").read_text()
+
+        self.assertEqual(admin_html.count("collapsible-card data-table-card"), 2)
+        self.assertIn(".card.data-table-card", admin_html)
+        self.assertIn("backdrop-filter: none", admin_html)
+        self.assertIn("const MODEL_CHANNEL_ROUTE_PAGE_LIMIT = 50", admin_html)
+        self.assertIn("let modelChannelRoutePage = 0", admin_html)
+        self.assertIn("function modelChannelRoutePaginationState(routeCount, requestedPage)", admin_html)
+        self.assertIn("function resetModelChannelRoutePaginationAndRender()", admin_html)
+        self.assertIn("const visibleRoutes = routes.slice(pagination.pageStart, pagination.pageEnd)", admin_html)
+        self.assertIn("visibleRoutes.map(route =>", admin_html)
+        self.assertIn('id="modelChannelRoutePageSummary"', admin_html)
+        self.assertIn('id="modelChannelRoutePrevPage"', admin_html)
+        self.assertIn('id="modelChannelRouteNextPage"', admin_html)
+        self.assertIn("loadModelChannelRoutePage(-1)", admin_html)
+        self.assertIn("loadModelChannelRoutePage(1)", admin_html)
+        self.assertIn("setTimeout(resetModelChannelRoutePaginationAndRender, 180)", admin_html)
+
+        for filter_id in (
+            "modelChannelRouteModelFilter",
+            "modelChannelRouteChannelFilter",
+            "modelChannelRouteEndpointFilter",
+            "modelChannelRouteStatusFilter",
+            "modelChannelRouteSort",
+        ):
+            self.assertIn(
+                f'id="{filter_id}" class="form-select" onchange="resetModelChannelRoutePaginationAndRender()"',
+                admin_html,
+            )
+        self.assertIn("prevButton.disabled = pagination.prevDisabled", admin_html)
+        self.assertIn("nextButton.disabled = pagination.nextDisabled", admin_html)
+
+    def test_admin_ui_provider_channel_route_pagination_behavior(self) -> None:
+        admin_html = Path(admin_module.__file__).parent / "static" / "admin.html"
+        probe = r"""
+const assert = require('assert').strict;
+const fs = require('fs');
+const vm = require('vm');
+const source = fs.readFileSync(process.argv[1], 'utf8');
+
+function sourceBetween(startMarker, endMarker) {
+  const start = source.indexOf(startMarker);
+  const end = source.indexOf(endMarker, start);
+  assert.notEqual(start, -1, `missing ${startMarker}`);
+  assert.notEqual(end, -1, `missing ${endMarker}`);
+  return source.slice(start, end);
+}
+
+const elements = new Map();
+function element(id) {
+  if (!elements.has(id)) elements.set(id, { value: 'stale' });
+  return elements.get(id);
+}
+
+const production = [
+  'const MODEL_CHANNEL_ROUTE_PAGE_LIMIT = 50;',
+  'let modelChannelRoutePage = 0;',
+  sourceBetween(
+    'function modelChannelRoutePaginationState(routeCount, requestedPage)',
+    'function resetModelChannelRoutePaginationAndRender()',
+  ),
+  sourceBetween(
+    'function resetModelChannelRoutePaginationAndRender()',
+    'function loadModelChannelRoutePage(direction)',
+  ),
+  sourceBetween(
+    'function loadModelChannelRoutePage(direction)',
+    'function resetModelChannelRouteFilters()',
+  ),
+  sourceBetween(
+    'function resetModelChannelRouteFilters()',
+    'function filteredModelChannelRoutes()',
+  ),
+].join('\n');
+
+const context = {
+  assert,
+  document: { getElementById: element },
+  element,
+  filteredRouteCount: 0,
+  renderCount: 0,
+};
+vm.createContext(context);
+vm.runInContext(`${production}
+function filteredModelChannelRoutes() { return Array(filteredRouteCount); }
+function renderModelChannelRoutes() { renderCount += 1; }
+
+function expectState(routeCount, requestedPage, expected) {
+  const actual = modelChannelRoutePaginationState(routeCount, requestedPage);
+  assert.deepEqual(JSON.parse(JSON.stringify(actual)), expected);
+}
+
+expectState(0, 0, {
+  page: 0, pageCount: 1, pageStart: 0, pageEnd: 50,
+  prevDisabled: true, nextDisabled: true, summary: '暂无 route',
+});
+expectState(50, 0, {
+  page: 0, pageCount: 1, pageStart: 0, pageEnd: 50,
+  prevDisabled: true, nextDisabled: true, summary: '第 1 页 · 显示 1-50 / 50',
+});
+expectState(51, 0, {
+  page: 0, pageCount: 2, pageStart: 0, pageEnd: 50,
+  prevDisabled: true, nextDisabled: false, summary: '第 1 页 · 显示 1-50 / 51',
+});
+expectState(51, 1, {
+  page: 1, pageCount: 2, pageStart: 50, pageEnd: 100,
+  prevDisabled: false, nextDisabled: true, summary: '第 2 页 · 显示 51-51 / 51',
+});
+expectState(101, 1, {
+  page: 1, pageCount: 3, pageStart: 50, pageEnd: 100,
+  prevDisabled: false, nextDisabled: false, summary: '第 2 页 · 显示 51-100 / 101',
+});
+expectState(101, 99, {
+  page: 2, pageCount: 3, pageStart: 100, pageEnd: 150,
+  prevDisabled: false, nextDisabled: true, summary: '第 3 页 · 显示 101-101 / 101',
+});
+expectState(101, -1, {
+  page: 0, pageCount: 3, pageStart: 0, pageEnd: 50,
+  prevDisabled: true, nextDisabled: false, summary: '第 1 页 · 显示 1-50 / 101',
+});
+
+filteredRouteCount = 51;
+modelChannelRoutePage = 0;
+loadModelChannelRoutePage(-1);
+assert.equal(modelChannelRoutePage, 0);
+loadModelChannelRoutePage(1);
+assert.equal(modelChannelRoutePage, 1);
+loadModelChannelRoutePage(1);
+assert.equal(modelChannelRoutePage, 1);
+loadModelChannelRoutePage(-1);
+assert.equal(modelChannelRoutePage, 0);
+
+modelChannelRoutePage = 2;
+resetModelChannelRoutePaginationAndRender();
+assert.equal(modelChannelRoutePage, 0);
+
+modelChannelRoutePage = 2;
+resetModelChannelRouteFilters();
+assert.equal(modelChannelRoutePage, 0);
+for (const id of [
+  'modelChannelRouteSearch',
+  'modelChannelRouteModelFilter',
+  'modelChannelRouteChannelFilter',
+  'modelChannelRouteEndpointFilter',
+  'modelChannelRouteStatusFilter',
+]) assert.equal(element(id).value, '');
+assert.equal(element('modelChannelRouteSort').value, 'model_priority');
+assert.equal(renderCount, 6);
+`, context);
+"""
+        result = subprocess.run(
+            ["node", "-e", probe, str(admin_html)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+
     def test_provider_channel_schema_accepts_anthropic_x_api_key(self) -> None:
         created = AdminProviderChannelCreate(
             name="Claude relay",
