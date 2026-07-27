@@ -33,8 +33,10 @@ from .proxy import (
     get_http_client,
     get_stream_client,
     _channel_usage_kwargs,
+    _is_local_pool_timeout,
     _record_channel_failure,
     _record_channel_success,
+    _upstream_transport_error_code,
     _channel_fallback_route_reason,
     _next_channel_fallback_config,
 )
@@ -1281,19 +1283,27 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
             req = stream_client.build_request("POST", attempt.upstream_url, **request_kwargs)
             try:
                 upstream = await stream_client.send(req, stream=True)
-            except (httpx.TimeoutException, httpx.RequestError):
-                fallback_cfg = _select_fallback(used_cfg, "upstream_unreachable")
+            except (httpx.TimeoutException, httpx.RequestError) as exc:
+                if _is_local_pool_timeout(exc):
+                    return anthropic_error(
+                        "Upstream request capacity exhausted",
+                        error_type="overloaded_error",
+                        status_code=503,
+                        request_id=client_request_id,
+                    )
+                error_code = _upstream_transport_error_code(exc)
+                fallback_cfg = _select_fallback(used_cfg, error_code)
                 await _record_failed_attempt(
                     used_cfg,
                     route_reason=used_route_reason,
                     status_code=502,
-                    reason="upstream_unreachable",
+                    reason=error_code,
                     terminal=fallback_cfg is None,
                 )
                 if fallback_cfg is None:
                     return _anthropic_temporary_error(client_request_id, status_code=502)
                 used_cfg = fallback_cfg
-                used_route_reason = _fallback_reason("upstream_unreachable")
+                used_route_reason = _fallback_reason(error_code)
                 continue
 
             upstream_request_id = extract_upstream_request_id(upstream.headers)
@@ -1666,19 +1676,27 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                 json=attempt.payload,
                 headers=attempt.headers,
             )
-        except (httpx.TimeoutException, httpx.RequestError):
-            fallback_cfg = _select_fallback(used_cfg, "upstream_unreachable")
+        except (httpx.TimeoutException, httpx.RequestError) as exc:
+            if _is_local_pool_timeout(exc):
+                return anthropic_error(
+                    "Upstream request capacity exhausted",
+                    error_type="overloaded_error",
+                    status_code=503,
+                    request_id=client_request_id,
+                )
+            error_code = _upstream_transport_error_code(exc)
+            fallback_cfg = _select_fallback(used_cfg, error_code)
             await _record_failed_attempt(
                 used_cfg,
                 route_reason=used_route_reason,
                 status_code=502,
-                reason="upstream_unreachable",
+                reason=error_code,
                 terminal=fallback_cfg is None,
             )
             if fallback_cfg is None:
                 return _anthropic_temporary_error(client_request_id, status_code=502)
             used_cfg = fallback_cfg
-            used_route_reason = _fallback_reason("upstream_unreachable")
+            used_route_reason = _fallback_reason(error_code)
             continue
 
         upstream_request_id = extract_upstream_request_id(upstream.headers)
