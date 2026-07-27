@@ -865,7 +865,11 @@ Content-Type: application/json
 | `COINCOIN_KEY_PREFIX` | `sk_cc_` | API Key 前缀 |
 | `COINCOIN_KEY_PEPPER` | `coincoin-pepper` | Key 哈希盐值 |
 | `COINCOIN_USAGE_FLUSH_INTERVAL` | `5` | 用量写入间隔(秒) |
-| `COINCOIN_HTTP_POOL_MAX` | `100` | HTTP 连接池大小 |
+| `COINCOIN_HTTP_POOL_MAX` | `600` | 每个 Python 进程的文本出站总连接上限；非流式与流式客户端共享 |
+| `COINCOIN_HTTP_POOL_KEEPALIVE` | `200` | 文本出站共享池的 keepalive 连接上限 |
+| `COINCOIN_HTTP_IMAGE_POOL_MAX` | `100` | 图片流式客户端的独立出站连接上限 |
+| `COINCOIN_HTTP_IMAGE_POOL_KEEPALIVE` | `20` | 图片流式客户端的 keepalive 连接上限 |
+| `COINCOIN_HTTP_POOL_TIMEOUT_SECONDS` | `60` | 等待文本出站连接池空位的最长秒数；超时视为本地过载，不会惩罚或切换上游渠道 |
 | `COINCOIN_KEY_CACHE_TTL` | `30` | Key 缓存 TTL(秒) |
 | `COINCOIN_PRICE_INPUT_PER_MILLION` | `99` | Input 价格（分/百万Token）|
 | `COINCOIN_PRICE_OUTPUT_PER_MILLION` | `699` | Output 价格（分/百万Token）|

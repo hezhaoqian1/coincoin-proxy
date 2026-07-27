@@ -604,6 +604,101 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(upstream_client.calls[0]["json"]["model"], "root-upstream-model")
         self.assertEqual(upstream_client.calls[0]["headers"]["authorization"], "Bearer root-key")
 
+    async def test_text_clients_share_600_connection_transport_and_image_pool_stays_small(self) -> None:
+        original_client = proxy_module._http_client
+        original_stream_client = proxy_module._http_stream_client
+        original_image_stream_client = proxy_module._http_image_stream_client
+        original_text_transport = proxy_module._http_text_transport
+        proxy_module._http_client = None
+        proxy_module._http_stream_client = None
+        proxy_module._http_image_stream_client = None
+        proxy_module._http_text_transport = None
+        fake_client = SimpleNamespace(is_closed=False)
+        fake_transport = object()
+        try:
+            with patch.object(
+                proxy_module.httpx,
+                "AsyncHTTPTransport",
+                return_value=fake_transport,
+            ) as transport_factory, patch.object(
+                proxy_module.httpx,
+                "AsyncClient",
+                return_value=fake_client,
+            ) as client_factory:
+                client = await proxy_module.get_http_client()
+                stream_client = await proxy_module.get_stream_client()
+                image_stream_client = await proxy_module.get_image_stream_client()
+        finally:
+            proxy_module._http_client = original_client
+            proxy_module._http_stream_client = original_stream_client
+            proxy_module._http_image_stream_client = original_image_stream_client
+            proxy_module._http_text_transport = original_text_transport
+
+        self.assertIs(client, fake_client)
+        self.assertIs(stream_client, fake_client)
+        self.assertIs(image_stream_client, fake_client)
+        transport_factory.assert_called_once()
+        text_limits = transport_factory.call_args.kwargs["limits"]
+        self.assertEqual(text_limits.max_connections, 600)
+        self.assertEqual(text_limits.max_keepalive_connections, 200)
+        self.assertEqual(client_factory.call_count, 3)
+        client_kwargs = client_factory.call_args_list[0].kwargs
+        self.assertIs(client_kwargs["transport"], fake_transport)
+        self.assertEqual(client_kwargs["timeout"].pool, 60.0)
+        self.assertEqual(client_kwargs["timeout"].connect, 10.0)
+        stream_kwargs = client_factory.call_args_list[1].kwargs
+        self.assertIs(stream_kwargs["transport"], fake_transport)
+        self.assertEqual(stream_kwargs["timeout"].pool, 60.0)
+        self.assertEqual(stream_kwargs["timeout"].connect, 5.0)
+        image_kwargs = client_factory.call_args_list[2].kwargs
+        self.assertEqual(image_kwargs["limits"].max_connections, 100)
+        self.assertEqual(image_kwargs["limits"].max_keepalive_connections, 20)
+
+    async def test_close_http_client_closes_all_clients_and_clears_shared_transport(self) -> None:
+        original_client = proxy_module._http_client
+        original_stream_client = proxy_module._http_stream_client
+        original_image_stream_client = proxy_module._http_image_stream_client
+        original_text_transport = proxy_module._http_text_transport
+        clients = [
+            SimpleNamespace(is_closed=False, aclose=AsyncMock()),
+            SimpleNamespace(is_closed=False, aclose=AsyncMock()),
+            SimpleNamespace(is_closed=False, aclose=AsyncMock()),
+        ]
+        proxy_module._http_client = clients[0]
+        proxy_module._http_stream_client = clients[1]
+        proxy_module._http_image_stream_client = clients[2]
+        proxy_module._http_text_transport = object()
+        try:
+            await proxy_module.close_http_client()
+
+            for client in clients:
+                client.aclose.assert_awaited_once()
+            self.assertIsNone(proxy_module._http_client)
+            self.assertIsNone(proxy_module._http_stream_client)
+            self.assertIsNone(proxy_module._http_image_stream_client)
+            self.assertIsNone(proxy_module._http_text_transport)
+
+            await proxy_module.close_http_client()
+            for client in clients:
+                client.aclose.assert_awaited_once()
+        finally:
+            proxy_module._http_client = original_client
+            proxy_module._http_stream_client = original_stream_client
+            proxy_module._http_image_stream_client = original_image_stream_client
+            proxy_module._http_text_transport = original_text_transport
+
+    def test_upstream_transport_errors_have_actionable_codes(self) -> None:
+        cases = [
+            (httpx.PoolTimeout("pool full"), "upstream_pool_timeout"),
+            (httpx.ConnectTimeout("connect slow"), "upstream_connect_timeout"),
+            (httpx.ReadTimeout("read slow"), "upstream_read_timeout"),
+            (httpx.WriteTimeout("write slow"), "upstream_write_timeout"),
+            (httpx.ConnectError("connection failed"), "upstream_unreachable"),
+        ]
+        for error, expected in cases:
+            with self.subTest(error=type(error).__name__):
+                self.assertEqual(proxy_module._upstream_transport_error_code(error), expected)
+
     async def test_grok_build_responses_preserves_flat_function_tools(self) -> None:
         self._add_grok_model()
         upstream_client = _RecordingClient(
@@ -1344,6 +1439,141 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(usage_kwargs["channel_id"], "ch_test_backup")
         self.assertEqual(usage_kwargs["fallback_from_channel_id"], "ch_test_primary")
         self.assertEqual(usage_kwargs["route_attempt"], 1)
+
+    async def test_responses_pool_timeout_returns_local_overload_without_channel_fallback(self) -> None:
+        channel_router.set_snapshot(
+            [
+                ProviderChannelSnapshot(
+                    channel_id="ch_pool_primary",
+                    provider_platform="sub2api",
+                    base_url="https://primary-channel.example/v1",
+                    api_key="primary-key",
+                    auth_style="bearer",
+                    priority=0,
+                    allowed_fails=1,
+                ),
+                ProviderChannelSnapshot(
+                    channel_id="ch_pool_backup",
+                    provider_platform="new_api",
+                    base_url="https://backup-channel.example/v1",
+                    api_key="backup-key",
+                    auth_style="bearer",
+                    priority=10,
+                ),
+            ],
+            [
+                ModelChannelRouteSnapshot(
+                    route_id="mcr_pool_primary",
+                    public_model_id="gpt-5.3-codex",
+                    endpoint="responses",
+                    channel_id="ch_pool_primary",
+                ),
+                ModelChannelRouteSnapshot(
+                    route_id="mcr_pool_backup",
+                    public_model_id="gpt-5.3-codex",
+                    endpoint="responses",
+                    channel_id="ch_pool_backup",
+                ),
+            ],
+        )
+        upstream_client = _RecordingClient(
+            [
+                httpx.PoolTimeout("pool full"),
+                _FakeUpstreamResponse(
+                    {
+                        "id": "resp_pool_fallback",
+                        "output": [
+                            {
+                                "type": "message",
+                                "content": [{"type": "output_text", "text": "OK"}],
+                            }
+                        ],
+                        "usage": {"input_tokens": 3, "output_tokens": 1, "total_tokens": 4},
+                    }
+                ),
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(proxy_module.usage_buffer, "add", AsyncMock()) as add_usage:
+                response = await client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"model": "gpt-5.3-codex", "input": "Reply with only: OK"},
+                )
+
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertEqual(response.json()["error"]["code"], "upstream_pool_timeout")
+        self.assertEqual(len(upstream_client.calls), 1)
+        add_usage.assert_not_awaited()
+        self.assertEqual(channel_router.channel_state("ch_pool_primary"), {})
+
+    async def test_responses_stream_pool_timeout_returns_local_overload_without_channel_fallback(self) -> None:
+        channel_router.set_snapshot(
+            [
+                ProviderChannelSnapshot(
+                    channel_id="ch_stream_pool_primary",
+                    provider_platform="sub2api",
+                    base_url="https://primary-channel.example/v1",
+                    api_key="primary-key",
+                    auth_style="bearer",
+                    priority=0,
+                    allowed_fails=1,
+                ),
+                ProviderChannelSnapshot(
+                    channel_id="ch_stream_pool_backup",
+                    provider_platform="new_api",
+                    base_url="https://backup-channel.example/v1",
+                    api_key="backup-key",
+                    auth_style="bearer",
+                    priority=10,
+                ),
+            ],
+            [
+                ModelChannelRouteSnapshot(
+                    route_id="mcr_stream_pool_primary",
+                    public_model_id="gpt-5.3-codex",
+                    endpoint="responses",
+                    channel_id="ch_stream_pool_primary",
+                ),
+                ModelChannelRouteSnapshot(
+                    route_id="mcr_stream_pool_backup",
+                    public_model_id="gpt-5.3-codex",
+                    endpoint="responses",
+                    channel_id="ch_stream_pool_backup",
+                ),
+            ],
+        )
+        upstream_client = _RecordingStreamClient(
+            [
+                httpx.PoolTimeout("pool full"),
+                _FakeEventStreamResponse(["data: should-not-be-used"]),
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_stream_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(proxy_module.usage_buffer, "add", AsyncMock()) as add_usage:
+                response = await client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"model": "gpt-5.3-codex", "input": "Reply with only: OK", "stream": True},
+                )
+
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertEqual(response.json()["error"]["code"], "upstream_pool_timeout")
+        self.assertEqual(len(upstream_client.calls), 1)
+        add_usage.assert_not_awaited()
+        self.assertEqual(channel_router.channel_state("ch_stream_pool_primary"), {})
 
     async def test_responses_provider_channel_can_fallback_across_multiple_empty_outputs(self) -> None:
         channel_router.set_snapshot(

@@ -72,6 +72,9 @@ CHANNEL_FALLBACK_MAX_ATTEMPTS = 16
 CHANNEL_FALLBACK_RETRY_ERRORS = frozenset({
     "upstream_unreachable",
     "upstream_timeout",
+    "upstream_connect_timeout",
+    "upstream_read_timeout",
+    "upstream_write_timeout",
     "upstream_invalid_json",
     "upstream_unexpected_content_type",
     "upstream_empty_response",
@@ -996,47 +999,103 @@ logger = logging.getLogger("coincoin.proxy")
 _http_client: Optional[httpx.AsyncClient] = None
 _http_stream_client: Optional[httpx.AsyncClient] = None
 _http_image_stream_client: Optional[httpx.AsyncClient] = None
+_http_text_transport: Optional[httpx.AsyncHTTPTransport] = None
 _http_lock = asyncio.Lock()
 IMAGE_UPSTREAM_TIMEOUT = httpx.Timeout(connect=10.0, read=300.0, write=300.0, pool=60.0)
 
 
+def _upstream_transport_error_code(exc: BaseException) -> str:
+    if isinstance(exc, httpx.PoolTimeout):
+        return "upstream_pool_timeout"
+    if isinstance(exc, httpx.ConnectTimeout):
+        return "upstream_connect_timeout"
+    if isinstance(exc, httpx.ReadTimeout):
+        return "upstream_read_timeout"
+    if isinstance(exc, httpx.WriteTimeout):
+        return "upstream_write_timeout"
+    if isinstance(exc, httpx.TimeoutException):
+        return "upstream_timeout"
+    return "upstream_unreachable"
+
+
+def _is_local_pool_timeout(exc: BaseException) -> bool:
+    return isinstance(exc, httpx.PoolTimeout)
+
+
+def _upstream_transport_status_code(exc: BaseException) -> int:
+    return 503 if _is_local_pool_timeout(exc) else 502
+
+
+def _upstream_transport_error_response(exc: BaseException) -> JSONResponse:
+    error_code = _upstream_transport_error_code(exc)
+    message = "Upstream request capacity exhausted" if _is_local_pool_timeout(exc) else "Upstream request failed"
+    return JSONResponse(
+        content={"error": {"message": message, "type": "server_error", "code": error_code}},
+        status_code=_upstream_transport_status_code(exc),
+    )
+
+
+def _record_upstream_transport_failure(cfg, exc: BaseException) -> str:
+    error_code = _upstream_transport_error_code(exc)
+    if not _is_local_pool_timeout(exc):
+        _record_channel_failure(cfg, error_code=error_code)
+    return error_code
+
+
+def _text_upstream_timeout(*, read_seconds: float, connect_seconds: float = 10.0) -> httpx.Timeout:
+    return httpx.Timeout(
+        connect=connect_seconds,
+        read=read_seconds,
+        write=60.0,
+        pool=float(settings.http_pool_timeout_seconds),
+    )
+
+
 async def get_http_client() -> httpx.AsyncClient:
-    global _http_client
+    global _http_client, _http_text_transport
     if _http_client and not _http_client.is_closed:
         return _http_client
     async with _http_lock:
         if _http_client and not _http_client.is_closed:
             return _http_client
-        limits = httpx.Limits(
-            max_connections=settings.http_pool_max,
-            max_keepalive_connections=settings.http_pool_keepalive,
-        )
+        if _http_text_transport is None:
+            _http_text_transport = httpx.AsyncHTTPTransport(
+                limits=httpx.Limits(
+                    max_connections=settings.http_pool_max,
+                    max_keepalive_connections=settings.http_pool_keepalive,
+                ),
+            )
         _http_client = httpx.AsyncClient(
-            limits=limits,
-            timeout=httpx.Timeout(connect=10.0, read=60.0, write=60.0, pool=60.0),
+            transport=_http_text_transport,
+            timeout=_text_upstream_timeout(read_seconds=60.0),
             trust_env=False,
         )
         return _http_client
 
 
 async def get_stream_client() -> httpx.AsyncClient:
-    global _http_stream_client
+    global _http_stream_client, _http_text_transport
     if _http_stream_client and not _http_stream_client.is_closed:
         return _http_stream_client
     async with _http_lock:
         if _http_stream_client and not _http_stream_client.is_closed:
             return _http_stream_client
-        limits = httpx.Limits(
-            max_connections=settings.http_pool_max,
-            max_keepalive_connections=settings.http_pool_keepalive,
+        if _http_text_transport is None:
+            _http_text_transport = httpx.AsyncHTTPTransport(
+                limits=httpx.Limits(
+                    max_connections=settings.http_pool_max,
+                    max_keepalive_connections=settings.http_pool_keepalive,
+                ),
+            )
+        stream_timeout = _text_upstream_timeout(
+            read_seconds=float(settings.responses_stream_read_timeout),
+            connect_seconds=5.0,
         )
-        stream_timeout = httpx.Timeout(
-            connect=5.0,
-            read=float(settings.responses_stream_read_timeout),
-            write=60.0,
-            pool=60.0,
+        _http_stream_client = httpx.AsyncClient(
+            transport=_http_text_transport,
+            timeout=stream_timeout,
+            trust_env=False,
         )
-        _http_stream_client = httpx.AsyncClient(limits=limits, timeout=stream_timeout, trust_env=False)
         return _http_stream_client
 
 
@@ -1048,8 +1107,8 @@ async def get_image_stream_client() -> httpx.AsyncClient:
         if _http_image_stream_client and not _http_image_stream_client.is_closed:
             return _http_image_stream_client
         limits = httpx.Limits(
-            max_connections=settings.http_pool_max,
-            max_keepalive_connections=settings.http_pool_keepalive,
+            max_connections=settings.http_image_pool_max,
+            max_keepalive_connections=settings.http_image_pool_keepalive,
         )
         _http_image_stream_client = httpx.AsyncClient(
             limits=limits,
@@ -1060,7 +1119,7 @@ async def get_image_stream_client() -> httpx.AsyncClient:
 
 
 async def close_http_client() -> None:
-    global _http_client, _http_stream_client, _http_image_stream_client
+    global _http_client, _http_stream_client, _http_image_stream_client, _http_text_transport
     if _http_client and not _http_client.is_closed:
         await _http_client.aclose()
     _http_client = None
@@ -1070,6 +1129,7 @@ async def close_http_client() -> None:
     if _http_image_stream_client and not _http_image_stream_client.is_closed:
         await _http_image_stream_client.aclose()
     _http_image_stream_client = None
+    _http_text_transport = None
 
 
 async def _post_with_retries(
@@ -2486,11 +2546,11 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             try:
                 req = stream_client.build_request("POST", upstream_url, json=chat_payload, headers=headers)
                 upstream = await stream_client.send(req, stream=True)
-            except (httpx.TimeoutException, httpx.RequestError):
-                _record_channel_failure(used_cfg, error_code="upstream_unreachable")
+            except (httpx.TimeoutException, httpx.RequestError) as exc:
+                error_code = _record_upstream_transport_failure(used_cfg, exc)
                 return JSONResponse(
-                    content={"error": {"message": "Upstream request failed", "type": "server_error", "code": "upstream_unreachable"}},
-                    status_code=502,
+                    content={"error": {"message": "Upstream request failed", "type": "server_error", "code": error_code}},
+                    status_code=_upstream_transport_status_code(exc),
                 )
             stream_headers = filter_headers(dict(upstream.headers))
             stream_headers.pop("content-length", None)
@@ -2703,11 +2763,11 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         t0 = time.monotonic()
         try:
             upstream = await client.post(upstream_url, json=chat_payload, headers=headers)
-        except (httpx.TimeoutException, httpx.RequestError):
-            _record_channel_failure(used_cfg, error_code="upstream_unreachable")
+        except (httpx.TimeoutException, httpx.RequestError) as exc:
+            error_code = _record_upstream_transport_failure(used_cfg, exc)
             return JSONResponse(
-                content={"error": {"message": "Upstream request failed", "type": "server_error", "code": "upstream_unreachable"}},
-                status_code=502,
+                content={"error": {"message": "Upstream request failed", "type": "server_error", "code": error_code}},
+                status_code=_upstream_transport_status_code(exc),
             )
         duration_ms = int((time.monotonic() - t0) * 1000)
         response_headers = filter_headers(dict(upstream.headers))
@@ -2961,8 +3021,10 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 is_cheap = False
             try:
                 return await _send_stream(used_cfg, is_fallback=True)
-            except (httpx.TimeoutException, httpx.RequestError):
-                _record_channel_failure(used_cfg, error_code=failure_reason)
+            except (httpx.TimeoutException, httpx.RequestError) as exc:
+                error_code = _record_upstream_transport_failure(used_cfg, exc)
+                if _is_local_pool_timeout(exc):
+                    raise
                 system_fallback_cfg = _system_fallback_config(
                     public_model,
                     used_cfg,
@@ -2970,12 +3032,12 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                     messages_for_route,
                     tools_for_route,
                     lock_model_selection=resolved_model.lock_model_selection,
-                    reason=failure_reason,
+                    reason=error_code,
                 )
                 if system_fallback_cfg is None:
                     raise
                 used_cfg = system_fallback_cfg
-                used_route_reason = _system_fallback_route_reason(failure_reason)
+                used_route_reason = _system_fallback_route_reason(error_code)
                 can_fallback = False
                 is_cheap = False
                 return await _send_stream(used_cfg, is_fallback=True)
@@ -2998,20 +3060,27 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         try:
             upstream = await _send_stream(used_cfg)
         except (httpx.TimeoutException, httpx.RequestError) as exc:
+            error_code = _record_upstream_transport_failure(used_cfg, exc)
+            if _is_local_pool_timeout(exc):
+                return JSONResponse(
+                    content={"error": {"message": "Upstream request capacity exhausted", "type": "server_error", "code": error_code}},
+                    status_code=503,
+                )
             if cpa_channel is not None:
                 gemini_cpa.record_failure(cpa_channel)
-            _record_channel_failure(used_cfg, error_code="upstream_unreachable")
-            if _should_try_channel_fallback(used_cfg, error_code="upstream_unreachable"):
+            if _should_try_channel_fallback(used_cfg, error_code=error_code):
                 try:
-                    fallback_upstream = await _provider_or_system_stream_fallback("upstream_unreachable")
-                except (httpx.TimeoutException, httpx.RequestError):
+                    fallback_upstream = await _provider_or_system_stream_fallback(error_code)
+                except (httpx.TimeoutException, httpx.RequestError) as fallback_exc:
+                    if _is_local_pool_timeout(fallback_exc):
+                        return _upstream_transport_error_response(fallback_exc)
                     fallback_upstream = None
                 if fallback_upstream is not None:
                     upstream = fallback_upstream
                 else:
                     logger.error("upstream stream connect error: %s", exc)
                     return JSONResponse(
-                        content={"error": {"message": "Upstream request failed", "type": "server_error", "code": "upstream_unreachable"}},
+                        content={"error": {"message": "Upstream request failed", "type": "server_error", "code": error_code}},
                         status_code=502,
                     )
             elif can_fallback:
@@ -3021,11 +3090,15 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 used_route_reason = f"{_fb}_fallback_timeout"
                 can_fallback = False
                 is_cheap = False
-                upstream = await _send_stream(used_cfg, is_fallback=True)
+                try:
+                    upstream = await _send_stream(used_cfg, is_fallback=True)
+                except (httpx.TimeoutException, httpx.RequestError) as fallback_exc:
+                    _record_upstream_transport_failure(used_cfg, fallback_exc)
+                    return _upstream_transport_error_response(fallback_exc)
             else:
                 logger.error("upstream stream connect error: %s", exc)
                 return JSONResponse(
-                    content={"error": {"message": "Upstream request failed", "type": "server_error", "code": "upstream_unreachable"}},
+                    content={"error": {"message": "Upstream request failed", "type": "server_error", "code": error_code}},
                     status_code=502,
                 )
 
@@ -3051,11 +3124,8 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 _record_channel_failure(used_cfg, status_code=_code)
                 try:
                     upstream = await _retry_stream_with_cfg(route_fallback_cfg, route_fallback_reason, str(_code))
-                except (httpx.TimeoutException, httpx.RequestError):
-                    return JSONResponse(
-                        content={"error": {"message": "Upstream request failed", "type": "server_error", "code": "upstream_unreachable"}},
-                        status_code=502,
-                    )
+                except (httpx.TimeoutException, httpx.RequestError) as fallback_exc:
+                    return _upstream_transport_error_response(fallback_exc)
 
         if (
             upstream.status_code >= 400
@@ -3082,11 +3152,8 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                         _system_fallback_route_reason(str(_code)),
                         str(_code),
                     )
-                except (httpx.TimeoutException, httpx.RequestError):
-                    return JSONResponse(
-                        content={"error": {"message": "Upstream request failed", "type": "server_error", "code": "upstream_unreachable"}},
-                        status_code=502,
-                    )
+                except (httpx.TimeoutException, httpx.RequestError) as fallback_exc:
+                    return _upstream_transport_error_response(fallback_exc)
 
         if (
             can_fallback
@@ -3108,7 +3175,11 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             used_route_reason = f"{_fb}_fallback_{_code}"
             can_fallback = False
             is_cheap = False
-            upstream = await _send_stream(used_cfg, is_fallback=True)
+            try:
+                upstream = await _send_stream(used_cfg, is_fallback=True)
+            except (httpx.TimeoutException, httpx.RequestError) as fallback_exc:
+                _record_upstream_transport_failure(used_cfg, fallback_exc)
+                return _upstream_transport_error_response(fallback_exc)
 
         if cpa_channel is not None:
             if upstream.status_code < 400:
@@ -3143,11 +3214,8 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                         route_fallback_reason,
                         "upstream_unexpected_content_type",
                     )
-                except (httpx.TimeoutException, httpx.RequestError):
-                    return JSONResponse(
-                        content={"error": {"message": "Upstream request failed", "type": "server_error", "code": "upstream_unreachable"}},
-                        status_code=502,
-                    )
+                except (httpx.TimeoutException, httpx.RequestError) as fallback_exc:
+                    return _upstream_transport_error_response(fallback_exc)
                 content_type = upstream.headers.get("content-type", "")
                 upstream_request_id = extract_upstream_request_id(upstream.headers)
             elif can_fallback:
@@ -3158,7 +3226,11 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 used_route_reason = f"{_fb}_fallback_unexpected"
                 can_fallback = False
                 is_cheap = False
-                upstream = await _send_stream(used_cfg, is_fallback=True)
+                try:
+                    upstream = await _send_stream(used_cfg, is_fallback=True)
+                except (httpx.TimeoutException, httpx.RequestError) as fallback_exc:
+                    _record_upstream_transport_failure(used_cfg, fallback_exc)
+                    return _upstream_transport_error_response(fallback_exc)
                 content_type = upstream.headers.get("content-type", "")
                 upstream_request_id = extract_upstream_request_id(upstream.headers)
             if "text/event-stream" not in content_type:
@@ -3431,13 +3503,18 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
     while True:
         try:
             upstream, duration_ms = await _post_json(used_cfg)
-        except (httpx.TimeoutException, httpx.RequestError):
+        except (httpx.TimeoutException, httpx.RequestError) as exc:
+            error_code = _record_upstream_transport_failure(used_cfg, exc)
+            if _is_local_pool_timeout(exc):
+                return JSONResponse(
+                    content={"error": {"message": "Upstream request capacity exhausted", "type": "server_error", "code": error_code}},
+                    status_code=503,
+                )
             if cpa_channel is not None:
                 gemini_cpa.record_failure(cpa_channel)
-            _record_current_failure(error_code="upstream_unreachable")
             route_fallback_cfg, route_fallback_reason = _select_provider_or_system_fallback(
-                "upstream_unreachable",
-                error_code="upstream_unreachable",
+                error_code,
+                error_code=error_code,
             )
             if route_fallback_cfg is not None:
                 used_cfg = route_fallback_cfg
@@ -3451,9 +3528,9 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 can_fallback = False
                 is_cheap = False
                 continue
-            _notify_responses_fallback_exhausted(status_code=502, reason="upstream_unreachable")
+            _notify_responses_fallback_exhausted(status_code=502, reason=error_code)
             return JSONResponse(
-                content={"error": {"message": "Upstream request failed", "type": "server_error", "code": "upstream_unreachable"}},
+                content={"error": {"message": "Upstream request failed", "type": "server_error", "code": error_code}},
                 status_code=502,
             )
 
