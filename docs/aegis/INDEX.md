@@ -5,6 +5,7 @@ Entries are workspace records, not authoritative runtime decisions.
 
 | Date | Kind | Path | Title |
 | --- | --- | --- | --- |
+| 2026-07-28 | plan | docs/aegis/plans/2026-07-28-enterprise-reporting-api.md | Enterprise Reporting API Implementation Plan |
 | 2026-07-28 | spec | docs/aegis/specs/2026-07-28-enterprise-reporting-api-design.md | Enterprise Reporting API And Admin Management |
 | 2026-05-13 | plan | docs/aegis/plans/2026-05-13-operating-dashboard-v2.md | CoinCoin Operating Dashboard v2 |
 | 2026-05-15 | work | docs/aegis/work/2026-05-15-rolling-24h-dashboard/10-intent.md | CoinCoin dashboard rolling 24h reporting intent |
