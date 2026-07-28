@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { createContext, createElement, useCallback, useContext, useEffect, useState } from 'react'
 import {
     getApiKey,
     setApiKey as storeApiKey,
@@ -16,9 +16,10 @@ import {
 } from '../api/client'
 
 const LEGACY_DEMO_KEY = 'sk_cc_demo_key'
+const AuthContext = createContext(null)
 
-export function useAuth(options = {}) {
-    const shouldLoadRecoverableKey = !!options.loadRecoverableKey
+function useAuthState() {
+    const shouldLoadRecoverableKey = true
     const initialKey = getApiKey()
     const [apiKey, setApiKeyState] = useState(initialKey === LEGACY_DEMO_KEY ? '' : initialKey)
     const [isLoggedIn, setIsLoggedIn] = useState(!!initialKey && initialKey !== LEGACY_DEMO_KEY)
@@ -109,10 +110,8 @@ export function useAuth(options = {}) {
         }
 
         syncDeveloperKeyState()
-        window.addEventListener('coincoin-auth-changed', syncDeveloperKeyState)
         return () => {
             active = false
-            window.removeEventListener('coincoin-auth-changed', syncDeveloperKeyState)
         }
     }, [apiKey, username, shouldLoadRecoverableKey])
 
@@ -219,4 +218,17 @@ export function useAuth(options = {}) {
         workbenchApiKey,
         username,
     }
+}
+
+export function AuthProvider({ children }) {
+    const value = useAuthState()
+    return createElement(AuthContext.Provider, { value }, children)
+}
+
+export function useAuth() {
+    const value = useContext(AuthContext)
+    if (!value) {
+        throw new Error('useAuth must be used within AuthProvider')
+    }
+    return value
 }

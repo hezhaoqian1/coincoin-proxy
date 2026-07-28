@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
-import { BrowserRouter, Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation, useParams } from 'react-router-dom'
 import { useAuth } from './hooks/useAuth'
+import AppShell from './components/AppShell'
 import Navbar from './components/Navbar'
 import Footer from './components/Footer'
 import Landing from './pages/Landing'
@@ -40,6 +41,11 @@ function GuestOnlyRoute({ children }) {
     const { isLoggedIn } = useAuth()
     if (isLoggedIn) return <Navigate to="/dashboard" replace />
     return children
+}
+
+function UserAreaLayout() {
+    const { isLoggedIn } = useAuth()
+    return isLoggedIn ? <AppShell><Outlet /></AppShell> : <Outlet />
 }
 
 function ReferralRedirect() {
@@ -92,33 +98,35 @@ export default function App() {
                     <GuestOnlyRoute><PublicShell><Register /></PublicShell></GuestOnlyRoute>
                 } />
                 <Route path="/r/:code" element={<ReferralRedirect />} />
-                <Route path="/dashboard" element={
-                    <ProtectedRoute><Dashboard /></ProtectedRoute>
-                } />
-                <Route path="/usage" element={
-                    <ProtectedRoute><Usage /></ProtectedRoute>
-                } />
-                <Route path="/recharge" element={<Recharge />} />
-                <Route path="/docs" element={<Docs />} />
-                <Route path="/guides/:guideId" element={
-                    <ProtectedRoute><GuideDetail /></ProtectedRoute>
-                } />
-                <Route path="/playground" element={
-                    <ProtectedRoute><Playground /></ProtectedRoute>
-                } />
-                <Route path="/account" element={
-                    <ProtectedRoute><Account /></ProtectedRoute>
-                } />
-                <Route path="/settings" element={<Navigate to="/guides/api-quickstart" replace />} />
-                <Route path="/api-keys" element={
-                    <ProtectedRoute><ApiKeys /></ProtectedRoute>
-                } />
-                <Route path="/referrals" element={
-                    <ProtectedRoute><Referrals /></ProtectedRoute>
-                } />
-                <Route path="/station" element={
-                    <ProtectedRoute><Station /></ProtectedRoute>
-                } />
+                <Route element={<UserAreaLayout />}>
+                    <Route path="/dashboard" element={
+                        <ProtectedRoute><Dashboard /></ProtectedRoute>
+                    } />
+                    <Route path="/usage" element={
+                        <ProtectedRoute><Usage /></ProtectedRoute>
+                    } />
+                    <Route path="/recharge" element={<Recharge />} />
+                    <Route path="/docs" element={<Docs />} />
+                    <Route path="/guides/:guideId" element={
+                        <ProtectedRoute><GuideDetail /></ProtectedRoute>
+                    } />
+                    <Route path="/playground" element={
+                        <ProtectedRoute><Playground /></ProtectedRoute>
+                    } />
+                    <Route path="/account" element={
+                        <ProtectedRoute><Account /></ProtectedRoute>
+                    } />
+                    <Route path="/settings" element={<Navigate to="/guides/api-quickstart" replace />} />
+                    <Route path="/api-keys" element={
+                        <ProtectedRoute><ApiKeys /></ProtectedRoute>
+                    } />
+                    <Route path="/referrals" element={
+                        <ProtectedRoute><Referrals /></ProtectedRoute>
+                    } />
+                    <Route path="/station" element={
+                        <ProtectedRoute><Station /></ProtectedRoute>
+                    } />
+                </Route>
                 <Route path="/s/:slug" element={<StationPortal />} />
                 <Route path="/pay/return" element={<PublicShell><PayReturn /></PublicShell>} />
                 <Route path="*" element={<Navigate to="/" replace />} />

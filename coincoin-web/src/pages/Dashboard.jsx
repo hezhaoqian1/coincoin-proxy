@@ -2,11 +2,11 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { Line } from 'react-chartjs-2'
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler } from 'chart.js'
-import { getBalance, getUsageLogs, getAnnouncements, activateKey, setGeneratedKey as storeGeneratedKey } from '../api/client'
+import { getAnnouncements, getBalance, getDailyUsage, getUsageLogs, activateKey, setGeneratedKey as storeGeneratedKey } from '../api/client'
 import useOrderConfirm from '../hooks/useOrderConfirm'
 import { useAuth } from '../hooks/useAuth'
 import AppShell from '../components/AppShell'
-import { formatLocalTime, getLocalDateRangeIso, getLocalIsoDate, getLocalTodayRangeIso, getRecentLocalIsoDates } from '../utils/time'
+import { formatLocalTime, getLocalIsoDate, getLocalTodayRangeIso, getRecentLocalIsoDates } from '../utils/time'
 import './Dashboard.css'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler)
@@ -28,41 +28,36 @@ function formatUsageUnits(log) {
     return `${(log.total_tokens || log.usage_unit_count || 0).toLocaleString()} tokens`
 }
 
-async function getLocalDailyUsage(days = 7) {
-    const dates = getRecentLocalIsoDates(days)
-    const rows = await Promise.all(dates.map(async (day) => {
-        const range = getLocalDateRangeIso(day)
-        if (!range) {
-            return {
-                day,
-                input_tokens: 0,
-                output_tokens: 0,
-                tokens_total: 0,
-                images_total: 0,
-                videos_total: 0,
-                cost_usd: 0,
-                requests_total: 0,
-            }
-        }
-
-        const usage = await getUsageLogs(1, 0, {
-            start_date: range.start,
-            end_date: range.end,
-            end_exclusive: 'true',
+function normalizeDailyUsage(rows, days = 7, todayUsage = null) {
+    const byDay = new Map((rows || []).map((row) => [row.day, row]))
+    const today = getLocalIsoDate()
+    const todaySummary = todayUsage?.summary
+    if (todaySummary) {
+        byDay.set(today, {
+            day: today,
+            input_tokens: todaySummary.input_tokens || 0,
+            output_tokens: todaySummary.output_tokens || 0,
+            tokens_total: todaySummary.total_tokens || 0,
+            images_total: todaySummary.image_count || 0,
+            videos_total: todaySummary.video_count || 0,
+            cost_usd: todaySummary.cost_usd || 0,
+            requests_total: todayUsage.total || 0,
         })
-        const summary = usage.summary || {}
+    }
+
+    return getRecentLocalIsoDates(days).map((day) => {
+        const row = byDay.get(day) || {}
         return {
             day,
-            input_tokens: summary.input_tokens || 0,
-            output_tokens: summary.output_tokens || 0,
-            tokens_total: summary.total_tokens || 0,
-            images_total: summary.image_count || 0,
-            videos_total: summary.video_count || 0,
-            cost_usd: summary.cost_usd || 0,
-            requests_total: usage.total || 0,
+            input_tokens: row.input_tokens || 0,
+            output_tokens: row.output_tokens || 0,
+            tokens_total: row.tokens_total || 0,
+            images_total: row.images_total || 0,
+            videos_total: row.videos_total || 0,
+            cost_usd: row.cost_usd || 0,
+            requests_total: row.requests_total || 0,
         }
-    }))
-    return rows
+    })
 }
 
 function ReadinessCard({ authMode, username, hasDeveloperKey }) {
@@ -351,28 +346,36 @@ export default function Dashboard() {
     useEffect(() => {
         async function load() {
             const todayRange = getLocalTodayRangeIso()
+            const secondaryData = Promise.allSettled([
+                getUsageLogs(20),
+                getUsageLogs(1, 0, {
+                    start_date: todayRange?.start,
+                    end_date: todayRange?.end,
+                    end_exclusive: todayRange ? 'true' : undefined,
+                }),
+                getDailyUsage(7),
+                getAnnouncements(),
+            ])
+
             try {
-                const [b, u, todayU] = await Promise.all([
-                    getBalance(),
-                    getUsageLogs(20),
-                    getUsageLogs(1, 0, {
-                        start_date: todayRange?.start,
-                        end_date: todayRange?.end,
-                        end_exclusive: todayRange ? 'true' : undefined,
-                    }),
-                ])
-                setBalance(b)
-                setUsage(u)
-                setTodayUsage(todayU)
+                setBalance(await getBalance())
                 setLoadError('')
             } catch (err) {
                 setBalance(null)
-                setUsage(null)
-                setTodayUsage(null)
                 setLoadError(err.message || '控制台会话已失效，请重新登录。')
             }
-            try { setDailyData(await getLocalDailyUsage(7)) } catch { /* ignore */ }
-            try { setAnnouncements(await getAnnouncements()) } catch { /* ignore */ }
+
+            const [usageResult, todayResult, dailyResult, announcementResult] = await secondaryData
+            if (usageResult.status === 'fulfilled') setUsage(usageResult.value)
+            if (todayResult.status === 'fulfilled') setTodayUsage(todayResult.value)
+            if (dailyResult.status === 'fulfilled') {
+                setDailyData(normalizeDailyUsage(
+                    dailyResult.value,
+                    7,
+                    todayResult.status === 'fulfilled' ? todayResult.value : null,
+                ))
+            }
+            if (announcementResult.status === 'fulfilled') setAnnouncements(announcementResult.value)
         }
         load()
     }, [])
