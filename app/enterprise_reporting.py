@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .billing import get_available_balance_cents
+from .billing import get_available_balances_cents
 from .config import settings
 from .db import get_db
 from .models import (
@@ -189,6 +189,19 @@ def _key_fingerprint(key_hash: str) -> str:
     return f"sha256:{key_hash[:12]}"
 
 
+def _key_is_effectively_active(key: EnterpriseAccessKey, now: Optional[datetime] = None) -> bool:
+    current = now or _utcnow()
+    return key.status == "active" and not (
+        key.expires_at and _as_utc(key.expires_at) <= current
+    )
+
+
+def _key_display_status(key: EnterpriseAccessKey, now: Optional[datetime] = None) -> str:
+    if key.status == "revoked":
+        return "revoked"
+    return "active" if _key_is_effectively_active(key, now) else "expired"
+
+
 def _trusted_proxy_networks() -> list[ipaddress.IPv4Network | ipaddress.IPv6Network]:
     networks = []
     for raw in settings.trusted_proxy_cidrs.split(","):
@@ -209,15 +222,21 @@ def resolve_client_ip(request: Request) -> Optional[ipaddress.IPv4Address | ipad
     except ValueError:
         return None
 
-    if any(direct_ip in network for network in _trusted_proxy_networks()):
-        forwarded = request.headers.get("cf-connecting-ip", "").strip()
-        if not forwarded:
-            forwarded = request.headers.get("x-forwarded-for", "").split(",", 1)[0].strip()
-        if forwarded:
+    trusted_networks = _trusted_proxy_networks()
+    if any(direct_ip in network for network in trusted_networks):
+        forwarded_values = [
+            value.strip()
+            for value in request.headers.get("x-forwarded-for", "").split(",")
+            if value.strip()
+        ]
+        for forwarded in reversed(forwarded_values):
             try:
-                return ipaddress.ip_address(forwarded)
+                forwarded_ip = ipaddress.ip_address(forwarded)
             except ValueError:
-                return None
+                continue
+            if not any(forwarded_ip in network for network in trusted_networks):
+                return forwarded_ip
+        return None
     return direct_ip
 
 
@@ -327,7 +346,7 @@ def _key_fields(key: EnterpriseAccessKey) -> dict:
         "id": key.id,
         "name": key.name,
         "fingerprint": _key_fingerprint(key.key_hash),
-        "status": key.status,
+        "status": _key_display_status(key),
         "ip_allowlist": allowlist,
         "expires_at": _iso(key.expires_at),
         "last_used_at": _iso(key.last_used_at),
@@ -403,7 +422,7 @@ async def list_enterprises(
             1 for grant in grants if grant.enterprise_id == enterprise.id and grant.status == "active"
         )
         enterprise_keys = [key for key in keys if key.enterprise_id == enterprise.id]
-        item["active_key_count"] = sum(1 for key in enterprise_keys if key.status == "active")
+        item["active_key_count"] = sum(1 for key in enterprise_keys if _key_is_effectively_active(key))
         last_used_values = [key.last_used_at for key in enterprise_keys if key.last_used_at]
         item["last_used_at"] = _iso(max(last_used_values)) if last_used_values else None
         data.append(item)
@@ -597,16 +616,22 @@ async def enterprise_balances(
         ).all()
         activity_by_user = {row.user_id: row.last_activity_at for row in activity_rows}
 
+    pending_costs = {
+        user.id: await usage_buffer.get_pending_cost(user.id)
+        for user in users_by_id.values()
+    }
+    snapshots = await get_available_balances_cents(
+        db,
+        list(users_by_id.values()),
+        pending_cost_cents_by_user=pending_costs,
+    )
     data = []
     threshold = int(auth.enterprise.low_balance_threshold_cents or 0)
     for grant in grants:
         user = users_by_id.get(grant.user_id)
         if user is None:
             continue
-        pending_cost = await usage_buffer.get_pending_cost(user.id)
-        snapshot = await get_available_balance_cents(
-            db, user, pending_cost_cents=pending_cost
-        )
+        snapshot = snapshots.get(user.id, {})
         available = int(snapshot.get("available_cents", 0) or 0)
         balance_status = "insufficient" if available <= 0 else "low" if threshold > 0 and available <= threshold else "ok"
         data.append(

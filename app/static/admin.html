@@ -3970,12 +3970,12 @@
         <tr>
           <td>${escapeHtml(key.name)}</td>
           <td class="text-mono text-sm">${escapeHtml(key.fingerprint)}</td>
-          <td><span class="badge ${key.status === 'active' ? 'badge-success' : 'badge-error'}">${key.status === 'active' ? '有效' : '已吊销'}</span></td>
+          <td><span class="badge ${key.status === 'active' ? 'badge-success' : key.status === 'expired' ? 'badge-warning' : 'badge-error'}">${key.status === 'active' ? '有效' : key.status === 'expired' ? '已过期' : '已吊销'}</span></td>
           <td class="text-sm text-muted">${formatDateFull(key.expires_at)}</td>
           <td class="text-sm text-muted">${formatDateFull(key.last_used_at)}</td>
           <td><div class="actions">
             <button class="btn btn-sm btn-secondary" data-key-id="${escapeHtml(key.id)}" onclick="editEnterpriseKey(this)">编辑</button>
-            ${key.status === 'active' ? `<button class="btn btn-sm btn-danger" data-key-id="${escapeHtml(key.id)}" onclick="revokeEnterpriseKey(this)">吊销</button>` : ''}
+            ${key.status !== 'revoked' ? `<button class="btn btn-sm btn-danger" data-key-id="${escapeHtml(key.id)}" onclick="revokeEnterpriseKey(this)">吊销</button>` : ''}
           </div></td>
         </tr>
       `).join('') : '<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--text-tertiary)">暂无查询密钥</td></tr>';

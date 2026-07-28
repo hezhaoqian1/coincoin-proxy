@@ -171,7 +171,22 @@ class EnterpriseSchemaTests(unittest.TestCase):
         with patch.object(enterprise.settings, "trusted_proxy_cidrs", ""):
             self.assertEqual(str(enterprise.resolve_client_ip(make_request(headers=headers))), "203.0.113.10")
         with patch.object(enterprise.settings, "trusted_proxy_cidrs", "203.0.113.0/24"):
-            self.assertEqual(str(enterprise.resolve_client_ip(make_request(headers=headers))), "198.51.100.8")
+            self.assertEqual(str(enterprise.resolve_client_ip(make_request(headers=headers))), "198.51.100.9")
+
+    def test_spoofed_cloudflare_header_cannot_override_x_forwarded_for(self):
+        headers = {"CF-Connecting-IP": "198.51.100.8", "X-Forwarded-For": "192.0.2.44"}
+        with patch.object(enterprise.settings, "trusted_proxy_cidrs", "203.0.113.0/24"):
+            self.assertEqual(str(enterprise.resolve_client_ip(make_request(headers=headers))), "192.0.2.44")
+
+    def test_forwarded_chain_is_unwrapped_from_trusted_proxy_side(self):
+        headers = {"X-Forwarded-For": "192.0.2.44, 203.0.113.20, 203.0.113.10"}
+        with patch.object(enterprise.settings, "trusted_proxy_cidrs", "203.0.113.0/24"):
+            self.assertEqual(str(enterprise.resolve_client_ip(make_request(headers=headers))), "192.0.2.44")
+
+    def test_trusted_proxy_without_verifiable_forwarded_address_fails_closed(self):
+        headers = {"CF-Connecting-IP": "198.51.100.8", "X-Forwarded-For": "203.0.113.20"}
+        with patch.object(enterprise.settings, "trusted_proxy_cidrs", "203.0.113.0/24"):
+            self.assertIsNone(enterprise.resolve_client_ip(make_request(headers=headers)))
 
 
 class EnterpriseAdminStaticTests(unittest.TestCase):
@@ -206,6 +221,7 @@ class EnterpriseAdminStaticTests(unittest.TestCase):
         self.assertIn("JSON.stringify({ status: 'revoked' })", self.html)
         self.assertIn("escapeHtml(item.name)", self.html)
         self.assertIn("escapeHtml(key.fingerprint)", self.html)
+        self.assertIn("已过期", self.html)
 
 
 class EnterpriseAuthenticationTests(unittest.IsolatedAsyncioTestCase):
@@ -278,7 +294,11 @@ class EnterpriseAuthenticationTests(unittest.IsolatedAsyncioTestCase):
         key = make_key(ip_allowlist=json.dumps(["198.51.100.0/24"]))
         db = FakeDB(FakeResult(rows=[(key, make_enterprise())]))
         request = make_request(
-            headers={"Authorization": f"Bearer {raw}", "CF-Connecting-IP": "198.51.100.8"}
+            headers={
+                "Authorization": f"Bearer {raw}",
+                "CF-Connecting-IP": "198.51.100.8",
+                "X-Forwarded-For": "198.51.100.8",
+            }
         )
         with patch.object(enterprise.settings, "trusted_proxy_cidrs", "203.0.113.0/24"), patch.object(
             enterprise, "hash_key", return_value="a" * 64
@@ -323,8 +343,13 @@ class EnterpriseReportingTests(unittest.IsolatedAsyncioTestCase):
             enterprise.usage_buffer, "get_pending_cost", AsyncMock(side_effect=[10, 20])
         ) as pending, patch.object(
             enterprise,
-            "get_available_balance_cents",
-            AsyncMock(side_effect=[{"available_cents": 450}, {"available_cents": -120}]),
+            "get_available_balances_cents",
+            AsyncMock(
+                return_value={
+                    "usr_one": {"available_cents": 450},
+                    "usr_two": {"available_cents": -120},
+                }
+            ),
         ) as billing, patch.object(enterprise, "_utcnow", return_value=NOW):
             result = await enterprise.enterprise_balances(response, auth, db)
 
@@ -332,7 +357,8 @@ class EnterpriseReportingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["total_available_balance_cents"], 330)
         self.assertEqual([item["balance_status"] for item in result["data"]], ["low", "insufficient"])
         self.assertEqual([call.args[0] for call in pending.await_args_list], ["usr_one", "usr_two"])
-        self.assertEqual([call.kwargs["pending_cost_cents"] for call in billing.await_args_list], [10, 20])
+        billing.assert_awaited_once()
+        self.assertEqual(billing.await_args.kwargs["pending_cost_cents_by_user"], {"usr_one": 10, "usr_two": 20})
         serialized = json.dumps(result)
         for forbidden in ("usr_one", "usr_two", "private-one", "one@example.com", "api_key_id", "channel_id"):
             self.assertNotIn(forbidden, serialized)
@@ -427,6 +453,22 @@ class EnterpriseAdminTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["data"][0]["last_used_at"], "2026-07-28T03:30:00Z")
         self.assertNotIn("key_hash", json.dumps(result))
         self.assertIn("coincoin_enterprise_clients.name LIKE", str(db.statements[0]))
+
+    def test_expired_key_is_not_effectively_active(self):
+        key = make_key(expires_at=NOW - timedelta(seconds=1))
+        self.assertFalse(enterprise._key_is_effectively_active(key, NOW))
+        self.assertEqual(enterprise._key_display_status(key, NOW), "expired")
+
+    async def test_list_enterprises_excludes_expired_keys_from_active_count(self):
+        ent = make_enterprise()
+        db = FakeDB(
+            FakeResult(values=[ent]),
+            FakeResult(values=[]),
+            FakeResult(values=[make_key(expires_at=NOW - timedelta(seconds=1))]),
+        )
+        with patch.object(enterprise, "_utcnow", return_value=NOW):
+            result = await enterprise.list_enterprises("", db)
+        self.assertEqual(result["data"][0]["active_key_count"], 0)
 
     async def test_create_enterprise_returns_detail_and_persists_normalized_fields(self):
         db = FakeDB(
