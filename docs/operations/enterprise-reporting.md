@@ -21,10 +21,10 @@ COINCOIN_TRUSTED_PROXY_CIDRS=
 ```
 
 `COINCOIN_TRUSTED_PROXY_CIDRS` is a comma-separated list of direct proxy CIDRs.
-CoinCoin trusts `CF-Connecting-IP` or the first `X-Forwarded-For` address only
-when the direct peer is in this list. Leave it empty when CoinCoin receives
-client connections directly. Never list the public Internet or an unverified
-proxy range.
+When the direct peer is trusted, CoinCoin unwraps `X-Forwarded-For` from the
+proxy side and uses the first address outside those trusted networks. Leave it
+empty when CoinCoin receives client connections directly. Never list the
+public Internet or an unverified proxy range.
 
 ## Create And Grant
 
@@ -32,13 +32,17 @@ proxy range.
 2. Create an enterprise with a stable lowercase code and a non-negative
    low-balance threshold in US cents.
 3. Search for each intended CoinCoin user and select it explicitly.
-4. Assign every selected user a customer-facing `account_code` unique inside
-   the enterprise.
+4. Optionally assign a customer-facing `account_code` unique inside the
+   enterprise. When left blank, CoinCoin saves that user's current username as
+   the code. A user without a username requires an explicit code.
 5. Review the final count and save the complete account set.
 
 Do not infer membership from email domains, username prefixes, or naming
 similarity. Personal and historical accounts require the same explicit review.
 Replacing the account set affects every key for the enterprise immediately.
+Changing the username alone does not update a previously saved `account_code`.
+Because public responses expose this value, leaving it blank explicitly allows
+the enterprise to see the authorized user's username.
 
 ## Issue And Deliver A Key
 
@@ -78,7 +82,8 @@ keys, balances, stations, or model routing.
 ## Verification Checklist
 
 - The enterprise list contains only explicitly approved accounts.
-- Public responses contain `account_code`, not usernames, emails, or user IDs.
+- Public responses contain `account_code`, which may equal the authorized
+  user's username, but contain no separate username, email, or user ID fields.
 - `Cache-Control` is `no-store`.
 - A normal CoinCoin API key fails on enterprise endpoints.
 - A reporting key fails on model-call and admin endpoints.

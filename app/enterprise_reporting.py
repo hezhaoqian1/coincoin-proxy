@@ -30,6 +30,7 @@ from .usage_buffer import usage_buffer
 ENTERPRISE_KEY_PREFIX = "cc_ent_"
 MAX_ENTERPRISE_GRANTS = 200
 MAX_IP_ALLOWLIST_ENTRIES = 50
+MAX_ACCOUNT_CODE_LENGTH = 64
 ENTERPRISE_CODE_PATTERN = r"^[a-z0-9][a-z0-9_-]{1,63}$"
 
 public_router = APIRouter(prefix="/v1/enterprise", tags=["enterprise-reporting"])
@@ -78,13 +79,21 @@ class EnterpriseGrantInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     user_id: str = Field(min_length=1, max_length=32)
-    account_code: str = Field(pattern=ENTERPRISE_CODE_PATTERN)
+    account_code: str = Field(default="", max_length=MAX_ACCOUNT_CODE_LENGTH)
     status: Literal["active", "disabled"] = "active"
 
-    @field_validator("user_id", "account_code")
+    @field_validator("user_id")
     @classmethod
-    def strip_grant_strings(cls, value: str) -> str:
+    def strip_user_id(cls, value: str) -> str:
         return value.strip()
+
+    @field_validator("account_code")
+    @classmethod
+    def normalize_account_code(cls, value: str) -> str:
+        value = value.strip()
+        if any(ord(character) < 32 or ord(character) == 127 for character in value):
+            raise ValueError("account_code must not contain control characters")
+        return value
 
 
 class EnterpriseGrantReplaceRequest(BaseModel):
@@ -482,19 +491,37 @@ async def replace_enterprise_accounts(
     if active_count > MAX_ENTERPRISE_GRANTS:
         raise HTTPException(status_code=422, detail="enterprise may have at most 200 active accounts")
     user_ids = [account.user_id for account in payload.accounts]
-    account_codes = [account.account_code for account in payload.accounts]
     if len(user_ids) != len(set(user_ids)):
         raise HTTPException(status_code=422, detail="duplicate user_id")
-    if len(account_codes) != len(set(account_codes)):
-        raise HTTPException(status_code=422, detail="duplicate account_code")
-    found_user_ids: set[str] = set()
+    users_by_id: dict[str, User] = {}
     if user_ids:
-        found_user_ids = set(
-            (await db.execute(select(User.id).where(User.id.in_(user_ids)))).scalars().all()
-        )
-    missing_user_ids = sorted(set(user_ids) - found_user_ids)
+        users = (await db.execute(select(User).where(User.id.in_(user_ids)))).scalars().all()
+        users_by_id = {user.id: user for user in users}
+    missing_user_ids = sorted(set(user_ids) - set(users_by_id))
     if missing_user_ids:
         raise HTTPException(status_code=422, detail={"missing_user_ids": missing_user_ids})
+
+    resolved_account_codes: list[str] = []
+    for account in payload.accounts:
+        account_code = account.account_code or (users_by_id[account.user_id].username or "").strip()
+        if not account_code:
+            raise HTTPException(
+                status_code=422,
+                detail={"user_id": account.user_id, "account_code": "username is missing; enter an account_code"},
+            )
+        if len(account_code) > MAX_ACCOUNT_CODE_LENGTH:
+            raise HTTPException(
+                status_code=422,
+                detail={"user_id": account.user_id, "account_code": "username exceeds 64 characters; enter a shorter account_code"},
+            )
+        if any(ord(character) < 32 or ord(character) == 127 for character in account_code):
+            raise HTTPException(
+                status_code=422,
+                detail={"user_id": account.user_id, "account_code": "account_code must not contain control characters"},
+            )
+        resolved_account_codes.append(account_code)
+    if len(resolved_account_codes) != len(set(resolved_account_codes)):
+        raise HTTPException(status_code=422, detail="duplicate account_code")
 
     await db.execute(
         delete(EnterpriseAccountGrant).where(
@@ -507,10 +534,10 @@ async def replace_enterprise_accounts(
                 id=generate_id("eag_"),
                 enterprise_id=enterprise_id,
                 user_id=account.user_id,
-                account_code=account.account_code,
+                account_code=account_code,
                 status=account.status,
             )
-            for account in payload.accounts
+            for account, account_code in zip(payload.accounts, resolved_account_codes)
         ]
     )
     await db.commit()
