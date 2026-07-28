@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { getStationApplication } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
 import './AppShell.css'
+
+const AppShellContext = createContext(false)
 
 function ShellIcon({ kind }) {
     const common = {
@@ -202,7 +204,23 @@ function MobileBottomNav({ location }) {
     )
 }
 
-export default function AppShell({ title, description, actions, children }) {
+function AppPageContent({ title, description, actions, children }) {
+    return (
+        <>
+            {(title || description || actions) ? (
+                <section className="app-page-intro">
+                    <div className="app-page-intro-copy">
+                        {title ? <h1 className="app-page-intro-title">{title}</h1> : null}
+                    </div>
+                    {actions ? <div className="app-page-intro-actions">{actions}</div> : null}
+                </section>
+            ) : null}
+            {children}
+        </>
+    )
+}
+
+function AppShellFrame({ title, description, actions, children }) {
     const { logout } = useAuth()
     const navigate = useNavigate()
     const location = useLocation()
@@ -274,46 +292,47 @@ export default function AppShell({ title, description, actions, children }) {
     }
 
     return (
-        <div className="app-shell">
-            <aside className="app-sidebar">
-                <div className="app-sidebar-top">
-                    <Link to="/dashboard" className="app-sidebar-brand">
-                        <div className="logo-icon">CF</div>
-                        <div className="app-sidebar-brand-copy">
-                            <strong>ClawFather</strong>
-                            <span>中转站控制台</span>
-                        </div>
-                    </Link>
-                </div>
-
-                <nav className="app-sidebar-nav">
-                    {navGroups.map((group) => (
-                        <ShellGroup key={group.title} title={group.title} items={group.items} location={location} />
-                    ))}
-                </nav>
-
-                <div className="app-sidebar-footer">
-                    <button onClick={handleLogout} className="shell-action-btn shell-action-btn-muted">
-                        <span className="shell-action-icon"><ShellIcon kind="logout" /></span>
-                        <span>退出登录</span>
-                    </button>
-                </div>
-            </aside>
-
-            <div className="app-main">
-                <main className="app-main-content">
-                    {(title || description || actions) ? (
-                        <section className="app-page-intro">
-                            <div className="app-page-intro-copy">
-                                {title ? <h1 className="app-page-intro-title">{title}</h1> : null}
+        <AppShellContext.Provider value>
+            <div className="app-shell">
+                <aside className="app-sidebar">
+                    <div className="app-sidebar-top">
+                        <Link to="/dashboard" className="app-sidebar-brand">
+                            <div className="logo-icon">CF</div>
+                            <div className="app-sidebar-brand-copy">
+                                <strong>ClawFather</strong>
+                                <span>中转站控制台</span>
                             </div>
-                            {actions ? <div className="app-page-intro-actions">{actions}</div> : null}
-                        </section>
-                    ) : null}
-                    {children}
-                </main>
+                        </Link>
+                    </div>
+
+                    <nav className="app-sidebar-nav">
+                        {navGroups.map((group) => (
+                            <ShellGroup key={group.title} title={group.title} items={group.items} location={location} />
+                        ))}
+                    </nav>
+
+                    <div className="app-sidebar-footer">
+                        <button onClick={handleLogout} className="shell-action-btn shell-action-btn-muted">
+                            <span className="shell-action-icon"><ShellIcon kind="logout" /></span>
+                            <span>退出登录</span>
+                        </button>
+                    </div>
+                </aside>
+
+                <div className="app-main">
+                    <main className="app-main-content">
+                        <AppPageContent title={title} description={description} actions={actions}>
+                            {children}
+                        </AppPageContent>
+                    </main>
+                </div>
+                <MobileBottomNav location={location} />
             </div>
-            <MobileBottomNav location={location} />
-        </div>
+        </AppShellContext.Provider>
     )
+}
+
+export default function AppShell(props) {
+    const isNested = useContext(AppShellContext)
+    return isNested ? <AppPageContent {...props} /> : <AppShellFrame {...props} />
 }

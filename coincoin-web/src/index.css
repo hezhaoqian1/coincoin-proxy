@@ -422,6 +422,14 @@ pre {
   animation: fadeIn 0.4s ease-out forwards;
 }
 
+/* Console routes already provide immediate navigation feedback through the
+   persistent shell. Replaying entrance animations on every route mount makes
+   loaded content look like it flashes, so keep them for public pages only. */
+.app-shell .animate-fade-in-up,
+.app-shell .animate-fade-in {
+  animation: none;
+}
+
 /* Staggered children animation */
 .stagger-children>*:nth-child(1) {
   animation-delay: 0ms;
