@@ -333,6 +333,7 @@ npm run build
 
 ## Documentation
 
+- [Enterprise Reporting API Usage Guide (Chinese)](./docs/guides/enterprise-reporting-api.md)
 - [Enterprise Reporting API](./docs/reference/enterprise-reporting-api.md)
 - [Enterprise Reporting Operations](./docs/operations/enterprise-reporting.md)
 - [Enterprise Reporting Release Note](./docs/releases/2026-07-enterprise-reporting-api.md)

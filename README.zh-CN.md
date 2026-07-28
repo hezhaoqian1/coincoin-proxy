@@ -303,6 +303,10 @@ Claude Code-only 上游和普通 OpenAI-compatible 上游不完全一样：真�
 - `coincoin-proxy` 自己的 README
 - `coincoin-proxy` 站点里的 `/docs`
 
+企业客户拿到以 `cc_ent_` 开头的 Reporting Key 后，可按
+[企业余额与用量查询 API 使用指南](./docs/guides/enterprise-reporting-api.md)
+查询授权账号余额、最近用量，并接入定时轮询告警。
+
 当前状态请按下面理解：
 
 - Railway 上真正部署的是 `coincoin-proxy`
