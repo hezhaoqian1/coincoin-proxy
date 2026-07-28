@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "2026-07-28-enterprise-reporting-api",
+  "currentTodo": "Implementation and local verification complete.",
+  "completedTodos": [
+    "Added persistence, dedicated enterprise auth, admin APIs, read-only reporting APIs, admin UI, documentation, and 32 focused tests.",
+    "Passed 112 affected regression tests and confirmed the full suite has only the three recorded baseline video_jobs errors.",
+    "Verified mobile table scrolling, one-time secret handling, metadata, imports, syntax, and diff hygiene."
+  ],
+  "activeSlice": "Final closeout and user handoff.",
+  "evidenceRefs": [
+    "final-focused-regression",
+    "final-full-suite",
+    "final-admin-ui-mobile",
+    "final-docs-static-security"
+  ],
+  "blockedOn": null,
+  "nextStep": "User review; commit, push, deploy, and production customer provisioning require separate action.",
+  "updatedAt": "2026-07-28"
+}

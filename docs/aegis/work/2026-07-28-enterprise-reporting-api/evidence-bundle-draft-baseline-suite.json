@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "artifactKey": "baseline-suite",
+  "type": "test",
+  "source": "/tmp/coincoin-enterprise-baseline.log",
+  "summary": "Pre-change baseline: 431 tests, 3 existing video_jobs errors caused by RequestLog missing effective_cache_creation_input_per_million; 1 skipped.",
+  "verifier": "unittest"
+}

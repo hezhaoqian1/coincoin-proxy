@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "artifactKey": "final-docs-static-security",
+  "type": "verification",
+  "source": "git diff --check; per-file docs checker; Node inline-script parse; Python import; source scan",
+  "summary": "Diff whitespace, six new managed docs, inline admin JavaScript, app/model imports, and customer/credential boundary scans passed; full repository docs harness remains unavailable in this isolated baseline.",
+  "verifier": "shell"
+}

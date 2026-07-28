@@ -1,0 +1,21 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "baselineRefs": [
+    "docs/aegis/specs/2026-07-28-enterprise-reporting-api-design.md",
+    "docs/aegis/plans/2026-07-28-enterprise-reporting-api.md"
+  ],
+  "impactStatement": "docs/aegis/work/2026-07-28-enterprise-reporting-api/impact-statement-draft.json",
+  "compatPlan": "Existing API keys, sessions, stations, billing behavior, public routes, and customer data remain unchanged.",
+  "retirementPlan": "No existing owner or persistent state was retired; disable enterprise and irrevocable key revoke remain the rollback controls.",
+  "evidenceBundle": [
+    "docs/aegis/work/2026-07-28-enterprise-reporting-api/evidence-bundle-draft-admin-ui-browser.json",
+    "docs/aegis/work/2026-07-28-enterprise-reporting-api/evidence-bundle-draft-baseline-suite.json",
+    "docs/aegis/work/2026-07-28-enterprise-reporting-api/evidence-bundle-draft-docs-contract.json",
+    "docs/aegis/work/2026-07-28-enterprise-reporting-api/evidence-bundle-draft-final-admin-ui-mobile.json",
+    "docs/aegis/work/2026-07-28-enterprise-reporting-api/evidence-bundle-draft-final-docs-static-security.json",
+    "docs/aegis/work/2026-07-28-enterprise-reporting-api/evidence-bundle-draft-final-focused-regression.json",
+    "docs/aegis/work/2026-07-28-enterprise-reporting-api/evidence-bundle-draft-final-full-suite.json",
+    "docs/aegis/work/2026-07-28-enterprise-reporting-api/evidence-bundle-draft-focused-regression.json",
+    "docs/aegis/work/2026-07-28-enterprise-reporting-api/evidence-bundle-draft-persistence-import.json"
+  ]
+}

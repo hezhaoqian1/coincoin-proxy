@@ -347,6 +347,8 @@ Claude Code-only 上游和普通 OpenAI-compatible 上游不完全一样：真�
 | `/v1/embeddings` | POST | 生成 embedding，固定走 Azure `text-embedding-3-small` |
 | `/v1/balance` | GET | 查询账户余额和用量 |
 | `/v1/usage` | GET | 查询请求明细（支持分页） |
+| `/v1/enterprise/balances` | GET | 查询企业已授权账号余额 |
+| `/v1/enterprise/usage-summary` | GET | 查询企业已授权账号汇总用量 |
 | `/v1/images/generations` | POST | 生成图片 |
 | `/v1/images/edits` | POST | 编辑图片 / 图生图 |
 | `/v1/image-jobs/generations` | POST | 创建异步文生图任务 |

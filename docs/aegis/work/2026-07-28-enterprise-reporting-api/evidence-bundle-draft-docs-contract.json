@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "artifactKey": "docs-contract",
+  "type": "documentation",
+  "source": "docs/reference/enterprise-reporting-api.md,docs/operations/enterprise-reporting.md,docs/releases/2026-07-enterprise-reporting-api.md",
+  "summary": "Reference, runbook, release note, placeholders, config, rotation, and rollback guidance are present.",
+  "verifier": "shell"
+}

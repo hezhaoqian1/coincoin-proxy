@@ -1,3 +1,4 @@
+from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
@@ -11,6 +12,8 @@ class Settings(BaseSettings):
     key_prefix: str = "sk_cc_"
     key_pepper: str = "coincoin-pepper"
     key_encryption_secret: str = ""
+    trusted_proxy_cidrs: str = ""
+    enterprise_reporting_rpm: int = Field(default=60, gt=0)
     console_session_days: int = 30
     console_session_refresh_threshold_days: int = 15
     monitoring_token: str = ""

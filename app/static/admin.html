@@ -921,6 +921,44 @@
 
     .actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
+    .enterprise-modal-section {
+      padding-top: 20px;
+      margin-top: 20px;
+      border-top: 1px solid var(--border);
+    }
+
+    .enterprise-account-list {
+      max-height: 300px;
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg-primary);
+    }
+
+    .enterprise-account-row {
+      display: grid;
+      grid-template-columns: 24px minmax(180px, 1fr) minmax(150px, 220px);
+      gap: 12px;
+      align-items: center;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      min-width: 0;
+    }
+
+    .enterprise-account-row:last-child { border-bottom: none; }
+    .enterprise-account-row .user-info { min-width: 0; overflow: hidden; }
+    .enterprise-account-row .user-info strong,
+    .enterprise-account-row .user-info span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .enterprise-secret-value {
+      min-height: 74px;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      user-select: all;
+    }
+
+    .enterprise-table { min-width: 760px; }
+
     /* Inline filter bar */
     .filter-bar {
       display: flex;
@@ -1030,6 +1068,12 @@
       .user-cell { gap: 8px; }
       .user-avatar { width: 32px; height: 32px; font-size: 12px; }
       .filter-bar .form-input, .filter-bar .form-select { min-width: 120px; }
+      .enterprise-account-row {
+        grid-template-columns: 24px minmax(0, 1fr);
+      }
+      .enterprise-account-row .enterprise-account-code {
+        grid-column: 2;
+      }
     }
 
     @media (max-width: 480px) {
@@ -1080,6 +1124,10 @@
           <div class="nav-item" data-page="users">
             <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
             用户管理
+          </div>
+          <div class="nav-item" data-page="enterprise-api">
+            <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 21h18M5 21V7l7-4 7 4v14M9 10h1m4 0h1M9 14h1m4 0h1M9 18h1m4 0h1"/></svg>
+            企业 API
           </div>
           <div class="nav-item" data-page="keys">
             <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg>
@@ -1529,6 +1577,33 @@
                 <button id="userPrevPage" class="btn btn-sm btn-secondary" onclick="loadUsersPage(-1)">上一页</button>
                 <button id="userNextPage" class="btn btn-sm btn-secondary" onclick="loadUsersPage(1)">下一页</button>
               </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- =============== Enterprise API =============== -->
+      <div id="page-enterprise-api" class="page">
+        <div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap">
+          <div>
+            <h1 class="page-title">企业 API</h1>
+            <p class="page-desc">管理企业账号范围与只读查询密钥</p>
+          </div>
+          <button class="btn btn-primary" onclick="openEnterpriseModal()">新建企业</button>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <div class="filter-bar">
+              <input type="search" id="enterpriseSearch" class="form-input" style="width:300px" placeholder="搜索企业名称或代码" oninput="debounceEnterpriseSearch()" />
+            </div>
+            <button class="btn btn-secondary" onclick="loadEnterprises()">刷新</button>
+          </div>
+          <div class="card-body flush">
+            <div class="table-wrapper">
+              <table class="enterprise-table">
+                <thead><tr><th>企业</th><th>状态</th><th>低余额阈值</th><th>授权账号</th><th>有效密钥</th><th>最近访问</th><th>操作</th></tr></thead>
+                <tbody id="enterpriseBody"></tbody>
+              </table>
             </div>
           </div>
         </div>
@@ -2304,6 +2379,105 @@
 
   <!-- =============== Modals =============== -->
 
+  <div id="enterpriseModal" class="modal-overlay">
+    <div class="modal" style="max-width:920px">
+      <div class="modal-header">
+        <span class="modal-title" id="enterpriseModalTitle">新建企业</span>
+        <button class="modal-close" onclick="closeModal('enterpriseModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">企业名称</label>
+            <input id="enterpriseName" class="form-input" maxlength="128" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">企业代码</label>
+            <input id="enterpriseCode" class="form-input text-mono" maxlength="64" placeholder="customer-code" />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">状态</label>
+            <select id="enterpriseStatus" class="form-select"><option value="active">启用</option><option value="disabled">停用</option></select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">低余额阈值（美分）</label>
+            <input id="enterpriseThreshold" type="number" min="0" step="1" class="form-input" value="0" />
+          </div>
+        </div>
+
+        <div id="enterpriseManagedSections" style="display:none">
+          <section class="enterprise-modal-section">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+              <div>
+                <div class="card-title">授权账号</div>
+                <div class="text-sm text-muted" id="enterpriseAccountCount">0 / 200 个有效账号</div>
+              </div>
+              <button class="btn btn-primary btn-sm" onclick="saveEnterpriseAccounts()">保存账号范围</button>
+            </div>
+            <input type="search" id="enterpriseUserSearch" class="form-input" placeholder="搜索用户名、邮箱或 External ID" oninput="debounceEnterpriseUserSearch()" style="margin-bottom:10px" />
+            <div id="enterpriseAccountList" class="enterprise-account-list"></div>
+          </section>
+
+          <section class="enterprise-modal-section">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+              <div>
+                <div class="card-title">查询密钥</div>
+                <div class="text-sm text-muted">所有密钥共享上方账号范围</div>
+              </div>
+              <button class="btn btn-secondary btn-sm" onclick="resetEnterpriseKeyForm()">新密钥</button>
+            </div>
+            <input type="hidden" id="enterpriseKeyId" />
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">密钥名称</label>
+                <input id="enterpriseKeyName" class="form-input" maxlength="100" placeholder="Production" />
+              </div>
+              <div class="form-group">
+                <label class="form-label">过期时间（可选）</label>
+                <input id="enterpriseKeyExpiry" type="datetime-local" class="form-input" />
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">IP 白名单（可选，每行或逗号分隔）</label>
+              <textarea id="enterpriseKeyAllowlist" class="form-input" rows="2" placeholder="203.0.113.10&#10;10.0.0.0/24"></textarea>
+            </div>
+            <div style="display:flex;justify-content:flex-end;margin-bottom:14px">
+              <button class="btn btn-primary" id="enterpriseKeySaveButton" onclick="saveEnterpriseKey()">创建密钥</button>
+            </div>
+            <div class="table-wrapper">
+              <table>
+                <thead><tr><th>名称</th><th>指纹</th><th>状态</th><th>过期</th><th>最近使用</th><th>操作</th></tr></thead>
+                <tbody id="enterpriseKeysBody"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('enterpriseModal')">关闭</button>
+        <button class="btn btn-primary" onclick="saveEnterpriseSettings()">保存企业设置</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="enterpriseSecretModal" class="modal-overlay">
+    <div class="modal" style="max-width:560px">
+      <div class="modal-header">
+        <span class="modal-title">查询密钥已创建</span>
+        <button class="modal-close" onclick="closeEnterpriseSecretModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="enterpriseSecretValue" class="code-display enterprise-secret-value"></div>
+        <button class="btn btn-primary mt-4" onclick="copyToClipboard(document.getElementById('enterpriseSecretValue').textContent)" style="width:100%">复制密钥</button>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeEnterpriseSecretModal()">完成</button>
+      </div>
+    </div>
+  </div>
+
   <!-- User Edit Modal -->
   <div id="userModal" class="modal-overlay">
     <div class="modal" style="max-width:880px">
@@ -2937,6 +3111,11 @@
   <script>
     let currentUserId = null;
     let usersCache = [];
+    let enterpriseCache = [];
+    let currentEnterprise = null;
+    let enterpriseUserOptions = [];
+    let enterpriseSearchTimeout = null;
+    let enterpriseUserSearchTimeout = null;
     let searchTimeout = null;
     let stationSearchTimeout = null;
     let userSortAsc = false;
@@ -3020,6 +3199,7 @@
 	        dashboard: loadDashboard,
 	        analytics: loadAnalytics,
 	        users: loadUsers,
+	        'enterprise-api': loadEnterprises,
 	        'finance-summary': loadFinanceSummary,
 	        'finance-ledger': loadFinanceLedger,
 	        keys: loadAllKeys,
@@ -3554,6 +3734,324 @@
         console.error(e);
         toast('加载失败', 'error');
       }
+    }
+
+    // ==================== Enterprise API ====================
+    function enterpriseErrorMessage(data, fallback) {
+      if (!data || data.detail === undefined) return fallback;
+      return typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail);
+    }
+
+    async function loadEnterprises() {
+      const body = document.getElementById('enterpriseBody');
+      if (!body) return;
+      body.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:32px;color:var(--text-tertiary)">加载中...</td></tr>';
+      try {
+        const search = document.getElementById('enterpriseSearch')?.value.trim() || '';
+        const url = search ? `/admin/enterprise-clients?q=${encodeURIComponent(search)}` : '/admin/enterprise-clients';
+        const r = await fetch(url, { headers: adminHeaders() });
+        const payload = await r.json();
+        if (!r.ok) {
+          body.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:32px;color:var(--error)">加载失败</td></tr>';
+          return toast(enterpriseErrorMessage(payload, '加载失败'), 'error');
+        }
+        enterpriseCache = payload.data || [];
+        body.innerHTML = enterpriseCache.length ? enterpriseCache.map(item => `
+          <tr>
+            <td><div class="user-info"><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml(item.code)}</span></div></td>
+            <td><span class="badge ${item.status === 'active' ? 'badge-success' : 'badge-error'}">${item.status === 'active' ? '启用' : '停用'}</span></td>
+            <td>${formatMoney(item.low_balance_threshold_cents || 0)}</td>
+            <td>${formatNum(item.account_count || 0)}</td>
+            <td>${formatNum(item.active_key_count || 0)}</td>
+            <td class="text-sm text-muted">${formatDateFull(item.last_used_at)}</td>
+            <td><button class="btn btn-sm btn-secondary" data-enterprise-id="${escapeHtml(item.id)}" onclick="openEnterpriseModal(this.dataset.enterpriseId)">编辑</button></td>
+          </tr>
+        `).join('') : '<tr><td colspan="7"><div class="empty-state"><h3>暂无企业</h3></div></td></tr>';
+      } catch (error) {
+        console.error(error);
+        body.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:32px;color:var(--error)">加载失败</td></tr>';
+        toast('加载失败', 'error');
+      }
+    }
+
+    function debounceEnterpriseSearch() {
+      clearTimeout(enterpriseSearchTimeout);
+      enterpriseSearchTimeout = setTimeout(loadEnterprises, 300);
+    }
+
+    async function openEnterpriseModal(enterpriseId = '') {
+      currentEnterprise = null;
+      enterpriseUserOptions = [];
+      document.getElementById('enterpriseModalTitle').textContent = enterpriseId ? '编辑企业' : '新建企业';
+      document.getElementById('enterpriseName').value = '';
+      document.getElementById('enterpriseCode').value = '';
+      document.getElementById('enterpriseCode').disabled = false;
+      document.getElementById('enterpriseStatus').value = 'active';
+      document.getElementById('enterpriseThreshold').value = '0';
+      document.getElementById('enterpriseManagedSections').style.display = 'none';
+      document.getElementById('enterpriseAccountList').innerHTML = '';
+      resetEnterpriseKeyForm();
+      openModal('enterpriseModal');
+      if (!enterpriseId) {
+        document.getElementById('enterpriseName').focus();
+        return;
+      }
+      try {
+        const r = await fetch(`/admin/enterprise-clients/${encodeURIComponent(enterpriseId)}`, { headers: adminHeaders() });
+        const payload = await r.json();
+        if (!r.ok) return toast(enterpriseErrorMessage(payload, '加载企业失败'), 'error');
+        currentEnterprise = payload;
+        renderEnterpriseEditor();
+        await loadEnterpriseAccountCandidates();
+      } catch (error) {
+        console.error(error);
+        toast('加载企业失败', 'error');
+      }
+    }
+
+    function renderEnterpriseEditor() {
+      if (!currentEnterprise) return;
+      document.getElementById('enterpriseName').value = currentEnterprise.name || '';
+      document.getElementById('enterpriseCode').value = currentEnterprise.code || '';
+      document.getElementById('enterpriseCode').disabled = true;
+      document.getElementById('enterpriseStatus').value = currentEnterprise.status || 'active';
+      document.getElementById('enterpriseThreshold').value = currentEnterprise.low_balance_threshold_cents || 0;
+      document.getElementById('enterpriseManagedSections').style.display = 'block';
+      renderEnterpriseKeys();
+    }
+
+    async function saveEnterpriseSettings() {
+      const name = document.getElementById('enterpriseName').value.trim();
+      const code = document.getElementById('enterpriseCode').value.trim();
+      const low_balance_threshold_cents = Number(document.getElementById('enterpriseThreshold').value || 0);
+      if (!name || (!currentEnterprise && !code)) return toast('请填写企业名称和代码', 'error');
+      if (!Number.isInteger(low_balance_threshold_cents) || low_balance_threshold_cents < 0) return toast('低余额阈值必须是非负整数', 'error');
+      const creating = !currentEnterprise;
+      const url = creating ? '/admin/enterprise-clients' : `/admin/enterprise-clients/${encodeURIComponent(currentEnterprise.id)}`;
+      const payload = creating
+        ? { name, code, low_balance_threshold_cents }
+        : { name, status: document.getElementById('enterpriseStatus').value, low_balance_threshold_cents };
+      try {
+        const r = await fetch(url, {
+          method: creating ? 'POST' : 'PATCH',
+          headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+          body: JSON.stringify(payload)
+        });
+        const data = await r.json();
+        if (!r.ok) return toast(enterpriseErrorMessage(data, '保存失败'), 'error');
+        currentEnterprise = data;
+        document.getElementById('enterpriseModalTitle').textContent = '编辑企业';
+        renderEnterpriseEditor();
+        await loadEnterpriseAccountCandidates();
+        loadEnterprises();
+        toast(creating ? '企业已创建' : '企业设置已保存', 'success');
+      } catch (error) {
+        console.error(error);
+        toast('保存失败', 'error');
+      }
+    }
+
+    function debounceEnterpriseUserSearch() {
+      clearTimeout(enterpriseUserSearchTimeout);
+      enterpriseUserSearchTimeout = setTimeout(loadEnterpriseAccountCandidates, 300);
+    }
+
+    async function loadEnterpriseAccountCandidates() {
+      if (!currentEnterprise) return;
+      const list = document.getElementById('enterpriseAccountList');
+      list.innerHTML = '<div class="text-sm text-muted" style="padding:18px">加载中...</div>';
+      try {
+        const search = document.getElementById('enterpriseUserSearch').value.trim();
+        const params = new URLSearchParams();
+        if (search) params.set('search', search);
+        const query = params.toString();
+        const r = await fetch(query ? `/admin/users?${query}` : '/admin/users', { headers: adminHeaders() });
+        const users = await r.json();
+        if (!r.ok) return toast(enterpriseErrorMessage(users, '加载用户失败'), 'error');
+        const merged = new Map((Array.isArray(users) ? users : []).map(user => [user.id, user]));
+        (currentEnterprise.accounts || []).forEach(account => {
+          if (!merged.has(account.user_id)) {
+            merged.set(account.user_id, { id: account.user_id, ...(account.user || {}) });
+          }
+        });
+        enterpriseUserOptions = Array.from(merged.values());
+        renderEnterpriseAccounts();
+      } catch (error) {
+        console.error(error);
+        list.innerHTML = '<div class="text-sm text-error" style="padding:18px">加载失败</div>';
+      }
+    }
+
+    function renderEnterpriseAccounts() {
+      const selected = new Map((currentEnterprise?.accounts || []).map(account => [account.user_id, account]));
+      const list = document.getElementById('enterpriseAccountList');
+      document.getElementById('enterpriseAccountCount').textContent = `${Array.from(selected.values()).filter(item => item.status === 'active').length} / 200 个有效账号`;
+      list.innerHTML = enterpriseUserOptions.length ? enterpriseUserOptions.map(user => {
+        const grant = selected.get(user.id);
+        const displayName = user.username || user.external_id || user.email || user.id;
+        const secondary = [user.email, user.external_id, user.id].find(value => value && value !== displayName) || '';
+        return `<label class="enterprise-account-row" data-user-id="${escapeHtml(user.id)}">
+          <input type="checkbox" class="enterprise-account-check" ${grant?.status === 'active' ? 'checked' : ''} onchange="syncEnterpriseAccountRow(this)" />
+          <span class="user-info"><strong>${escapeHtml(displayName)}</strong><span>${escapeHtml(secondary)}</span></span>
+          <input class="form-input enterprise-account-code text-mono" maxlength="64" placeholder="account-code" value="${escapeHtml(grant?.account_code || '')}" ${grant?.status === 'active' ? '' : 'disabled'} />
+        </label>`;
+      }).join('') : '<div class="empty-state" style="padding:28px"><h3>没有匹配用户</h3></div>';
+    }
+
+    function syncEnterpriseAccountRow(checkbox) {
+      const row = checkbox.closest('.enterprise-account-row');
+      const input = row.querySelector('.enterprise-account-code');
+      input.disabled = !checkbox.checked;
+      if (checkbox.checked && !input.value) input.focus();
+      const count = document.querySelectorAll('#enterpriseAccountList .enterprise-account-check:checked').length;
+      document.getElementById('enterpriseAccountCount').textContent = `${count} / 200 个有效账号`;
+    }
+
+    async function saveEnterpriseAccounts() {
+      if (!currentEnterprise) return;
+      const accounts = Array.from(document.querySelectorAll('#enterpriseAccountList .enterprise-account-check:checked')).map(checkbox => {
+        const row = checkbox.closest('.enterprise-account-row');
+        return {
+          user_id: row.dataset.userId,
+          account_code: row.querySelector('.enterprise-account-code').value.trim(),
+          status: 'active'
+        };
+      });
+      if (accounts.some(account => !account.account_code)) return toast('每个已选账号都要填写客户侧代码', 'error');
+      if (accounts.length > 200) return toast('最多选择 200 个有效账号', 'error');
+      try {
+        const r = await fetch(`/admin/enterprise-clients/${encodeURIComponent(currentEnterprise.id)}/accounts`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+          body: JSON.stringify({ accounts })
+        });
+        const data = await r.json();
+        if (!r.ok) return toast(enterpriseErrorMessage(data, '保存账号范围失败'), 'error');
+        currentEnterprise = data;
+        renderEnterpriseEditor();
+        await loadEnterpriseAccountCandidates();
+        loadEnterprises();
+        toast('账号范围已更新', 'success');
+      } catch (error) {
+        console.error(error);
+        toast('保存账号范围失败', 'error');
+      }
+    }
+
+    function dateTimeLocalValue(value) {
+      const date = utcDate(value);
+      if (!date || Number.isNaN(date.getTime())) return '';
+      const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+      return local.toISOString().slice(0, 16);
+    }
+
+    function resetEnterpriseKeyForm() {
+      document.getElementById('enterpriseKeyId').value = '';
+      document.getElementById('enterpriseKeyName').value = '';
+      document.getElementById('enterpriseKeyExpiry').value = '';
+      document.getElementById('enterpriseKeyAllowlist').value = '';
+      document.getElementById('enterpriseKeySaveButton').textContent = '创建密钥';
+    }
+
+    function editEnterpriseKey(button) {
+      const key = (currentEnterprise?.keys || []).find(item => item.id === button.dataset.keyId);
+      if (!key) return;
+      document.getElementById('enterpriseKeyId').value = key.id;
+      document.getElementById('enterpriseKeyName').value = key.name || '';
+      document.getElementById('enterpriseKeyExpiry').value = dateTimeLocalValue(key.expires_at);
+      document.getElementById('enterpriseKeyAllowlist').value = (key.ip_allowlist || []).join('\n');
+      document.getElementById('enterpriseKeySaveButton').textContent = '保存密钥设置';
+    }
+
+    function renderEnterpriseKeys() {
+      const body = document.getElementById('enterpriseKeysBody');
+      const keys = currentEnterprise?.keys || [];
+      body.innerHTML = keys.length ? keys.map(key => `
+        <tr>
+          <td>${escapeHtml(key.name)}</td>
+          <td class="text-mono text-sm">${escapeHtml(key.fingerprint)}</td>
+          <td><span class="badge ${key.status === 'active' ? 'badge-success' : 'badge-error'}">${key.status === 'active' ? '有效' : '已吊销'}</span></td>
+          <td class="text-sm text-muted">${formatDateFull(key.expires_at)}</td>
+          <td class="text-sm text-muted">${formatDateFull(key.last_used_at)}</td>
+          <td><div class="actions">
+            <button class="btn btn-sm btn-secondary" data-key-id="${escapeHtml(key.id)}" onclick="editEnterpriseKey(this)">编辑</button>
+            ${key.status === 'active' ? `<button class="btn btn-sm btn-danger" data-key-id="${escapeHtml(key.id)}" onclick="revokeEnterpriseKey(this)">吊销</button>` : ''}
+          </div></td>
+        </tr>
+      `).join('') : '<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--text-tertiary)">暂无查询密钥</td></tr>';
+    }
+
+    async function reloadCurrentEnterprise() {
+      if (!currentEnterprise) return;
+      const r = await fetch(`/admin/enterprise-clients/${encodeURIComponent(currentEnterprise.id)}`, { headers: adminHeaders() });
+      const data = await r.json();
+      if (!r.ok) throw new Error(enterpriseErrorMessage(data, '刷新企业失败'));
+      currentEnterprise = data;
+      renderEnterpriseEditor();
+    }
+
+    async function saveEnterpriseKey() {
+      if (!currentEnterprise) return;
+      const keyId = document.getElementById('enterpriseKeyId').value;
+      const name = document.getElementById('enterpriseKeyName').value.trim();
+      if (!name) return toast('请填写密钥名称', 'error');
+      const expiryValue = document.getElementById('enterpriseKeyExpiry').value;
+      const ip_allowlist = document.getElementById('enterpriseKeyAllowlist').value
+        .split(/[\n,]/).map(item => item.trim()).filter(Boolean);
+      const payload = {
+        name,
+        expires_at: expiryValue ? new Date(expiryValue).toISOString() : null,
+        ip_allowlist
+      };
+      const url = keyId
+        ? `/admin/enterprise-keys/${encodeURIComponent(keyId)}`
+        : `/admin/enterprise-clients/${encodeURIComponent(currentEnterprise.id)}/keys`;
+      try {
+        const r = await fetch(url, {
+          method: keyId ? 'PATCH' : 'POST',
+          headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+          body: JSON.stringify(payload)
+        });
+        const data = await r.json();
+        if (!r.ok) return toast(enterpriseErrorMessage(data, '保存密钥失败'), 'error');
+        if (!keyId) {
+          document.getElementById('enterpriseSecretValue').textContent = data.api_key || '';
+          openModal('enterpriseSecretModal');
+        }
+        resetEnterpriseKeyForm();
+        await reloadCurrentEnterprise();
+        loadEnterprises();
+        toast(keyId ? '密钥设置已保存' : '密钥已创建', 'success');
+      } catch (error) {
+        console.error(error);
+        toast(error.message || '保存密钥失败', 'error');
+      }
+    }
+
+    async function revokeEnterpriseKey(button) {
+      const keyId = button.dataset.keyId;
+      if (!keyId || !confirm('确认吊销这把企业查询密钥？吊销后无法恢复。')) return;
+      try {
+        const r = await fetch(`/admin/enterprise-keys/${encodeURIComponent(keyId)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+          body: JSON.stringify({ status: 'revoked' })
+        });
+        const data = await r.json();
+        if (!r.ok) return toast(enterpriseErrorMessage(data, '吊销失败'), 'error');
+        resetEnterpriseKeyForm();
+        await reloadCurrentEnterprise();
+        loadEnterprises();
+        toast('密钥已吊销', 'success');
+      } catch (error) {
+        console.error(error);
+        toast('吊销失败', 'error');
+      }
+    }
+
+    function closeEnterpriseSecretModal() {
+      document.getElementById('enterpriseSecretValue').textContent = '';
+      closeModal('enterpriseSecretModal');
     }
 
     // ==================== Users ====================

@@ -7,6 +7,30 @@ Entries are workspace records, not authoritative runtime decisions.
 
 | Date | Kind | Path | Title |
 | --- | --- | --- | --- |
+| 2026-07-28 | plan | docs/aegis/plans/2026-07-28-enterprise-reporting-api.md | Enterprise Reporting API Implementation Plan |
+| 2026-07-28 | spec | docs/aegis/specs/2026-07-28-enterprise-reporting-api-design.md | Enterprise Reporting API And Admin Management |
+| 2026-07-28 | work | docs/aegis/work/2026-07-28-enterprise-reporting-api/10-intent.md | Enterprise Reporting API intent |
+| 2026-07-28 | work | docs/aegis/work/2026-07-28-enterprise-reporting-api/20-checkpoint.md | Enterprise Reporting API checkpoint |
+| 2026-07-28 | work | docs/aegis/work/2026-07-28-enterprise-reporting-api/90-evidence.md | Enterprise Reporting API evidence |
+| 2026-07-28 | work | docs/aegis/work/2026-07-28-enterprise-reporting-api/99-reflection.md | Enterprise Reporting API reflection |
+| 2026-07-28 | artifact | docs/aegis/work/2026-07-28-enterprise-reporting-api/task-intent-draft.json | Enterprise Reporting API task intent draft |
+| 2026-07-28 | artifact | docs/aegis/work/2026-07-28-enterprise-reporting-api/baseline-read-set-hint.json | Enterprise Reporting API baseline read-set hint |
+| 2026-07-28 | artifact | docs/aegis/work/2026-07-28-enterprise-reporting-api/baseline-usage-draft.json | Enterprise Reporting API baseline usage draft |
+| 2026-07-28 | artifact | docs/aegis/work/2026-07-28-enterprise-reporting-api/impact-statement-draft.json | Enterprise Reporting API impact statement draft |
+| 2026-07-28 | artifact | docs/aegis/work/2026-07-28-enterprise-reporting-api/todo-checkpoint-draft.json | Enterprise Reporting API todo checkpoint draft |
+| 2026-07-28 | artifact | docs/aegis/work/2026-07-28-enterprise-reporting-api/drift-check-draft.json | Enterprise Reporting API drift check draft |
+| 2026-07-28 | artifact | docs/aegis/work/2026-07-28-enterprise-reporting-api/evidence-bundle-draft-baseline-suite.json | 2026-07-28-enterprise-reporting-api evidence baseline-suite |
+| 2026-07-28 | artifact | docs/aegis/work/2026-07-28-enterprise-reporting-api/evidence-bundle-draft-persistence-import.json | 2026-07-28-enterprise-reporting-api evidence persistence-import |
+| 2026-07-28 | artifact | docs/aegis/work/2026-07-28-enterprise-reporting-api/resume-state-hint.json | 2026-07-28-enterprise-reporting-api resume state hint |
+| 2026-07-28 | artifact | docs/aegis/work/2026-07-28-enterprise-reporting-api/evidence-bundle-draft-focused-regression.json | 2026-07-28-enterprise-reporting-api evidence focused-regression |
+| 2026-07-28 | artifact | docs/aegis/work/2026-07-28-enterprise-reporting-api/evidence-bundle-draft-admin-ui-browser.json | 2026-07-28-enterprise-reporting-api evidence admin-ui-browser |
+| 2026-07-28 | artifact | docs/aegis/work/2026-07-28-enterprise-reporting-api/evidence-bundle-draft-docs-contract.json | 2026-07-28-enterprise-reporting-api evidence docs-contract |
+| 2026-07-28 | artifact | docs/aegis/work/2026-07-28-enterprise-reporting-api/evidence-bundle-draft-final-focused-regression.json | 2026-07-28-enterprise-reporting-api evidence final-focused-regression |
+| 2026-07-28 | artifact | docs/aegis/work/2026-07-28-enterprise-reporting-api/evidence-bundle-draft-final-full-suite.json | 2026-07-28-enterprise-reporting-api evidence final-full-suite |
+| 2026-07-28 | artifact | docs/aegis/work/2026-07-28-enterprise-reporting-api/evidence-bundle-draft-final-admin-ui-mobile.json | 2026-07-28-enterprise-reporting-api evidence final-admin-ui-mobile |
+| 2026-07-28 | artifact | docs/aegis/work/2026-07-28-enterprise-reporting-api/evidence-bundle-draft-final-docs-static-security.json | 2026-07-28-enterprise-reporting-api evidence final-docs-static-security |
+| 2026-07-28 | artifact | docs/aegis/work/2026-07-28-enterprise-reporting-api/gate-input-pack.json | 2026-07-28-enterprise-reporting-api gate input pack |
+| 2026-07-28 | work | docs/aegis/work/2026-07-28-enterprise-reporting-api/proof-bundle.md | 2026-07-28-enterprise-reporting-api proof bundle |
 | 2026-05-13 | plan | docs/aegis/plans/2026-05-13-operating-dashboard-v2.md | CoinCoin Operating Dashboard v2 |
 | 2026-05-15 | work | docs/aegis/work/2026-05-15-rolling-24h-dashboard/10-intent.md | CoinCoin dashboard rolling 24h reporting intent |
 | 2026-05-15 | work | docs/aegis/work/2026-05-15-rolling-24h-dashboard/20-checkpoint.md | CoinCoin dashboard rolling 24h reporting checkpoint |

@@ -72,6 +72,67 @@ class ApiKey(Base):
     user = relationship("User", back_populates="keys")
 
 
+class EnterpriseClient(Base):
+    __tablename__ = "coincoin_enterprise_clients"
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'disabled')", name="ck_enterprise_client_status"),
+        CheckConstraint(
+            "low_balance_threshold_cents >= 0",
+            name="ck_enterprise_client_threshold_nonnegative",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    name: Mapped[str] = mapped_column(String(128))
+    code: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    status: Mapped[str] = mapped_column(String(16), default="active", index=True)
+    low_balance_threshold_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class EnterpriseAccountGrant(Base):
+    __tablename__ = "coincoin_enterprise_account_grants"
+    __table_args__ = (
+        UniqueConstraint("enterprise_id", "user_id", name="uq_enterprise_grant_user"),
+        UniqueConstraint("enterprise_id", "account_code", name="uq_enterprise_grant_account_code"),
+        CheckConstraint("status IN ('active', 'disabled')", name="ck_enterprise_grant_status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    enterprise_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("coincoin_enterprise_clients.id"), index=True
+    )
+    user_id: Mapped[str] = mapped_column(String(32), ForeignKey("coincoin_users.id"), index=True)
+    account_code: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(16), default="active", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class EnterpriseAccessKey(Base):
+    __tablename__ = "coincoin_enterprise_access_keys"
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'revoked')", name="ck_enterprise_key_status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    enterprise_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("coincoin_enterprise_clients.id"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(100), default="")
+    key_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    status: Mapped[str] = mapped_column(String(16), default="active", index=True)
+    ip_allowlist: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class UsageDaily(Base):
     __tablename__ = "coincoin_usage_daily"
 
