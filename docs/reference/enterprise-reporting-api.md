@@ -14,6 +14,9 @@ usage for the CoinCoin accounts explicitly granted by an administrator. It is
 read-only and does not authorize model calls, recharge, user administration,
 or request-log access.
 
+For a copy-paste production walkthrough and polling-based balance alerts, see
+the [Chinese enterprise reporting usage guide](../guides/enterprise-reporting-api.md).
+
 ## Authentication
 
 Send the reporting key only as a Bearer credential:
@@ -147,3 +150,8 @@ raw-log field.
 
 Authentication error bodies intentionally do not identify which credential
 check failed.
+
+## Related
+
+- [企业余额与用量查询 API 使用指南](../guides/enterprise-reporting-api.md)
+- [Enterprise Reporting Operations](../operations/enterprise-reporting.md)
