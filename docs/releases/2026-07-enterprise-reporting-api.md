@@ -18,6 +18,8 @@ enterprise or credential has been created by this change.
   reporting credentials.
 - Administrator APIs and an **Enterprise API** admin page for enterprise,
   account-scope, and key lifecycle management.
+- Optional account labels that default to the explicitly authorized user's
+  username and remain persisted for stable reporting.
 - `GET /v1/enterprise/balances` and
   `GET /v1/enterprise/usage-summary?days=7`.
 - Bearer-only reporting authentication, per-key limits, optional IP allowlists,

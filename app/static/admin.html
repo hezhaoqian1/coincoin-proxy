@@ -3890,10 +3890,11 @@
         const grant = selected.get(user.id);
         const displayName = user.username || user.external_id || user.email || user.id;
         const secondary = [user.email, user.external_id, user.id].find(value => value && value !== displayName) || '';
-        return `<label class="enterprise-account-row" data-user-id="${escapeHtml(user.id)}">
+        const accountCodePlaceholder = user.username ? `留空默认使用 ${user.username}` : '无用户名，请填写客户侧代码';
+        return `<label class="enterprise-account-row" data-user-id="${escapeHtml(user.id)}" data-username="${escapeHtml(user.username || '')}">
           <input type="checkbox" class="enterprise-account-check" ${grant?.status === 'active' ? 'checked' : ''} onchange="syncEnterpriseAccountRow(this)" />
           <span class="user-info"><strong>${escapeHtml(displayName)}</strong><span>${escapeHtml(secondary)}</span></span>
-          <input class="form-input enterprise-account-code text-mono" maxlength="64" placeholder="account-code" value="${escapeHtml(grant?.account_code || '')}" ${grant?.status === 'active' ? '' : 'disabled'} />
+          <input class="form-input enterprise-account-code text-mono" maxlength="64" placeholder="${escapeHtml(accountCodePlaceholder)}" value="${escapeHtml(grant?.account_code || '')}" ${grant?.status === 'active' ? '' : 'disabled'} />
         </label>`;
       }).join('') : '<div class="empty-state" style="padding:28px"><h3>没有匹配用户</h3></div>';
     }
@@ -3902,7 +3903,7 @@
       const row = checkbox.closest('.enterprise-account-row');
       const input = row.querySelector('.enterprise-account-code');
       input.disabled = !checkbox.checked;
-      if (checkbox.checked && !input.value) input.focus();
+      if (checkbox.checked && !input.value && !row.dataset.username) input.focus();
       const count = document.querySelectorAll('#enterpriseAccountList .enterprise-account-check:checked').length;
       document.getElementById('enterpriseAccountCount').textContent = `${count} / 200 个有效账号`;
     }
@@ -3917,7 +3918,6 @@
           status: 'active'
         };
       });
-      if (accounts.some(account => !account.account_code)) return toast('每个已选账号都要填写客户侧代码', 'error');
       if (accounts.length > 200) return toast('最多选择 200 个有效账号', 'error');
       try {
         const r = await fetch(`/admin/enterprise-clients/${encodeURIComponent(currentEnterprise.id)}/accounts`, {

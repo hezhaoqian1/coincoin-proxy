@@ -28,6 +28,15 @@ once when an administrator creates it. CoinCoin stores only a peppered hash.
 Successful responses include `Cache-Control: no-store`. Do not put the key in
 a URL, query string, source repository, ticket, or application log.
 
+## Account Identity
+
+Every result row has an `account_code` chosen by the administrator. When the
+administrator leaves it blank, CoinCoin saves the authorized user's current
+username as the code. This intentionally makes that username visible to the
+enterprise. Changing the username alone does not update a previously saved
+value, and the response still omits separate username, email, and internal
+user-ID fields.
+
 ## Balances
 
 ```http
@@ -122,8 +131,9 @@ Example response:
 ```
 
 The server resolves the enterprise's active account grants before querying
-request logs. The contract has no `user_id`, username, API-key ID, arbitrary
-date range, model-routing, channel, provider, request payload, or raw-log field.
+request logs. The contract has no `user_id`, separate username, API-key ID,
+arbitrary date range, model-routing, channel, provider, request payload, or
+raw-log field.
 
 ## Errors
 

@@ -104,14 +104,17 @@ invalidates all of its reporting keys immediately.
 | `id` | Primary key with `eag_` prefix. |
 | `enterprise_id` | Owning enterprise. |
 | `user_id` | CoinCoin user visible to the enterprise. |
-| `account_code` | Customer-facing stable label, unique inside the enterprise. |
+| `account_code` | Customer-facing stable label, unique inside the enterprise; defaults to the authorized user's username when omitted. |
 | `status` | `active` or `disabled`. |
 | `created_at`, `updated_at` | Audit timestamps. |
 
 `(enterprise_id, user_id)` and `(enterprise_id, account_code)` are unique.
 A user may be deliberately linked to more than one enterprise, but only through
 separate explicit grants. Public responses expose `account_code`, never the
-internal user ID, username, or email.
+internal user ID, email, or a separate username field. An administrator may
+intentionally expose the explicitly authorized user's username by leaving
+`account_code` blank. The resolved value is persisted and does not track later
+username changes.
 
 The admin account editor replaces the complete grant set in one transaction.
 Removing a grant changes all enterprise keys immediately; there is no
@@ -394,8 +397,9 @@ Add a focused `tests/test_enterprise_reporting.py` suite covering:
 8. negative balances and total calculation remain correct;
 9. usage aggregation includes only active grants and the requested rolling
    window;
-10. responses omit usernames, emails, internal user IDs, API-key IDs, routes,
-   channels, providers, and request payloads;
+10. responses omit separate username, email, internal user-ID, API-key-ID,
+   route, channel, provider, and request-payload fields; `account_code` may
+   intentionally equal an authorized user's username;
 11. admin CRUD, duplicate validation, key rotation, and revoke behavior;
 12. trusted-proxy handling rejects spoofed forwarding headers from untrusted
     peers;

@@ -157,6 +157,15 @@ class EnterpriseSchemaTests(unittest.TestCase):
         )
         self.assertEqual(len(payload.accounts), 201)
 
+    def test_account_code_is_optional_and_accepts_username_characters(self):
+        generated = enterprise.EnterpriseGrantInput(user_id="usr_one")
+        explicit = enterprise.EnterpriseGrantInput(
+            user_id="usr_two",
+            account_code="Operator.One",
+        )
+        self.assertEqual(generated.account_code, "")
+        self.assertEqual(explicit.account_code, "Operator.One")
+
     def test_ip_allowlist_is_normalized_and_limited(self):
         payload = enterprise.EnterpriseKeyCreateRequest(
             name="Production",
@@ -209,6 +218,8 @@ class EnterpriseAdminStaticTests(unittest.TestCase):
             self.assertIn(endpoint, self.html)
         self.assertIn("enterprise-account-check:checked", self.html)
         self.assertIn("account_code", self.html)
+        self.assertIn("留空默认使用", self.html)
+        self.assertNotIn("每个已选账号都要填写客户侧代码", self.html)
 
     def test_one_time_secret_is_cleared_and_never_persisted(self):
         self.assertIn("data.api_key || ''", self.html)
@@ -551,7 +562,7 @@ class EnterpriseAdminTests(unittest.IsolatedAsyncioTestCase):
         returned_grant = make_grant("usr_one", "primary")
         db = FakeDB(
             FakeResult(values=[ent]),
-            FakeResult(values=["usr_one"]),
+            FakeResult(values=[user]),
             FakeResult(),
             FakeResult(rows=[(returned_grant, user)]),
             FakeResult(values=[]),
@@ -572,6 +583,97 @@ class EnterpriseAdminTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("DELETE FROM coincoin_enterprise_account_grants", str(db.statements[2]))
         self.assertEqual(result["accounts"][0]["account_code"], "primary")
         self.assertEqual(result["keys"], [])
+
+    async def test_blank_account_code_defaults_to_authorized_username(self):
+        ent = make_enterprise()
+        user = User(id="usr_one", username="Operator.One", status="active")
+        returned_grant = make_grant("usr_one", "Operator.One")
+        db = FakeDB(
+            FakeResult(values=[ent]),
+            FakeResult(values=[user]),
+            FakeResult(),
+            FakeResult(rows=[(returned_grant, user)]),
+            FakeResult(values=[]),
+        )
+        payload = enterprise.EnterpriseGrantReplaceRequest(
+            accounts=[{"user_id": "usr_one"}]
+        )
+
+        with patch.object(enterprise, "generate_id", return_value="eag_created"):
+            result = await enterprise.replace_enterprise_accounts(ent.id, payload, db)
+
+        self.assertEqual(db.added[0].account_code, "Operator.One")
+        self.assertEqual(result["accounts"][0]["account_code"], "Operator.One")
+
+    async def test_blank_account_code_requires_username_before_mutation(self):
+        ent = make_enterprise()
+        user = User(id="usr_one", username=None, external_id="external-one", status="active")
+        db = FakeDB(FakeResult(values=[ent]), FakeResult(values=[user]))
+        payload = enterprise.EnterpriseGrantReplaceRequest(
+            accounts=[{"user_id": "usr_one"}]
+        )
+
+        with self.assertRaises(Exception) as raised:
+            await enterprise.replace_enterprise_accounts(ent.id, payload, db)
+
+        self.assertEqual(raised.exception.status_code, 422)
+        self.assertEqual(raised.exception.detail["user_id"], "usr_one")
+        self.assertEqual(db.commit_count, 0)
+        self.assertEqual(len(db.statements), 2)
+
+    async def test_generated_and_explicit_account_code_conflict_is_atomic(self):
+        ent = make_enterprise()
+        users = [
+            User(id="usr_one", username="shared-code", status="active"),
+            User(id="usr_two", username="operator-two", status="active"),
+        ]
+        db = FakeDB(FakeResult(values=[ent]), FakeResult(values=users))
+        payload = enterprise.EnterpriseGrantReplaceRequest(
+            accounts=[
+                {"user_id": "usr_one"},
+                {"user_id": "usr_two", "account_code": "shared-code"},
+            ]
+        )
+
+        with self.assertRaises(Exception) as raised:
+            await enterprise.replace_enterprise_accounts(ent.id, payload, db)
+
+        self.assertEqual(raised.exception.status_code, 422)
+        self.assertEqual(raised.exception.detail, "duplicate account_code")
+        self.assertEqual(db.commit_count, 0)
+        self.assertEqual(len(db.statements), 2)
+
+    async def test_generated_account_code_rejects_overlong_username_before_mutation(self):
+        ent = make_enterprise()
+        user = User(id="usr_one", username="a" * 65, status="active")
+        db = FakeDB(FakeResult(values=[ent]), FakeResult(values=[user]))
+        payload = enterprise.EnterpriseGrantReplaceRequest(
+            accounts=[{"user_id": "usr_one"}]
+        )
+
+        with self.assertRaises(Exception) as raised:
+            await enterprise.replace_enterprise_accounts(ent.id, payload, db)
+
+        self.assertEqual(raised.exception.status_code, 422)
+        self.assertIn("exceeds 64 characters", raised.exception.detail["account_code"])
+        self.assertEqual(db.commit_count, 0)
+        self.assertEqual(len(db.statements), 2)
+
+    async def test_generated_account_code_rejects_control_characters_before_mutation(self):
+        ent = make_enterprise()
+        user = User(id="usr_one", username="operator\nname", status="active")
+        db = FakeDB(FakeResult(values=[ent]), FakeResult(values=[user]))
+        payload = enterprise.EnterpriseGrantReplaceRequest(
+            accounts=[{"user_id": "usr_one"}]
+        )
+
+        with self.assertRaises(Exception) as raised:
+            await enterprise.replace_enterprise_accounts(ent.id, payload, db)
+
+        self.assertEqual(raised.exception.status_code, 422)
+        self.assertIn("control characters", raised.exception.detail["account_code"])
+        self.assertEqual(db.commit_count, 0)
+        self.assertEqual(len(db.statements), 2)
 
     async def test_grant_replacement_rejects_duplicates_and_over_200_active_before_mutation(self):
         ent = make_enterprise()
