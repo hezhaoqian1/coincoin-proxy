@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "candidateDocs": [
+    "docs/aegis/specs/2026-07-28-enterprise-reporting-api-design.md",
+    "docs/aegis/plans/2026-07-28-enterprise-reporting-api.md",
+    "app/security.py",
+    "app/billing.py",
+    "app/usage_buffer.py",
+    "app/models.py",
+    "app/main.py",
+    "app/static/admin.html"
+  ],
+  "whyRelevant": "Approved contract and canonical auth, billing, persistence, router, and admin UI owners.",
+  "missingAuthority": []
+}

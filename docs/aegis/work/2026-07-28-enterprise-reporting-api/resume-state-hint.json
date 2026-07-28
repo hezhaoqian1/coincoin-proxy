@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "2026-07-28-enterprise-reporting-api",
+  "lastCheckpointRef": "docs/aegis/work/2026-07-28-enterprise-reporting-api/todo-checkpoint-draft.json",
+  "resumeInstruction": "If resumed, inspect git status and current diff before any commit or deployment step.",
+  "knownPartialWork": [
+    "Added persistence, dedicated enterprise auth, admin APIs, read-only reporting APIs, admin UI, documentation, and 32 focused tests.",
+    "Passed 112 affected regression tests and confirmed the full suite has only the three recorded baseline video_jobs errors.",
+    "Verified mobile table scrolling, one-time secret handling, metadata, imports, syntax, and diff hygiene."
+  ],
+  "mustReadBeforeContinuing": [
+    "docs/aegis/work/2026-07-28-enterprise-reporting-api/10-intent.md",
+    "docs/aegis/work/2026-07-28-enterprise-reporting-api/20-checkpoint.md",
+    "docs/aegis/work/2026-07-28-enterprise-reporting-api/todo-checkpoint-draft.json"
+  ],
+  "unsafeToAssume": [
+    "Do not assume deployment, production schema creation, customer grants, or production key issuance occurred."
+  ]
+}

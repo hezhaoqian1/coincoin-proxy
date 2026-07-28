@@ -269,6 +269,8 @@ curl http://127.0.0.1:8000/v1/image-jobs/<job_id> \
 | `/v1/image-jobs/{job_id}` | `GET` | Async job status and result |
 | `/v1/balance` | `GET` | User balance and aggregate usage |
 | `/v1/usage` | `GET` | Paginated request history |
+| `/v1/enterprise/balances` | `GET` | Authorized enterprise account balances |
+| `/v1/enterprise/usage-summary` | `GET` | Authorized enterprise aggregate usage |
 
 ## Model Routing
 
@@ -330,6 +332,10 @@ npm run build
 ```
 
 ## Documentation
+
+- [Enterprise Reporting API](./docs/reference/enterprise-reporting-api.md)
+- [Enterprise Reporting Operations](./docs/operations/enterprise-reporting.md)
+- [Enterprise Reporting Release Note](./docs/releases/2026-07-enterprise-reporting-api.md)
 
 - [简体中文 README](./README.zh-CN.md)
 - [Environment example](./env.example)

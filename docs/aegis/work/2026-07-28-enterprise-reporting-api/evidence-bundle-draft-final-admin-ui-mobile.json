@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "artifactKey": "final-admin-ui-mobile",
+  "type": "screenshot",
+  "source": "/tmp/coincoin-enterprise-table-mobile-final.png",
+  "summary": "At 390x844, body width stayed 390px, the 356px table container scrolled its 760px table by 404px, and the rightmost action header was fully visible.",
+  "verifier": "gstack-browse"
+}

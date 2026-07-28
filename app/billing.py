@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .credit_wallet import debit_credit_batches, list_spendable_credit_batches
-from .models import BillingLedgerEntry, TrafficPackBalance, User, UserSubscription
+from .models import BillingLedgerEntry, CreditBalance, TrafficPackBalance, User, UserSubscription
 from .security import generate_id
 
 
@@ -383,6 +383,87 @@ async def get_available_balance_cents(
         "available_cents": available,
         "changed": changed,
     }
+
+
+async def get_available_balances_cents(
+    db: AsyncSession,
+    users: list[User],
+    *,
+    pending_cost_cents_by_user: dict[str, int] | None = None,
+    now: datetime | None = None,
+) -> dict[str, dict]:
+    """Load available balances for multiple users without per-user query amplification."""
+    current = now or utcnow()
+    user_ids = list(dict.fromkeys(user.id for user in users))
+    if not user_ids:
+        return {}
+
+    subscriptions = (
+        await db.execute(select(UserSubscription).where(UserSubscription.user_id.in_(user_ids)))
+    ).scalars().all()
+    traffic_packs = (
+        await db.execute(
+            select(TrafficPackBalance)
+            .where(
+                TrafficPackBalance.user_id.in_(user_ids),
+                TrafficPackBalance.status == "active",
+                TrafficPackBalance.remaining_cents > 0,
+                TrafficPackBalance.expires_at > current,
+            )
+            .order_by(
+                TrafficPackBalance.user_id.asc(),
+                TrafficPackBalance.expires_at.asc(),
+                TrafficPackBalance.created_at.asc(),
+                TrafficPackBalance.id.asc(),
+            )
+        )
+    ).scalars().all()
+    credit_batches = (
+        await db.execute(
+            select(CreditBalance)
+            .where(
+                CreditBalance.user_id.in_(user_ids),
+                CreditBalance.status == "active",
+                CreditBalance.remaining_cents > 0,
+            )
+            .order_by(CreditBalance.user_id.asc(), CreditBalance.created_at.asc(), CreditBalance.id.asc())
+        )
+    ).scalars().all()
+    subscription_by_user = {subscription.user_id: subscription for subscription in subscriptions}
+    packs_by_user: dict[str, list[TrafficPackBalance]] = {}
+    for pack in traffic_packs:
+        packs_by_user.setdefault(pack.user_id, []).append(pack)
+    credits_by_user: dict[str, list[CreditBalance]] = {}
+    for batch in credit_batches:
+        credits_by_user.setdefault(batch.user_id, []).append(batch)
+
+    pending_costs = pending_cost_cents_by_user or {}
+    snapshots = {}
+    for user in users:
+        sub = subscription_by_user.get(user.id)
+        changed = normalize_subscription_period(sub, current)
+        packs = packs_by_user.get(user.id, [])
+        batches = credits_by_user.get(user.id, [])
+        subscription_remaining = available_subscription_cents(sub, current)
+        traffic_remaining = sum(max(0, int(pack.remaining_cents or 0)) for pack in packs)
+        credit_remaining = sum(max(0, int(batch.remaining_cents or 0)) for batch in batches)
+        legacy_balance = int(user.balance or 0)
+        pending_cost = int(pending_costs.get(user.id, 0) or 0)
+        snapshots[user.id] = {
+            "subscription": sub,
+            "traffic_packs": packs,
+            "subscription_remaining_cents": subscription_remaining,
+            "traffic_pack_remaining_cents": traffic_remaining,
+            "credit_cents": credit_remaining,
+            "legacy_balance_cents": legacy_balance,
+            "available_cents": subscription_remaining
+            + traffic_remaining
+            + credit_remaining
+            + legacy_balance
+            - pending_cost,
+            "changed": changed,
+        }
+    return snapshots
 
 
 async def debit_usage_cents(

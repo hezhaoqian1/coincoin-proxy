@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "artifactKey": "final-focused-regression",
+  "type": "test",
+  "source": "python -m unittest tests.test_enterprise_reporting tests.test_proxy_auth_cache tests.test_admin_usage_fields",
+  "summary": "Fresh affected regression: 112 tests passed, including 32 enterprise reporting tests, model-auth rejection, and all management API success paths.",
+  "verifier": "unittest"
+}

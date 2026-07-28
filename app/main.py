@@ -41,6 +41,7 @@ from .payment import router as payment_router
 from .config import settings
 from .db import Base, engine
 from .fallback_alerts import shutdown_fallback_alerts
+from .enterprise_reporting import admin_router as enterprise_admin_router, public_router as enterprise_router
 from .model_alias_overrides import get_model_alias_override_db_state, refresh_model_alias_registry_from_db
 from .model_pricing_overrides import get_model_pricing_override_db_state, refresh_model_pricing_registry_from_db
 from .provider_channels import get_provider_channel_db_state, refresh_provider_channel_router_from_db
@@ -1143,6 +1144,8 @@ app.include_router(auth_router)
 app.include_router(stations_router)
 app.include_router(admin_stations_router)
 app.include_router(monitoring_ops_router)
+app.include_router(enterprise_router)
+app.include_router(enterprise_admin_router)
 
 # Some OpenAI-compatible clients use `/openai/v1` as their base URL and still
 # expect discovery/chat/embedding routes under that prefix.
