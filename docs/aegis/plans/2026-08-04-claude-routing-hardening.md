@@ -68,7 +68,7 @@ admin presentation, focused tests, and operator documentation. Decision: code-ch
   add only verified 86 aliases, and re-query the protected admin APIs.
 - [x] Run direct upstream and CoinCoin/Claude Code probes and audit all active route
   identifiers against each upstream model catalog.
-- [ ] Review, push, merge, and verify the deployed service.
+- [x] Review, push, merge, and verify the deployed service.
 
 ## Verification Status
 
@@ -80,6 +80,15 @@ admin presentation, focused tests, and operator documentation. Decision: code-ch
   JavaScript syntax, Markdown link checks, secret scans, and `git diff --check` pass.
 - The repository baseline does not track `tests/test_docs_check.py` or
   `scripts/check_docs.py`; their documented commands cannot run on this branch.
+- Pull request 31 merged as `9b09174`; Railway then served the new route-audit
+  response while `/health` remained HTTP 200.
+- Post-deploy route audits checked 24 Sixoner, 22 86, and 9 Zhangyu active routes
+  with zero unsupported upstream models. A CoinCoin Haiku request returned HTTP 200
+  with `OK` in 1.83 seconds.
+- Post-deploy representative probes returned HTTP 200 in 2.14 seconds for Sixoner
+  Sonnet and 1.68 seconds for 86 Opus. Zhangyu Fable timed out again after 30
+  seconds, confirming it should remain the third fallback rather than be treated as
+  a healthy primary or secondary channel.
 
 ## Risks And Rollback
 
