@@ -46,8 +46,8 @@ LEGACY_PUBLIC_TEXT_PRICES = {
     "gpt-5.4-mini": (75, 450),
     "gpt-5.6": (500, 3000),
     "gpt-5.6-sol": (500, 3000),
-    "gpt-5.6-terra": (250, 1500),
-    "gpt-5.6-luna": (100, 600),
+    "gpt-5.6-terra": (200, 1200),
+    "gpt-5.6-luna": (20, 120),
     "gpt-5-codex": (175, 1400),
     "gpt-5-codex-mini": (75, 450),
 }
@@ -682,9 +682,9 @@ class ModelCatalogTests(unittest.TestCase):
             tools=None,
         )
 
-        self.assertEqual(resolved.public_model.price_input_per_million, 250)
+        self.assertEqual(resolved.public_model.price_input_per_million, 200)
         self.assertEqual(resolved.public_model.cache_creation_multiplier, 1.25)
-        self.assertEqual(resolved.public_model.effective_cache_creation_input_per_million, 312.5)
+        self.assertEqual(resolved.public_model.effective_cache_creation_input_per_million, 250.0)
 
     def test_checked_in_claude_opus_5_uses_official_model_and_pricing(self) -> None:
         settings.model_catalog_json = ""
