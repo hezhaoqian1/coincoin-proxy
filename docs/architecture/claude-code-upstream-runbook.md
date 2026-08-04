@@ -1,6 +1,6 @@
 # Claude Code Upstream Runbook
 
-Updated: 2026-07-26
+Updated: 2026-08-04
 
 This runbook documents the runtime setup for Claude Code-only upstreams in CoinCoin. It intentionally does not include upstream API keys or admin tokens.
 
@@ -38,12 +38,21 @@ The channel is intended for Claude Code traffic. Ordinary OpenAI-compatible requ
 
 The Claude Code family is exposed through public `claude-*` model ids. Current generation models include:
 
+- `claude-haiku-4.5`
+- `claude-haiku-4-5`
+- `claude-opus-4.5`
+- `claude-opus-4.7`
+- `claude-opus-4.8`
 - `claude-opus-5`
 - `claude-sonnet-4`
-- `claude-sonnet-4-6`
 - `claude-sonnet-4.5`
 - `claude-sonnet-4.6`
 - `claude-sonnet-5`
+
+Model version suffixes are provider model identifiers, not a global Claude naming
+rule. In particular, Sixoner and 86 advertise Haiku 4.5 as
+`claude-haiku-4-5-20251001`. Do not change Sonnet or Opus routes to end in `1001`;
+use each provider's exact advertised identifier.
 
 `claude-opus-5` must use the exact upstream model id and an Anthropic Messages transform:
 
@@ -53,15 +62,88 @@ The Claude Code family is exposed through public `claude-*` model ids. Current g
 - `transform_profile`: `anthropic_messages`
 - `status`: `active`
 
-As of 2026-07-26, upstream model discovery reports `claude-opus-5` on the Sixoner Claude Code and Zhangyu Claude MAX channels. The 86 CLAUDE channel does not advertise it and must not receive an Opus 5 route until a direct smoke test succeeds.
+As of 2026-08-04, the verified non-1M 86 mappings used for fallback are:
+
+| Public model or alias | 86 upstream model |
+| --- | --- |
+| `haiku`, `claude-haiku-4.5`, `claude-haiku-4-5` | `claude-haiku-4-5-20251001` |
+| `sonnet`, `claude-sonnet-4`, `claude-sonnet-4.5`, `claude-sonnet-4.6` | `claude-sonnet-4-6` |
+| `opus`, `opusplan`, `best`, `default` | `claude-opus-4-7` |
+| `claude-opus-4.5` | `claude-opus-4-5-20251101` |
+| `claude-opus-5` | `claude-opus-5` |
+
+Do not add `opus[1m]` or `sonnet[1m]` routes to 86 until a direct 1M-context
+request succeeds. Advertising a base model does not prove support for an extended
+context alias.
 
 Claude public models should remain route-only for Claude Code upstream coverage. Do not silently fall back to GPT-backed Claude aliases for these models.
 
+## Route Order And Concurrency
+
+Claude fallback order must be deterministic:
+
+1. Sixoner Claude Code, effective priority `0`.
+2. 86 CLAUDE, effective priority `1`.
+3. Zhangyu Claude MAX, effective priority `2`.
+
+Route-level `priority_override` values take precedence over the channel priority.
+Leave the override empty when the route should inherit the channel's order. Two
+fallback channels at the same priority are weight-selected, not ordered.
+
+86 currently allows five concurrent requests. The gateway does not reserve a
+separate local semaphore for this provider. When 86 is saturated it can return 429;
+429 is retryable and therefore continues to Zhangyu when that route exists. Keep the
+third route active for busy models and watch the capacity alert category rather than
+assuming five upstream slots equal five CoinCoin users.
+
 ## Runtime Fallback and Failure Records
 
-Both non-streaming and streaming `POST /v1/messages` requests immediately try the next active provider-channel route when the current channel returns `429`, `502`, or `503`, or when the initial upstream connection times out or fails. The retry keeps the public CoinCoin model id and changes only the selected channel and provider model. A stream is never replayed after response events have already been emitted because replaying partial output can duplicate text or tool calls.
+Both non-streaming and streaming `POST /v1/messages` requests immediately try the
+next active provider-channel route when the current channel returns 408, 429, any
+5xx status, or when the initial upstream connection times out or fails. This includes
+Cloudflare 524, which means Cloudflare connected to the origin but did not receive a
+response before its origin timeout. The retry keeps the public CoinCoin model id and
+changes only the selected channel and provider model. A stream is never replayed
+after response events have already been emitted because replaying partial output can
+duplicate text or tool calls.
 
-Every failed upstream attempt is written to `coincoin_request_logs`, including attempts with no token usage. Buffered log rows receive stable ids before the database flush, are retried after transient database failures, and use idempotent inserts so an ambiguous commit cannot create duplicates. Failed attempts have zero token usage and zero retail/wholesale charge. Intermediate failed attempts do not increment aggregate request totals; the final success or terminal failure increments the logical request exactly once. Streaming requests use endpoint `messages:stream`; non-streaming requests use `messages`.
+Do not automatically retry ordinary 400, 404, or 422 responses. A 404 model error is
+usually a bad route identifier and repeating it on unrelated channels can hide a
+configuration mistake. Correct the route using the procedure below.
+
+Every failed upstream attempt is written to `coincoin_request_logs`, including
+attempts with no token usage. A terminal local HTTP connection-pool timeout is also
+logged with status 503, but it does not mark the selected provider unhealthy or enter
+the upstream alert counter because no upstream request was sent. Buffered log rows
+receive stable ids before the database flush, are retried after transient database
+failures, and use idempotent inserts so an ambiguous commit cannot create duplicates.
+Failed attempts have zero token usage and zero retail/wholesale charge. Intermediate
+failed attempts do not increment aggregate request totals; the final success or
+terminal failure increments the logical request exactly once. Streaming requests use
+endpoint `messages:stream`; non-streaming requests use `messages`.
+
+## Route Model Audit And 404 Repair
+
+In the administrator provider-channel list, open **Upstream Models** for a channel.
+CoinCoin compares the complete advertised `/models` response with every active route
+for that channel. The summary reports one of:
+
+- `路由审计通过`: every checked active route model is advertised.
+- `路由警告`: one or more active route model ids are absent; edit or disable each
+  listed route before treating the channel as healthy for that public model.
+- `路由审计不可用`: the upstream model list failed, was empty, or only a single
+  Messages probe succeeded. This is not proof that the routes are invalid.
+
+The audit is advisory and never changes production routes automatically. To repair a
+model 404:
+
+1. Read the failed RequestLog's `channel_id`, public `model`, `provider_model`, and
+   request id.
+2. Open that channel's **Upstream Models** view and confirm the exact advertised id.
+3. Patch the existing route rather than adding a duplicate route at the same priority.
+4. Refresh the router, re-open **Upstream Models**, and require the warning to clear.
+5. Send one direct upstream request and one CoinCoin `/v1/messages` request for the
+   public alias; confirm the successful RequestLog uses the intended channel/model.
 
 Terminal upstream failures return a short CoinCoin error rather than the provider or Cloudflare response body. The response body and `request-id` header include a generated `ccreq_*` id. The same id is stored at the start of `upstream_request_id` in the failed RequestLog so support can trace the client-visible error without exposing the upstream hostname, Cloudflare Ray id, API key, or raw HTML.
 
@@ -69,7 +151,11 @@ Terminal upstream failures return a short CoinCoin error rather than the provide
 
 The gateway counts only failures observed while handling authenticated user `/v1/messages` traffic. Provider discovery, channel monitors, health probes, and admin connection tests call their own upstream paths and do not enter these counters.
 
-Failures are grouped per channel and endpoint into availability (`5xx` and connection errors), capacity (`429`), and authentication (`401`/`403`) categories. The default policy alerts after 5 availability/capacity failures or 3 authentication failures in a rolling 60-second window, then deduplicates that category key for 300 seconds. Configure it with:
+Failures are grouped per channel and endpoint into availability (`408`, `5xx`, and
+connection errors), capacity (`429`), and authentication (`401`/`403`) categories.
+The default policy alerts after 5 availability/capacity failures or 3 authentication
+failures in a rolling 60-second window, then deduplicates that category key for 300
+seconds. Configure it with:
 
 ```bash
 COINCOIN_FALLBACK_ALERT_WEBHOOK_URL=https://oapi.dingtalk.com/robot/send?access_token=...
@@ -150,6 +236,13 @@ Check route status:
 ```bash
 curl -fsS -H "Authorization: Bearer $COINCOIN_ADMIN_TOKEN" \
   "https://clawfather.up.railway.app/admin/model-channel-routes?public_model_id=claude-opus-5"
+```
+
+Audit all active routes against one channel's advertised models:
+
+```bash
+curl -fsS -H "Authorization: Bearer $COINCOIN_ADMIN_TOKEN" \
+  "https://clawfather.up.railway.app/admin/provider-channels/$CHANNEL_ID/upstream-models"
 ```
 
 Check model pricing:
