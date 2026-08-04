@@ -63,7 +63,10 @@ from .usage_buffer import (
 router = APIRouter(prefix="/v1", tags=["anthropic-compat"])
 logger = logging.getLogger("coincoin.anthropic_compat")
 
-_MESSAGES_FALLBACK_STATUSES = {429, 502, 503}
+
+def _is_messages_fallback_status(status_code: int) -> bool:
+    status_code = int(status_code or 0)
+    return status_code in {408, 429} or 500 <= status_code <= 599
 
 
 def _kiro_go_upstream_model(model_id: str) -> str:
@@ -1211,25 +1214,29 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
         reason: str,
         terminal: bool,
         upstream_request_id: str = "",
+        affect_channel_health: bool = True,
+        alert_upstream: bool = True,
     ) -> None:
-        if status_code:
-            _record_channel_failure(cfg, status_code=status_code)
-        else:
-            _record_channel_failure(cfg, error_code=reason)
-        try:
-            schedule_user_upstream_failure(
-                UpstreamFailureBurstAlert(
-                    endpoint=endpoint_name,
-                    model=display_model,
-                    channel_id=str(getattr(cfg, "channel_id", "") or ""),
-                    status_code=status_code,
-                    reason=reason,
-                    provider_platform=str(getattr(cfg, "provider_platform", "") or ""),
-                    request_id=client_request_id,
+        if affect_channel_health:
+            if status_code:
+                _record_channel_failure(cfg, status_code=status_code)
+            else:
+                _record_channel_failure(cfg, error_code=reason)
+        if alert_upstream:
+            try:
+                schedule_user_upstream_failure(
+                    UpstreamFailureBurstAlert(
+                        endpoint=endpoint_name,
+                        model=display_model,
+                        channel_id=str(getattr(cfg, "channel_id", "") or ""),
+                        status_code=status_code,
+                        reason=reason,
+                        provider_platform=str(getattr(cfg, "provider_platform", "") or ""),
+                        request_id=client_request_id,
+                    )
                 )
-            )
-        except Exception:
-            logger.warning("upstream failure alert scheduling failed", exc_info=True)
+            except Exception:
+                logger.warning("upstream failure alert scheduling failed", exc_info=True)
         await usage_buffer.add(
             user.id,
             api_key_id=api_key_id,
@@ -1285,6 +1292,15 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                 upstream = await stream_client.send(req, stream=True)
             except (httpx.TimeoutException, httpx.RequestError) as exc:
                 if _is_local_pool_timeout(exc):
+                    await _record_failed_attempt(
+                        used_cfg,
+                        route_reason=used_route_reason,
+                        status_code=503,
+                        reason="local_pool_timeout",
+                        terminal=True,
+                        affect_channel_health=False,
+                        alert_upstream=False,
+                    )
                     return anthropic_error(
                         "Upstream request capacity exhausted",
                         error_type="overloaded_error",
@@ -1311,7 +1327,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                 status_code = int(upstream.status_code)
                 fallback_cfg = (
                     _select_fallback(used_cfg, str(status_code))
-                    if status_code in _MESSAGES_FALLBACK_STATUSES
+                    if _is_messages_fallback_status(status_code)
                     else None
                 )
                 await _record_failed_attempt(
@@ -1327,7 +1343,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                     used_cfg = fallback_cfg
                     used_route_reason = _fallback_reason(str(status_code))
                     continue
-                if status_code in _MESSAGES_FALLBACK_STATUSES or status_code >= 500:
+                if _is_messages_fallback_status(status_code):
                     return _anthropic_temporary_error(client_request_id, status_code=status_code)
                 return anthropic_error(
                     f"Upstream request failed. Request ID: {client_request_id}",
@@ -1678,6 +1694,15 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
             )
         except (httpx.TimeoutException, httpx.RequestError) as exc:
             if _is_local_pool_timeout(exc):
+                await _record_failed_attempt(
+                    used_cfg,
+                    route_reason=used_route_reason,
+                    status_code=503,
+                    reason="local_pool_timeout",
+                    terminal=True,
+                    affect_channel_health=False,
+                    alert_upstream=False,
+                )
                 return anthropic_error(
                     "Upstream request capacity exhausted",
                     error_type="overloaded_error",
@@ -1704,7 +1729,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
             status_code = int(upstream.status_code)
             fallback_cfg = (
                 _select_fallback(used_cfg, str(status_code))
-                if status_code in _MESSAGES_FALLBACK_STATUSES
+                if _is_messages_fallback_status(status_code)
                 else None
             )
             await _record_failed_attempt(
@@ -1719,7 +1744,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                 used_cfg = fallback_cfg
                 used_route_reason = _fallback_reason(str(status_code))
                 continue
-            if status_code in _MESSAGES_FALLBACK_STATUSES or status_code >= 500:
+            if _is_messages_fallback_status(status_code):
                 return _anthropic_temporary_error(client_request_id, status_code=status_code)
             return anthropic_error(
                 f"Upstream request failed. Request ID: {client_request_id}",
