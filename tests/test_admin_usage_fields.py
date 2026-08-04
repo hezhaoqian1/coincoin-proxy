@@ -2131,6 +2131,119 @@ function createApp(fetchImpl) {
         self.assertEqual(calls[1][1]["authorization"], "Bearer sk-test-secret")
         self.assertNotIn("sk-test-secret", json.dumps(payload))
 
+    def test_provider_channel_route_audit_flags_only_active_unsupported_models(self) -> None:
+        routes = [
+            SimpleNamespace(
+                route_id="mcr_supported",
+                channel_id="ch_claude",
+                public_model_id="haiku",
+                upstream_model="claude-haiku-4-5-20251001",
+                status="active",
+            ),
+            SimpleNamespace(
+                route_id="mcr_unsupported",
+                channel_id="ch_claude",
+                public_model_id="claude-haiku-4.5",
+                upstream_model="claude-haiku-4-5-20251016",
+                status="active",
+            ),
+            SimpleNamespace(
+                route_id="mcr_disabled",
+                channel_id="ch_claude",
+                public_model_id="old-haiku",
+                upstream_model="claude-haiku-old",
+                status="disabled",
+            ),
+            SimpleNamespace(
+                route_id="mcr_other_channel",
+                channel_id="ch_other",
+                public_model_id="other",
+                upstream_model="other-model",
+                status="active",
+            ),
+        ]
+        discovery = {
+            "ok": True,
+            "models": [{"id": "claude-haiku-4-5-20251001"}],
+        }
+
+        audit = admin_module._provider_channel_route_audit(
+            "ch_claude",
+            discovery,
+            routes,
+        )
+
+        self.assertEqual(audit["status"], "warning")
+        self.assertEqual(audit["checked_routes"], 2)
+        self.assertEqual(audit["unsupported_count"], 1)
+        self.assertEqual(
+            audit["unsupported_routes"],
+            [
+                {
+                    "route_id": "mcr_unsupported",
+                    "public_model_id": "claude-haiku-4.5",
+                    "upstream_model": "claude-haiku-4-5-20251016",
+                }
+            ],
+        )
+
+    def test_provider_channel_route_audit_is_unavailable_for_probe_only_discovery(self) -> None:
+        audit = admin_module._provider_channel_route_audit(
+            "ch_claude",
+            {
+                "ok": True,
+                "discovery_mode": "messages_probe",
+                "models": [{"id": "claude-opus-4-7"}],
+            },
+            [
+                SimpleNamespace(
+                    route_id="mcr_opus",
+                    channel_id="ch_claude",
+                    public_model_id="opus",
+                    upstream_model="claude-opus-4-7",
+                    status="active",
+                )
+            ],
+        )
+
+        self.assertEqual(audit["status"], "unavailable")
+        self.assertEqual(audit["checked_routes"], 0)
+        self.assertEqual(audit["unsupported_count"], 0)
+
+    def test_provider_channel_route_audit_resolves_inherited_upstream_model(self) -> None:
+        route = SimpleNamespace(
+            route_id="mcr_inherited",
+            channel_id="ch_claude",
+            public_model_id="claude-haiku-4.5",
+            upstream_model="",
+            status="active",
+        )
+        public_model = SimpleNamespace(
+            upstream_model="claude-haiku-4-5-20251001",
+            provider_model="",
+        )
+
+        with patch.object(admin_module.model_registry, "get_public_model", return_value=public_model):
+            audit = admin_module._provider_channel_route_audit(
+                "ch_claude",
+                {
+                    "ok": True,
+                    "models": [{"id": "claude-haiku-4-5-20251001"}],
+                },
+                [route],
+            )
+
+        self.assertEqual(audit["status"], "ok")
+        self.assertEqual(audit["checked_routes"], 1)
+        self.assertEqual(audit["unsupported_count"], 0)
+
+    def test_admin_ui_renders_provider_route_audit_warning(self) -> None:
+        admin_html = Path("app/static/admin.html").read_text(encoding="utf-8")
+
+        self.assertIn("function providerChannelRouteAuditSummary(payload = {})", admin_html)
+        self.assertIn("payload.route_audit", admin_html)
+        self.assertIn("不在上游模型列表", admin_html)
+
     async def test_provider_channel_connection_uses_api_key_auth_style(self) -> None:
         channel = SimpleNamespace(
             id="ch_azure",

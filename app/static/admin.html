@@ -5588,6 +5588,20 @@
       return isAnthropicProviderChannel(channel) ? 'anthropic_messages' : 'openai_compatible';
     }
 
+    function providerChannelRouteAuditSummary(payload = {}) {
+      const audit = payload.route_audit || {};
+      if (audit.status === 'warning') {
+        const samples = (audit.unsupported_routes || []).slice(0, 3).map(route =>
+          `${route.public_model_id || route.route_id} -> ${route.upstream_model || '-'}`
+        );
+        const suffix = Number(audit.unsupported_count || 0) > samples.length ? ' 等' : '';
+        return `路由警告：${Number(audit.unsupported_count || 0)} 条 active route 不在上游模型列表（${samples.join('，')}${suffix}）`;
+      }
+      if (audit.status === 'unavailable') return '路由审计不可用：上游未返回完整模型列表';
+      if (audit.status === 'ok') return `路由审计通过：${Number(audit.checked_routes || 0)} 条 active route`;
+      return '';
+    }
+
     function renderProviderChannelModels(payload = {}) {
       if ((!payload || !Object.keys(payload).length) && providerChannelModelsLastPayload) payload = providerChannelModelsLastPayload;
       if (payload && payload.ok) providerChannelModelsLastPayload = payload;
@@ -5603,7 +5617,8 @@
       const recommended = payload.recommended_base_url && channel.base_url && payload.recommended_base_url !== channel.base_url
         ? ` · 建议 Base URL ${payload.recommended_base_url}`
         : '';
-      summary.textContent = `${Number(payload.model_count || 0)} 个模型 · HTTP ${Number(payload.status_code || 0)} · ${Number(payload.latency_ms || 0)}ms · ${payload.models_url || '-'}${recommended}`;
+      const routeAudit = providerChannelRouteAuditSummary(payload);
+      summary.textContent = `${Number(payload.model_count || 0)} 个模型 · HTTP ${Number(payload.status_code || 0)} · ${Number(payload.latency_ms || 0)}ms · ${payload.models_url || '-'}${recommended}${routeAudit ? ` · ${routeAudit}` : ''}`;
       body.innerHTML = providerChannelModelsCache.length ? providerChannelModelsCache.map((model, index) => {
         const suggested = model.suggested_public_model_id || '';
         const endpoint = isAnthropicProviderChannel(channel) ? 'chat/completions' : '';

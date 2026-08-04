@@ -5,7 +5,7 @@ import secrets
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Optional, Tuple
+from typing import Any, Iterable, Optional, Tuple
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
@@ -960,6 +960,74 @@ def _attach_public_model_suggestions(models: list[dict]) -> tuple[list[dict], li
             suggested = provider_to_public[model_id]
         enriched.append({**model, "suggested_public_model_id": suggested})
     return enriched, public_models
+
+
+def _provider_channel_route_audit(
+    channel_id: str,
+    discovery_payload: dict,
+    routes: Iterable[Any],
+) -> dict:
+    active_routes = [
+        route
+        for route in routes
+        if str(getattr(route, "channel_id", "") or "").strip() == channel_id
+        and str(getattr(route, "status", "active") or "active").strip().lower() == "active"
+    ]
+    if (
+        not discovery_payload.get("ok")
+        or discovery_payload.get("discovery_mode") == "messages_probe"
+        or not discovery_payload.get("models")
+    ):
+        return {
+            "status": "unavailable",
+            "checked_routes": 0,
+            "unsupported_count": 0,
+            "unsupported_routes": [],
+        }
+
+    advertised_models = {
+        str(item.get("id") or "").strip()
+        for item in discovery_payload.get("models") or []
+        if isinstance(item, dict) and str(item.get("id") or "").strip()
+    }
+    audited_routes = []
+    for route in active_routes:
+        public_model_id = str(getattr(route, "public_model_id", "") or "").strip()
+        public_model = model_registry.get_public_model(public_model_id)
+        effective_upstream_model = str(
+            getattr(route, "upstream_model", "")
+            or getattr(public_model, "upstream_model", "")
+            or getattr(public_model, "provider_model", "")
+            or public_model_id
+        ).strip()
+        audited_routes.append((route, public_model_id, effective_upstream_model))
+    unsupported_routes = [
+        {
+            "route_id": str(getattr(route, "route_id", "") or "").strip(),
+            "public_model_id": public_model_id,
+            "upstream_model": effective_upstream_model,
+        }
+        for route, public_model_id, effective_upstream_model in audited_routes
+        if effective_upstream_model not in advertised_models
+    ]
+    unsupported_routes.sort(key=lambda item: (item["public_model_id"], item["route_id"]))
+    return {
+        "status": "warning" if unsupported_routes else "ok",
+        "checked_routes": len(active_routes),
+        "unsupported_count": len(unsupported_routes),
+        "unsupported_routes": unsupported_routes,
+    }
+
+
+def _attach_provider_channel_route_audit(channel_id: str, payload: dict) -> dict:
+    return {
+        **payload,
+        "route_audit": _provider_channel_route_audit(
+            channel_id,
+            payload,
+            channel_router.list_routes(),
+        ),
+    }
 
 
 def _provider_channel_messages_url(base_url: str) -> tuple[str, str]:
@@ -2616,7 +2684,10 @@ async def test_provider_channel_connection(channel_id: str, db: AsyncSession = D
     channel = await db.get(ProviderChannel, channel_id)
     if channel is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="provider channel not found")
-    payload = await _provider_channel_models_payload(channel)
+    payload = _attach_provider_channel_route_audit(
+        channel_id,
+        await _provider_channel_models_payload(channel),
+    )
     return {
         "ok": payload.get("ok", False),
         "channel_id": payload.get("channel_id", channel_id),
@@ -2627,6 +2698,7 @@ async def test_provider_channel_connection(channel_id: str, db: AsyncSession = D
         "latency_ms": payload.get("latency_ms", 0),
         "model_count": payload.get("model_count", 0),
         "sample_models": (payload.get("models") or [])[:8],
+        "route_audit": payload.get("route_audit") or {},
         "attempts": payload.get("attempts") or [],
         "error": payload.get("error", ""),
     }
@@ -2637,7 +2709,10 @@ async def list_provider_channel_upstream_models(channel_id: str, db: AsyncSessio
     channel = await db.get(ProviderChannel, channel_id)
     if channel is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="provider channel not found")
-    return await _provider_channel_models_payload(channel)
+    return _attach_provider_channel_route_audit(
+        channel_id,
+        await _provider_channel_models_payload(channel),
+    )
 
 
 @router.patch("/provider-channels/{channel_id}", dependencies=[Depends(admin_guard)])
