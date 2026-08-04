@@ -310,6 +310,8 @@ def build_dingtalk_text_payload(alert: FallbackExhaustedAlert) -> Dict[str, Any]
 def _failure_category(alert: UpstreamFailureBurstAlert) -> str:
     if alert.reason == "upstream_unreachable":
         return "availability"
+    if int(alert.status_code or 0) == 408:
+        return "availability"
     if int(alert.status_code or 0) == 429:
         return "rate_limit"
     if int(alert.status_code or 0) in {401, 403}:

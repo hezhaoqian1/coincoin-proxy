@@ -187,53 +187,89 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
-    def _configure_anthropic_fallback_channels(self, *, public_model_id="claude-opus-4-7"):
-        channel_router.set_snapshot(
-            [
+    def _configure_anthropic_fallback_channels(
+        self,
+        *,
+        public_model_id="claude-opus-4-7",
+        include_tertiary=False,
+    ):
+        channels = [
+            ProviderChannelSnapshot(
+                channel_id="ch_primary",
+                name="Primary Claude relay",
+                provider_platform="claude_relay",
+                channel_type="anthropic_compatible",
+                base_url="https://primary-claude.example",
+                api_key="primary-key",
+                auth_style="x-api-key",
+                priority=0,
+                capabilities=("chat/completions",),
+            ),
+            ProviderChannelSnapshot(
+                channel_id="ch_backup",
+                name="Backup Claude relay",
+                provider_platform="claude_relay",
+                channel_type="anthropic_compatible",
+                base_url="https://backup-claude.example",
+                api_key="backup-key",
+                auth_style="x-api-key",
+                priority=10,
+                capabilities=("chat/completions",),
+            ),
+        ]
+        routes = [
+            ModelChannelRouteSnapshot(
+                route_id="mcr_primary",
+                public_model_id=public_model_id,
+                endpoint="chat/completions",
+                channel_id="ch_primary",
+                upstream_model="claude-primary",
+                transform_profile="anthropic_messages",
+            ),
+            ModelChannelRouteSnapshot(
+                route_id="mcr_backup",
+                public_model_id=public_model_id,
+                endpoint="chat/completions",
+                channel_id="ch_backup",
+                upstream_model="claude-backup",
+                transform_profile="anthropic_messages",
+            ),
+        ]
+        if include_tertiary:
+            channels.append(
                 ProviderChannelSnapshot(
-                    channel_id="ch_primary",
-                    name="Primary Claude relay",
+                    channel_id="ch_tertiary",
+                    name="Tertiary Claude relay",
                     provider_platform="claude_relay",
                     channel_type="anthropic_compatible",
-                    base_url="https://primary-claude.example",
-                    api_key="primary-key",
+                    base_url="https://tertiary-claude.example",
+                    api_key="tertiary-key",
                     auth_style="x-api-key",
-                    priority=0,
+                    priority=20,
                     capabilities=("chat/completions",),
-                ),
-                ProviderChannelSnapshot(
-                    channel_id="ch_backup",
-                    name="Backup Claude relay",
-                    provider_platform="claude_relay",
-                    channel_type="anthropic_compatible",
-                    base_url="https://backup-claude.example",
-                    api_key="backup-key",
-                    auth_style="x-api-key",
-                    priority=10,
-                    capabilities=("chat/completions",),
-                ),
-            ],
-            [
+                )
+            )
+            routes.append(
                 ModelChannelRouteSnapshot(
-                    route_id="mcr_primary",
+                    route_id="mcr_tertiary",
                     public_model_id=public_model_id,
                     endpoint="chat/completions",
-                    channel_id="ch_primary",
-                    upstream_model="claude-primary",
+                    channel_id="ch_tertiary",
+                    upstream_model="claude-tertiary",
                     transform_profile="anthropic_messages",
-                ),
-                ModelChannelRouteSnapshot(
-                    route_id="mcr_backup",
-                    public_model_id=public_model_id,
-                    endpoint="chat/completions",
-                    channel_id="ch_backup",
-                    upstream_model="claude-backup",
-                    transform_profile="anthropic_messages",
-                ),
-            ],
-        )
+                )
+            )
+        channel_router.set_snapshot(channels, routes)
         registry._initialized = False
         registry.init_from_settings()
+
+    def test_messages_fallback_status_policy_is_transient_only(self):
+        for status_code in (408, 429, 500, 502, 503, 504, 524, 529, 599):
+            with self.subTest(status_code=status_code):
+                self.assertTrue(anthropic_module._is_messages_fallback_status(status_code))
+        for status_code in (400, 401, 403, 404, 409, 422, 600):
+            with self.subTest(status_code=status_code):
+                self.assertFalse(anthropic_module._is_messages_fallback_status(status_code))
 
     async def test_models_returns_claude_shape_for_claude_cli(self):
         async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as client:
@@ -2542,7 +2578,7 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(failed["channel_id"], "ch_primary")
         self.assertTrue(failed["request_log_only"])
 
-    async def test_messages_pool_timeout_returns_overload_without_fallback_or_failure_record(self):
+    async def test_messages_pool_timeout_returns_overload_and_records_terminal_failure(self):
         self._configure_anthropic_fallback_channels()
         fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_pool_timeout")
         client = _RecordingClient(
@@ -2582,11 +2618,15 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 503, response.text)
         self.assertEqual(response.json()["error"]["type"], "overloaded_error")
         self.assertEqual(len(client.calls), 1)
-        add_usage.assert_not_awaited()
+        add_usage.assert_awaited_once()
+        failure = add_usage.await_args.kwargs
+        self.assertEqual(failure["status_code"], 503)
+        self.assertEqual(failure["requests"], 1)
+        self.assertFalse(failure["request_log_only"])
         alert_failure.assert_not_called()
         self.assertEqual(channel_router.channel_state("ch_primary"), {})
 
-    async def test_messages_stream_pool_timeout_returns_overload_without_fallback_or_failure_record(self):
+    async def test_messages_stream_pool_timeout_returns_overload_and_records_terminal_failure(self):
         self._configure_anthropic_fallback_channels()
         fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_stream_pool_timeout")
         client = _RecordingStreamClient(
@@ -2617,7 +2657,12 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 503, response.text)
         self.assertEqual(response.json()["error"]["type"], "overloaded_error")
         self.assertEqual(len(client.calls), 2)
-        add_usage.assert_not_awaited()
+        add_usage.assert_awaited_once()
+        failure = add_usage.await_args.kwargs
+        self.assertEqual(failure["status_code"], 503)
+        self.assertEqual(failure["endpoint"], "messages:stream")
+        self.assertEqual(failure["requests"], 1)
+        self.assertFalse(failure["request_log_only"])
         alert_failure.assert_not_called()
         self.assertEqual(channel_router.channel_state("ch_primary"), {})
 
@@ -2757,6 +2802,140 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(add_usage.await_args_list[0].kwargs["status_code"], 429)
         self.assertEqual(add_usage.await_args_list[1].kwargs["channel_id"], "ch_backup")
 
+    async def test_messages_falls_back_on_cloudflare_524(self):
+        self._configure_anthropic_fallback_channels()
+        fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_524_fallback")
+        client = _RecordingClient(
+            [
+                _FakeUpstreamResponse({"error": {"message": "origin timed out"}}, status_code=524),
+                _FakeUpstreamResponse(
+                    {
+                        "id": "msg_backup_524",
+                        "type": "message",
+                        "role": "assistant",
+                        "model": "claude-backup",
+                        "content": [{"type": "text", "text": "OK"}],
+                        "stop_reason": "end_turn",
+                        "usage": {"input_tokens": 4, "output_tokens": 1},
+                    }
+                ),
+            ]
+        )
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_http_client", AsyncMock(return_value=client)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()) as add_usage,
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={"authorization": "Bearer sk_test"},
+                    json={
+                        "model": "claude-opus-4-7",
+                        "max_tokens": 64,
+                        "messages": [{"role": "user", "content": "Reply with exactly OK"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(add_usage.await_args_list[0].kwargs["status_code"], 524)
+        self.assertEqual(add_usage.await_args_list[1].kwargs["channel_id"], "ch_backup")
+
+    async def test_messages_does_not_fallback_on_404_model_error(self):
+        self._configure_anthropic_fallback_channels()
+        fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_404_no_fallback")
+        client = _RecordingClient(
+            [
+                _FakeUpstreamResponse({"error": {"message": "model unsupported"}}, status_code=404),
+                _FakeUpstreamResponse(
+                    {
+                        "id": "msg_backup_should_not_run",
+                        "type": "message",
+                        "role": "assistant",
+                        "model": "claude-backup",
+                        "content": [{"type": "text", "text": "unexpected"}],
+                        "stop_reason": "end_turn",
+                        "usage": {"input_tokens": 4, "output_tokens": 1},
+                    }
+                ),
+            ]
+        )
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_http_client", AsyncMock(return_value=client)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()) as add_usage,
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={"authorization": "Bearer sk_test"},
+                    json={
+                        "model": "claude-opus-4-7",
+                        "max_tokens": 64,
+                        "messages": [{"role": "user", "content": "Reply with exactly OK"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertEqual(len(client.calls), 1)
+        failure = add_usage.await_args.kwargs
+        self.assertEqual(failure["status_code"], 404)
+        self.assertEqual(failure["requests"], 1)
+        self.assertFalse(failure["request_log_only"])
+
+    async def test_messages_multi_hop_fallback_reaches_third_channel(self):
+        self._configure_anthropic_fallback_channels(include_tertiary=True)
+        fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_multi_fallback")
+        client = _RecordingClient(
+            [
+                _FakeUpstreamResponse({"error": {"message": "origin timed out"}}, status_code=524),
+                _FakeUpstreamResponse({"error": {"message": "maintenance"}}, status_code=503),
+                _FakeUpstreamResponse(
+                    {
+                        "id": "msg_tertiary",
+                        "type": "message",
+                        "role": "assistant",
+                        "model": "claude-tertiary",
+                        "content": [{"type": "text", "text": "OK"}],
+                        "stop_reason": "end_turn",
+                        "usage": {"input_tokens": 4, "output_tokens": 1},
+                    }
+                ),
+            ]
+        )
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_http_client", AsyncMock(return_value=client)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()) as add_usage,
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={"authorization": "Bearer sk_test"},
+                    json={
+                        "model": "claude-opus-4-7",
+                        "max_tokens": 64,
+                        "messages": [{"role": "user", "content": "Reply with exactly OK"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(
+            [call["url"] for call in client.calls],
+            [
+                "https://primary-claude.example/v1/messages",
+                "https://backup-claude.example/v1/messages",
+                "https://tertiary-claude.example/v1/messages",
+            ],
+        )
+        self.assertEqual([call.kwargs["status_code"] for call in add_usage.await_args_list[:2]], [524, 503])
+        success = add_usage.await_args_list[2].kwargs
+        self.assertEqual(success["channel_id"], "ch_tertiary")
+        self.assertEqual(success["route_attempt"], 2)
+
     async def test_streaming_messages_falls_back_on_initial_connection_error(self):
         self._configure_anthropic_fallback_channels()
         fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_stream_connect")
@@ -2847,6 +3026,47 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         success = add_usage.await_args_list[1].kwargs
         self.assertEqual(success["endpoint"], "messages:stream")
         self.assertEqual(success["channel_id"], "ch_backup")
+
+    async def test_streaming_messages_falls_back_on_524_before_sending_events(self):
+        self._configure_anthropic_fallback_channels()
+        fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_stream_524")
+        stream_client = _RecordingStreamClient(
+            [
+                _FakeEventStreamResponse([], status_code=524, body="origin timed out"),
+                _FakeAnthropicEventStreamResponse(
+                    [
+                        'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_backup_stream","type":"message","role":"assistant","model":"claude-backup","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":4,"output_tokens":0}}}',
+                        'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
+                        'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"OK"}}',
+                        'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}',
+                        'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":1}}',
+                        'event: message_stop\ndata: {"type":"message_stop"}',
+                    ]
+                ),
+            ]
+        )
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_stream_client", AsyncMock(return_value=stream_client)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()) as add_usage,
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={"authorization": "Bearer sk_test"},
+                    json={
+                        "model": "claude-opus-4-7",
+                        "stream": True,
+                        "max_tokens": 64,
+                        "messages": [{"role": "user", "content": "Reply with exactly OK"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn('"text":"OK"', response.text)
+        self.assertEqual(add_usage.await_args_list[0].kwargs["status_code"], 524)
+        self.assertEqual(add_usage.await_args_list[1].kwargs["channel_id"], "ch_backup")
 
     async def test_messages_all_channels_fail_returns_sanitized_request_id_and_terminal_log(self):
         self._configure_anthropic_fallback_channels()

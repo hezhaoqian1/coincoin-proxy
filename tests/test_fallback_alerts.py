@@ -99,6 +99,20 @@ class UpstreamFailureBurstAlertTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(notify.call_args.args[0].category, "availability")
 
+    async def test_request_timeout_status_shares_availability_counter(self) -> None:
+        with patch.object(fallback_alerts, "_send_upstream_failure_burst_alert", AsyncMock(return_value=True)) as notify:
+            for index in range(5):
+                await fallback_alerts.record_user_upstream_failure(
+                    self._alert(
+                        f"ccreq_408_{index}",
+                        status_code=408,
+                        reason="408",
+                    ),
+                    now=1000 + index,
+                )
+
+        self.assertEqual(notify.call_args.args[0].category, "availability")
+
     async def test_rate_limit_has_separate_capacity_counter(self) -> None:
         with patch.object(fallback_alerts, "_send_upstream_failure_burst_alert", AsyncMock(return_value=True)) as notify:
             for index in range(5):
