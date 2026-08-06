@@ -269,6 +269,13 @@ uvicorn app.main:app --reload --port 8000
 
 上线验收至少覆盖普通对话、`/v1/responses` 和一个短编码任务。请求日志里应看到 `provider_platform=new_api`、`provider_model=deepseek-v4-pro`、`channel_id` 为该 DeepSeek 渠道。
 
+生产验收记录（2026-08-06）：
+
+- 渠道 `ch_8147f5cbb37a0ba43b31bf6a` 已配置为 `new_api` / `openai_compatible`，连接测试返回 200，模型列表可发现 `deepseek-v4-pro`
+- 已创建 `responses` route `mcr_f810e7929ef2c37f8c3238d3` 与 `chat/completions` route `mcr_7c95183a17070a5f4cd2a77a`
+- 生产 smoke 覆盖普通对话、`/v1/responses` 固定文本、Python 编码任务，三项均返回 200
+- 请求日志确认 `route_reason=catalog:deepseek-v4-pro:route_only:channel:ch_8147f5cbb37a0ba43b31bf6a`，`provider_platform=new_api`，`provider_model=deepseek-v4-pro`
+
 ### Route 语义
 
 - 没有 route 时，请求继续走 `config/model_catalog.json` 和 env 的默认路径。
