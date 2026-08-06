@@ -210,7 +210,7 @@ uvicorn app.main:app --reload --port 8000
 - 旧 GPT lane 当前公开 alias 包括 `gpt-5`、`gpt-5.1`、`gpt-5.1-codex`、`gpt-5.1-codex-mini`、`gpt-5.1-codex-max`、`gpt-5.2`、`gpt-5.2-codex`、`gpt-5.3-codex`、`gpt-5.4`、`gpt-5.4-mini`、`gpt-5.5`、`gpt-5.6`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`、`codex-auto-review`、`gpt-5-codex`、`gpt-5-codex-mini`，以及由 `COINCOIN_FIXED_MODEL` 指定的默认 GPT alias
 - embedding 请求不再复用旧 GPT / CPA lane；`/v1/embeddings` 默认和显式 `text-embedding-3-small` 都直连 Azure
 - Gemini 文本能力是增量暴露；显式传入 Gemini 文本 alias 时，会路由到 native Gemini CPA lane
-- DeepSeek 文本 alias `deepseek-v4-pro` 是 route-only 公共模型；部署后需要在后台把它绑定到 New API / OpenAI-compatible provider channel 才能承载客户请求
+- DeepSeek 文本 alias `deepseek-v4-pro`、`deepseek-v4-flash` 是 route-only 公共模型；部署后需要在后台把它们绑定到 New API / OpenAI-compatible provider channel 才能承载客户请求
 - 图片请求如果省略 `model`，默认走 `gpt-image-2` 的 OpenAI/Azure 图片直连 lane
 - Gemini 图片 alias 保留为显式模型；传入 `model=gemini-image` 时，会路由到 native Gemini CPA lane，并在 CoinCoin 内转换成 OpenAI-compatible 图片响应
 - 图片模型支持 `/v1/images/generations` 与 `/v1/images/edits`，不会伪装成文本模型
@@ -258,16 +258,17 @@ uvicorn app.main:app --reload --port 8000
 
 ### DeepSeek / New API 渠道
 
-`deepseek-v4-pro` 保持 route-only，不在 git 或环境变量里保存上游 key。生产接入时新增一个 `openai_compatible` provider channel：
+`deepseek-v4-pro`、`deepseek-v4-flash` 保持 route-only，不在 git 或环境变量里保存上游 key。生产接入时新增一个 `openai_compatible` provider channel：
 
 - `Base URL`: `https://zzone.cc.cd/v1`
 - `Provider Platform`: `new_api`
 - `Auth Style`: `bearer`
 - `Capabilities`: `chat/completions,responses`
 - route `public_model_id=deepseek-v4-pro` 到 `upstream_model=deepseek-v4-pro`
+- route `public_model_id=deepseek-v4-flash` 到 `upstream_model=deepseek-v4-flash`
 - 建议分别创建 `chat/completions` 和 `responses` 两条 route；如果上游以后收窄某个 endpoint，可单独禁用对应 route
 
-上线验收至少覆盖普通对话、`/v1/responses` 和一个短编码任务。请求日志里应看到 `provider_platform=new_api`、`provider_model=deepseek-v4-pro`、`channel_id` 为该 DeepSeek 渠道。
+上线验收至少覆盖普通对话、`/v1/responses` 和一个短编码任务。请求日志里应看到 `provider_platform=new_api`、`provider_model` 为对应 DeepSeek 上游模型、`channel_id` 为该 DeepSeek 渠道。
 
 生产验收记录（2026-08-06）：
 

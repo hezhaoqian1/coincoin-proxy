@@ -558,21 +558,37 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
 
     def _add_deepseek_model(self) -> None:
         catalog = json.loads(settings.model_catalog_json)
-        catalog.setdefault("models", []).append(
-            {
-                "id": "deepseek-v4-pro",
-                "owned_by": "deepseek",
-                "provider_name": "DeepSeek",
-                "provider_model": "deepseek-v4-pro",
-                "upstream_model": "deepseek-v4-pro",
-                "capabilities": ["chat/completions", "responses"],
-                "routing_mode": "route_only",
-                "delivery_lane": "route_only",
-                "price_input_per_million": 44,
-                "price_output_per_million": 87,
-                "billable_sku": "deepseek-v4-pro-text",
-                "pricing": {"cache_read_multiplier": 0.008333333333333333},
-            }
+        catalog.setdefault("models", []).extend(
+            [
+                {
+                    "id": "deepseek-v4-pro",
+                    "owned_by": "deepseek",
+                    "provider_name": "DeepSeek",
+                    "provider_model": "deepseek-v4-pro",
+                    "upstream_model": "deepseek-v4-pro",
+                    "capabilities": ["chat/completions", "responses"],
+                    "routing_mode": "route_only",
+                    "delivery_lane": "route_only",
+                    "price_input_per_million": 44,
+                    "price_output_per_million": 87,
+                    "billable_sku": "deepseek-v4-pro-text",
+                    "pricing": {"cache_read_multiplier": 0.008333333333333333},
+                },
+                {
+                    "id": "deepseek-v4-flash",
+                    "owned_by": "deepseek",
+                    "provider_name": "DeepSeek",
+                    "provider_model": "deepseek-v4-flash",
+                    "upstream_model": "deepseek-v4-flash",
+                    "capabilities": ["chat/completions", "responses"],
+                    "routing_mode": "route_only",
+                    "delivery_lane": "route_only",
+                    "price_input_per_million": 14,
+                    "price_output_per_million": 28,
+                    "billable_sku": "deepseek-v4-flash-text",
+                    "pricing": {"cache_read_multiplier": 0.02},
+                },
+            ]
         )
         settings.model_catalog_json = json.dumps(catalog)
         registry._initialized = False
@@ -604,6 +620,20 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                     endpoint="chat/completions",
                     channel_id="ch_deepseek_test",
                     upstream_model="deepseek-v4-pro",
+                ),
+                ModelChannelRouteSnapshot(
+                    route_id="mcr_deepseek_flash_responses",
+                    public_model_id="deepseek-v4-flash",
+                    endpoint="responses",
+                    channel_id="ch_deepseek_test",
+                    upstream_model="deepseek-v4-flash",
+                ),
+                ModelChannelRouteSnapshot(
+                    route_id="mcr_deepseek_flash_chat",
+                    public_model_id="deepseek-v4-flash",
+                    endpoint="chat/completions",
+                    channel_id="ch_deepseek_test",
+                    upstream_model="deepseek-v4-flash",
                 ),
             ],
         )
@@ -895,6 +925,64 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(usage_kwargs["price_output_per_million"], 87)
         self.assertEqual(usage_kwargs["cache_read_tokens"], 3)
         self.assertEqual(usage_kwargs["cache_read_multiplier"], 0.008333333333333333)
+        self.assertEqual(usage_kwargs["channel_id"], "ch_deepseek_test")
+        self.assertEqual(usage_kwargs["provider_platform"], "new_api")
+
+    async def test_deepseek_flash_route_only_chat_uses_newapi_provider_channel(self) -> None:
+        self._add_deepseek_model()
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "resp_deepseek_flash",
+                        "object": "response",
+                        "status": "completed",
+                        "model": "deepseek-v4-flash",
+                        "output": [
+                            {
+                                "type": "message",
+                                "content": [{"type": "output_text", "text": "FLASH"}],
+                            },
+                        ],
+                        "usage": {
+                            "input_tokens": 7,
+                            "output_tokens": 1,
+                            "total_tokens": 8,
+                            "input_tokens_details": {"cached_tokens": 2},
+                        },
+                    }
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(openai_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                openai_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(openai_module.usage_buffer, "add", AsyncMock()) as add_usage:
+                response = await client.post(
+                    "/v1/chat/completions",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={
+                        "model": "deepseek-v4-flash",
+                        "messages": [{"role": "user", "content": "Reply with only: FLASH"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["model"], "deepseek-v4-flash")
+        self.assertEqual(response.json()["choices"][0]["message"]["content"], "FLASH")
+        self.assertEqual(upstream_client.calls[0]["url"], "https://deepseek.example/v1/responses")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "deepseek-v4-flash")
+        self.assertEqual(upstream_client.calls[0]["headers"]["authorization"], "Bearer deepseek-key")
+        usage_kwargs = add_usage.await_args.kwargs
+        self.assertEqual(usage_kwargs["provider_model"], "deepseek-v4-flash")
+        self.assertEqual(usage_kwargs["price_input_per_million"], 14)
+        self.assertEqual(usage_kwargs["price_output_per_million"], 28)
+        self.assertEqual(usage_kwargs["cache_read_tokens"], 2)
+        self.assertEqual(usage_kwargs["cache_read_multiplier"], 0.02)
         self.assertEqual(usage_kwargs["channel_id"], "ch_deepseek_test")
         self.assertEqual(usage_kwargs["provider_platform"], "new_api")
 

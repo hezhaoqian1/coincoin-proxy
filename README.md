@@ -281,7 +281,7 @@ Routing rules:
 - If a user omits `model`, the default GPT public model still works for legacy clients.
 - Image generation defaults to `gpt-image-2` unless the request selects a different public image alias.
 - Gemini text aliases route through the native Gemini CPA lane.
-- `deepseek-v4-pro` is a route-only public alias. Operators must attach it to a New API/OpenAI-compatible provider channel before customer traffic can use it.
+- DeepSeek public aliases such as `deepseek-v4-pro` and `deepseek-v4-flash` are route-only. Operators must attach them to a New API/OpenAI-compatible provider channel before customer traffic can use them.
 - `gemini-image` routes through CoinCoin's OpenAI-compatible image adapter.
 - Embeddings use `text-embedding-3-small` and do not share the old GPT/CPA lane.
 - Admin-created provider channel routes can override catalog defaults for specific public models and endpoints.
