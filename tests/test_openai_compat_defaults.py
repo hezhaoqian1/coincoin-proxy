@@ -556,6 +556,58 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
+    def _add_deepseek_model(self) -> None:
+        catalog = json.loads(settings.model_catalog_json)
+        catalog.setdefault("models", []).append(
+            {
+                "id": "deepseek-v4-pro",
+                "owned_by": "deepseek",
+                "provider_name": "DeepSeek",
+                "provider_model": "deepseek-v4-pro",
+                "upstream_model": "deepseek-v4-pro",
+                "capabilities": ["chat/completions", "responses"],
+                "routing_mode": "route_only",
+                "delivery_lane": "route_only",
+                "price_input_per_million": 44,
+                "price_output_per_million": 87,
+                "billable_sku": "deepseek-v4-pro-text",
+                "pricing": {"cache_read_multiplier": 0.008333333333333333},
+            }
+        )
+        settings.model_catalog_json = json.dumps(catalog)
+        registry._initialized = False
+        registry.init_from_settings()
+        channel_router.set_snapshot(
+            [
+                ProviderChannelSnapshot(
+                    channel_id="ch_deepseek_test",
+                    provider_platform="new_api",
+                    channel_type="openai_compatible",
+                    base_url="https://deepseek.example/v1",
+                    api_key="deepseek-key",
+                    auth_style="bearer",
+                    priority=0,
+                    capabilities=("chat/completions", "responses"),
+                )
+            ],
+            [
+                ModelChannelRouteSnapshot(
+                    route_id="mcr_deepseek_responses",
+                    public_model_id="deepseek-v4-pro",
+                    endpoint="responses",
+                    channel_id="ch_deepseek_test",
+                    upstream_model="deepseek-v4-pro",
+                ),
+                ModelChannelRouteSnapshot(
+                    route_id="mcr_deepseek_chat",
+                    public_model_id="deepseek-v4-pro",
+                    endpoint="chat/completions",
+                    channel_id="ch_deepseek_test",
+                    upstream_model="deepseek-v4-pro",
+                ),
+            ],
+        )
+
     def tearDown(self) -> None:
         for patcher in reversed(getattr(self, "_workbench_auth_patchers", [])):
             patcher.stop()
@@ -783,6 +835,68 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             usage_kwargs["server_side_tool_usage_details"]["web_search_calls"],
             4,
         )
+
+    async def test_deepseek_route_only_chat_uses_newapi_provider_channel(self) -> None:
+        self._add_deepseek_model()
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "resp_deepseek",
+                        "object": "response",
+                        "status": "completed",
+                        "model": "deepseek-v4-pro",
+                        "output": [
+                            {
+                                "type": "reasoning",
+                                "summary": [{"type": "summary_text", "text": "Short reasoning."}],
+                            },
+                            {
+                                "type": "message",
+                                "content": [{"type": "output_text", "text": "OK"}],
+                            },
+                        ],
+                        "usage": {
+                            "input_tokens": 9,
+                            "output_tokens": 2,
+                            "total_tokens": 11,
+                            "input_tokens_details": {"cached_tokens": 3},
+                        },
+                    }
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(openai_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                openai_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(openai_module.usage_buffer, "add", AsyncMock()) as add_usage:
+                response = await client.post(
+                    "/v1/chat/completions",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={
+                        "model": "deepseek-v4-pro",
+                        "messages": [{"role": "user", "content": "Reply with only: OK"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["model"], "deepseek-v4-pro")
+        self.assertEqual(response.json()["choices"][0]["message"]["content"], "OK")
+        self.assertEqual(upstream_client.calls[0]["url"], "https://deepseek.example/v1/responses")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "deepseek-v4-pro")
+        self.assertEqual(upstream_client.calls[0]["headers"]["authorization"], "Bearer deepseek-key")
+        usage_kwargs = add_usage.await_args.kwargs
+        self.assertEqual(usage_kwargs["provider_model"], "deepseek-v4-pro")
+        self.assertEqual(usage_kwargs["price_input_per_million"], 44)
+        self.assertEqual(usage_kwargs["price_output_per_million"], 87)
+        self.assertEqual(usage_kwargs["cache_read_tokens"], 3)
+        self.assertEqual(usage_kwargs["cache_read_multiplier"], 0.008333333333333333)
+        self.assertEqual(usage_kwargs["channel_id"], "ch_deepseek_test")
+        self.assertEqual(usage_kwargs["provider_platform"], "new_api")
 
     async def test_grok_build_responses_preserves_builtin_search_tools(self) -> None:
         self._add_grok_model()
