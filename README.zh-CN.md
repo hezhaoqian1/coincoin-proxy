@@ -276,6 +276,10 @@ uvicorn app.main:app --reload --port 8000
 - 已创建 `responses` route `mcr_f810e7929ef2c37f8c3238d3` 与 `chat/completions` route `mcr_7c95183a17070a5f4cd2a77a`
 - 生产 smoke 覆盖普通对话、`/v1/responses` 固定文本、Python 编码任务，三项均返回 200
 - 请求日志确认 `route_reason=catalog:deepseek-v4-pro:route_only:channel:ch_8147f5cbb37a0ba43b31bf6a`，`provider_platform=new_api`，`provider_model=deepseek-v4-pro`
+- `deepseek-v4-flash` 已复用同一渠道，连接测试返回 200，模型列表可发现该 alias
+- 已创建 `responses` route `mcr_c4b6c3f6265123e2d21034d9` 与 `chat/completions` route `mcr_ac8d227ceb6dd426b3d18c2f`
+- flash 生产 smoke 覆盖普通对话、`/v1/responses` 固定文本、Python 编码任务，三项均返回 200
+- flash 请求日志确认 `route_reason=catalog:deepseek-v4-flash:route_only:channel:ch_8147f5cbb37a0ba43b31bf6a`，`provider_platform=new_api`，`provider_model=deepseek-v4-flash`，基础价格为 14/28 分每百万 tokens，cache read multiplier 为 0.02
 
 ### Route 语义
 
