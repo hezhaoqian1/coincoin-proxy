@@ -127,6 +127,7 @@ async def _run_migrations(conn):
         ("coincoin_users", "register_ip", "VARCHAR(64) NULL"),
         ("coincoin_users", "email", "VARCHAR(255) NULL UNIQUE"),
         ("coincoin_users", "email_verified_at", "DATETIME NULL"),
+        ("coincoin_users", "daily_spend_limit_cents", "BIGINT NULL"),
         ("coincoin_referral_rewards", "recipient_id", "VARCHAR(32) NULL"),
         ("coincoin_referral_rewards", "reward_type", "VARCHAR(32) DEFAULT 'purchase_commission'"),
         ("coincoin_referral_rewards", "idempotency_key", "VARCHAR(128) NULL UNIQUE"),

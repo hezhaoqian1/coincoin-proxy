@@ -21,6 +21,14 @@ class _ScalarResult:
         return self._value
 
 
+class _FirstRowResult:
+    def __init__(self, row):
+        self._row = row
+
+    def first(self):
+        return self._row
+
+
 class ProxyAuthCacheTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self._billing_mode = settings.billing_mode
@@ -135,6 +143,60 @@ class ProxyAuthCacheTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(ctx.exception.status_code, 429)
         self.assertEqual(ctx.exception.detail, "token limit exceeded")
+
+    async def test_authorize_request_rejects_daily_spend_limit(self) -> None:
+        request = self._request()
+        db = SimpleNamespace(
+            execute=AsyncMock(
+                side_effect=[
+                    _ScalarResult(
+                        SimpleNamespace(
+                            id="u_test",
+                            status="active",
+                            balance=1000,
+                            token_limit=None,
+                            token_used=0,
+                            request_limit_per_minute=None,
+                            request_limit_per_day=None,
+                            daily_spend_limit_cents=500,
+                        )
+                    ),
+                    _FirstRowResult((490,)),
+                ]
+            )
+        )
+
+        with patch.object(proxy_module.model_registry, "ensure_initialized"), patch.object(
+            proxy_module.model_registry, "has_routable_models", return_value=True
+        ), patch.object(
+            proxy_module.key_cache,
+            "get",
+            AsyncMock(
+                return_value={
+                    "id": "u_test",
+                    "balance": 1000,
+                    "token_limit": None,
+                    "token_used": 0,
+                    "request_limit_per_minute": None,
+                    "request_limit_per_day": None,
+                    proxy_module._KEY_KIND_ATTR: "api",
+                    "controls": {},
+                }
+            ),
+        ), patch.object(
+            proxy_module.usage_buffer, "get_pending_tokens", AsyncMock(return_value=0)
+        ), patch.object(
+            proxy_module.usage_buffer, "get_pending_cost_for_api_key", AsyncMock(return_value=0)
+        ), patch.object(
+            proxy_module.usage_buffer, "get_pending_cost", AsyncMock(return_value=0)
+        ), patch.object(
+            proxy_module.usage_buffer, "get_pending_cost_today", AsyncMock(return_value=10)
+        ), patch("app.billing.get_available_balance_cents", AsyncMock(return_value={"available_cents": 1000})):
+            with self.assertRaises(HTTPException) as ctx:
+                await proxy_module.authorize_request(request, db)
+
+        self.assertEqual(ctx.exception.status_code, 429)
+        self.assertEqual(ctx.exception.detail, "daily spend limit exceeded")
 
     async def test_authorize_request_rejects_ip_outside_key_allowlist(self) -> None:
         request = Request(

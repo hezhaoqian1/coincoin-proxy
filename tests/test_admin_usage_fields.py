@@ -498,6 +498,9 @@ assert.equal(renderCount, 6);
         self.assertIn("params.set('usage_sort', usageSort)", admin_html)
         self.assertIn("周期消耗", admin_html)
         self.assertIn("u.period_usage", admin_html)
+        self.assertIn('id="modalDailySpendLimitUsd"', admin_html)
+        self.assertIn("p.daily_spend_limit_cents", admin_html)
+        self.assertIn("上海时间自然日", admin_html)
 
     def test_admin_quick_create_uses_admin_user_endpoint_with_password(self) -> None:
         admin_html = (Path(admin_module.__file__).parent / "static" / "admin.html").read_text()
@@ -3113,6 +3116,7 @@ function createApp(fetchImpl) {
             output_tokens_used=200,
             request_limit_per_minute=None,
             request_limit_per_day=None,
+            daily_spend_limit_cents=500,
             referral_code=None,
             referred_by=None,
             created_at=datetime(2026, 6, 1, 10, 0, 0),
@@ -3135,6 +3139,7 @@ function createApp(fetchImpl) {
         self.assertEqual(result[0]["period_usage"]["images_total"], 3)
         self.assertEqual(result[0]["period_usage"]["videos_total"], 0)
         self.assertEqual(result[0]["period_usage"]["cost_cents"], 456)
+        self.assertEqual(result[0]["daily_spend_limit_cents"], 500)
         query_text = str(fake_db.queries[-1].compile())
         self.assertIn("coincoin_request_logs", query_text)
         self.assertIn("created_at >=", query_text)
@@ -4328,6 +4333,7 @@ function createApp(fetchImpl) {
             output_tokens_used=9_400,
             request_limit_per_minute=60,
             request_limit_per_day=1000,
+            daily_spend_limit_cents=1200,
         )
         fake_db = _FakeDB(execute_results=[_FakeEntityResult(user)])
 
@@ -4345,6 +4351,7 @@ function createApp(fetchImpl) {
                     "token_limit": None,
                     "request_limit_per_minute": None,
                     "request_limit_per_day": None,
+                    "daily_spend_limit_cents": None,
                 },
             )
 
@@ -4352,10 +4359,45 @@ function createApp(fetchImpl) {
         self.assertIsNone(user.token_limit)
         self.assertIsNone(user.request_limit_per_minute)
         self.assertIsNone(user.request_limit_per_day)
+        self.assertIsNone(user.daily_spend_limit_cents)
         payload = response.json()
         self.assertIsNone(payload["token_limit"])
         self.assertIsNone(payload["request_limit_per_minute"])
         self.assertIsNone(payload["request_limit_per_day"])
+        self.assertIsNone(payload["daily_spend_limit_cents"])
+        self.assertEqual(fake_db.commits, 1)
+
+    async def test_update_user_sets_daily_spend_limit(self) -> None:
+        user = SimpleNamespace(
+            id="u_1",
+            status="active",
+            balance=294,
+            token_limit=None,
+            token_used=0,
+            input_tokens_used=0,
+            output_tokens_used=0,
+            request_limit_per_minute=None,
+            request_limit_per_day=None,
+            daily_spend_limit_cents=None,
+        )
+        fake_db = _FakeDB(execute_results=[_FakeEntityResult(user)])
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.patch(
+                "/admin/users/u_1",
+                json={"daily_spend_limit_cents": 2500},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(user.daily_spend_limit_cents, 2500)
+        self.assertEqual(response.json()["daily_spend_limit_cents"], 2500)
         self.assertEqual(fake_db.commits, 1)
 
     async def test_user_detail_exposes_key_policy_and_shared_balance(self) -> None:

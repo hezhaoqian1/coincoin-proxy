@@ -37,6 +37,7 @@ class User(Base):
     # 请求限制
     request_limit_per_minute: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     request_limit_per_day: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    daily_spend_limit_cents: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     
     # 邀请体系
     referral_code: Mapped[Optional[str]] = mapped_column(String(16), unique=True, nullable=True)

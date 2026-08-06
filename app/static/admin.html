@@ -4100,7 +4100,7 @@
             <td>${billingSummaryHtml(u.billing_summary, true)}</td>
             <td><div>${formatNum(u.token_used)} / ${u.token_limit ? formatNum(u.token_limit) : '∞'}</div><div class="text-sm text-muted">输入: ${formatNum(u.input_tokens_used||0)} | 输出: ${formatNum(u.output_tokens_used||0)}</div>${u.token_limit ? `<div class="progress"><div class="progress-bar ${color}" style="width:${pct}%"></div></div>` : ''}</td>
             <td>${periodHtml}</td>
-            <td><div class="text-sm">${u.request_limit_per_minute ? u.request_limit_per_minute + '/分钟' : '∞'}</div><div class="text-sm text-muted">${u.request_limit_per_day ? u.request_limit_per_day + '/天' : '∞'}</div></td>
+            <td><div class="text-sm">${u.request_limit_per_minute ? u.request_limit_per_minute + '/分钟' : '∞'}</div><div class="text-sm text-muted">${u.request_limit_per_day ? u.request_limit_per_day + '/天' : '∞'} req</div><div class="text-sm text-muted">${u.daily_spend_limit_cents != null ? formatMoney(u.daily_spend_limit_cents) + '/天' : '∞/天消费'}</div></td>
             <td class="text-sm text-muted">${formatDate(u.created_at)}</td>
             <td><div class="actions">
               <button class="btn btn-sm btn-secondary" onclick="openUserModal('${u.id}')">编辑</button>
@@ -4325,6 +4325,11 @@
           <div class="form-row">
             <div class="form-group"><label class="form-label">每分钟请求上限</label><input type="number" id="modalRPM" class="form-input" value="${u.request_limit_per_minute||''}" placeholder="不限" /></div>
             <div class="form-group"><label class="form-label">每天请求上限</label><input type="number" id="modalRPD" class="form-input" value="${u.request_limit_per_day||''}" placeholder="不限" /></div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">每天消费上限（美元）</label>
+            <input type="number" id="modalDailySpendLimitUsd" class="form-input" min="0" step="0.01" value="${u.daily_spend_limit_cents != null ? (Number(u.daily_spend_limit_cents) / 100).toFixed(2) : ''}" placeholder="不限" />
+            <div class="text-sm text-muted" style="margin-top:8px">按上海时间自然日统计；达到当日消费上限后，新的 API 请求会返回 daily spend limit exceeded。</div>
           </div>
           <div class="form-group">
             <label class="form-label">重置登录密码</label>
@@ -4592,11 +4597,14 @@
       const tu = document.getElementById('modalTokenUsed').value;
       const rpm = document.getElementById('modalRPM').value;
       const rpd = document.getElementById('modalRPD').value;
+      const dailySpendLimitUsd = document.getElementById('modalDailySpendLimitUsd').value;
+      if (dailySpendLimitUsd !== '' && (!Number.isFinite(Number(dailySpendLimitUsd)) || Number(dailySpendLimitUsd) < 0)) return toast('请输入有效的每天消费上限', 'error');
       if (bal !== '') p.balance = Number(bal);
       p.token_limit = tl === '' ? null : Number(tl);
       if (tu !== '') p.token_used = Number(tu);
       p.request_limit_per_minute = rpm === '' ? null : Number(rpm);
       p.request_limit_per_day = rpd === '' ? null : Number(rpd);
+      p.daily_spend_limit_cents = dailySpendLimitUsd === '' ? null : Math.round(Number(dailySpendLimitUsd) * 100);
       try {
         const r = await fetch(`/admin/users/${currentUserId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...adminHeaders() }, body: JSON.stringify(p) });
         if (r.ok) { toast('保存成功', 'success'); closeModal('userModal'); loadUsers(); loadSummary(); }

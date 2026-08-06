@@ -2399,6 +2399,26 @@ async def _authorize_api_user_after_resolution(request: Request, db: AsyncSessio
         if available_balance_cents <= 0:
             raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail="insufficient balance")
 
+    daily_spend_limit = getattr(user, "daily_spend_limit_cents", None)
+    if daily_spend_limit is not None:
+        today = china_today()
+        try:
+            result = await db.execute(
+                select(UsageDaily.cost_cents).where(
+                    UsageDaily.user_id == user.id, UsageDaily.day == today
+                )
+            )
+            row = result.first()
+            spent_today = int(row[0]) if row else 0
+            pending_today_cost = await usage_buffer.get_pending_cost_today(user.id)
+            if (spent_today + pending_today_cost) >= int(daily_spend_limit):
+                raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="daily spend limit exceeded")
+        except HTTPException:
+            raise
+        except Exception:
+            logger.exception("daily spend limit lookup failed")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="internal error")
+
     if user.request_limit_per_day is not None:
         today = china_today()
         try:

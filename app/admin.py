@@ -3052,6 +3052,7 @@ async def list_users(
             "output_tokens_used": u.output_tokens_used,
             "request_limit_per_minute": u.request_limit_per_minute,
             "request_limit_per_day": u.request_limit_per_day,
+            "daily_spend_limit_cents": getattr(u, "daily_spend_limit_cents", None),
             "referral_code": u.referral_code,
             "referred_by": u.referred_by,
             "created_at": u.created_at,
@@ -3213,6 +3214,8 @@ async def update_user(user_id: str, payload: AdminUserUpdate, db: AsyncSession =
         user.request_limit_per_minute = payload.request_limit_per_minute
     if "request_limit_per_day" in payload.model_fields_set:
         user.request_limit_per_day = payload.request_limit_per_day
+    if "daily_spend_limit_cents" in payload.model_fields_set:
+        user.daily_spend_limit_cents = payload.daily_spend_limit_cents
 
     if balance_delta > 0:
         from .finance_summary import increment_finance_summary
@@ -3234,6 +3237,7 @@ async def update_user(user_id: str, payload: AdminUserUpdate, db: AsyncSession =
         "output_tokens_used": user.output_tokens_used,
         "request_limit_per_minute": user.request_limit_per_minute,
         "request_limit_per_day": user.request_limit_per_day,
+        "daily_spend_limit_cents": getattr(user, "daily_spend_limit_cents", None),
     }
 
 
@@ -3507,6 +3511,7 @@ async def get_user_detail(user_id: str, db: AsyncSession = Depends(get_db)):
         "output_tokens_used": user.output_tokens_used,
         "request_limit_per_minute": user.request_limit_per_minute,
         "request_limit_per_day": user.request_limit_per_day,
+        "daily_spend_limit_cents": getattr(user, "daily_spend_limit_cents", None),
         "created_at": user.created_at,
         "updated_at": user.updated_at,
         **_admin_available_fields(billing),

@@ -500,6 +500,14 @@ class UsageBuffer:
         usage = self._usage_by_user.get(user_id, {})
         return round(usage.get("cost_cents_f", 0.0))
 
+    async def get_pending_cost_today(self, user_id: str) -> int:
+        """获取今日待刷新的费用（分，四舍五入）"""
+        today = china_today()
+        bucket = self._daily.get((user_id, today))
+        if not bucket:
+            return 0
+        return round(bucket.get("cost_cents_f", 0.0))
+
     async def get_pending_cost_for_api_key(self, api_key_id: str) -> int:
         if not api_key_id:
             return 0

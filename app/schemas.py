@@ -106,6 +106,7 @@ class AdminUserUpdate(BaseModel):
     output_tokens_used: Optional[int] = Field(default=None, description="手动调整已用输出 token 数")
     request_limit_per_minute: Optional[int] = None
     request_limit_per_day: Optional[int] = None
+    daily_spend_limit_cents: Optional[int] = Field(default=None, ge=0, description="用户每日消费上限（分）")
 
 
 class AdminUserCreateRequest(BaseModel):
