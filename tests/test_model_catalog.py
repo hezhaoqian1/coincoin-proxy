@@ -754,6 +754,31 @@ class ModelCatalogTests(unittest.TestCase):
         with self.assertRaises(ModelCapabilityError):
             registry.resolve_public_model("grok-build", "responses")
 
+    def test_checked_in_deepseek_model_is_route_only_for_newapi_channel(self) -> None:
+        settings.model_catalog_json = ""
+        registry._initialized = False
+        registry.init_from_settings()
+
+        model = registry.get_public_model("deepseek-v4-pro")
+
+        self.assertIsNotNone(model)
+        self.assertEqual(model.owned_by, "deepseek")
+        self.assertEqual(model.provider_name, "DeepSeek")
+        self.assertEqual(model.provider_model, "deepseek-v4-pro")
+        self.assertEqual(model.upstream_model, "deepseek-v4-pro")
+        self.assertEqual(model.routing_mode, "route_only")
+        self.assertEqual(model.delivery_lane, "route_only")
+        self.assertEqual(model.capabilities, ("chat/completions", "responses"))
+        self.assertEqual(model.billable_sku, "deepseek-v4-pro-text")
+        self.assertEqual(model.price_input_per_million, 44)
+        self.assertEqual(model.price_output_per_million, 87)
+        self.assertEqual(model.cache_read_multiplier, 0.008333333333333333)
+        self.assertEqual(model.effective_cached_input_per_million, 0.3667)
+        self.assertEqual(model.metadata["provider_platform"], "new_api")
+
+        with self.assertRaises(ModelCapabilityError):
+            registry.resolve_public_model("deepseek-v4-pro", "responses")
+
     def test_explicit_gpt_5_2_alias_keeps_legacy_lane(self) -> None:
         resolved = registry.resolve_public_model(
             "gpt-5.2",
