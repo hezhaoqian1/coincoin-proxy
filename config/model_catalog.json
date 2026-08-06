@@ -310,6 +310,42 @@
       }
     },
     {
+      "id": "deepseek-v4-flash",
+      "owned_by": "deepseek",
+      "provider_name": "DeepSeek",
+      "provider_model": "deepseek-v4-flash",
+      "upstream_model": "deepseek-v4-flash",
+      "created": 1785984000,
+      "capabilities": ["chat/completions", "responses"],
+      "routing_mode": "route_only",
+      "delivery_lane": "route_only",
+      "price_input_per_million": 14,
+      "price_output_per_million": 28,
+      "billable_sku": "deepseek-v4-flash-text",
+      "pricing": {
+        "cache_read_multiplier": 0.02
+      },
+      "metadata": {
+        "display_name": "DeepSeek V4 Flash",
+        "version": "deepseek-v4-flash",
+        "description": "Fast DeepSeek reasoning and coding model exposed through a configured New API provider channel.",
+        "context_length": 128000,
+        "supported_parameters": ["stream", "tools"],
+        "preferred_api_backend": "chat/completions",
+        "provider_platform": "new_api",
+        "upstream_base_url": "https://zzone.cc.cd/v1",
+        "upstream_price_source": "https://zzone.cc.cd/api/pricing",
+        "upstream_price_checked_at": "2026-08-06",
+        "upstream_model_ratio": 0.07,
+        "upstream_completion_ratio": 2,
+        "upstream_cache_ratio": 0.02,
+        "thinking": {
+          "levels": ["default"]
+        },
+        "tier": "stable"
+      }
+    },
+    {
       "id": "gpt-5.6",
       "owned_by": "openai",
       "provider_name": "OpenAI",
