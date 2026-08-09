@@ -739,6 +739,7 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertEqual(resolved.public_model.delivery_lane, "kiro_go")
         self.assertEqual(resolved.backend.model_id, "claude-opus-4.6")
         self.assertEqual(resolved.backend.upstream_url, "https://kiro-go.example")
+        self.assertEqual(resolved.public_model.metadata["provider_route_aliases"], ["claude-opus-4.6"])
         self.assertEqual(resolved.route_reason, "catalog:claude-opus-4-6:kiro_go")
 
     def test_checked_in_grok_models_are_route_only_and_share_grok_4_5_upstream(self) -> None:

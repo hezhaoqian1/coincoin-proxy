@@ -572,7 +572,8 @@
       "price_output_per_million": "${COINCOIN_CLAUDE_OPUS_OUTPUT_PRICE:-2500}",
       "billable_sku": "claude-code-compat-text",
       "metadata": {
-        "compat_family": "claude-code"
+        "compat_family": "claude-code",
+        "provider_route_aliases": ["claude-opus-4.6"]
       }
     },
     {

@@ -152,6 +152,30 @@ class ChannelRouter:
     def has_routes_for_model(self, public_model_id: str) -> bool:
         return bool(self._routes_by_model.get(public_model_id))
 
+    def _route_public_model_ids_for(self, public_model: Any) -> Tuple[str, ...]:
+        public_id = str(getattr(public_model, "public_id", "") or "").strip()
+        if not public_id:
+            return ()
+        if self._routes_by_model.get(public_id):
+            return (public_id,)
+
+        metadata = getattr(public_model, "metadata", {}) or {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        aliases = _split_csv_or_jsonish(
+            metadata.get("provider_route_aliases")
+            or metadata.get("provider_route_alias")
+            or metadata.get("route_aliases")
+            or metadata.get("route_alias")
+        )
+
+        route_ids = [public_id]
+        for alias in aliases:
+            normalized = str(alias or "").strip()
+            if normalized and normalized != public_id and normalized not in route_ids:
+                route_ids.append(normalized)
+        return tuple(route_ids)
+
     def _cooldown_until(self, channel_id: str) -> float:
         return _as_float((self._state.get(channel_id) or {}).get("cooldown_until"), 0.0)
 
@@ -172,32 +196,41 @@ class ChannelRouter:
         public_id = str(getattr(public_model, "public_id", "") or "").strip()
         if not public_id:
             return None
-        routes = self._routes_by_model.get(public_id) or []
-        if not routes:
+        route_public_ids = self._route_public_model_ids_for(public_model)
+        if not route_public_ids:
             return None
 
         now = time.time()
         endpoint = str(endpoint or "").strip()
         excluded = {str(item or "").strip() for item in exclude_channel_ids if str(item or "").strip()}
         candidates: List[Tuple[ModelChannelRouteSnapshot, ProviderChannelSnapshot, int, int]] = []
-        for route in routes:
-            if (route.status or "").strip().lower() != ACTIVE_STATUS:
+        selected_route_public_id = ""
+        for route_public_id in route_public_ids:
+            routes = self._routes_by_model.get(route_public_id) or []
+            if not routes:
                 continue
-            route_endpoint = str(route.endpoint or "").strip()
-            if route_endpoint and route_endpoint != endpoint:
-                continue
-            channel = self._channels.get(route.channel_id)
-            if channel is not None and channel.channel_id in excluded:
-                continue
-            if channel is None or not self._is_available(channel, now):
-                continue
-            if channel.capabilities and endpoint not in channel.capabilities:
-                continue
-            if not (channel.base_url and channel.api_key):
-                continue
-            priority = route.priority_override if route.priority_override is not None else channel.priority
-            weight = route.weight_override if route.weight_override is not None else channel.weight
-            candidates.append((route, channel, int(priority or 0), max(1, int(weight or 1))))
+            candidates = []
+            for route in routes:
+                if (route.status or "").strip().lower() != ACTIVE_STATUS:
+                    continue
+                route_endpoint = str(route.endpoint or "").strip()
+                if route_endpoint and route_endpoint != endpoint:
+                    continue
+                channel = self._channels.get(route.channel_id)
+                if channel is not None and channel.channel_id in excluded:
+                    continue
+                if channel is None or not self._is_available(channel, now):
+                    continue
+                if channel.capabilities and endpoint not in channel.capabilities:
+                    continue
+                if not (channel.base_url and channel.api_key):
+                    continue
+                priority = route.priority_override if route.priority_override is not None else channel.priority
+                weight = route.weight_override if route.weight_override is not None else channel.weight
+                candidates.append((route, channel, int(priority or 0), max(1, int(weight or 1))))
+            if candidates:
+                selected_route_public_id = route_public_id
+                break
 
         if not candidates:
             return None
@@ -210,7 +243,7 @@ class ChannelRouter:
             best_score = float("inf")
             for item in tier:
                 route, channel, _priority, weight = item
-                seed = f"{affinity}:{public_id}:{endpoint}:{route.route_id}:{channel.channel_id}"
+                seed = f"{affinity}:{public_id}:{selected_route_public_id}:{endpoint}:{route.route_id}:{channel.channel_id}"
                 digest = hashlib.sha256(seed.encode("utf-8")).digest()
                 bucket = int.from_bytes(digest[:8], "big")
                 unit = (bucket + 1) / ((1 << 64) + 1)
