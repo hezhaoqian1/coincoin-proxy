@@ -132,7 +132,7 @@ class Settings(BaseSettings):
 
     # Performance. Streaming and non-streaming text clients share one transport,
     # so these values are the total text outbound capacity for each process.
-    http_pool_max: int = 600
+    http_pool_max: int = 1000
     http_pool_keepalive: int = 200
     http_image_pool_max: int = 100
     http_image_pool_keepalive: int = 20
