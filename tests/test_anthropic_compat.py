@@ -263,11 +263,11 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         registry._initialized = False
         registry.init_from_settings()
 
-    def test_messages_fallback_status_policy_is_transient_only(self):
-        for status_code in (408, 429, 500, 502, 503, 504, 524, 529, 599):
+    def test_messages_fallback_status_policy_matches_provider_channel_failures(self):
+        for status_code in (401, 403, 408, 429, 500, 502, 503, 504, 524, 529, 599):
             with self.subTest(status_code=status_code):
                 self.assertTrue(anthropic_module._is_messages_fallback_status(status_code))
-        for status_code in (400, 401, 403, 404, 409, 422, 600):
+        for status_code in (400, 404, 409, 422, 600):
             with self.subTest(status_code=status_code):
                 self.assertFalse(anthropic_module._is_messages_fallback_status(status_code))
 
@@ -2802,6 +2802,58 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(add_usage.await_args_list[0].kwargs["status_code"], 429)
         self.assertEqual(add_usage.await_args_list[1].kwargs["channel_id"], "ch_backup")
 
+    async def test_messages_falls_back_on_upstream_403(self):
+        self._configure_anthropic_fallback_channels()
+        fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_auth_fallback")
+        client = _RecordingClient(
+            [
+                _FakeUpstreamResponse({"error": {"message": "upstream account forbidden"}}, status_code=403),
+                _FakeUpstreamResponse(
+                    {
+                        "id": "msg_backup_auth",
+                        "type": "message",
+                        "role": "assistant",
+                        "model": "claude-backup",
+                        "content": [{"type": "text", "text": "OK"}],
+                        "stop_reason": "end_turn",
+                        "usage": {"input_tokens": 4, "output_tokens": 1},
+                    }
+                ),
+            ]
+        )
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_http_client", AsyncMock(return_value=client)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()) as add_usage,
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={"authorization": "Bearer sk_test"},
+                    json={
+                        "model": "claude-opus-4-7",
+                        "max_tokens": 64,
+                        "messages": [{"role": "user", "content": "Reply with exactly OK"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(
+            [call["url"] for call in client.calls],
+            [
+                "https://primary-claude.example/v1/messages",
+                "https://backup-claude.example/v1/messages",
+            ],
+        )
+        failed = add_usage.await_args_list[0].kwargs
+        self.assertEqual(failed["status_code"], 403)
+        self.assertEqual(failed["requests"], 0)
+        self.assertTrue(failed["request_log_only"])
+        success = add_usage.await_args_list[1].kwargs
+        self.assertEqual(success["channel_id"], "ch_backup")
+        self.assertEqual(success["route_attempt"], 1)
+
     async def test_messages_falls_back_on_cloudflare_524(self):
         self._configure_anthropic_fallback_channels()
         fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_524_fallback")
@@ -2936,6 +2988,51 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(success["channel_id"], "ch_tertiary")
         self.assertEqual(success["route_attempt"], 2)
 
+    async def test_messages_multi_hop_fallback_continues_after_upstream_403(self):
+        self._configure_anthropic_fallback_channels(include_tertiary=True)
+        fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_multi_auth_fallback")
+        client = _RecordingClient(
+            [
+                _FakeUpstreamResponse({"error": {"message": "rate limited"}}, status_code=429),
+                _FakeUpstreamResponse({"error": {"message": "upstream account forbidden"}}, status_code=403),
+                _FakeUpstreamResponse(
+                    {
+                        "id": "msg_tertiary_auth",
+                        "type": "message",
+                        "role": "assistant",
+                        "model": "claude-tertiary",
+                        "content": [{"type": "text", "text": "OK"}],
+                        "stop_reason": "end_turn",
+                        "usage": {"input_tokens": 4, "output_tokens": 1},
+                    }
+                ),
+            ]
+        )
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_http_client", AsyncMock(return_value=client)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()) as add_usage,
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={"authorization": "Bearer sk_test"},
+                    json={
+                        "model": "claude-opus-4-7",
+                        "max_tokens": 64,
+                        "messages": [{"role": "user", "content": "Reply with exactly OK"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual([call.kwargs["status_code"] for call in add_usage.await_args_list[:2]], [429, 403])
+        self.assertTrue(add_usage.await_args_list[0].kwargs["request_log_only"])
+        self.assertTrue(add_usage.await_args_list[1].kwargs["request_log_only"])
+        success = add_usage.await_args_list[2].kwargs
+        self.assertEqual(success["channel_id"], "ch_tertiary")
+        self.assertEqual(success["route_attempt"], 2)
+
     async def test_streaming_messages_falls_back_on_initial_connection_error(self):
         self._configure_anthropic_fallback_channels()
         fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_stream_connect")
@@ -3027,6 +3124,55 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(success["endpoint"], "messages:stream")
         self.assertEqual(success["channel_id"], "ch_backup")
 
+    async def test_streaming_messages_falls_back_on_403_before_sending_events(self):
+        self._configure_anthropic_fallback_channels()
+        fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_stream_auth_fallback")
+        stream_client = _RecordingStreamClient(
+            [
+                _FakeEventStreamResponse([], status_code=403, body="upstream account forbidden"),
+                _FakeAnthropicEventStreamResponse(
+                    [
+                        'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_backup_stream_auth","type":"message","role":"assistant","model":"claude-backup","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":4,"output_tokens":0}}}',
+                        'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
+                        'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"OK"}}',
+                        'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}',
+                        'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":1}}',
+                        'event: message_stop\ndata: {"type":"message_stop"}',
+                    ]
+                ),
+            ]
+        )
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_stream_client", AsyncMock(return_value=stream_client)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()) as add_usage,
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={"authorization": "Bearer sk_test", "anthropic-version": "2023-06-01"},
+                    json={
+                        "model": "claude-opus-4-7",
+                        "max_tokens": 64,
+                        "stream": True,
+                        "messages": [{"role": "user", "content": "Reply with exactly OK"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn('"text":"OK"', response.text)
+        request_calls = [call for call in stream_client.calls if "url" in call]
+        self.assertEqual([call["url"] for call in request_calls], [
+            "https://primary-claude.example/v1/messages",
+            "https://backup-claude.example/v1/messages",
+        ])
+        failed = add_usage.await_args_list[0].kwargs
+        self.assertEqual(failed["endpoint"], "messages:stream")
+        self.assertEqual(failed["status_code"], 403)
+        self.assertTrue(failed["request_log_only"])
+        self.assertEqual(add_usage.await_args_list[1].kwargs["channel_id"], "ch_backup")
+
     async def test_streaming_messages_falls_back_on_524_before_sending_events(self):
         self._configure_anthropic_fallback_channels()
         fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_stream_524")
@@ -3066,6 +3212,56 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertIn('"text":"OK"', response.text)
         self.assertEqual(add_usage.await_args_list[0].kwargs["status_code"], 524)
+        self.assertEqual(add_usage.await_args_list[1].kwargs["channel_id"], "ch_backup")
+
+    async def test_streaming_messages_falls_back_on_native_error_before_message_start(self):
+        self._configure_anthropic_fallback_channels()
+        fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_stream_pre_start_error")
+        stream_client = _RecordingStreamClient(
+            [
+                _FakeAnthropicEventStreamResponse(
+                    [
+                        'event: error\ndata: {"type":"error","error":{"type":"api_error","message":"cloudflare https://secret-upstream.example sk-secret-value"}}',
+                    ]
+                ),
+                _FakeAnthropicEventStreamResponse(
+                    [
+                        'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_backup_pre_start","type":"message","role":"assistant","model":"claude-backup","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":4,"output_tokens":0}}}',
+                        'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
+                        'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"OK"}}',
+                        'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}',
+                        'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":1}}',
+                        'event: message_stop\ndata: {"type":"message_stop"}',
+                    ]
+                ),
+            ]
+        )
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_stream_client", AsyncMock(return_value=stream_client)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()) as add_usage,
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={"authorization": "Bearer sk_test", "anthropic-version": "2023-06-01"},
+                    json={
+                        "model": "claude-opus-4-7",
+                        "stream": True,
+                        "max_tokens": 64,
+                        "messages": [{"role": "user", "content": "Reply with exactly OK"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn('"text":"OK"', response.text)
+        self.assertNotIn("secret-upstream.example", response.text)
+        request_calls = [call for call in stream_client.calls if "url" in call]
+        self.assertEqual(len(request_calls), 2)
+        failed = add_usage.await_args_list[0].kwargs
+        self.assertEqual(failed["status_code"], 502)
+        self.assertTrue(failed["request_log_only"])
         self.assertEqual(add_usage.await_args_list[1].kwargs["channel_id"], "ch_backup")
 
     async def test_messages_all_channels_fail_returns_sanitized_request_id_and_terminal_log(self):

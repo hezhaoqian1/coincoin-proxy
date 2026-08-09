@@ -64,6 +64,9 @@ Before any bytes are sent to the client, `/v1/messages` should immediately try
 the next eligible provider-channel route when the current Claude channel returns
 a retryable upstream failure:
 
+- HTTP `401` or `403` from a selected provider channel. User authentication has
+  already completed before route selection, so these statuses mean the upstream
+  account/key/channel failed, not that the CoinCoin user should be rejected.
 - HTTP `429`
 - HTTP `502`
 - HTTP `503`
@@ -87,6 +90,31 @@ Streaming caveat: if the upstream fails after the gateway has already started
 forwarding events to the client, the gateway returns a sanitized stream error
 event. It does not splice a second provider's stream into an already-open
 response.
+
+The stream replay boundary is intentionally earlier than "HTTP 200". Anthropic
+compatible upstreams can return HTTP 200 and then immediately emit an SSE
+`event: error`. CoinCoin now pre-reads the upstream stream until the first
+client-visible event:
+
+- If HTTP status, transport, empty-stream, invalid native SSE, or native
+  `event: error` fails before the first forwarded event, the request is retried
+  on the next eligible Claude channel.
+- If `message_start`, content, thinking, or tool-use bytes have already been
+  forwarded, the request is terminal for that client response. CoinCoin records
+  the failed attempt and emits a short sanitized SSE error with the CoinCoin
+  request id.
+
+This keeps Claude Code safe from duplicate content/tool calls while still
+recovering from providers that fail at stream startup.
+
+When reading logs:
+
+- `route_attempt=0` with a terminal `messages:stream` failure usually means the
+  stream failed after CoinCoin had already forwarded a visible event.
+- `route_attempt>0` on the final success means at least one earlier Claude
+  channel failed before the client-visible stream boundary.
+- Intermediate failed attempts should have `request_log_only=true`,
+  `requests=0`, zero token usage, and the failed `channel_id`.
 
 ## Verification commands
 
