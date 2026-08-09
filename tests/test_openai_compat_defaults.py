@@ -686,7 +686,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(upstream_client.calls[0]["json"]["model"], "root-upstream-model")
         self.assertEqual(upstream_client.calls[0]["headers"]["authorization"], "Bearer root-key")
 
-    async def test_text_clients_share_600_connection_transport_and_image_pool_stays_small(self) -> None:
+    async def test_text_clients_share_configured_connection_transport_and_image_pool_stays_small(self) -> None:
         original_client = proxy_module._http_client
         original_stream_client = proxy_module._http_stream_client
         original_image_stream_client = proxy_module._http_image_stream_client
@@ -721,7 +721,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(image_stream_client, fake_client)
         transport_factory.assert_called_once()
         text_limits = transport_factory.call_args.kwargs["limits"]
-        self.assertEqual(text_limits.max_connections, 600)
+        self.assertEqual(text_limits.max_connections, 1000)
         self.assertEqual(text_limits.max_keepalive_connections, 200)
         self.assertEqual(client_factory.call_count, 3)
         client_kwargs = client_factory.call_args_list[0].kwargs
