@@ -120,9 +120,13 @@ class Settings(BaseSettings):
     quota_api_key_concurrency_limit: int = 0
     quota_station_concurrency_limit: int = 0
 
-    # Performance
-    http_pool_max: int = 100
-    http_pool_keepalive: int = 20
+    # Performance. Streaming and non-streaming text clients share one transport,
+    # so these values are the total text outbound capacity for each process.
+    http_pool_max: int = 1000
+    http_pool_keepalive: int = 200
+    http_image_pool_max: int = 100
+    http_image_pool_keepalive: int = 20
+    http_pool_timeout_seconds: float = 60.0
     responses_stream_read_timeout: int = 90
     key_cache_ttl: int = 30
     key_cache_max: int = 10000
