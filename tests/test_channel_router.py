@@ -84,6 +84,89 @@ class ChannelRouterTests(unittest.TestCase):
         self.assertEqual(len(set(choices)), 1)
         self.assertIn(choices[0], {"ch_a", "ch_b"})
 
+    def test_provider_route_aliases_reuse_existing_model_routes_when_exact_route_is_missing(self) -> None:
+        router = ChannelRouter()
+        router.set_snapshot(
+            [
+                ProviderChannelSnapshot(
+                    channel_id="ch_sixoner",
+                    provider_platform="sixoner",
+                    channel_type="anthropic_compatible",
+                    base_url="https://sub.sixoner.com",
+                    api_key="sixoner-key",
+                    priority=0,
+                )
+            ],
+            [
+                ModelChannelRouteSnapshot(
+                    route_id="mcr_opus_dot",
+                    public_model_id="claude-opus-4.6",
+                    endpoint="chat/completions",
+                    channel_id="ch_sixoner",
+                    upstream_model="claude-opus-4-6",
+                    transform_profile="anthropic_messages",
+                )
+            ],
+        )
+
+        choice = router.select_for_model(
+            SimpleNamespace(
+                public_id="claude-opus-4-6",
+                provider_model="claude-opus-4-6",
+                upstream_model="claude-opus-4-6",
+                metadata={"provider_route_aliases": ["claude-opus-4.6"]},
+            ),
+            self._backend(),
+            "chat/completions",
+        )
+
+        self.assertIsNotNone(choice)
+        self.assertEqual(choice.route_id, "mcr_opus_dot")
+        self.assertEqual(choice.channel_id, "ch_sixoner")
+        self.assertEqual(choice.provider_model, "claude-opus-4-6")
+        self.assertEqual(choice.transform_profile, "anthropic_messages")
+
+    def test_exact_route_takes_precedence_over_provider_route_aliases(self) -> None:
+        router = ChannelRouter()
+        router.set_snapshot(
+            [
+                ProviderChannelSnapshot(channel_id="ch_exact", base_url="https://exact.example", api_key="exact", priority=0),
+                ProviderChannelSnapshot(channel_id="ch_alias", base_url="https://alias.example", api_key="alias", priority=0),
+            ],
+            [
+                ModelChannelRouteSnapshot(
+                    route_id="mcr_exact",
+                    public_model_id="claude-opus-4-6",
+                    endpoint="chat/completions",
+                    channel_id="ch_exact",
+                    upstream_model="claude-opus-4-6-exact",
+                ),
+                ModelChannelRouteSnapshot(
+                    route_id="mcr_alias",
+                    public_model_id="claude-opus-4.6",
+                    endpoint="chat/completions",
+                    channel_id="ch_alias",
+                    upstream_model="claude-opus-4-6-alias",
+                ),
+            ],
+        )
+
+        choice = router.select_for_model(
+            SimpleNamespace(
+                public_id="claude-opus-4-6",
+                provider_model="claude-opus-4-6",
+                upstream_model="claude-opus-4-6",
+                metadata={"provider_route_aliases": ["claude-opus-4.6"]},
+            ),
+            self._backend(),
+            "chat/completions",
+        )
+
+        self.assertIsNotNone(choice)
+        self.assertEqual(choice.route_id, "mcr_exact")
+        self.assertEqual(choice.channel_id, "ch_exact")
+        self.assertEqual(choice.provider_model, "claude-opus-4-6-exact")
+
     def test_affinity_fallback_excludes_failed_channel(self) -> None:
         router = ChannelRouter()
         router.set_snapshot(

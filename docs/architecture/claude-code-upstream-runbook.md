@@ -1,6 +1,6 @@
 # Claude Code Upstream Runbook
 
-Updated: 2026-08-04
+Updated: 2026-08-10
 
 This runbook documents the runtime setup for Claude Code-only upstreams in CoinCoin. It intentionally does not include upstream API keys or admin tokens.
 
@@ -41,6 +41,8 @@ The Claude Code family is exposed through public `claude-*` model ids. Current g
 - `claude-haiku-4.5`
 - `claude-haiku-4-5`
 - `claude-opus-4.5`
+- `claude-opus-4.6`
+- `claude-opus-4-6`
 - `claude-opus-4.7`
 - `claude-opus-4.8`
 - `claude-opus-5`
@@ -62,6 +64,12 @@ use each provider's exact advertised identifier.
 - `transform_profile`: `anthropic_messages`
 - `status`: `active`
 
+Provider-route aliases are declared in `config/model_catalog.json` under
+`metadata.provider_route_aliases`. The router checks exact provider-channel
+routes first. If none exist, it checks aliases in order. `claude-opus-4-6`
+therefore reuses `claude-opus-4.6` routes on every configured Claude upstream
+unless an operator creates explicit `claude-opus-4-6` routes.
+
 As of 2026-08-04, the verified non-1M 86 mappings used for fallback are:
 
 | Public model or alias | 86 upstream model |
@@ -70,6 +78,7 @@ As of 2026-08-04, the verified non-1M 86 mappings used for fallback are:
 | `sonnet`, `claude-sonnet-4`, `claude-sonnet-4.5`, `claude-sonnet-4.6` | `claude-sonnet-4-6` |
 | `opus`, `opusplan`, `best`, `default` | `claude-opus-4-7` |
 | `claude-opus-4.5` | `claude-opus-4-5-20251101` |
+| `claude-opus-4.6`, `claude-opus-4-6` | `claude-opus-4-6` |
 | `claude-opus-5` | `claude-opus-5` |
 
 Do not add `opus[1m]` or `sonnet[1m]` routes to 86 until a direct 1M-context

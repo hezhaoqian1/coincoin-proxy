@@ -3,7 +3,7 @@ type: runbook
 status: active
 owner: platform
 audience: [operator, developer, reviewer, agent]
-updated: 2026-08-09
+updated: 2026-08-10
 canonical_for: claude-code-upstream-operations
 ---
 
@@ -25,6 +25,13 @@ model routes instead of a legacy GPT-backed Claude catalog path.
 
 The public model remains a CoinCoin model id. The route decides which upstream
 model name is sent to the provider.
+
+Some public ids are spelling aliases for the same provider model. The checked-in
+catalog can declare `metadata.provider_route_aliases`; when a public model has no
+exact provider-channel route, the router checks those aliases in order. For
+example, `claude-opus-4-6` reuses `claude-opus-4.6` routes unless an operator
+creates explicit `claude-opus-4-6` routes. Explicit routes always win, so an
+operator can still tune or disable the hyphen alias independently.
 
 ## Runtime concurrency
 
