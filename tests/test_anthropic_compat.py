@@ -3437,8 +3437,50 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.text.count("event: error"), 1)
+        self.assertIn('data: {"type":"error","error":{"type":"api_error"', response.text)
         self.assertNotIn("cloudflare", response.text.lower())
         self.assertNotIn("secret-upstream.example", response.text)
         self.assertNotIn("sk-secret-value", response.text)
         add_usage.assert_awaited_once()
         self.assertEqual(add_usage.await_args.kwargs["status_code"], 502)
+
+    async def test_native_stream_error_payload_is_newapi_compatible_even_when_event_name_differs(self):
+        self._configure_anthropic_fallback_channels()
+        fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_native_error_payload")
+        stream_client = _RecordingStreamClient(
+            [
+                _FakeAnthropicEventStreamResponse(
+                    [
+                        'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_error_payload","type":"message","role":"assistant","model":"claude-primary","content":[],"usage":{"input_tokens":1,"output_tokens":0}}}',
+                        'event: message_delta\ndata: {"type":"error","error":{"type":"overloaded_error","message":"Upstream overloaded"}}',
+                        'event: message_stop\ndata: {"type":"message_stop"}',
+                    ]
+                )
+            ]
+        )
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_stream_client", AsyncMock(return_value=stream_client)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()) as add_usage,
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={"authorization": "Bearer sk_test", "anthropic-version": "2023-06-01"},
+                    json={
+                        "model": "claude-opus-4-7",
+                        "stream": True,
+                        "max_tokens": 64,
+                        "messages": [{"role": "user", "content": "Reply"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn("event: message_start", response.text)
+        self.assertIn("event: error", response.text)
+        self.assertIn('data: {"type":"error","error":{"type":"api_error"', response.text)
+        self.assertNotIn("event: message_stop", response.text)
+        add_usage.assert_awaited_once()
+        self.assertEqual(add_usage.await_args.kwargs["status_code"], 502)
+        self.assertEqual(add_usage.await_args.kwargs["requests"], 1)

@@ -93,10 +93,41 @@ gateway process could not obtain a local outbound connection quickly enough; it
 returns a local overload error and should not burn fallback channels for the same
 request.
 
-Streaming caveat: if the upstream fails after the gateway has already started
-forwarding events to the client, the gateway returns a sanitized stream error
-event. It does not splice a second provider's stream into an already-open
-response.
+## Streaming error contract
+
+Anthropic streaming errors are part of the SSE stream contract. After CoinCoin
+has started forwarding a stream, the HTTP status may already be `200`; downstream
+systems must detect failure from the stream event rather than from a later HTTP
+status code.
+
+For native Anthropic Messages upstreams, a mid-stream failure must be forwarded
+as an Anthropic error event:
+
+```text
+event: error
+data: {"type":"error","error":{"type":"api_error","message":"Upstream request failed"}}
+```
+
+Preserve official Anthropic error types when the upstream sends one, including
+`rate_limit_error`, `overloaded_error`, `timeout_error`, and `api_error`. If the
+upstream sends a provider URL, trace id, key name, edge-provider detail, or any
+non-Anthropic value as `error.type`, normalize it to `api_error` and sanitize the
+message before sending it to clients.
+
+Never emit `event: message_stop` after a stream error. A downstream such as
+NewAPI treats a Claude stream payload with `type: "error"` and non-empty
+`error.type` as a relay error. If CoinCoin first emits a normal stop event, many
+clients will close the parser as a successful completion and ignore the later
+error.
+
+CoinCoin records a zero-cost terminal failure log for a stream that ends in an
+error event. It must not record successful usage for that stream, even if the
+upstream had already sent a `message_start` usage block.
+
+Fallback remains a pre-stream decision only. If the upstream fails after the
+gateway has already started forwarding events to the client, the gateway returns
+a sanitized stream error event. It does not splice a second provider's stream
+into an already-open response.
 
 The stream replay boundary is intentionally earlier than "HTTP 200". Anthropic
 compatible upstreams can return HTTP 200 and then immediately emit an SSE
