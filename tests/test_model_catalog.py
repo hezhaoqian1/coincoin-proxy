@@ -727,6 +727,20 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertEqual(resolved.backend.upstream_url, "https://kiro-go.example")
         self.assertEqual(resolved.route_reason, "catalog:claude-opus-5:kiro_go")
 
+    def test_checked_in_claude_opus_4_6_hyphen_alias_maps_to_kiro_go_dot_model(self) -> None:
+        settings.model_catalog_json = ""
+        settings.claude_compat_provider = "kiro_go"
+        registry._initialized = False
+        registry.init_from_settings()
+
+        resolved = registry.resolve_public_model("claude-opus-4-6", "responses")
+
+        self.assertEqual(resolved.public_model.public_id, "claude-opus-4-6")
+        self.assertEqual(resolved.public_model.delivery_lane, "kiro_go")
+        self.assertEqual(resolved.backend.model_id, "claude-opus-4.6")
+        self.assertEqual(resolved.backend.upstream_url, "https://kiro-go.example")
+        self.assertEqual(resolved.route_reason, "catalog:claude-opus-4-6:kiro_go")
+
     def test_checked_in_grok_models_are_route_only_and_share_grok_4_5_upstream(self) -> None:
         settings.model_catalog_json = ""
         registry._initialized = False
