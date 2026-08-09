@@ -5,7 +5,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -66,7 +66,7 @@ logger = logging.getLogger("coincoin.anthropic_compat")
 
 def _is_messages_fallback_status(status_code: int) -> bool:
     status_code = int(status_code or 0)
-    return status_code in {408, 429} or 500 <= status_code <= 599
+    return status_code in {401, 403, 408, 429} or 500 <= status_code <= 599
 
 
 def _kiro_go_upstream_model(model_id: str) -> str:
@@ -1218,7 +1218,9 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
         alert_upstream: bool = True,
     ) -> None:
         if affect_channel_health:
-            if status_code:
+            if status_code in {401, 403}:
+                _record_channel_failure(cfg, error_code=str(status_code))
+            elif status_code:
                 _record_channel_failure(cfg, status_code=status_code)
             else:
                 _record_channel_failure(cfg, error_code=reason)
@@ -1273,11 +1275,93 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
     def _fallback_reason(reason: str) -> str:
         return _channel_fallback_route_reason(reason)
 
+    async def _preflight_messages_stream(
+        upstream_response: Any,
+        attempt: _AnthropicUpstreamAttempt,
+    ) -> tuple[bool, str, List[bytes], _AnthropicStreamState, AsyncIterator[str], bool]:
+        """Read until the first client-visible stream event.
+
+        Streaming cannot be safely replayed once bytes have reached Claude Code.
+        This preflight window lets us abandon a broken provider while the client
+        has not seen a message_start/content event yet.
+        """
+        stream_state = _AnthropicStreamState()
+        line_iter = upstream_response.aiter_lines()
+        initial_events: List[bytes] = []
+        anthropic_event_lines: List[str] = []
+        saw_anthropic_event = False
+
+        def _preflight_anthropic_event(raw_event: str) -> tuple[bool, str]:
+            event_type, payload_dict = _parse_anthropic_sse_event(raw_event)
+            if not event_type:
+                return False, ""
+            if event_type == "ping":
+                return False, ""
+            if event_type == "error":
+                return False, "upstream_stream_error"
+            if payload_dict is None:
+                return False, "upstream_stream_error"
+            should_forward_event = not (
+                event_type == "message_start" and stream_state.message_started
+            )
+            _update_state_from_anthropic_event(
+                stream_state,
+                event_type=event_type,
+                event_payload=payload_dict,
+            )
+            if should_forward_event:
+                masked_event = _mask_anthropic_sse_event_model(raw_event, display_model)
+                initial_events.append((masked_event + "\n\n").encode("utf-8"))
+            return bool(initial_events), ""
+
+        while True:
+            try:
+                raw_line = str(await line_iter.__anext__() or "")
+            except StopAsyncIteration:
+                return False, "upstream_stream_error", initial_events, stream_state, line_iter, saw_anthropic_event
+            except (httpx.TimeoutException, httpx.RequestError):
+                return False, "upstream_stream_error", initial_events, stream_state, line_iter, saw_anthropic_event
+            except Exception:
+                return False, "upstream_stream_error", initial_events, stream_state, line_iter, saw_anthropic_event
+
+            if attempt.is_native and (anthropic_event_lines or raw_line.startswith("event:")):
+                if raw_line.startswith("event:"):
+                    saw_anthropic_event = True
+                if raw_line == "":
+                    raw_event = "\n".join(anthropic_event_lines)
+                    anthropic_event_lines.clear()
+                    ready, error_code = _preflight_anthropic_event(raw_event)
+                    if error_code:
+                        return False, error_code, initial_events, stream_state, line_iter, saw_anthropic_event
+                    if ready:
+                        return True, "", initial_events, stream_state, line_iter, saw_anthropic_event
+                    continue
+                anthropic_event_lines.append(raw_line)
+                continue
+
+            if raw_line == "":
+                continue
+            if attempt.is_native and saw_anthropic_event:
+                continue
+
+            events = _translate_openai_chunk_to_anthropic_events(
+                stream_state,
+                display_model=display_model,
+                raw_line=raw_line,
+            )
+            if events:
+                initial_events.extend(events)
+                return True, "", initial_events, stream_state, line_iter, saw_anthropic_event
+
     if payload.get("stream"):
         stream_client = await get_stream_client()
         upstream = None
         upstream_request_id = ""
         attempt = _build_attempt(used_cfg)
+        initial_stream_events: List[bytes] = []
+        stream_state = _AnthropicStreamState()
+        stream_line_iter: Optional[AsyncIterator[str]] = None
+        stream_saw_anthropic_event = False
 
         while True:
             attempt = _build_attempt(used_cfg)
@@ -1351,7 +1435,31 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                     status_code=status_code,
                     request_id=client_request_id,
                 )
-            break
+            (
+                preflight_ok,
+                preflight_reason,
+                initial_stream_events,
+                stream_state,
+                stream_line_iter,
+                stream_saw_anthropic_event,
+            ) = await _preflight_messages_stream(upstream, attempt)
+            if preflight_ok:
+                break
+            fallback_cfg = _select_fallback(used_cfg, preflight_reason or "upstream_stream_error")
+            await _record_failed_attempt(
+                used_cfg,
+                route_reason=used_route_reason,
+                status_code=502,
+                reason=preflight_reason or "upstream_stream_error",
+                terminal=fallback_cfg is None,
+                upstream_request_id=upstream_request_id,
+            )
+            await upstream.aclose()
+            if fallback_cfg is None:
+                return _anthropic_temporary_error(client_request_id, status_code=502)
+            used_cfg = fallback_cfg
+            used_route_reason = _fallback_reason(preflight_reason or "upstream_stream_error")
+            continue
 
         stream_headers = filter_headers(dict(upstream.headers))
         stream_headers.pop("content-length", None)
@@ -1363,21 +1471,30 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
         final_route_reason = used_route_reason
         final_attempt = attempt
         final_upstream_request_id = upstream_request_id
+        final_initial_stream_events = list(initial_stream_events)
+        final_stream_state = stream_state
+        final_stream_line_iter = stream_line_iter
+        final_stream_saw_anthropic_event = stream_saw_anthropic_event
+        final_upstream_status_code = int(upstream.status_code)
 
         if final_attempt.is_native:
             async def iter_native_bytes():
-                stream_state = _AnthropicStreamState()
+                stream_state = final_stream_state
                 reader_task: Optional[asyncio.Task] = None
                 stream_failed = False
                 anthropic_event_lines: List[str] = []
-                saw_anthropic_event = False
+                saw_anthropic_event = final_stream_saw_anthropic_event
 
                 try:
+                    for event in final_initial_stream_events:
+                        yield event
+
                     queue: asyncio.Queue = asyncio.Queue()
 
                     async def _pump_lines() -> None:
                         try:
-                            async for line in upstream.aiter_lines():
+                            line_source = final_stream_line_iter or upstream.aiter_lines()
+                            async for line in line_source:
                                 await queue.put(("line", line))
                             await queue.put(("eof", None))
                         except Exception as exc:
@@ -1576,7 +1693,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                     provider_model=final_cfg.model_id or _effective_provider_model,
                     route_reason=final_route_reason,
                     duration_ms=duration_ms,
-                    status_code=upstream.status_code,
+                    status_code=final_upstream_status_code,
                     price_input_per_million=price_input_per_million,
                     price_output_per_million=price_output_per_million,
                     usage_unit_type="tokens",
@@ -1597,12 +1714,15 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                 media_type="text/event-stream",
             )
 
-        stream_state = _AnthropicStreamState()
+        stream_state = final_stream_state
 
         async def iter_openai_bytes():
             stream_failed = False
             try:
-                async for line in upstream.aiter_lines():
+                for event in final_initial_stream_events:
+                    yield event
+                line_source = final_stream_line_iter or upstream.aiter_lines()
+                async for line in line_source:
                     for event in _translate_openai_chunk_to_anthropic_events(
                         stream_state,
                         display_model=display_model,
@@ -1655,7 +1775,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                         provider_model=final_cfg.model_id or _effective_provider_model,
                         route_reason=final_route_reason,
                         duration_ms=duration_ms,
-                        status_code=upstream.status_code,
+                        status_code=final_upstream_status_code,
                         price_input_per_million=price_input_per_million,
                         price_output_per_million=price_output_per_million,
                         usage_unit_type="tokens",
