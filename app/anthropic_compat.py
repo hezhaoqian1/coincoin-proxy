@@ -516,6 +516,54 @@ def _anthropic_stream_error_bytes(
     )
 
 
+_ANTHROPIC_STREAM_ERROR_TYPES = frozenset(
+    {
+        "invalid_request_error",
+        "authentication_error",
+        "billing_error",
+        "permission_error",
+        "not_found_error",
+        "conflict_error",
+        "request_too_large",
+        "rate_limit_error",
+        "api_error",
+        "timeout_error",
+        "overloaded_error",
+    }
+)
+
+
+def _normalize_anthropic_stream_error_type(value: Any) -> str:
+    error_type = _sanitize_upstream_error_text(str(value or ""), max_length=100).strip()
+    if error_type in _ANTHROPIC_STREAM_ERROR_TYPES:
+        return error_type
+    return "api_error"
+
+
+def _is_anthropic_stream_error_event(event_type: str, payload: Dict[str, Any]) -> bool:
+    return (
+        event_type == "error"
+        or str(payload.get("type") or "") == "error"
+        or isinstance(payload.get("error"), dict)
+    )
+
+
+def _anthropic_stream_error_bytes_from_payload(payload: Dict[str, Any], *, request_id: str = "") -> bytes:
+    raw_error = payload.get("error") if isinstance(payload.get("error"), dict) else payload
+    sanitized_error = _sanitize_upstream_error_payload(raw_error)
+    if isinstance(sanitized_error, dict):
+        message = str(sanitized_error.get("message") or "Upstream request failed")
+        error_type = _normalize_anthropic_stream_error_type(sanitized_error.get("type"))
+    else:
+        message = str(sanitized_error or "Upstream request failed")
+        error_type = "api_error"
+    return _anthropic_stream_error_bytes(
+        message or "Upstream request failed",
+        error_type=error_type,
+        request_id=request_id,
+    )
+
+
 @dataclass(frozen=True)
 class _AnthropicUpstreamAttempt:
     cfg: Any
@@ -661,14 +709,21 @@ async def _consume_native_anthropic_sse_response(
     events: List[bytes] = []
     anthropic_event_lines: List[str] = []
     saw_anthropic_event = False
+    stream_failed = False
 
     def _flush_anthropic_event() -> None:
+        nonlocal stream_failed
         if not anthropic_event_lines:
             return
         raw_event = "\n".join(anthropic_event_lines)
         event_type, payload_dict = _parse_anthropic_sse_event(raw_event)
         if event_type and payload_dict is not None:
             should_forward_event = not (event_type == "message_start" and state.message_started)
+            if _is_anthropic_stream_error_event(event_type, payload_dict):
+                events.append(_anthropic_stream_error_bytes_from_payload(payload_dict))
+                stream_failed = True
+                anthropic_event_lines.clear()
+                return
             _update_state_from_anthropic_event(
                 state,
                 event_type=event_type,
@@ -686,6 +741,8 @@ async def _consume_native_anthropic_sse_response(
                 saw_anthropic_event = True
             if raw_line == "":
                 _flush_anthropic_event()
+                if stream_failed:
+                    break
                 continue
             anthropic_event_lines.append(raw_line)
             continue
@@ -702,7 +759,7 @@ async def _consume_native_anthropic_sse_response(
         )
 
     _flush_anthropic_event()
-    return b"".join(events), state.usage, state.message_stopped
+    return b"".join(events), {} if stream_failed else state.usage, False if stream_failed else state.message_stopped
 
 
 def _normalize_anthropic_stop_reason(finish_reason: str, saw_tool_call: bool) -> str:
@@ -1297,9 +1354,9 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                 return False, ""
             if event_type == "ping":
                 return False, ""
-            if event_type == "error":
-                return False, "upstream_stream_error"
             if payload_dict is None:
+                return False, "upstream_stream_error"
+            if _is_anthropic_stream_error_event(event_type, payload_dict):
                 return False, "upstream_stream_error"
             should_forward_event = not (
                 event_type == "message_start" and stream_state.message_started
@@ -1485,6 +1542,31 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                 anthropic_event_lines: List[str] = []
                 saw_anthropic_event = final_stream_saw_anthropic_event
 
+                def _native_anthropic_event_bytes(raw_event: str) -> tuple[Optional[bytes], bool]:
+                    event_type, payload_dict = _parse_anthropic_sse_event(raw_event)
+                    if not event_type or payload_dict is None:
+                        return None, False
+                    if _is_anthropic_stream_error_event(event_type, payload_dict):
+                        return (
+                            _anthropic_stream_error_bytes_from_payload(
+                                payload_dict,
+                                request_id=client_request_id,
+                            ),
+                            True,
+                        )
+                    should_forward_event = not (
+                        event_type == "message_start" and stream_state.message_started
+                    )
+                    _update_state_from_anthropic_event(
+                        stream_state,
+                        event_type=event_type,
+                        event_payload=payload_dict,
+                    )
+                    if not should_forward_event:
+                        return None, False
+                    raw_event = _mask_anthropic_sse_event_model(raw_event, display_model)
+                    return (raw_event + "\n\n").encode("utf-8"), False
+
                 try:
                     for event in final_initial_stream_events:
                         yield event
@@ -1526,35 +1608,21 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                                     saw_anthropic_event = True
                                 if raw_line == "":
                                     raw_event = "\n".join(anthropic_event_lines)
-                                    event_type, payload_dict = _parse_anthropic_sse_event(raw_event)
-                                    if event_type and payload_dict is not None:
-                                        if event_type == "error":
-                                            await _record_failed_attempt(
-                                                final_cfg,
-                                                route_reason=final_route_reason,
-                                                status_code=502,
-                                                reason="upstream_stream_error",
-                                                terminal=True,
-                                                upstream_request_id=final_upstream_request_id,
-                                            )
-                                            yield _anthropic_stream_error_bytes(
-                                                f"Upstream service temporarily unavailable. Request ID: {client_request_id}",
-                                                request_id=client_request_id,
-                                            )
-                                            stream_failed = True
-                                            return
-                                        should_forward_event = not (
-                                            event_type == "message_start" and stream_state.message_started
-                                        )
-                                        _update_state_from_anthropic_event(
-                                            stream_state,
-                                            event_type=event_type,
-                                            event_payload=payload_dict,
-                                        )
-                                        if should_forward_event:
-                                            raw_event = _mask_anthropic_sse_event_model(raw_event, display_model)
-                                            yield (raw_event + "\n\n").encode("utf-8")
+                                    event_bytes, event_failed = _native_anthropic_event_bytes(raw_event)
+                                    if event_bytes is not None:
+                                        yield event_bytes
                                     anthropic_event_lines.clear()
+                                    if event_failed:
+                                        await _record_failed_attempt(
+                                            final_cfg,
+                                            route_reason=final_route_reason,
+                                            status_code=502,
+                                            reason="upstream_stream_error",
+                                            terminal=True,
+                                            upstream_request_id=final_upstream_request_id,
+                                        )
+                                        stream_failed = True
+                                        return
                                     continue
                                 anthropic_event_lines.append(raw_line)
                                 continue
@@ -1590,35 +1658,21 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                         if item_type == "eof":
                             if anthropic_event_lines:
                                 raw_event = "\n".join(anthropic_event_lines)
-                                event_type, payload_dict = _parse_anthropic_sse_event(raw_event)
-                                if event_type and payload_dict is not None:
-                                    if event_type == "error":
-                                        await _record_failed_attempt(
-                                            final_cfg,
-                                            route_reason=final_route_reason,
-                                            status_code=502,
-                                            reason="upstream_stream_error",
-                                            terminal=True,
-                                            upstream_request_id=final_upstream_request_id,
-                                        )
-                                        yield _anthropic_stream_error_bytes(
-                                            f"Upstream service temporarily unavailable. Request ID: {client_request_id}",
-                                            request_id=client_request_id,
-                                        )
-                                        stream_failed = True
-                                        return
-                                    should_forward_event = not (
-                                        event_type == "message_start" and stream_state.message_started
-                                    )
-                                    _update_state_from_anthropic_event(
-                                        stream_state,
-                                        event_type=event_type,
-                                        event_payload=payload_dict,
-                                    )
-                                    if should_forward_event:
-                                        raw_event = _mask_anthropic_sse_event_model(raw_event, display_model)
-                                        yield (raw_event + "\n\n").encode("utf-8")
+                                event_bytes, event_failed = _native_anthropic_event_bytes(raw_event)
+                                if event_bytes is not None:
+                                    yield event_bytes
                                 anthropic_event_lines.clear()
+                                if event_failed:
+                                    await _record_failed_attempt(
+                                        final_cfg,
+                                        route_reason=final_route_reason,
+                                        status_code=502,
+                                        reason="upstream_stream_error",
+                                        terminal=True,
+                                        upstream_request_id=final_upstream_request_id,
+                                    )
+                                    stream_failed = True
+                                    return
                             break
                 except (httpx.TimeoutException, httpx.RequestError):
                     await _record_failed_attempt(
