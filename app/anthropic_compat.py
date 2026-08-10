@@ -104,9 +104,11 @@ def anthropic_error(
     *,
     error_type: str = "invalid_request_error",
     status_code: int = 400,
+    headers: Optional[Dict[str, str]] = None,
 ) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
+        headers=headers,
         content={
             "type": "error",
             "error": {
@@ -114,6 +116,51 @@ def anthropic_error(
                 "message": message,
             },
         },
+    )
+
+
+def _extract_upstream_request_id_from_error_payload(value: Any) -> str:
+    if isinstance(value, dict):
+        request_id = value.get("request_id")
+        if request_id:
+            return str(request_id).strip()
+        error = value.get("error")
+        if isinstance(error, dict):
+            nested_request_id = error.get("request_id")
+            if nested_request_id:
+                return str(nested_request_id).strip()
+        for item in value.values():
+            nested = _extract_upstream_request_id_from_error_payload(item)
+            if nested:
+                return nested
+    elif isinstance(value, list):
+        for item in value:
+            nested = _extract_upstream_request_id_from_error_payload(item)
+            if nested:
+                return nested
+    return ""
+
+
+def _anthropic_upstream_error_response(
+    *,
+    upstream_status_code: int,
+    message: str = "Upstream request failed",
+    error_type: str = "api_error",
+    upstream_request_id: str = "",
+) -> JSONResponse:
+    headers: Dict[str, str] = {}
+    request_id = str(upstream_request_id or "").strip()
+    if request_id:
+        headers["x-request-id"] = request_id
+        headers["x-upstream-request-id"] = request_id
+    status_code = 502 if upstream_status_code == 400 else upstream_status_code
+    body_message = "Upstream request failed" if upstream_status_code == 400 else message
+    body_error_type = "api_error" if upstream_status_code == 400 else error_type
+    return anthropic_error(
+        body_message,
+        error_type=body_error_type,
+        status_code=status_code,
+        headers=headers or None,
     )
 
 
@@ -500,6 +547,50 @@ def _anthropic_stream_error_bytes(
     )
 
 
+_ANTHROPIC_STREAM_ERROR_TYPES = frozenset(
+    {
+        "invalid_request_error",
+        "authentication_error",
+        "billing_error",
+        "permission_error",
+        "not_found_error",
+        "conflict_error",
+        "request_too_large",
+        "rate_limit_error",
+        "api_error",
+        "timeout_error",
+        "overloaded_error",
+    }
+)
+
+
+def _normalize_anthropic_stream_error_type(value: Any) -> str:
+    error_type = _sanitize_upstream_error_text(str(value or ""), max_length=100).strip()
+    if error_type in _ANTHROPIC_STREAM_ERROR_TYPES:
+        return error_type
+    return "api_error"
+
+
+def _is_anthropic_stream_error_event(event_type: str, payload: Dict[str, Any]) -> bool:
+    return (
+        event_type == "error"
+        or str(payload.get("type") or "") == "error"
+        or isinstance(payload.get("error"), dict)
+    )
+
+
+def _anthropic_stream_error_bytes_from_payload(payload: Dict[str, Any]) -> tuple[bytes, str]:
+    raw_error = payload.get("error") if isinstance(payload.get("error"), dict) else payload
+    sanitized_error = _sanitize_upstream_error_payload(raw_error)
+    if isinstance(sanitized_error, dict):
+        message = str(sanitized_error.get("message") or "Upstream request failed")
+        error_type = _normalize_anthropic_stream_error_type(sanitized_error.get("type"))
+    else:
+        message = str(sanitized_error or "Upstream request failed")
+        error_type = "api_error"
+    return _anthropic_stream_error_bytes(message or "Upstream request failed", error_type=error_type), error_type
+
+
 def _mask_anthropic_sse_event_model(raw_event: str, display_model: str) -> str:
     event_type, payload = _parse_anthropic_sse_event(raw_event)
     if event_type != "message_start" or not isinstance(payload, dict):
@@ -589,19 +680,23 @@ async def _consume_native_anthropic_sse_response(
     events: List[bytes] = []
     anthropic_event_lines: List[str] = []
     saw_anthropic_event = False
+    stream_failed = False
 
     def _flush_anthropic_event() -> None:
+        nonlocal stream_failed
         if not anthropic_event_lines:
             return
         raw_event = "\n".join(anthropic_event_lines)
         event_type, payload_dict = _parse_anthropic_sse_event(raw_event)
         if event_type and payload_dict is not None:
             should_forward_event = not (event_type == "message_start" and state.message_started)
-            _update_state_from_anthropic_event(
-                state,
-                event_type=event_type,
-                event_payload=payload_dict,
-            )
+            if _is_anthropic_stream_error_event(event_type, payload_dict):
+                error_event, _error_type = _anthropic_stream_error_bytes_from_payload(payload_dict)
+                events.append(error_event)
+                stream_failed = True
+                anthropic_event_lines.clear()
+                return
+            _update_state_from_anthropic_event(state, event_type=event_type, event_payload=payload_dict)
             if should_forward_event:
                 masked_event = _mask_anthropic_sse_event_model(raw_event, display_model)
                 events.append((masked_event + "\n\n").encode("utf-8"))
@@ -614,6 +709,8 @@ async def _consume_native_anthropic_sse_response(
                 saw_anthropic_event = True
             if raw_line == "":
                 _flush_anthropic_event()
+                if stream_failed:
+                    break
                 continue
             anthropic_event_lines.append(raw_line)
             continue
@@ -630,9 +727,9 @@ async def _consume_native_anthropic_sse_response(
         )
 
     _flush_anthropic_event()
-    if not state.message_stopped and state.usage:
+    if not stream_failed and not state.message_stopped and state.usage:
         events.extend(_finalize_anthropic_stream(state, display_model=display_model))
-    return b"".join(events), state.usage
+    return b"".join(events), {} if stream_failed else state.usage
 
 
 def _normalize_anthropic_stop_reason(finish_reason: str, saw_tool_call: bool) -> str:
@@ -1202,11 +1299,21 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
         upstream = None
         upstream_request_id = ""
 
-        def _stream_error_response(message: str, *, error_type: str = "api_error") -> StreamingResponse:
+        def _stream_error_response(
+            message: str,
+            *,
+            error_type: str = "api_error",
+            upstream_request_id: str = "",
+        ) -> StreamingResponse:
+            error_headers = dict(response_headers)
+            request_id = str(upstream_request_id or "").strip()
+            if request_id:
+                error_headers["x-request-id"] = request_id
+                error_headers["x-upstream-request-id"] = request_id
             return StreamingResponse(
                 iter([_anthropic_stream_error_bytes(message, error_type=error_type)]),
                 status_code=200,
-                headers=response_headers,
+                headers=error_headers,
                 media_type="text/event-stream",
             )
 
@@ -1243,8 +1350,9 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                     data = None
                 if isinstance(data, dict) and isinstance(data.get("error"), dict):
                     error_info = data["error"]
-                    error_type = _sanitize_upstream_error_text(str(error_info.get("type") or error_type), max_length=100)
+                    error_type = _normalize_anthropic_stream_error_type(error_info.get("type") or error_type)
                     message = _sanitize_upstream_error_text(str(error_info.get("message") or message))
+                    upstream_request_id = upstream_request_id or _extract_upstream_request_id_from_error_payload(data)
             fallback_cfg, fallback_reason = _select_fallback_cfg(str(upstream.status_code), status_code=upstream.status_code)
             if fallback_cfg is not None and _is_native_upstream_cfg(fallback_cfg):
                 _record_channel_failure(used_cfg, status_code=upstream.status_code)
@@ -1255,7 +1363,11 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                 continue
             _record_channel_failure(used_cfg, status_code=upstream.status_code)
             await upstream.aclose()
-            return _stream_error_response(message, error_type=error_type)
+            return _stream_error_response(
+                "Upstream request failed" if upstream.status_code == 400 else message,
+                error_type="api_error" if upstream.status_code == 400 else error_type,
+                upstream_request_id=upstream_request_id,
+            )
 
         async def iter_bytes():
             stream_state = _AnthropicStreamState()
@@ -1263,6 +1375,26 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
             stream_failed = False
             anthropic_event_lines: List[str] = []
             saw_anthropic_event = False
+
+            def _native_anthropic_event_bytes(raw_event: str) -> tuple[Optional[bytes], bool]:
+                event_type, payload_dict = _parse_anthropic_sse_event(raw_event)
+                if not event_type or payload_dict is None:
+                    return None, False
+                if _is_anthropic_stream_error_event(event_type, payload_dict):
+                    error_event, _error_type = _anthropic_stream_error_bytes_from_payload(payload_dict)
+                    return error_event, True
+                should_forward_event = not (
+                    event_type == "message_start" and stream_state.message_started
+                )
+                _update_state_from_anthropic_event(
+                    stream_state,
+                    event_type=event_type,
+                    event_payload=payload_dict,
+                )
+                if not should_forward_event:
+                    return None, False
+                raw_event = _mask_anthropic_sse_event_model(raw_event, display_model)
+                return (raw_event + "\n\n").encode("utf-8"), False
 
             try:
                 queue: asyncio.Queue = asyncio.Queue()
@@ -1301,20 +1433,13 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                                 saw_anthropic_event = True
                             if raw_line == "":
                                 raw_event = "\n".join(anthropic_event_lines)
-                                event_type, payload_dict = _parse_anthropic_sse_event(raw_event)
-                                if event_type and payload_dict is not None:
-                                    should_forward_event = not (
-                                        event_type == "message_start" and stream_state.message_started
-                                    )
-                                    _update_state_from_anthropic_event(
-                                        stream_state,
-                                        event_type=event_type,
-                                        event_payload=payload_dict,
-                                    )
-                                    if should_forward_event:
-                                        raw_event = _mask_anthropic_sse_event_model(raw_event, display_model)
-                                        yield (raw_event + "\n\n").encode("utf-8")
+                                event_bytes, event_failed = _native_anthropic_event_bytes(raw_event)
+                                if event_bytes is not None:
+                                    yield event_bytes
                                 anthropic_event_lines.clear()
+                                if event_failed:
+                                    stream_failed = True
+                                    return
                                 continue
                             anthropic_event_lines.append(raw_line)
                             continue
@@ -1340,20 +1465,13 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                     if item_type == "eof":
                         if anthropic_event_lines:
                             raw_event = "\n".join(anthropic_event_lines)
-                            event_type, payload_dict = _parse_anthropic_sse_event(raw_event)
-                            if event_type and payload_dict is not None:
-                                should_forward_event = not (
-                                    event_type == "message_start" and stream_state.message_started
-                                )
-                                _update_state_from_anthropic_event(
-                                    stream_state,
-                                    event_type=event_type,
-                                    event_payload=payload_dict,
-                                )
-                                if should_forward_event:
-                                    raw_event = _mask_anthropic_sse_event_model(raw_event, display_model)
-                                    yield (raw_event + "\n\n").encode("utf-8")
+                            event_bytes, event_failed = _native_anthropic_event_bytes(raw_event)
+                            if event_bytes is not None:
+                                yield event_bytes
                             anthropic_event_lines.clear()
+                            if event_failed:
+                                stream_failed = True
+                                return
                         break
             except (httpx.TimeoutException, httpx.RequestError) as exc:
                 _record_upstream_transport_failure(used_cfg, exc)
@@ -1432,10 +1550,10 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                     if fallback_cfg is not None and not _is_native_upstream_cfg(fallback_cfg):
                         _use_fallback_cfg(fallback_cfg, fallback_reason)
                         continue
-                return anthropic_error(
-                    "Upstream request failed",
+                return _anthropic_upstream_error_response(
+                    upstream_status_code=_upstream_transport_status_code(exc),
+                    message="Upstream request failed",
                     error_type="overloaded_error" if _is_local_pool_timeout(exc) else "api_error",
-                    status_code=_upstream_transport_status_code(exc),
                 )
             upstream_request_id = extract_upstream_request_id(upstream.headers)
             if upstream.status_code < 400:
@@ -1452,6 +1570,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                     error_info = data["error"]
                     error_type = _sanitize_upstream_error_text(str(error_info.get("type") or error_type), max_length=100)
                     message = _sanitize_upstream_error_text(str(error_info.get("message") or message))
+                    upstream_request_id = upstream_request_id or _extract_upstream_request_id_from_error_payload(data)
             fallback_cfg, fallback_reason = _select_fallback_cfg(str(upstream.status_code), status_code=upstream.status_code)
             if fallback_cfg is not None and not _is_native_upstream_cfg(fallback_cfg):
                 _record_channel_failure(used_cfg, status_code=upstream.status_code)
@@ -1460,7 +1579,12 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                 continue
             _record_channel_failure(used_cfg, status_code=upstream.status_code)
             await upstream.aclose()
-            return anthropic_error(message, error_type=error_type, status_code=upstream.status_code)
+            return _anthropic_upstream_error_response(
+                upstream_status_code=upstream.status_code,
+                message=message,
+                error_type=error_type,
+                upstream_request_id=upstream_request_id,
+            )
         stream_headers = filter_headers(dict(upstream.headers))
         stream_headers.pop("content-length", None)
         stream_headers.setdefault("cache-control", "no-cache")
@@ -1534,10 +1658,10 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                 if fallback_cfg is not None:
                     _use_fallback_cfg(fallback_cfg, fallback_reason)
                     continue
-            return anthropic_error(
-                "Upstream request failed",
+            return _anthropic_upstream_error_response(
+                upstream_status_code=_upstream_transport_status_code(exc),
+                message="Upstream request failed",
                 error_type="overloaded_error" if _is_local_pool_timeout(exc) else "api_error",
-                status_code=_upstream_transport_status_code(exc),
             )
         duration_ms = _elapsed_ms_since(request_t0)
         response_headers = filter_headers(dict(upstream.headers))
@@ -1558,10 +1682,11 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                         _use_fallback_cfg(fallback_cfg, fallback_reason)
                         continue
                     _record_channel_failure(used_cfg, status_code=upstream.status_code)
-                    return anthropic_error(
-                        _sanitize_upstream_error_text(body.decode("utf-8", errors="replace") or "Upstream request failed"),
+                    return _anthropic_upstream_error_response(
+                        upstream_status_code=upstream.status_code,
+                        message=_sanitize_upstream_error_text(body.decode("utf-8", errors="replace") or "Upstream request failed"),
                         error_type="api_error",
-                        status_code=upstream.status_code,
+                        upstream_request_id=upstream_request_id,
                     )
                 if usage:
                     _record_channel_success(used_cfg, duration_ms=duration_ms)
@@ -1601,10 +1726,11 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                     _use_fallback_cfg(fallback_cfg, fallback_reason)
                     continue
                 _record_channel_failure(used_cfg, status_code=upstream.status_code)
-                return anthropic_error(
-                    _sanitize_upstream_error_text(body.decode("utf-8", errors="replace") or "Upstream request failed"),
+                return _anthropic_upstream_error_response(
+                    upstream_status_code=upstream.status_code,
+                    message=_sanitize_upstream_error_text(body.decode("utf-8", errors="replace") or "Upstream request failed"),
                     error_type="api_error",
-                    status_code=upstream.status_code,
+                    upstream_request_id=upstream_request_id,
                 )
             if _should_try_channel_fallback(used_cfg, error_code="upstream_unexpected_content_type"):
                 fallback_cfg, fallback_reason = _select_fallback_cfg(
@@ -1629,7 +1755,12 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                 _use_fallback_cfg(fallback_cfg, fallback_reason)
                 continue
             _record_channel_failure(used_cfg, error_code="upstream_invalid_json")
-            return anthropic_error("Upstream returned invalid JSON", error_type="api_error", status_code=502)
+            return _anthropic_upstream_error_response(
+                upstream_status_code=502,
+                message="Upstream returned invalid JSON",
+                error_type="api_error",
+                upstream_request_id=upstream_request_id,
+            )
 
         if upstream.status_code >= 400:
             fallback_cfg, fallback_reason = _select_fallback_cfg(str(upstream.status_code), status_code=upstream.status_code)
@@ -1643,8 +1774,17 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                 sanitized_error = _sanitize_upstream_error_payload(error_info)
                 message = sanitized_error.get("message") if isinstance(sanitized_error, dict) else str(sanitized_error)
                 error_type = sanitized_error.get("type") if isinstance(sanitized_error, dict) else "api_error"
-                return anthropic_error(message or "Upstream request failed", error_type=error_type or "api_error", status_code=upstream.status_code)
-            return anthropic_error("Upstream request failed", error_type="api_error", status_code=upstream.status_code)
+                upstream_request_id = upstream_request_id or _extract_upstream_request_id_from_error_payload(data)
+                return _anthropic_upstream_error_response(
+                    upstream_status_code=upstream.status_code,
+                    message=message or "Upstream request failed",
+                    error_type=error_type or "api_error",
+                    upstream_request_id=upstream_request_id,
+                )
+            return _anthropic_upstream_error_response(
+                upstream_status_code=upstream.status_code,
+                upstream_request_id=upstream_request_id,
+            )
         break
 
     if is_native_anthropic_upstream and _looks_like_anthropic_message_response(data):

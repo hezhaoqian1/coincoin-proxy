@@ -840,6 +840,108 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("channel:ch_anthropic_compat", usage_kwargs["route_reason"])
         self.assertEqual(usage_kwargs["channel_type"], "anthropic_compatible")
 
+    async def test_messages_native_non_stream_sse_error_stops_without_usage(self):
+        self._configure_anthropic_compatible_channel(upstream_model="claude-sonnet-4-6")
+        registry._initialized = False
+        registry.init_from_settings()
+        fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_anthropic_sse_error")
+        client = _RecordingClient(
+            [
+                _FakeAnthropicEventStreamResponse(
+                    [
+                        'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_sse_error","type":"message","role":"assistant","model":"claude-sonnet-4-6","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":6,"output_tokens":0}}}',
+                        'event: error\ndata: {"type":"error","error":{"type":"https://sub.sixoner.com/v1/messages","message":"bad gateway from https://sub.sixoner.com/v1/messages, cf-ray: a15309ba9be0fe8e-SIN, provider Cloudflare, key sk-secret1234567890"}}',
+                        'event: message_stop\ndata: {"type":"message_stop"}',
+                    ],
+                    headers={"content-type": "text/event-stream; charset=utf-8"},
+                )
+            ]
+        )
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_http_client", AsyncMock(return_value=client)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()) as add_usage,
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={
+                        "authorization": "Bearer sk_test",
+                        "anthropic-version": "2023-06-01",
+                    },
+                    json={
+                        "model": "claude-opus-4-7",
+                        "max_tokens": 64,
+                        "stream": False,
+                        "messages": [{"role": "user", "content": "Reply OK"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.text
+        self.assertIn("event: error", body)
+        self.assertIn('data: {"type":"error","error":{"type":"api_error"', body)
+        self.assertNotIn("event: message_stop", body)
+        self.assertNotIn("sub.sixoner.com", body)
+        self.assertNotIn("https://sub.sixoner.com", body)
+        self.assertNotIn("sk-secret1234567890", body)
+        self.assertNotIn("a15309ba9be0fe8e", body)
+        self.assertNotIn("cf-ray", body)
+        self.assertNotIn("Cloudflare", body)
+        self.assertNotIn("cloudflare", body)
+        add_usage.assert_not_awaited()
+
+    async def test_messages_native_upstream_400_is_masked_and_traceable(self):
+        self._configure_anthropic_compatible_channel(upstream_model="claude-sonnet-4-6")
+        registry._initialized = False
+        registry.init_from_settings()
+        fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_anthropic_400_error")
+        client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "type": "error",
+                        "error": {
+                            "type": "invalid_request_error",
+                            "message": "There was an issue with the format or content of your request.",
+                        },
+                        "request_id": "req_011Cdth1dwYb3KwMGW6is1ED",
+                    },
+                    status_code=400,
+                )
+            ]
+        )
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_http_client", AsyncMock(return_value=client)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()) as add_usage,
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={
+                        "authorization": "Bearer sk_test",
+                        "anthropic-version": "2023-06-01",
+                    },
+                    json={
+                        "model": "claude-opus-4-7",
+                        "max_tokens": 64,
+                        "messages": [{"role": "user", "content": "Reply OK"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 502, response.text)
+        body = response.json()
+        self.assertEqual(body["type"], "error")
+        self.assertEqual(body["error"]["type"], "api_error")
+        self.assertEqual(body["error"]["message"], "Upstream request failed")
+        self.assertEqual(response.headers.get("x-request-id"), "req_011Cdth1dwYb3KwMGW6is1ED")
+        self.assertEqual(response.headers.get("x-upstream-request-id"), "req_011Cdth1dwYb3KwMGW6is1ED")
+        self.assertNotIn("There was an issue with the format or content of your request.", response.text)
+        add_usage.assert_not_awaited()
+
     async def test_chat_completions_routes_to_anthropic_compatible_channel_and_returns_openai_shape(self):
         self._configure_anthropic_compatible_channel()
         registry._initialized = False
@@ -1498,6 +1600,55 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(usage_kwargs["input_tokens"], 20)
         self.assertEqual(usage_kwargs["cache_read_tokens"], 7)
         self.assertEqual(usage_kwargs["cache_creation_tokens"], 8)
+
+    async def test_messages_stream_native_anthropic_sse_error_is_newapi_compatible(self):
+        self._configure_anthropic_compatible_channel(upstream_model="claude-sonnet-4-6")
+        registry._initialized = False
+        registry.init_from_settings()
+        fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_native_stream_error")
+        stream_client = _RecordingStreamClient(
+            [
+                _FakeAnthropicEventStreamResponse(
+                    [
+                        'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_native_stream_error","type":"message","role":"assistant","model":"claude-sonnet-4-6","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":5,"cache_creation_input_tokens":8,"cache_read_input_tokens":7,"output_tokens":0}}}',
+                        'event: error\ndata: {"type":"error","error":{"type":"overloaded_error","message":"Upstream overloaded"}}',
+                        'event: message_stop\ndata: {"type":"message_stop"}',
+                    ]
+                ),
+            ]
+        )
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_stream_client", AsyncMock(return_value=stream_client)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()) as add_usage,
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={
+                        "authorization": "Bearer sk_test",
+                        "anthropic-version": "2023-06-01",
+                    },
+                    json={
+                        "model": "claude-opus-4-7",
+                        "stream": True,
+                        "max_tokens": 64,
+                        "messages": [{"role": "user", "content": "Reply with exactly OK"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.text
+        self.assertIn("event: message_start", body)
+        self.assertIn('"model":"claude-opus-4-7"', body)
+        self.assertIn("event: error", body)
+        self.assertIn('data: {"type":"error","error":{"type":"overloaded_error","message":"Upstream overloaded"}}', body)
+        self.assertNotIn("event: message_stop", body)
+        self.assertEqual(stream_client.calls[0]["url"], "https://claude-relay.example/v1/messages")
+        self.assertEqual(stream_client.calls[0]["json"]["model"], "claude-sonnet-4-6")
+        self.assertTrue(stream_client.calls[0]["json"]["stream"])
+        add_usage.assert_not_awaited()
 
     async def test_messages_stream_kiro_go_native_anthropic_sse_keeps_upstream_usage_in_message_start(self):
         fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_kiro_stream_native_usage")
