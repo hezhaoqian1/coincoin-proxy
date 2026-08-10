@@ -1486,6 +1486,8 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                     continue
                 if _is_messages_fallback_status(status_code):
                     return _anthropic_temporary_error(client_request_id, status_code=status_code)
+                if status_code == 400:
+                    return _anthropic_temporary_error(client_request_id, status_code=502)
                 return anthropic_error(
                     f"Upstream request failed. Request ID: {client_request_id}",
                     error_type="api_error",
@@ -1920,6 +1922,8 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                 continue
             if _is_messages_fallback_status(status_code):
                 return _anthropic_temporary_error(client_request_id, status_code=status_code)
+            if status_code == 400:
+                return _anthropic_temporary_error(client_request_id, status_code=502)
             return anthropic_error(
                 f"Upstream request failed. Request ID: {client_request_id}",
                 error_type="api_error",

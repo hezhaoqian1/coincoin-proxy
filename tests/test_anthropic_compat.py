@@ -2535,6 +2535,53 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(success["requests"], 1)
         alert_failure.assert_called_once()
 
+    async def test_messages_native_upstream_400_is_masked_as_temporary_error(self):
+        self._configure_anthropic_compatible_channel(upstream_model="claude-sonnet-4-6")
+        registry._initialized = False
+        registry.init_from_settings()
+        fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_anthropic_400_error")
+        client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "type": "error",
+                        "error": {
+                            "type": "invalid_request_error",
+                            "message": "There was an issue with the format or content of your request.",
+                        },
+                        "request_id": "req_011Cdth1dwYb3KwMGW6is1ED",
+                    },
+                    status_code=400,
+                )
+            ]
+        )
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_http_client", AsyncMock(return_value=client)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()) as add_usage,
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={"authorization": "Bearer sk_test", "anthropic-version": "2023-06-01"},
+                    json={
+                        "model": "claude-opus-4-7",
+                        "max_tokens": 64,
+                        "messages": [{"role": "user", "content": "Reply OK"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 502, response.text)
+        body = response.json()
+        self.assertEqual(body["type"], "error")
+        self.assertEqual(body["error"]["type"], "api_error")
+        self.assertIn("Upstream service temporarily unavailable", body["error"]["message"])
+        self.assertTrue(body["request_id"].startswith("ccreq_"))
+        self.assertEqual(response.headers["request-id"], body["request_id"])
+        self.assertNotIn("There was an issue with the format or content of your request.", response.text)
+        add_usage.assert_not_awaited()
+
     async def test_messages_falls_back_on_connection_error(self):
         self._configure_anthropic_fallback_channels()
         fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_connect_fallback")
