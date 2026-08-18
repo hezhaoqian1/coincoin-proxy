@@ -210,7 +210,7 @@ uvicorn app.main:app --reload --port 8000
 - 旧 GPT lane 当前公开 alias 包括 `gpt-5`、`gpt-5.1`、`gpt-5.1-codex`、`gpt-5.1-codex-mini`、`gpt-5.1-codex-max`、`gpt-5.2`、`gpt-5.2-codex`、`gpt-5.3-codex`、`gpt-5.4`、`gpt-5.4-mini`、`gpt-5.5`、`gpt-5.6`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`、`codex-auto-review`、`gpt-5-codex`、`gpt-5-codex-mini`，以及由 `COINCOIN_FIXED_MODEL` 指定的默认 GPT alias
 - embedding 请求不再复用旧 GPT / CPA lane；`/v1/embeddings` 默认和显式 `text-embedding-3-small` 都直连 Azure
 - Gemini 文本能力是增量暴露；显式传入 Gemini 文本 alias 时，会路由到 native Gemini CPA lane
-- DeepSeek 文本 alias `deepseek-v4-pro`、`deepseek-v4-flash` 是 route-only 公共模型；部署后需要在后台把它们绑定到 New API / OpenAI-compatible provider channel 才能承载客户请求
+- DeepSeek 文本 alias `deepseek-v4-pro`、`deepseek-v4-flash` 是 route-only 公共模型，coding 流量 canonical preference 为上游 Responses；部署后需要在后台同时绑定 `responses` 和 `chat/completions` route 到 New API / OpenAI-compatible provider channel，Chat 接口仍由本地 Responses 兼容桥支持
 - 图片请求如果省略 `model`，默认走 `gpt-image-2` 的 OpenAI/Azure 图片直连 lane
 - Gemini 图片 alias 保留为显式模型；传入 `model=gemini-image` 时，会路由到 native Gemini CPA lane，并在 CoinCoin 内转换成 OpenAI-compatible 图片响应
 - 图片模型支持 `/v1/images/generations` 与 `/v1/images/edits`，不会伪装成文本模型
