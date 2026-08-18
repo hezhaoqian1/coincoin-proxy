@@ -33,6 +33,7 @@ logger = logging.getLogger("coincoin.channel_monitoring")
 
 MONITOR_OK_STATUSES = {"operational", "degraded"}
 MONITOR_FAILURE_STATUSES = {"failed", "error"}
+MONITOR_PROBE_OUTPUT_TOKENS = 64
 
 
 @dataclass(frozen=True)
@@ -94,6 +95,72 @@ def _status_for_response(response: httpx.Response, payload: Any, latency_ms: int
     if latency_ms >= 30_000:
         return "degraded", f"slow response {latency_ms}ms"
     return "operational", "ok"
+
+
+def _text_value_is_meaningful(value: Any) -> bool:
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, list):
+        return any(
+            isinstance(item, dict)
+            and str(item.get("type") or "") in {"text", "output_text"}
+            and _text_value_is_meaningful(item.get("text"))
+            for item in value
+        )
+    return False
+
+
+def _payload_has_meaningful_output(payload: Any, *, endpoint: str, channel_type: str) -> bool:
+    """Reject HTTP 200 probes that only consumed a reasoning budget."""
+    if not isinstance(payload, dict):
+        return isinstance(payload, str) and bool(payload.strip())
+
+    if channel_type == "anthropic_compatible":
+        for item in payload.get("content") or []:
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") in {"tool_use", "function_call"}:
+                return True
+            if item.get("type") == "text" and _text_value_is_meaningful(item.get("text")):
+                return True
+        return False
+
+    if endpoint == "chat/completions":
+        choices = payload.get("choices")
+        if not isinstance(choices, list):
+            return False
+        for choice in choices:
+            if not isinstance(choice, dict):
+                continue
+            message = choice.get("message") or choice.get("delta") or {}
+            if not isinstance(message, dict):
+                continue
+            if message.get("tool_calls") or message.get("function_call"):
+                return True
+            if _text_value_is_meaningful(message.get("content")):
+                return True
+            if _text_value_is_meaningful(choice.get("text")):
+                return True
+        return False
+
+    if _text_value_is_meaningful(payload.get("output_text")):
+        return True
+    for item in payload.get("output") or []:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") in {"function_call", "tool_use", "function"}:
+            return True
+        if item.get("type") in {"output_text", "text"} and _text_value_is_meaningful(item.get("text")):
+            return True
+        if item.get("type") == "message":
+            for content_item in item.get("content") or []:
+                if not isinstance(content_item, dict):
+                    continue
+                if content_item.get("type") in {"function_call", "tool_use", "function"}:
+                    return True
+                if content_item.get("type") in {"output_text", "text"} and _text_value_is_meaningful(content_item.get("text")):
+                    return True
+    return False
 
 
 def _headers(channel: ProviderChannel, api_key: str) -> dict[str, str]:
@@ -161,7 +228,7 @@ async def _probe_model(
         payload = {
             "model": model,
             "messages": [{"role": "user", "content": "ping"}],
-            "max_tokens": 8,
+            "max_tokens": MONITOR_PROBE_OUTPUT_TOKENS,
             "stream": False,
         }
     elif endpoint == "chat/completions":
@@ -169,7 +236,7 @@ async def _probe_model(
         payload = {
             "model": model,
             "messages": [{"role": "user", "content": "ping"}],
-            "max_tokens": 8,
+            "max_tokens": MONITOR_PROBE_OUTPUT_TOKENS,
             "stream": False,
         }
     else:
@@ -177,7 +244,7 @@ async def _probe_model(
         payload = {
             "model": model,
             "input": "ping",
-            "max_output_tokens": 8,
+            "max_output_tokens": MONITOR_PROBE_OUTPUT_TOKENS,
             "store": False,
             "stream": False,
         }
@@ -191,6 +258,13 @@ async def _probe_model(
         except ValueError:
             data = response.text
         status, message = _status_for_response(response, data, latency_ms)
+        if status == "operational" and not _payload_has_meaningful_output(
+            data,
+            endpoint=endpoint,
+            channel_type=channel_type,
+        ):
+            status = "failed"
+            message = "upstream_empty_response"
         if ping_message and status == "operational":
             status = "degraded"
             message = ping_message

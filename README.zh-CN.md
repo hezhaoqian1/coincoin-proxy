@@ -66,7 +66,7 @@ CoinCoin Proxy 感谢来自大学校友会、科技公司和海外华人开发�
 可选的持久用量/额度基础设施已经放在 Redis Streams 和 Go
 `usage-quota-service` 中，默认关闭。正式账务路径仍由 Python 网关负责，直到
 shadow reconciliation 证明与历史请求日志和日聚合完全一致。开关、运行命令和回滚步骤见
-[`docs/usage-quota-infra.md`](./docs/usage-quota-infra.md)。
+[`docs/operations/usage-quota-infrastructure.md`](./docs/operations/usage-quota-infrastructure.md)。
 
 ---
 
@@ -139,6 +139,14 @@ COINCOIN_GEMINI_CPA_COOLDOWN_SECONDS=30
 COINCOIN_VERTEX_API_KEY=your-vertex-api-key
 COINCOIN_VERTEX_GEMINI_API_BASE=https://aiplatform.googleapis.com/v1/publishers/google
 
+# DeepSeek / New API 直连 lane
+COINCOIN_DEEPSEEK_BASE_URL=https://zzone.cc.cd/v1
+COINCOIN_DEEPSEEK_API_KEY=your-deepseek-upstream-key
+COINCOIN_DEEPSEEK_AUTH_STYLE=bearer
+COINCOIN_DEEPSEEK_INPUT_PRICE=44
+COINCOIN_DEEPSEEK_OUTPUT_PRICE=87
+COINCOIN_DEEPSEEK_CACHE_READ_MULTIPLIER=0.008333333333333333
+
 # 多图异步任务
 COINCOIN_IMAGE_JOBS_ENABLED=true
 COINCOIN_IMAGE_JOB_SYNC_INPUT_LIMIT=2
@@ -189,6 +197,7 @@ uvicorn app.main:app --reload --port 8000
 - 旧 GPT lane 当前公开 alias 包括 `gpt-5`、`gpt-5.1`、`gpt-5.1-codex`、`gpt-5.1-codex-mini`、`gpt-5.1-codex-max`、`gpt-5.2`、`gpt-5.2-codex`、`gpt-5.3-codex`、`gpt-5.4`、`gpt-5.4-mini`、`gpt-5.5`、`gpt-5.6`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`、`codex-auto-review`、`gpt-5-codex`、`gpt-5-codex-mini`，以及由 `COINCOIN_FIXED_MODEL` 指定的默认 GPT alias
 - embedding 请求不再复用旧 GPT / CPA lane；`/v1/embeddings` 默认和显式 `text-embedding-3-small` 都直连 Azure
 - Gemini 文本能力是增量暴露；显式传入 Gemini 文本 alias 时，会路由到 native Gemini CPA lane
+- DeepSeek 文本 alias `deepseek-v4-pro` 通过 OpenAI-compatible New API 上游直连；coding 请求优先走上游 Responses API，`/v1/chat/completions` 仍由本地兼容桥接支持；配置 `COINCOIN_DEEPSEEK_API_KEY` 后才会出现在 `/v1/models`
 - 图片请求如果省略 `model`，默认走 `gpt-image-2` 的 OpenAI/Azure 图片直连 lane
 - Gemini 图片 alias 保留为显式模型；传入 `model=gemini-image` 时，会路由到 native Gemini CPA lane，并在 CoinCoin 内转换成 OpenAI-compatible 图片响应
 - 图片模型支持 `/v1/images/generations` 与 `/v1/images/edits`，不会伪装成文本模型
@@ -258,21 +267,22 @@ uvicorn app.main:app --reload --port 8000
 - `route_attempt`：`0` 是首选路径，`1+` 是 fallback 尝试
 - `route_reason`：区分 `channel_fallback:*`、`system_fallback:*`、catalog 默认路径等
 
-更完整的后台操作说明以本 README 的 `上游渠道、模型 route 与 fallback` 章节和后台页面提示为准。
+更完整的后台操作说明见本 README 的 `上游渠道、模型 route 与 fallback` 章节、后台页面提示和
+[`docs/README.md`](./docs/README.md) 中按任务整理的运维文档。
 
 ### Claude Code 专用上游
 
 Claude Code-only 上游和普通 OpenAI-compatible 上游不完全一样：真实 Claude Code 客户端请求需要走 Anthropic Messages 形状、Claude Code headers 和 `?beta=true`，普通脚本探测或后台服务端监控可能被上游边缘策略拒绝。不要只根据普通 `/v1/chat/completions` 或监控 `503` 判定这类渠道不可用。
 
-当前 Sixoner Claude Code 接入使用 `anthropic_compatible` provider channel 加 model route 的方式承载，`claude-sonnet-5` 等公开 Claude 模型保持 route-only，避免重新落回旧的 GPT-backed Claude alias。Claude Code 模型的倍率通过 `/admin/model-pricing/{model_id}` 管理；当前生产策略是 `claude-*` 公共模型统一 `model_multiplier=6.0`、`output_multiplier=1.0`、`cache_read_multiplier=0.1`。
+当前 Sixoner Claude Code 接入使用 `anthropic_compatible` provider channel 加 model route 的方式承载，`claude-sonnet-5` 等公开 Claude 模型保持 route-only，避免重新落回旧的 GPT-backed Claude alias。Claude Code 模型的倍率通过 `/admin/model-pricing/{model_id}` 管理；当前生产策略是 `claude-*` 公共模型统一 `model_multiplier=4.0`、`output_multiplier=1.0`、`cache_read_multiplier=0.1`。
 
-详细验收项、价格计算公式和运维命令见 [`docs/architecture/claude-code-upstream-runbook.md`](./docs/architecture/claude-code-upstream-runbook.md)。
+详细验收项、价格计算公式和运维命令见 [`docs/operations/claude-code-upstream-runbook.md`](./docs/operations/claude-code-upstream-runbook.md)。
 
 ---
 
 ## API 文档
 
-当前实际部署并对外使用的文档/API 入口只有一层：
+当前实际部署并对外使用的公开文档/API 入口只有一层：
 
 - `coincoin-proxy` 自己的 README
 - `coincoin-proxy` 站点里的 `/docs`
@@ -280,10 +290,10 @@ Claude Code-only 上游和普通 OpenAI-compatible 上游不完全一样：真�
 当前状态请按下面理解：
 
 - Railway 上真正部署的是 `coincoin-proxy`
-- 根仓库里的 `services/docs-portal/**`、`docs/**` 目前不是线上入口，不要当成已部署文档站
+- `docs/**` 是仓库内的开发、运维和架构决策文档，不是已部署的线上文档站；它服务维护者和 coding agent
 - 如果你要改线上用户实际看到的文档、示例和 API 说明，优先改 `coincoin-proxy` 这个嵌套仓库
-
-注意：
+- 如果你要让 AI 参与开发，先读根目录 [`AGENTS.md`](./AGENTS.md)，再按
+  [`docs/README.md`](./docs/README.md) 选择最小阅读集，不要把整个 `docs/` 一次性塞进上下文
 
 ## 监控设计
 
@@ -308,8 +318,6 @@ Claude Code-only 上游和普通 OpenAI-compatible 上游不完全一样：真�
   - `POST /ops/monitoring/probes/cpa-responses`
 
 完整方案以本 README 的监控设计说明、受保护 probe 路由和后台页面提示为准。
-
-- 当前这个仓库的 GitHub remote、部署服务、代码目录和日常沟通都统一按 `coincoin-proxy` 理解
 
 ### 基础端点
 
@@ -821,6 +829,12 @@ Content-Type: application/json
 | `COINCOIN_GATEWAY_BASE_URL` | - | 可选 legacy/internal OpenAI-compatible gateway 根地址 |
 | `COINCOIN_GATEWAY_API_KEY` | - | 可选 legacy/internal gateway 访问密钥 |
 | `COINCOIN_GATEWAY_AUTH_STYLE` | `bearer` | 可选 legacy/internal gateway 认证方式 |
+| `COINCOIN_DEEPSEEK_BASE_URL` | `https://zzone.cc.cd/v1` | DeepSeek / New API 兼容上游根地址 |
+| `COINCOIN_DEEPSEEK_API_KEY` | - | DeepSeek 上游访问密钥；为空时不暴露 `deepseek-v4-pro` |
+| `COINCOIN_DEEPSEEK_AUTH_STYLE` | `bearer` | DeepSeek 上游认证方式 |
+| `COINCOIN_DEEPSEEK_INPUT_PRICE` | `44` | `deepseek-v4-pro` input 价格（分/百万 tokens） |
+| `COINCOIN_DEEPSEEK_OUTPUT_PRICE` | `87` | `deepseek-v4-pro` output 价格（分/百万 tokens） |
+| `COINCOIN_DEEPSEEK_CACHE_READ_MULTIPLIER` | `0.008333333333333333` | `deepseek-v4-pro` cached input 折扣倍率 |
 | `COINCOIN_DB_HOST` | - | 数据库主机 |
 | `COINCOIN_DB_PORT` | `3306` | 数据库端口 |
 | `COINCOIN_DB_NAME` | - | 数据库名 |
@@ -830,7 +844,11 @@ Content-Type: application/json
 | `COINCOIN_KEY_PREFIX` | `sk_cc_` | API Key 前缀 |
 | `COINCOIN_KEY_PEPPER` | `coincoin-pepper` | Key 哈希盐值 |
 | `COINCOIN_USAGE_FLUSH_INTERVAL` | `5` | 用量写入间隔(秒) |
-| `COINCOIN_HTTP_POOL_MAX` | `100` | HTTP 连接池大小 |
+| `COINCOIN_HTTP_POOL_MAX` | `600` | 每个 Python 进程的文本出站总连接上限；非流式与流式客户端共享 |
+| `COINCOIN_HTTP_POOL_KEEPALIVE` | `200` | 文本出站共享池的 keepalive 连接上限 |
+| `COINCOIN_HTTP_IMAGE_POOL_MAX` | `100` | 图片流式客户端的独立出站连接上限 |
+| `COINCOIN_HTTP_IMAGE_POOL_KEEPALIVE` | `20` | 图片流式客户端的 keepalive 连接上限 |
+| `COINCOIN_HTTP_POOL_TIMEOUT_SECONDS` | `60` | 等待当前出站连接池空位的最长秒数；超时视为本地过载，不会惩罚或切换上游渠道 |
 | `COINCOIN_KEY_CACHE_TTL` | `30` | Key 缓存 TTL(秒) |
 | `COINCOIN_PRICE_INPUT_PER_MILLION` | `99` | Input 价格（分/百万Token）|
 | `COINCOIN_PRICE_OUTPUT_PER_MILLION` | `699` | Output 价格（分/百万Token）|

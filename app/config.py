@@ -52,6 +52,23 @@ class Settings(BaseSettings):
     gateway_api_key: str = ""
     gateway_auth_style: str = "bearer"
 
+    # xAI/Grok OpenAI-compatible upstream. The checked-in catalog publishes
+    # Grok only when grok_api_key is configured.
+    grok_base_url: str = "https://api.xtokenmirror.com/v1"
+    grok_api_key: str = ""
+    grok_auth_style: str = "bearer"
+    grok_input_price: int = 500
+    grok_output_price: int = 3000
+
+    # DeepSeek OpenAI-compatible upstream. The checked-in catalog publishes
+    # DeepSeek only when deepseek_api_key is configured.
+    deepseek_base_url: str = "https://zzone.cc.cd/v1"
+    deepseek_api_key: str = ""
+    deepseek_auth_style: str = "bearer"
+    deepseek_input_price: int = 44
+    deepseek_output_price: int = 87
+    deepseek_cache_read_multiplier: float = 0.008333333333333333
+
     # Claude compatibility upstream selection.
     # `upstream_direct` keeps the existing OpenAI/Azure-style Claude compat path.
     # `kiro_go` routes Claude aliases to a Kiro-Go deployment.

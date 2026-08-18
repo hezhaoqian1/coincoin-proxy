@@ -96,6 +96,20 @@ class _FakeAnthropicClient:
         )
 
 
+class _FakeChatClient:
+    def __init__(self, payload):
+        self.calls = []
+        self.payload = payload
+
+    async def get(self, url, headers):
+        self.calls.append(("GET", url, dict(headers), None))
+        return httpx.Response(200, json={"data": [{"id": "deepseek-v4-pro"}]})
+
+    async def post(self, url, json, headers):
+        self.calls.append(("POST", url, dict(headers), dict(json)))
+        return httpx.Response(200, json=self.payload)
+
+
 class ChannelMonitoringTests(unittest.IsolatedAsyncioTestCase):
     async def test_run_monitor_once_records_history_and_daily_rollup(self) -> None:
         monitor = SimpleNamespace(
@@ -145,6 +159,45 @@ class ChannelMonitoringTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(daily_rows), 2)
         self.assertEqual(daily_rows[0].total_checks, 1)
         self.assertEqual(daily_rows[0].operational_count, 1)
+
+    async def test_chat_monitor_uses_reasoning_safe_budget_and_rejects_empty_success(self) -> None:
+        monitor = SimpleNamespace(
+            id="cmon_deepseek",
+            channel_id="ch_deepseek",
+            name="DeepSeek V4 Pro",
+            endpoint="chat/completions",
+            primary_model="deepseek-v4-pro",
+            extra_models="",
+            status="active",
+            interval_seconds=60,
+            timeout_seconds=30,
+            last_checked_at=None,
+            last_status="",
+            last_latency_ms=0,
+            last_ping_latency_ms=0,
+            last_message="",
+        )
+        channel = SimpleNamespace(
+            id="ch_deepseek",
+            base_url="https://zzone.cc.cd/v1",
+            encrypted_api_key=encrypt_api_key("sk-test"),
+            auth_style="bearer",
+        )
+        db = _FakeDB(monitor=monitor, channel=channel)
+        client = _FakeChatClient(
+            {
+                "id": "chatcmpl_empty",
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": None}}],
+                "usage": {"prompt_tokens": 3, "completion_tokens": 8},
+            }
+        )
+
+        results = await run_provider_channel_monitor_once(db, monitor.id, client=client)
+
+        self.assertEqual(results[0].status, "failed")
+        self.assertEqual(results[0].message, "upstream_empty_response")
+        self.assertEqual(client.calls[1][1], "https://zzone.cc.cd/v1/chat/completions")
+        self.assertEqual(client.calls[1][3]["max_tokens"], 64)
 
     async def test_anthropic_compatible_monitor_uses_messages_endpoint(self) -> None:
         monitor = SimpleNamespace(

@@ -68,8 +68,9 @@ OFFICIAL_DEFAULT_TEXT_PRICES = {
     "gpt-5.5": FIXED_TEXT_PRICE,
     "gpt-5.6": FIXED_TEXT_PRICE,
     "gpt-5.6-sol": FIXED_TEXT_PRICE,
-    "gpt-5.6-terra": (250, 1500),
-    "gpt-5.6-luna": (100, 600),
+    "gpt-5.6-terra": (200, 1200),
+    "gpt-5.6-luna": (20, 120),
+    "deepseek-v4-pro": (44, 87),
     "claude-fable-5": CLAUDE_FABLE_PRICE,
     "claude-opus-4-8": CLAUDE_OPUS_PRICE,
     "claude-opus-4.8": CLAUDE_OPUS_PRICE,
@@ -372,6 +373,16 @@ class GatewayCatalogSyncTests(unittest.TestCase):
 
                 if capabilities.intersection(TEXT_CAPABILITIES):
                     self.assertEqual(model.get("upstream_model"), model.get("provider_model"))
+                    if model.get("provider_name") == "DeepSeek":
+                        self.assertEqual(model.get("upstream_url"), "${COINCOIN_DEEPSEEK_BASE_URL:-https://zzone.cc.cd/v1}")
+                        self.assertEqual(model.get("api_key"), "${COINCOIN_DEEPSEEK_API_KEY}")
+                        self.assertEqual(model.get("auth_style"), "${COINCOIN_DEEPSEEK_AUTH_STYLE:-bearer}")
+                        continue
+                    if model.get("provider_name") == "xAI":
+                        self.assertEqual(model.get("upstream_url"), "${COINCOIN_GROK_BASE_URL:-https://api.xtokenmirror.com/v1}")
+                        self.assertEqual(model.get("api_key"), "${COINCOIN_GROK_API_KEY}")
+                        self.assertEqual(model.get("auth_style"), "${COINCOIN_GROK_AUTH_STYLE:-bearer}")
+                        continue
                     self.assertEqual(
                         model.get("upstream_url"),
                         "${COINCOIN_UPSTREAM_BASE_URL}",

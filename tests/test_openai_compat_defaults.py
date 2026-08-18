@@ -505,6 +505,59 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         registry._initialized = False
         registry.init_from_settings()
 
+    def _add_grok_build_model(self) -> None:
+        catalog = json.loads(settings.model_catalog_json)
+        catalog.setdefault("models", []).append(
+            {
+                "id": "grok-build",
+                "owned_by": "xai",
+                "provider_name": "xAI",
+                "provider_model": "grok-4.5",
+                "capabilities": ["chat/completions", "responses"],
+                "routing_mode": "direct",
+                "delivery_lane": "upstream_direct",
+                "upstream_model": "grok-4.5",
+                "upstream_url": "https://grok.example/v1",
+                "api_key": "grok-key",
+                "auth_style": "bearer",
+                "price_input_per_million": 500,
+                "price_output_per_million": 3000,
+                "billable_sku": "xai-grok-build-text",
+            }
+        )
+        settings.model_catalog_json = json.dumps(catalog)
+        registry._initialized = False
+        registry.init_from_settings()
+
+    def _add_deepseek_model(self) -> None:
+        catalog = json.loads(settings.model_catalog_json)
+        catalog.setdefault("models", []).append(
+            {
+                "id": "deepseek-v4-pro",
+                "owned_by": "deepseek",
+                "provider_name": "DeepSeek",
+                "provider_model": "deepseek-v4-pro",
+                "capabilities": ["chat/completions", "responses"],
+                "routing_mode": "direct",
+                "delivery_lane": "upstream_direct",
+                "upstream_model": "deepseek-v4-pro",
+                "upstream_url": "https://deepseek.example/v1",
+                "api_key": "deepseek-key",
+                "auth_style": "bearer",
+                "price_input_per_million": 44,
+                "price_output_per_million": 87,
+                "billable_sku": "deepseek-v4-pro-text",
+                "pricing": {"cache_read_multiplier": 0.008333333333333333},
+                "metadata": {
+                    "preferred_api_backend": "responses",
+                    "provider_platform": "new_api",
+                },
+            }
+        )
+        settings.model_catalog_json = json.dumps(catalog)
+        registry._initialized = False
+        registry.init_from_settings()
+
     def tearDown(self) -> None:
         for patcher in reversed(getattr(self, "_workbench_auth_patchers", [])):
             patcher.stop()
@@ -552,6 +605,257 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(upstream_client.calls[0]["url"], "https://root-base.example/v1/responses")
         self.assertEqual(upstream_client.calls[0]["json"]["model"], "root-upstream-model")
         self.assertEqual(upstream_client.calls[0]["headers"]["authorization"], "Bearer root-key")
+
+    async def test_text_clients_share_configured_connection_transport_and_image_pool_stays_small(self) -> None:
+        original_client = proxy_module._http_client
+        original_stream_client = proxy_module._http_stream_client
+        original_image_stream_client = proxy_module._http_image_stream_client
+        original_text_transport = proxy_module._http_text_transport
+        proxy_module._http_client = None
+        proxy_module._http_stream_client = None
+        proxy_module._http_image_stream_client = None
+        proxy_module._http_text_transport = None
+        fake_client = SimpleNamespace(is_closed=False)
+        fake_transport = object()
+        try:
+            with patch.object(
+                proxy_module.httpx,
+                "AsyncHTTPTransport",
+                return_value=fake_transport,
+            ) as transport_factory, patch.object(
+                proxy_module.httpx,
+                "AsyncClient",
+                return_value=fake_client,
+            ) as client_factory:
+                client = await proxy_module.get_http_client()
+                stream_client = await proxy_module.get_stream_client()
+                image_stream_client = await proxy_module.get_image_stream_client()
+        finally:
+            proxy_module._http_client = original_client
+            proxy_module._http_stream_client = original_stream_client
+            proxy_module._http_image_stream_client = original_image_stream_client
+            proxy_module._http_text_transport = original_text_transport
+
+        self.assertIs(client, fake_client)
+        self.assertIs(stream_client, fake_client)
+        self.assertIs(image_stream_client, fake_client)
+        transport_factory.assert_called_once()
+        text_limits = transport_factory.call_args.kwargs["limits"]
+        self.assertEqual(text_limits.max_connections, 1000)
+        self.assertEqual(text_limits.max_keepalive_connections, 200)
+        self.assertEqual(client_factory.call_count, 3)
+        client_kwargs = client_factory.call_args_list[0].kwargs
+        self.assertIs(client_kwargs["transport"], fake_transport)
+        self.assertEqual(client_kwargs["timeout"].pool, 60.0)
+        self.assertEqual(client_kwargs["timeout"].connect, 10.0)
+        stream_kwargs = client_factory.call_args_list[1].kwargs
+        self.assertIs(stream_kwargs["transport"], fake_transport)
+        self.assertEqual(stream_kwargs["timeout"].pool, 60.0)
+        self.assertEqual(stream_kwargs["timeout"].connect, 5.0)
+        image_kwargs = client_factory.call_args_list[2].kwargs
+        self.assertEqual(image_kwargs["limits"].max_connections, 100)
+        self.assertEqual(image_kwargs["limits"].max_keepalive_connections, 20)
+
+    async def test_close_http_client_closes_all_clients_and_clears_shared_transport(self) -> None:
+        original_client = proxy_module._http_client
+        original_stream_client = proxy_module._http_stream_client
+        original_image_stream_client = proxy_module._http_image_stream_client
+        original_text_transport = proxy_module._http_text_transport
+        clients = [
+            SimpleNamespace(is_closed=False, aclose=AsyncMock()),
+            SimpleNamespace(is_closed=False, aclose=AsyncMock()),
+            SimpleNamespace(is_closed=False, aclose=AsyncMock()),
+        ]
+        proxy_module._http_client = clients[0]
+        proxy_module._http_stream_client = clients[1]
+        proxy_module._http_image_stream_client = clients[2]
+        proxy_module._http_text_transport = object()
+        try:
+            await proxy_module.close_http_client()
+
+            for client in clients:
+                client.aclose.assert_awaited_once()
+            self.assertIsNone(proxy_module._http_client)
+            self.assertIsNone(proxy_module._http_stream_client)
+            self.assertIsNone(proxy_module._http_image_stream_client)
+            self.assertIsNone(proxy_module._http_text_transport)
+
+            await proxy_module.close_http_client()
+            for client in clients:
+                client.aclose.assert_awaited_once()
+        finally:
+            proxy_module._http_client = original_client
+            proxy_module._http_stream_client = original_stream_client
+            proxy_module._http_image_stream_client = original_image_stream_client
+            proxy_module._http_text_transport = original_text_transport
+
+    def test_upstream_transport_errors_have_actionable_codes(self) -> None:
+        cases = [
+            (httpx.PoolTimeout("pool full"), "upstream_pool_timeout"),
+            (httpx.ConnectTimeout("connect slow"), "upstream_connect_timeout"),
+            (httpx.ReadTimeout("read slow"), "upstream_read_timeout"),
+            (httpx.WriteTimeout("write slow"), "upstream_write_timeout"),
+            (httpx.ConnectError("connection failed"), "upstream_unreachable"),
+        ]
+        for error, expected in cases:
+            with self.subTest(error=type(error).__name__):
+                self.assertEqual(proxy_module._upstream_transport_error_code(error), expected)
+
+    async def test_grok_build_responses_preserves_flat_function_tools(self) -> None:
+        self._add_grok_build_model()
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "resp_grok_tool",
+                        "model": "grok-4.5-build-free",
+                        "status": "completed",
+                        "output": [
+                            {
+                                "type": "function_call",
+                                "id": "call_grok_read",
+                                "call_id": "call_grok_read",
+                                "name": "read_file",
+                                "arguments": '{"path":"probe.txt"}',
+                            }
+                        ],
+                        "usage": {"input_tokens": 8, "output_tokens": 3, "total_tokens": 11},
+                    }
+                )
+            ]
+        )
+        tool = {
+            "type": "function",
+            "name": "read_file",
+            "description": "Read a file",
+            "parameters": {
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+            },
+        }
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(proxy_module.usage_buffer, "add", AsyncMock()):
+                response = await client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={
+                        "model": "grok-build",
+                        "input": "Read probe.txt",
+                        "tools": [tool],
+                        "tool_choice": "auto",
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(upstream_client.calls[0]["url"], "https://grok.example/v1/responses")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "grok-4.5")
+        self.assertEqual(upstream_client.calls[0]["json"]["tools"], [tool])
+        self.assertEqual(upstream_client.calls[0]["json"]["tool_choice"], "auto")
+        self.assertEqual(response.json()["model"], "grok-build")
+        self.assertEqual(upstream_client.calls[0]["headers"]["authorization"], "Bearer grok-key")
+
+    async def test_deepseek_chat_routes_to_newapi_compatible_responses_upstream(self) -> None:
+        self._add_deepseek_model()
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "resp_deepseek",
+                        "object": "response",
+                        "status": "completed",
+                        "model": "deepseek-v4-pro",
+                        "output": [
+                            {
+                                "type": "message",
+                                "content": [{"type": "output_text", "text": "OK"}],
+                            }
+                        ],
+                        "usage": {
+                            "input_tokens": 9,
+                            "output_tokens": 2,
+                            "total_tokens": 11,
+                            "input_tokens_details": {"cached_tokens": 3},
+                        },
+                    }
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(openai_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                openai_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(openai_module.usage_buffer, "add", AsyncMock()) as add_usage:
+                response = await client.post(
+                    "/v1/chat/completions",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={
+                        "model": "deepseek-v4-pro",
+                        "messages": [{"role": "user", "content": "Reply with only: OK"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["model"], "deepseek-v4-pro")
+        self.assertEqual(response.json()["choices"][0]["message"]["content"], "OK")
+        self.assertEqual(upstream_client.calls[0]["url"], "https://deepseek.example/v1/responses")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "deepseek-v4-pro")
+        self.assertEqual(upstream_client.calls[0]["headers"]["authorization"], "Bearer deepseek-key")
+        usage_kwargs = add_usage.await_args.kwargs
+        self.assertEqual(usage_kwargs["provider_model"], "deepseek-v4-pro")
+        self.assertEqual(usage_kwargs["price_input_per_million"], 44)
+        self.assertEqual(usage_kwargs["price_output_per_million"], 87)
+        self.assertEqual(usage_kwargs["cache_read_tokens"], 3)
+        self.assertEqual(usage_kwargs["cache_read_multiplier"], 0.008333333333333333)
+
+    async def test_deepseek_responses_client_uses_newapi_responses_upstream(self) -> None:
+        self._add_deepseek_model()
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "resp_deepseek_direct",
+                        "object": "response",
+                        "status": "completed",
+                        "model": "deepseek-v4-pro",
+                        "output": [
+                            {
+                                "type": "message",
+                                "content": [{"type": "output_text", "text": "OK"}],
+                            }
+                        ],
+                        "usage": {"input_tokens": 4, "output_tokens": 1, "total_tokens": 5},
+                    }
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(proxy_module.usage_buffer, "add", AsyncMock()):
+                response = await client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"model": "deepseek-v4-pro", "input": "Reply with only: OK"},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["output"][0]["content"][0]["text"], "OK")
+        self.assertEqual(upstream_client.calls[0]["url"], "https://deepseek.example/v1/responses")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "deepseek-v4-pro")
 
     async def test_chat_without_model_keeps_legacy_public_alias(self) -> None:
         upstream_client = _RecordingClient(
@@ -965,6 +1269,79 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(usage_kwargs["channel_id"], "ch_test_backup")
         self.assertEqual(usage_kwargs["fallback_from_channel_id"], "ch_test_primary")
         self.assertEqual(usage_kwargs["route_attempt"], 1)
+
+    async def test_responses_pool_timeout_returns_local_overload_without_channel_fallback(self) -> None:
+        channel_router.set_snapshot(
+            [
+                ProviderChannelSnapshot(
+                    channel_id="ch_pool_primary",
+                    provider_platform="sub2api",
+                    base_url="https://primary-channel.example/v1",
+                    api_key="primary-key",
+                    auth_style="bearer",
+                    priority=0,
+                    allowed_fails=1,
+                ),
+                ProviderChannelSnapshot(
+                    channel_id="ch_pool_backup",
+                    provider_platform="new_api",
+                    base_url="https://backup-channel.example/v1",
+                    api_key="backup-key",
+                    auth_style="bearer",
+                    priority=10,
+                ),
+            ],
+            [
+                ModelChannelRouteSnapshot(
+                    route_id="mcr_pool_primary",
+                    public_model_id="gpt-5.3-codex",
+                    endpoint="responses",
+                    channel_id="ch_pool_primary",
+                ),
+                ModelChannelRouteSnapshot(
+                    route_id="mcr_pool_backup",
+                    public_model_id="gpt-5.3-codex",
+                    endpoint="responses",
+                    channel_id="ch_pool_backup",
+                ),
+            ],
+        )
+        upstream_client = _RecordingClient(
+            [
+                httpx.PoolTimeout("pool full"),
+                _FakeUpstreamResponse(
+                    {
+                        "id": "resp_pool_fallback",
+                        "output": [
+                            {
+                                "type": "message",
+                                "content": [{"type": "output_text", "text": "OK"}],
+                            }
+                        ],
+                        "usage": {"input_tokens": 3, "output_tokens": 1, "total_tokens": 4},
+                    }
+                ),
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(proxy_module.usage_buffer, "add", AsyncMock()) as add_usage:
+                response = await client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"model": "gpt-5.3-codex", "input": "Reply with only: OK"},
+                )
+
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertEqual(response.json()["error"]["code"], "upstream_pool_timeout")
+        self.assertEqual(len(upstream_client.calls), 1)
+        add_usage.assert_not_awaited()
+        self.assertEqual(channel_router.channel_state("ch_pool_primary"), {})
 
     async def test_responses_provider_channel_can_fallback_across_multiple_empty_outputs(self) -> None:
         channel_router.set_snapshot(

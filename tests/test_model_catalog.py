@@ -46,8 +46,8 @@ LEGACY_PUBLIC_TEXT_PRICES = {
     "gpt-5.4-mini": (75, 450),
     "gpt-5.6": (500, 3000),
     "gpt-5.6-sol": (500, 3000),
-    "gpt-5.6-terra": (250, 1500),
-    "gpt-5.6-luna": (100, 600),
+    "gpt-5.6-terra": (200, 1200),
+    "gpt-5.6-luna": (20, 120),
     "gpt-5-codex": (175, 1400),
     "gpt-5-codex-mini": (75, 450),
 }
@@ -682,9 +682,107 @@ class ModelCatalogTests(unittest.TestCase):
             tools=None,
         )
 
-        self.assertEqual(resolved.public_model.price_input_per_million, 250)
+        self.assertEqual(resolved.public_model.price_input_per_million, 200)
         self.assertEqual(resolved.public_model.cache_creation_multiplier, 1.25)
-        self.assertEqual(resolved.public_model.effective_cache_creation_input_per_million, 312.5)
+        self.assertEqual(resolved.public_model.effective_cache_creation_input_per_million, 250.0)
+
+    def test_grok_build_and_grok_4_5_share_verified_upstream_model(self) -> None:
+        catalog = json.loads(settings.model_catalog_json)
+        for public_id in ("grok-4.5", "grok-build"):
+            catalog["models"].append(
+                {
+                    "id": public_id,
+                    "owned_by": "xai",
+                    "provider_name": "xAI",
+                    "provider_model": "grok-4.5",
+                    "upstream_model": "grok-4.5",
+                    "capabilities": ["chat/completions", "responses"],
+                    "routing_mode": "direct",
+                    "delivery_lane": "upstream_direct",
+                    "upstream_url": "https://grok.example/v1",
+                    "api_key": "grok-key",
+                    "auth_style": "bearer",
+                    "price_input_per_million": 500,
+                    "price_output_per_million": 3000,
+                    "billable_sku": "xai-grok-4.5-text",
+                    "metadata": {"supported_parameters": ["tools", "vision"]},
+                }
+            )
+        settings.model_catalog_json = json.dumps(catalog)
+        registry._initialized = False
+        registry.init_from_settings()
+
+        grok = registry.resolve_public_model("grok-4.5", "chat/completions")
+        build = registry.resolve_public_model("grok-build", "responses")
+
+        self.assertEqual(grok.backend.model_id, "grok-4.5")
+        self.assertEqual(build.backend.model_id, "grok-4.5")
+        self.assertEqual(build.public_model.public_id, "grok-build")
+        self.assertEqual(build.public_model.owned_by, "xai")
+        self.assertEqual(build.public_model.metadata["supported_parameters"], ["tools", "vision"])
+        self.assertEqual(build.route_reason, "catalog:grok-build:upstream_direct")
+
+    def test_checked_in_grok_models_require_secret_and_map_to_grok_4_5(self) -> None:
+        settings.model_catalog_json = ""
+
+        with patch.dict(
+            os.environ,
+            {
+                "COINCOIN_GROK_BASE_URL": "https://grok.example/v1",
+                "COINCOIN_GROK_API_KEY": "grok-test-key",
+            },
+        ):
+            registry._initialized = False
+            registry.init_from_settings()
+            grok = registry.resolve_public_model("grok-4.5", "chat/completions")
+            build = registry.resolve_public_model("grok-build", "responses")
+
+        self.assertEqual(grok.backend.model_id, "grok-4.5")
+        self.assertEqual(build.backend.model_id, "grok-4.5")
+        self.assertEqual(build.backend.upstream_url, "https://grok.example/v1")
+        self.assertEqual(build.backend.auth_style, "bearer")
+        self.assertEqual(build.public_model.price_input_per_million, 500)
+        self.assertEqual(build.public_model.price_output_per_million, 3000)
+
+        with patch.dict(os.environ, {"COINCOIN_GROK_API_KEY": ""}):
+            registry._initialized = False
+            registry.init_from_settings()
+
+        self.assertIsNone(registry.get_public_model("grok-4.5"))
+        self.assertIsNone(registry.get_public_model("grok-build"))
+
+    def test_checked_in_deepseek_model_requires_secret_and_routes_to_newapi_upstream(self) -> None:
+        settings.model_catalog_json = ""
+
+        with patch.dict(
+            os.environ,
+            {
+                "COINCOIN_DEEPSEEK_BASE_URL": "https://deepseek.example/v1",
+                "COINCOIN_DEEPSEEK_API_KEY": "deepseek-test-key",
+            },
+        ):
+            registry._initialized = False
+            registry.init_from_settings()
+            chat = registry.resolve_public_model("deepseek-v4-pro", "chat/completions")
+            responses = registry.resolve_public_model("deepseek-v4-pro", "responses")
+
+        self.assertEqual(chat.backend.model_id, "deepseek-v4-pro")
+        self.assertEqual(responses.backend.model_id, "deepseek-v4-pro")
+        self.assertEqual(chat.backend.upstream_url, "https://deepseek.example/v1")
+        self.assertEqual(chat.backend.auth_style, "bearer")
+        self.assertEqual(chat.public_model.owned_by, "deepseek")
+        self.assertEqual(chat.public_model.price_input_per_million, 44)
+        self.assertEqual(chat.public_model.price_output_per_million, 87)
+        self.assertEqual(chat.public_model.cache_read_multiplier, 0.008333333333333333)
+        self.assertEqual(chat.public_model.effective_cached_input_per_million, 0.3667)
+        self.assertEqual(chat.public_model.metadata["preferred_api_backend"], "responses")
+        self.assertEqual(chat.route_reason, "catalog:deepseek-v4-pro:upstream_direct")
+
+        with patch.dict(os.environ, {"COINCOIN_DEEPSEEK_API_KEY": ""}):
+            registry._initialized = False
+            registry.init_from_settings()
+
+        self.assertIsNone(registry.get_public_model("deepseek-v4-pro"))
 
     def test_explicit_gpt_5_2_alias_keeps_legacy_lane(self) -> None:
         resolved = registry.resolve_public_model(

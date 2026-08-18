@@ -42,6 +42,8 @@ from .proxy import (
     proxy_responses, responses_health, _KEY_ID_ATTR,
     _channel_fallback_config, _channel_usage_kwargs, _record_channel_failure, _record_channel_success,
     _next_provider_or_system_fallback_config, _notify_fallback_exhausted, _should_try_channel_fallback,
+    _is_local_pool_timeout, _record_upstream_transport_failure,
+    _upstream_transport_status_code,
 )
 from .router import (
     CLAUDE_COMPAT_PROVIDER_KIRO_GO,
@@ -87,6 +89,19 @@ def openai_error(message: str, error_type: str = "invalid_request_error",
             }
         }
     )
+
+
+def _preferred_upstream_backend(public_model: Any) -> str:
+    """Return an explicitly configured upstream API backend, if supported."""
+    metadata = getattr(public_model, "metadata", None)
+    if not isinstance(metadata, dict):
+        return ""
+    backend = str(metadata.get("preferred_api_backend") or "").strip().lower()
+    if backend in {"chat", "chat/completions"}:
+        return "chat/completions"
+    if backend == "responses":
+        return "responses"
+    return ""
 
 
 def _model_resolution_to_openai_error(exc: Exception) -> JSONResponse:
@@ -201,9 +216,14 @@ async def _proxy_anthropic_compatible_chat_completions(
     client = await get_http_client()
     try:
         upstream = await client.post(upstream_url, json=upstream_payload, headers=headers)
-    except (httpx.TimeoutException, httpx.RequestError):
-        _record_channel_failure(used_cfg, error_code="upstream_unreachable")
-        return openai_error("Upstream request failed", "server_error", code="upstream_unreachable", status_code=502)
+    except (httpx.TimeoutException, httpx.RequestError) as exc:
+        error_code = _record_upstream_transport_failure(used_cfg, exc)
+        return openai_error(
+            "Upstream request failed",
+            "server_error",
+            code=error_code,
+            status_code=_upstream_transport_status_code(exc),
+        )
 
     duration_ms = int((time.monotonic() - request_t0) * 1000)
     response_headers = filter_headers(dict(upstream.headers))
@@ -288,9 +308,14 @@ async def _proxy_anthropic_compatible_chat_completions_stream(
     try:
         req = stream_client.build_request("POST", upstream_url, json=upstream_payload, headers=headers)
         upstream = await stream_client.send(req, stream=True)
-    except (httpx.TimeoutException, httpx.RequestError):
-        _record_channel_failure(used_cfg, error_code="upstream_unreachable")
-        return openai_error("Upstream request failed", "server_error", code="upstream_unreachable", status_code=502)
+    except (httpx.TimeoutException, httpx.RequestError) as exc:
+        error_code = _record_upstream_transport_failure(used_cfg, exc)
+        return openai_error(
+            "Upstream request failed",
+            "server_error",
+            code=error_code,
+            status_code=_upstream_transport_status_code(exc),
+        )
 
     upstream_request_id = extract_upstream_request_id(upstream.headers)
     response_headers = filter_headers(dict(upstream.headers))
@@ -1366,7 +1391,10 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
             effective_provider_model=_effective_provider_model,
         )
 
-    if public_model.delivery_lane == CLAUDE_COMPAT_PROVIDER_KIRO_GO:
+    if (
+        public_model.delivery_lane == CLAUDE_COMPAT_PROVIDER_KIRO_GO
+        or _preferred_upstream_backend(public_model) == "chat/completions"
+    ):
         chat_payload: Dict[str, Any] = {
             "model": used_cfg.model_id,
             "messages": messages,
@@ -1403,9 +1431,14 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
             try:
                 req = stream_client.build_request("POST", upstream_url, json=chat_payload, headers=headers)
                 upstream = await stream_client.send(req, stream=True)
-            except (httpx.TimeoutException, httpx.RequestError):
-                _record_channel_failure(used_cfg, error_code="upstream_unreachable")
-                return openai_error("Upstream request failed", "server_error", code="upstream_unreachable", status_code=502)
+            except (httpx.TimeoutException, httpx.RequestError) as exc:
+                error_code = _record_upstream_transport_failure(used_cfg, exc)
+                return openai_error(
+                    "Upstream request failed",
+                    "server_error",
+                    code=error_code,
+                    status_code=_upstream_transport_status_code(exc),
+                )
             stream_headers = filter_headers(dict(upstream.headers))
             stream_headers.pop("content-length", None)
             stream_headers.setdefault("cache-control", "no-cache")
@@ -1509,9 +1542,14 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
         t0 = time.monotonic()
         try:
             upstream = await client.post(upstream_url, json=chat_payload, headers=headers)
-        except (httpx.TimeoutException, httpx.RequestError):
-            _record_channel_failure(used_cfg, error_code="upstream_unreachable")
-            return openai_error("Upstream request failed", "server_error", code="upstream_unreachable", status_code=502)
+        except (httpx.TimeoutException, httpx.RequestError) as exc:
+            error_code = _record_upstream_transport_failure(used_cfg, exc)
+            return openai_error(
+                "Upstream request failed",
+                "server_error",
+                code=error_code,
+                status_code=_upstream_transport_status_code(exc),
+            )
         duration_ms = int((time.monotonic() - t0) * 1000)
         response_headers = filter_headers(dict(upstream.headers))
         response_headers.pop("content-length", None)
@@ -1829,7 +1867,14 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
         try:
             upstream = await _send_stream(used_cfg)
         except (httpx.TimeoutException, httpx.RequestError) as exc:
-            _record_channel_failure(used_cfg, error_code="upstream_unreachable")
+            error_code = _record_upstream_transport_failure(used_cfg, exc)
+            if _is_local_pool_timeout(exc):
+                return openai_error(
+                    "Upstream request capacity exhausted",
+                    "server_error",
+                    code=error_code,
+                    status_code=503,
+                )
             if can_fallback:
                 _fb = "cheap" if is_cheap else "premium"
                 used_cfg = _channel_fallback_config(used_cfg, fallback_cfg)
@@ -1840,7 +1885,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
             else:
                 import logging as _logging
                 _logging.getLogger("coincoin.compat").error("upstream stream connect error: %s", exc)
-                return openai_error("Upstream request failed", "server_error", code="upstream_unreachable", status_code=502)
+                return openai_error("Upstream request failed", "server_error", code=error_code, status_code=502)
 
         if can_fallback and upstream.status_code >= 400:
             _fb = "cheap" if is_cheap else "premium"
@@ -2205,11 +2250,18 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
     while True:
         try:
             upstream, duration_ms = await _post_json(used_cfg)
-        except (httpx.TimeoutException, httpx.RequestError):
-            _record_current_failure(error_code="upstream_unreachable")
+        except (httpx.TimeoutException, httpx.RequestError) as exc:
+            error_code = _record_upstream_transport_failure(used_cfg, exc)
+            if _is_local_pool_timeout(exc):
+                return openai_error(
+                    "Upstream request capacity exhausted",
+                    "server_error",
+                    code=error_code,
+                    status_code=503,
+                )
             route_fallback_cfg, route_fallback_reason = _select_provider_or_system_fallback(
-                "upstream_unreachable",
-                error_code="upstream_unreachable",
+                error_code,
+                error_code=error_code,
             )
             if route_fallback_cfg is not None:
                 used_cfg = route_fallback_cfg
@@ -2223,8 +2275,8 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                 can_fallback = False
                 is_cheap = False
                 continue
-            _notify_chat_fallback_exhausted(status_code=502, reason="upstream_unreachable")
-            return openai_error("Upstream request failed", "server_error", code="upstream_unreachable", status_code=502)
+            _notify_chat_fallback_exhausted(status_code=502, reason=error_code)
+            return openai_error("Upstream request failed", "server_error", code=error_code, status_code=502)
 
         response_headers = filter_headers(dict(upstream.headers))
         response_headers.pop("content-length", None)
@@ -2437,11 +2489,17 @@ async def _proxy_gemini_cpa_chat_completions(
     try:
         upstream = await client.post(upstream_url, json=send_payload, headers=headers)
     except (httpx.TimeoutException, httpx.RequestError) as exc:
-        gemini_cpa.record_failure(channel)
-        _record_channel_failure(used_cfg, error_code="upstream_unreachable")
+        error_code = _record_upstream_transport_failure(used_cfg, exc)
+        if not _is_local_pool_timeout(exc):
+            gemini_cpa.record_failure(channel)
         import logging
         logging.getLogger("coincoin.compat").error("gemini cpa chat transport error: %s", exc)
-        return openai_error("Upstream request failed", "server_error", code="upstream_unreachable", status_code=502)
+        return openai_error(
+            "Upstream request failed",
+            "server_error",
+            code=error_code,
+            status_code=_upstream_transport_status_code(exc),
+        )
     duration_ms = int((time.monotonic() - t0) * 1000)
 
     response_headers = filter_headers(dict(upstream.headers))
@@ -2583,9 +2641,14 @@ async def embeddings(request: Request, db: AsyncSession = Depends(get_db)):
     t0 = time.monotonic()
     try:
         upstream = await client.post(upstream_url, json=payload, headers=headers)
-    except (httpx.TimeoutException, httpx.RequestError):
-        _record_channel_failure(used_cfg, error_code="upstream_unreachable")
-        return openai_error("Upstream request failed", "server_error", code="upstream_unreachable", status_code=502)
+    except (httpx.TimeoutException, httpx.RequestError) as exc:
+        error_code = _record_upstream_transport_failure(used_cfg, exc)
+        return openai_error(
+            "Upstream request failed",
+            "server_error",
+            code=error_code,
+            status_code=_upstream_transport_status_code(exc),
+        )
     duration_ms = int((time.monotonic() - t0) * 1000)
     response_headers = filter_headers(dict(upstream.headers))
     response_headers.pop("content-length", None)

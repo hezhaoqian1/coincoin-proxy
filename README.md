@@ -88,7 +88,7 @@ End users only talk to CoinCoin's public API and public model names. Internal ga
 Optional durable usage/quota infrastructure is available through Redis Streams
 and the Go `usage-quota-service`. It is disabled by default; the Python gateway
 remains the canonical billing path until shadow reconciliation proves parity.
-See [`docs/usage-quota-infra.md`](./docs/usage-quota-infra.md).
+See [`docs/operations/usage-quota-infrastructure.md`](./docs/operations/usage-quota-infrastructure.md).
 
 ## Core Features
 
@@ -153,6 +153,7 @@ COINCOIN_DB_PASSWORD=your-db-password
 Optional production lanes can be added with the variables in [`env.example`](./env.example):
 
 - native Gemini text and images
+- DeepSeek V4 Pro through an OpenAI-compatible New API upstream
 - OpenAI/Azure image generation
 - Seedance video generation
 - provider channel active monitoring
@@ -258,11 +259,12 @@ Routing rules:
 - If a user omits `model`, the default GPT public model still works for legacy clients.
 - Image generation defaults to `gpt-image-2` unless the request selects a different public image alias.
 - Gemini text aliases route through the native Gemini CPA lane.
+- `deepseek-v4-pro` routes through the configured OpenAI-compatible DeepSeek lane when `COINCOIN_DEEPSEEK_API_KEY` is set; coding traffic prefers the upstream Responses API, while `/v1/chat/completions` remains compatible through the local bridge.
 - `gemini-image` routes through CoinCoin's OpenAI-compatible image adapter.
 - Embeddings use `text-embedding-3-small` and do not share the old GPT/CPA lane.
 - Admin-created provider channel routes can override catalog defaults for specific public models and endpoints.
 - If a provider channel fails, CoinCoin records the failure, applies cooldown rules, tries one alternate route when available, and then falls back to the system catalog path.
-- Claude Code-only upstreams use Anthropic-compatible provider channels plus route-only public Claude models; see [`docs/architecture/claude-code-upstream-runbook.md`](./docs/architecture/claude-code-upstream-runbook.md) for the Sixoner route, Sonnet 5, pricing multiplier, and monitoring caveats.
+- Claude Code-only upstreams use Anthropic-compatible provider channels plus route-only public Claude models; see [`docs/operations/claude-code-upstream-runbook.md`](./docs/operations/claude-code-upstream-runbook.md) for the Sixoner route, Sonnet 5, pricing multiplier, and monitoring caveats.
 
 For the full operator workflow, see the Chinese runbook in [`README.zh-CN.md`](./README.zh-CN.md#上游渠道模型-route-与-fallback).
 
@@ -308,9 +310,12 @@ npm run build
 
 ## Documentation
 
+- [Documentation hub and task-oriented read sets](./docs/README.md)
 - [简体中文 README](./README.zh-CN.md)
 - [Environment example](./env.example)
 - [Model catalog](./config/model_catalog.json)
+- [AI-assisted development and documentation practices](./docs/contributing/ai-assisted-development.md)
+- [Repository instructions for coding agents](./AGENTS.md)
 - [Aegis operating notes](./docs/aegis/README.md)
 
 The broader workspace has additional operations documentation, but this repository is the deployed public control plane. Public user-facing API behavior should be updated here first.

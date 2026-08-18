@@ -211,6 +211,104 @@
       "billable_sku": "legacy-gpt-5.4-mini-text"
     },
     {
+      "id": "grok-4.5",
+      "owned_by": "xai",
+      "provider_name": "xAI",
+      "provider_model": "grok-4.5",
+      "upstream_model": "grok-4.5",
+      "created": 1784160000,
+      "capabilities": ["chat/completions", "responses"],
+      "routing_mode": "direct",
+      "delivery_lane": "upstream_direct",
+      "upstream_url": "${COINCOIN_GROK_BASE_URL:-https://api.xtokenmirror.com/v1}",
+      "api_key": "${COINCOIN_GROK_API_KEY}",
+      "auth_style": "${COINCOIN_GROK_AUTH_STYLE:-bearer}",
+      "price_input_per_million": "${COINCOIN_GROK_INPUT_PRICE:-500}",
+      "price_output_per_million": "${COINCOIN_GROK_OUTPUT_PRICE:-3000}",
+      "billable_sku": "xai-grok-4.5-text",
+      "metadata": {
+        "display_name": "Grok 4.5",
+        "version": "grok-4.5",
+        "description": "xAI reasoning model with streaming, vision and tool calling.",
+        "context_length": 500000,
+        "supported_parameters": ["tools", "vision"],
+        "thinking": {
+          "levels": ["low", "medium", "high"]
+        },
+        "tier": "stable"
+      }
+    },
+    {
+      "id": "grok-build",
+      "owned_by": "xai",
+      "provider_name": "xAI",
+      "provider_model": "grok-4.5",
+      "upstream_model": "grok-4.5",
+      "created": 1784160000,
+      "capabilities": ["chat/completions", "responses"],
+      "routing_mode": "direct",
+      "delivery_lane": "upstream_direct",
+      "upstream_url": "${COINCOIN_GROK_BASE_URL:-https://api.xtokenmirror.com/v1}",
+      "api_key": "${COINCOIN_GROK_API_KEY}",
+      "auth_style": "${COINCOIN_GROK_AUTH_STYLE:-bearer}",
+      "price_input_per_million": "${COINCOIN_GROK_INPUT_PRICE:-500}",
+      "price_output_per_million": "${COINCOIN_GROK_OUTPUT_PRICE:-3000}",
+      "billable_sku": "xai-grok-build-text",
+      "metadata": {
+        "display_name": "Grok Build",
+        "version": "grok-build",
+        "description": "Grok Build coding-agent alias backed by the verified Grok 4.5 Responses endpoint.",
+        "context_length": 500000,
+        "max_completion_tokens": 128000,
+        "supported_parameters": ["tools", "vision"],
+        "preferred_api_backend": "responses",
+        "client_family": "grok-build",
+        "thinking": {
+          "levels": ["low", "medium", "high"]
+        },
+        "tier": "stable"
+      }
+    },
+    {
+      "id": "deepseek-v4-pro",
+      "owned_by": "deepseek",
+      "provider_name": "DeepSeek",
+      "provider_model": "deepseek-v4-pro",
+      "upstream_model": "deepseek-v4-pro",
+      "created": 1785984000,
+      "capabilities": ["chat/completions", "responses"],
+      "routing_mode": "direct",
+      "delivery_lane": "upstream_direct",
+      "upstream_url": "${COINCOIN_DEEPSEEK_BASE_URL:-https://zzone.cc.cd/v1}",
+      "api_key": "${COINCOIN_DEEPSEEK_API_KEY}",
+      "auth_style": "${COINCOIN_DEEPSEEK_AUTH_STYLE:-bearer}",
+      "price_input_per_million": "${COINCOIN_DEEPSEEK_INPUT_PRICE:-44}",
+      "price_output_per_million": "${COINCOIN_DEEPSEEK_OUTPUT_PRICE:-87}",
+      "billable_sku": "deepseek-v4-pro-text",
+      "pricing": {
+        "cache_read_multiplier": "${COINCOIN_DEEPSEEK_CACHE_READ_MULTIPLIER:-0.008333333333333333}"
+      },
+      "metadata": {
+        "display_name": "DeepSeek V4 Pro",
+        "version": "deepseek-v4-pro",
+        "description": "DeepSeek reasoning and coding model through the zzone New API-compatible upstream.",
+        "context_length": 128000,
+        "supported_parameters": ["tools"],
+        "preferred_api_backend": "responses",
+        "provider_platform": "new_api",
+        "upstream_base_url": "https://zzone.cc.cd/v1",
+        "upstream_price_source": "https://zzone.cc.cd/api/pricing",
+        "upstream_price_checked_at": "2026-08-06",
+        "upstream_model_ratio": 0.2175,
+        "upstream_completion_ratio": 2,
+        "upstream_cache_ratio": 0.008333333333333333,
+        "thinking": {
+          "levels": ["default"]
+        },
+        "tier": "stable"
+      }
+    },
+    {
       "id": "gpt-5.5",
       "owned_by": "openai",
       "provider_name": "OpenAI",
@@ -260,8 +358,8 @@
       "capabilities": ["chat/completions", "responses"],
       "routing_mode": "legacy_auto",
       "delivery_lane": "legacy",
-      "price_input_per_million": "${COINCOIN_GPT_56_TERRA_INPUT_PRICE:-250}",
-      "price_output_per_million": "${COINCOIN_GPT_56_TERRA_OUTPUT_PRICE:-1500}",
+      "price_input_per_million": "${COINCOIN_GPT_56_TERRA_INPUT_PRICE:-200}",
+      "price_output_per_million": "${COINCOIN_GPT_56_TERRA_OUTPUT_PRICE:-1200}",
       "billable_sku": "legacy-gpt-5.6-terra-text",
       "pricing": {
         "cache_creation_multiplier": 1.25
@@ -275,8 +373,8 @@
       "capabilities": ["chat/completions", "responses"],
       "routing_mode": "legacy_auto",
       "delivery_lane": "legacy",
-      "price_input_per_million": "${COINCOIN_GPT_56_LUNA_INPUT_PRICE:-100}",
-      "price_output_per_million": "${COINCOIN_GPT_56_LUNA_OUTPUT_PRICE:-600}",
+      "price_input_per_million": "${COINCOIN_GPT_56_LUNA_INPUT_PRICE:-20}",
+      "price_output_per_million": "${COINCOIN_GPT_56_LUNA_OUTPUT_PRICE:-120}",
       "billable_sku": "legacy-gpt-5.6-luna-text",
       "pricing": {
         "cache_creation_multiplier": 1.25
