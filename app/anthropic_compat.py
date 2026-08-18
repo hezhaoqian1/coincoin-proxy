@@ -1730,7 +1730,8 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                     upstream_status_code=upstream.status_code,
                     message=_sanitize_upstream_error_text(body.decode("utf-8", errors="replace") or "Upstream request failed"),
                     error_type="api_error",
-                    upstream_request_id=upstream_request_id,
+                    # Unstructured bodies may contain provider infrastructure details;
+                    # do not re-expose their headers in the sanitized error response.
                 )
             if _should_try_channel_fallback(used_cfg, error_code="upstream_unexpected_content_type"):
                 fallback_cfg, fallback_reason = _select_fallback_cfg(
