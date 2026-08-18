@@ -5,7 +5,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-os.environ.setdefault("COINCOIN_DATABASE_URL", "mysql://test:test@127.0.0.1:3306/test")
+os.environ.setdefault("COINCOIN_DATABASE_URL", "mysql://127.0.0.1:3306/test")
 
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient

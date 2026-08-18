@@ -3,7 +3,7 @@ type: runbook
 status: active
 owner: platform
 audience: [operator, developer, reviewer, agent]
-updated: 2026-08-09
+updated: 2026-08-10
 canonical_for: claude-code-upstream-operations
 ---
 
@@ -62,7 +62,7 @@ Claude Code public models use model-level pricing overrides in `/admin/model-pri
 
 Current production policy:
 
-- `model_multiplier`: `6.0`
+- `model_multiplier`: `4.0`
 - `output_multiplier`: `1.0`
 - `cache_read_multiplier`: `0.1`
 - `pricing_mode`: `multiplier`
@@ -75,9 +75,9 @@ The router computes effective prices as:
 
 For `claude-sonnet-5`, the effective production prices are:
 
-- input: `300 -> 1800` cents per 1M tokens
-- cached input: `30 -> 180` cents per 1M cached-read tokens
-- output: `1500 -> 9000` cents per 1M tokens
+- input: `300 -> 1200` cents per 1M tokens
+- cached input: `30 -> 120` cents per 1M cached-read tokens
+- output: `1500 -> 6000` cents per 1M tokens
 
 When changing Claude Code pricing, update all public `claude-*` model overrides together unless there is an explicit SKU-level pricing decision.
 
@@ -155,9 +155,40 @@ gateway process could not obtain a local outbound connection quickly enough; it
 returns a local overload error and should not burn fallback channels for the same
 request.
 
-Streaming caveat: if the upstream fails after the gateway has already started
-forwarding events to the client, the gateway returns a sanitized stream error
-event. It does not splice a second provider's stream into an already-open
+## Streaming Error Contract
+
+Anthropic streaming errors are part of the SSE stream contract. After CoinCoin
+has started forwarding a stream, the HTTP status may already be `200`; downstream
+systems must detect failure from the stream event rather than from a later HTTP
+status code.
+
+For native Anthropic Messages upstreams, a mid-stream failure must be forwarded
+as an Anthropic error event:
+
+```text
+event: error
+data: {"type":"error","error":{"type":"api_error","message":"Upstream request failed"}}
+```
+
+Preserve official Anthropic error types when the upstream sends one, including
+`rate_limit_error`, `overloaded_error`, `timeout_error`, and `api_error`. If the
+upstream sends a provider URL, trace id, key name, edge-provider detail, or any
+non-Anthropic value as `error.type`, normalize it to `api_error` and sanitize the
+message before sending it to clients.
+
+Never emit `event: message_stop` after a stream error. A downstream such as
+NewAPI treats a Claude stream payload with `type: "error"` and non-empty
+`error.type` as a relay error. If CoinCoin first emits a normal stop event, many
+clients will close the parser as a successful completion and ignore the later
+error.
+
+CoinCoin also must not record successful usage for a stream that ends in an
+error event, even if the upstream had already sent a `message_start` usage block.
+
+Fallback remains a pre-stream decision only. If the upstream fails before any
+bytes are sent to the client, CoinCoin may try the next eligible route. If the
+upstream fails after the stream is open, CoinCoin returns the sanitized stream
+error event and does not splice a second provider's stream into the already-open
 response.
 
 ## Verification Commands
@@ -186,7 +217,7 @@ curl -fsS -H "Authorization: Bearer $COINCOIN_ADMIN_TOKEN" \
 Relevant local tests:
 
 ```bash
-COINCOIN_DATABASE_URL='mysql://test:test@127.0.0.1:3306/test' \
+COINCOIN_DATABASE_URL='mysql://127.0.0.1:3306/test' \
   .venv/bin/python -m pytest \
   tests/test_channel_router.py \
   tests/test_anthropic_compat.py \
