@@ -806,6 +806,7 @@ class ModelCatalogTests(unittest.TestCase):
                 self.assertEqual(model.cache_read_multiplier, expected["cache_multiplier"])
                 self.assertEqual(model.effective_cached_input_per_million, expected["effective_cached_input"])
                 self.assertEqual(model.metadata["provider_platform"], "new_api")
+                self.assertEqual(model.metadata["preferred_api_backend"], "responses")
 
                 with self.assertRaises(ModelCapabilityError):
                     registry.resolve_public_model(model_id, "responses")
