@@ -1338,6 +1338,30 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         payload = fallback_alerts.build_dingtalk_text_payload(alert)
         self.assertTrue(payload["text"]["content"].startswith("CoinCoinAlert CoinCoin fallback 全部失败"))
 
+    async def test_fallback_alert_uses_channel_names_and_keeps_ids(self) -> None:
+        channel_router.set_snapshot(
+            [
+                ProviderChannelSnapshot(channel_id="ch_primary", name="豪哥sub2api"),
+                ProviderChannelSnapshot(channel_id="ch_backup", name="通联不用剩下的"),
+            ],
+            [],
+        )
+        alert = FallbackExhaustedAlert(
+            endpoint="responses",
+            model="gpt-5.6-terra",
+            status_code=503,
+            reason="upstream_unreachable",
+            route_reason="channel_fallback:503",
+            channel_id="ch_backup",
+            fallback_from_channel_id="ch_primary",
+            route_attempt=1,
+        )
+
+        content = fallback_alerts.build_dingtalk_text_payload(alert)["text"]["content"]
+
+        self.assertIn("最终渠道: 通联不用剩下的 (ch_backup)", content)
+        self.assertIn("上一渠道: 豪哥sub2api (ch_primary)", content)
+
     async def test_chat_empty_nonstream_json_collapses_stream_output(self) -> None:
         settings.router_enabled = False
         settings.primary_auth_style = "bearer"

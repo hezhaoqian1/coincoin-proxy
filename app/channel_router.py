@@ -141,6 +141,22 @@ class ChannelRouter:
             key=lambda item: (item.priority, item.provider_platform, item.name, item.channel_id),
         )
 
+    def channel_label(self, channel_id: str) -> str:
+        """Return an operator-facing channel label while retaining the stable id."""
+        normalized = str(channel_id or "").strip()
+        if not normalized:
+            return ""
+        channel = self._channels.get(normalized)
+        name = str(getattr(channel, "name", "") or "").strip() if channel else ""
+        if name and name != normalized:
+            return f"{name} ({normalized})"
+        return normalized
+
+    def channel_labels(self, channel_ids: str) -> str:
+        """Format comma-separated channel ids for alerts and operator output."""
+        labels = [self.channel_label(item) for item in str(channel_ids or "").split(",") if item.strip()]
+        return ", ".join(labels)
+
     def list_routes(self, public_model_id: str = "") -> List[ModelChannelRouteSnapshot]:
         if public_model_id:
             return list(self._routes_by_model.get(public_model_id, ()))
