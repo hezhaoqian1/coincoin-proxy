@@ -102,6 +102,10 @@ UPSTREAM_SERVICE_UNAVAILABLE_PATTERNS = (
     "no available channel",
     "没有可用渠道",
     "无可用渠道",
+    "group_deleted",
+    "group deleted",
+    "分组已删除",
+    "所属分组已删除",
 )
 _UPSTREAM_URL_RE = re.compile(r"https?://[^\s\"'<>),，。]+", re.IGNORECASE)
 _UPSTREAM_HOST_RE = re.compile(
