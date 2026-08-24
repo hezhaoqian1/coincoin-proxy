@@ -11,6 +11,7 @@ from urllib.parse import parse_qs, unquote_plus, urlsplit
 import httpx
 
 from .alert_history import complete_alert_event, create_alert_event
+from .channel_router import channel_router
 from .config import settings
 from .redis_client import get_redis_client
 
@@ -292,8 +293,8 @@ def build_dingtalk_text_payload(alert: FallbackExhaustedAlert) -> Dict[str, Any]
         f"状态: HTTP {alert.status_code or 0}",
         f"原因: {alert.reason or '-'}",
         f"最终路由: {alert.route_reason or '-'}",
-        f"最终渠道: {alert.channel_id or '-'}",
-        f"上一渠道: {alert.fallback_from_channel_id or '-'}",
+        f"最终渠道: {channel_router.channel_labels(alert.channel_id) or '-'}",
+        f"上一渠道: {channel_router.channel_labels(alert.fallback_from_channel_id) or '-'}",
         f"尝试次数: {int(alert.route_attempt or 0)}",
     ]
     if alert.provider_platform or alert.channel_type:
