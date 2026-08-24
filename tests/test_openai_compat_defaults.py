@@ -2249,6 +2249,40 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("req_secret", response.text)
         self.assertNotIn("x-request-id", response.headers)
 
+    async def test_responses_upstream_deleted_group_is_reported_as_service_unavailable(self) -> None:
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {"code": "GROUP_DELETED", "message": "API Key 所属分组已删除"},
+                    status_code=403,
+                    headers={"x-request-id": "req_group_deleted"},
+                )
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ):
+                response = await client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"model": "gpt-5.2-codex", "input": "hello"},
+                )
+
+        self.assertEqual(response.status_code, 503, response.text)
+        payload = response.json()
+        self.assertEqual(payload["error"]["code"], "service_temporarily_unavailable")
+        self.assertEqual(payload["error"]["type"], "server_error")
+        self.assertEqual(payload["error"]["message"], "当前服务暂时不可用，请联系管理员处理。")
+        self.assertNotIn("GROUP_DELETED", response.text)
+        self.assertNotIn("分组已删除", response.text)
+        self.assertNotIn("req_group_deleted", response.text)
+        self.assertNotIn("x-request-id", response.headers)
+
     async def test_openai_responses_upstream_no_available_channel_is_reported_as_service_unavailable(self) -> None:
         upstream_error = {
             "error": {
