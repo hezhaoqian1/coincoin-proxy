@@ -310,7 +310,7 @@ function AudienceGuide() {
             title: 'Grok Build',
             tag: '已实测',
             desc: '官方 Grok Build CLI 通过 Responses 接入 CoinCoin。',
-            bullets: ['默认模型使用 grok-4.5', 'Base URL 使用统一 /v1', '推理、流式和函数工具回路已验证']
+            bullets: ['默认模型使用 grok-4.5，也可切换 grok-4.6', 'Base URL 使用统一 /v1', '推理、流式和函数工具回路已验证']
         },
         {
             title: 'OpenCode',
@@ -514,7 +514,7 @@ claude`}</pre>
                         <td>Grok Build</td>
                         <td><span className="badge badge-success">已实测支持</span></td>
                         <td><code>/v1 + responses</code></td>
-                        <td>官方 CLI 默认用 <code>grok-4.5</code> 公开模型，支持推理、流式输出、Web Search 和文件工具多轮回路。</td>
+                        <td>官方 CLI 默认用 <code>grok-4.5</code>，也可显式选择 <code>grok-4.6</code>；支持推理、流式输出、Web Search 和文件工具多轮回路。</td>
                     </tr>
                     <tr>
                         <td>OpenCode</td>
@@ -545,7 +545,7 @@ claude`}</pre>
 
             <h3>切换模型时你要改什么？</h3>
             <ul className="doc-list">
-                <li>只需要把请求或客户端配置中的 <code>model</code> 改成目标模型，例如 <code>gpt-5.4</code>、<code>grok-4.5</code>、<code>sonnet</code> 或 <code>claude-opus-5</code>。</li>
+                <li>只需要把请求或客户端配置中的 <code>model</code> 改成目标模型，例如 <code>gpt-5.4</code>、<code>grok-4.5</code>、<code>grok-4.6</code>、<code>sonnet</code> 或 <code>claude-opus-5</code>。</li>
                 <li>Base URL 和 API Key 不需要改，仍然走同一个 ClawFather 入口。</li>
                 <li>文本请求推荐走 <code>/v1/chat/completions</code> 或 <code>/v1/responses</code>，图片请求走 <code>/v1/images/generations</code> 或 <code>/v1/images/edits</code>，并使用 <code>{imageModelId}</code> 这类图片模型。</li>
                 <li>图片请求统一走 ClawFather 公开入口，不需要终端用户配置额外服务。</li>
@@ -622,7 +622,7 @@ function ModelsAndPricing({ textModels, imageModels, videoModels, defaultTextMod
             <div className="endpoint-strip">
                 <button onClick={() => copy(openaiBaseUrl, 'openai')}><span>OpenAI Base URL</span><code>{openaiBaseUrl}</code><strong>{copied === 'openai' ? '已复制' : '复制'}</strong></button>
                 <button onClick={() => copy(firstCurl, 'curl')}><span>第一条请求</span><code>curl chat/completions</code><strong>{copied === 'curl' ? '已复制' : '复制'}</strong></button>
-                <Link to="/guides/grok-build"><span>Grok / Grok Build</span><code>grok-4.5 · grok-build</code><strong>快速接入</strong></Link>
+                <Link to="/guides/grok-build"><span>Grok / Grok Build</span><code>grok-4.5 · grok-4.6 · grok-build</code><strong>快速接入</strong></Link>
             </div>
 
             <div className="model-catalog-head">

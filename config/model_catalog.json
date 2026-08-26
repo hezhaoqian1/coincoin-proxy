@@ -247,6 +247,30 @@
       }
     },
     {
+      "id": "grok-4.6",
+      "owned_by": "xai",
+      "provider_name": "xAI",
+      "provider_model": "grok-4.6",
+      "upstream_model": "grok-4.6",
+      "capabilities": ["chat/completions", "responses"],
+      "routing_mode": "route_only",
+      "delivery_lane": "route_only",
+      "price_input_per_million": 500,
+      "price_output_per_million": 3000,
+      "billable_sku": "xai-grok-4.6-text",
+      "metadata": {
+        "display_name": "Grok 4.6",
+        "version": "grok-4.6",
+        "description": "xAI Grok 4.6 exposed through a configured provider channel.",
+        "context_length": 500000,
+        "supported_parameters": ["stream", "reasoning_effort", "tools", "vision"],
+        "thinking": {
+          "levels": ["low", "medium", "high"]
+        },
+        "tier": "stable"
+      }
+    },
+    {
       "id": "grok-build",
       "owned_by": "xai",
       "provider_name": "xAI",
