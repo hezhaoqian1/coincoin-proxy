@@ -13,7 +13,7 @@ test('integration guide navigation exposes the Grok quickstart', () => {
 
 test('models page links Grok models to the quickstart guide', () => {
     assert.match(docsSource, /to="\/guides\/grok-build"/)
-    assert.match(docsSource, /grok-4\.5 · grok-build/)
+    assert.match(docsSource, /grok-4\.5 · grok-4\.6 · grok-build/)
 })
 
 test('the Grok quickstart link resolves to a configured guide', () => {

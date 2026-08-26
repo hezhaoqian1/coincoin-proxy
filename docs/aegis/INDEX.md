@@ -7,6 +7,7 @@ Entries are workspace records, not authoritative runtime decisions.
 
 | Date | Kind | Path | Title |
 | --- | --- | --- | --- |
+| 2026-08-26 | plan | docs/aegis/plans/2026-08-26-grok-46-support.md | Grok 4.6 Public Model Support |
 | 2026-08-04 | plan | docs/aegis/plans/2026-08-04-claude-routing-hardening.md | Claude Routing Hardening Implementation Plan |
 | 2026-07-28 | plan | docs/aegis/plans/2026-07-28-enterprise-reporting-api.md | Enterprise Reporting API Implementation Plan |
 | 2026-07-28 | spec | docs/aegis/specs/2026-07-28-enterprise-reporting-api-design.md | Enterprise Reporting API And Admin Management |

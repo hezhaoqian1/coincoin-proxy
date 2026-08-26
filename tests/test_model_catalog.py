@@ -742,29 +742,39 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertEqual(resolved.public_model.metadata["provider_route_aliases"], ["claude-opus-4.6"])
         self.assertEqual(resolved.route_reason, "catalog:claude-opus-4-6:kiro_go")
 
-    def test_checked_in_grok_models_are_route_only_and_share_grok_4_5_upstream(self) -> None:
+    def test_checked_in_grok_models_have_explicit_route_only_upstreams(self) -> None:
         settings.model_catalog_json = ""
         registry._initialized = False
         registry.init_from_settings()
 
-        grok = registry.get_public_model("grok-4.5")
+        expected = {
+            "grok-4.5": ("grok-4.5", "grok-4.5", "xai-grok-4.5-text"),
+            "grok-4.6": ("grok-4.6", "grok-4.6", "xai-grok-4.6-text"),
+            "grok-build": ("grok-4.5", "grok-4.5", "xai-grok-build-text"),
+        }
+        for public_id, (provider_model, upstream_model, billable_sku) in expected.items():
+            model = registry.get_public_model(public_id)
+            with self.subTest(model=public_id):
+                self.assertIsNotNone(model)
+                self.assertEqual(model.owned_by, "xai")
+                self.assertEqual(model.provider_model, provider_model)
+                self.assertEqual(model.upstream_model, upstream_model)
+                self.assertEqual(model.routing_mode, "route_only")
+                self.assertEqual(model.delivery_lane, "route_only")
+                self.assertEqual(model.capabilities, ("chat/completions", "responses"))
+                self.assertEqual(model.billable_sku, billable_sku)
+                self.assertEqual(model.price_input_per_million, 500)
+                self.assertEqual(model.price_output_per_million, 3000)
+                self.assertEqual(
+                    model.metadata["supported_parameters"],
+                    ["stream", "reasoning_effort", "tools", "vision"],
+                )
+
+        grok_46 = registry.get_public_model("grok-4.6")
+        self.assertEqual(grok_46.metadata["display_name"], "Grok 4.6")
+        self.assertEqual(grok_46.metadata["version"], "grok-4.6")
+        self.assertEqual(grok_46.metadata["context_length"], 500000)
         build = registry.get_public_model("grok-build")
-
-        self.assertIsNotNone(grok)
-        self.assertIsNotNone(build)
-        for model in (grok, build):
-            self.assertEqual(model.owned_by, "xai")
-            self.assertEqual(model.provider_model, "grok-4.5")
-            self.assertEqual(model.upstream_model, "grok-4.5")
-            self.assertEqual(model.routing_mode, "route_only")
-            self.assertEqual(model.delivery_lane, "route_only")
-            self.assertEqual(model.capabilities, ("chat/completions", "responses"))
-            self.assertEqual(
-                model.metadata["supported_parameters"],
-                ["stream", "reasoning_effort", "tools", "vision"],
-            )
-
-        self.assertEqual(build.billable_sku, "xai-grok-build-text")
         self.assertEqual(build.metadata["preferred_api_backend"], "responses")
         with self.assertRaises(ModelCapabilityError):
             registry.resolve_public_model("grok-build", "responses")

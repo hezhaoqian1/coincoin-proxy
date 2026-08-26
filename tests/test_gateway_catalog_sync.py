@@ -181,6 +181,27 @@ class GatewayCatalogSyncTests(unittest.TestCase):
         )
         self.assertEqual(invalid_models, [])
 
+    def test_grok_46_catalog_contract_is_route_only_and_uses_distinct_sku(self) -> None:
+        public_models = {
+            item["id"]: item
+            for item in (self.catalog.get("models") or [])
+            if isinstance(item, dict) and item.get("id")
+        }
+
+        model = public_models["grok-4.6"]
+        self.assertEqual(model.get("owned_by"), "xai")
+        self.assertEqual(model.get("provider_model"), "grok-4.6")
+        self.assertEqual(model.get("upstream_model"), "grok-4.6")
+        self.assertEqual(model.get("routing_mode"), "route_only")
+        self.assertEqual(model.get("delivery_lane"), "route_only")
+        self.assertEqual(set(model.get("capabilities") or []), TEXT_CAPABILITIES)
+        self.assertEqual(model.get("billable_sku"), "xai-grok-4.6-text")
+        self.assertEqual(model.get("price_input_per_million"), 500)
+        self.assertEqual(model.get("price_output_per_million"), 3000)
+        metadata = model.get("metadata") or {}
+        self.assertEqual(metadata.get("display_name"), "Grok 4.6")
+        self.assertEqual(metadata.get("version"), "grok-4.6")
+
     def test_default_models_exist_and_match_capabilities(self) -> None:
         public_models = {
             _placeholder_default(item["id"]): item

@@ -9,8 +9,8 @@ canonical_for: grok-sixoner-upstream-setup
 
 # Grok 与 Grok Build（Sixoner）
 
-CoinCoin 对外提供 `grok-4.5` 和 `grok-build`。两个公共模型都通过后台
-Provider Channel 路由到 Sixoner 的 `grok-4.5`，不在模型目录中保存上游密钥。
+CoinCoin 对外提供 `grok-4.5`、`grok-4.6` 和 `grok-build`。三个公共模型都通过
+后台 Provider Channel 路由到 Sixoner，不在模型目录中保存上游密钥。
 
 ## 渠道配置
 
@@ -37,6 +37,13 @@ API Key 只通过管理后台写入加密字段，不要提交到 Git、文档�
 | `grok-build` | `chat/completions` | `grok-4.5` |
 | `grok-build` | `responses` | `grok-4.5` |
 
+为 `grok-4.6` 单独创建两条路由，均使用上游模型 `grok-4.6`：
+
+| Public model | Endpoint | Upstream model |
+| --- | --- | --- |
+| `grok-4.6` | `chat/completions` | `grok-4.6` |
+| `grok-4.6` | `responses` | `grok-4.6` |
+
 `grok-build` 必须映射到 `grok-4.5`。Sixoner 的模型目录虽然会列出
 `grok-build`，但实测将它作为 Responses 上游模型直接调用返回 HTTP 502。
 
@@ -44,9 +51,11 @@ API Key 只通过管理后台写入加密字段，不要提交到 Git、文档�
 
 2026-08-25 使用 Sixoner 生产入口验证：
 
-- `GET /v1/models` 返回 HTTP 200，并列出 `grok-4.5` 和 `grok-build`。
+- `GET /v1/models` 返回 HTTP 200，并列出 `grok-4.5`、`grok-4.6` 和 `grok-build`。
 - `grok-4.5` 的 Chat Completions 返回 HTTP 200。
 - `grok-4.5` 的 Responses 返回 HTTP 200。
+- `grok-4.6` 已加入公共目录；上线前必须通过 Sixoner 渠道的 Chat Completions
+  和 Responses 代表探针确认上游实际可用。
 - Responses 平铺函数工具能返回 `function_call`。
 - Sixoner HTTP Responses 不接受 `previous_response_id`，提示仅 Responses
   WebSocket v2 支持。CoinCoin 会从本地缓存展开上一轮输入和输出，并在请求上游前
