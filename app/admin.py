@@ -1,4 +1,6 @@
 import asyncio
+import csv
+import io
 import logging
 import os
 import secrets
@@ -11,7 +13,7 @@ from urllib.parse import urlsplit, urlunsplit
 import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from sqlalchemy import case, delete, func, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -5763,6 +5765,166 @@ async def list_user_request_logs(
             for log in logs
         ],
     }
+
+
+REQUEST_LOG_EXPORT_HEADERS = [
+    "统计日期（上海）",
+    "序号",
+    "请求时间（上海）",
+    "请求时间（UTC）",
+    "接口",
+    "状态码",
+    "模型（用户）",
+    "客户模型别名",
+    "用量单位类型",
+    "用量单位数",
+    "输入Token",
+    "输出Token",
+    "缓存Token（兼容字段）",
+    "缓存读取Token",
+    "缓存创建Token",
+    "总Token",
+    "图片数",
+    "视频数",
+    "耗时（毫秒）",
+]
+
+
+def _parse_admin_usage_datetime_filter(value: Optional[str], *, is_end: bool = False) -> Tuple[Optional[datetime], bool]:
+    raw = (value or "").strip()
+    if not raw:
+        return None, False
+    try:
+        if len(raw) == 10:
+            day = date.fromisoformat(raw)
+            china_boundary = datetime.combine(
+                day + (timedelta(days=1) if is_end else timedelta()),
+                datetime.min.time(),
+            )
+            return china_boundary - timedelta(hours=8), is_end
+
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        return parsed, False
+    except ValueError:
+        return None, False
+
+
+def _csv_safe_cell(value: Any) -> Any:
+    text = "" if value is None else str(value)
+    if text[:1] in "=+-@":
+        return f"'{text}"
+    return value
+
+
+def _request_log_export_row(log: RequestLog, sequence: int) -> list[Any]:
+    created_at = log.created_at
+    if created_at and created_at.tzinfo is not None:
+        created_utc = created_at.astimezone(timezone.utc).replace(tzinfo=None)
+    else:
+        created_utc = created_at
+    created_shanghai = created_utc + timedelta(hours=8) if created_utc else None
+    input_tokens = int(log.input_tokens or 0)
+    output_tokens = int(log.output_tokens or 0)
+    total_tokens = input_tokens + output_tokens
+    customer_model = getattr(log, "customer_model_alias", "") or log.model or ""
+    return [
+        created_shanghai.date().isoformat() if created_shanghai else "",
+        sequence,
+        f"{created_shanghai.isoformat(timespec='seconds')}+08:00" if created_shanghai else "",
+        f"{created_utc.isoformat(timespec='seconds')}Z" if created_utc else "",
+        log.endpoint or "",
+        int(log.status_code or 0),
+        customer_model,
+        customer_model,
+        getattr(log, "usage_unit_type", "tokens") or "tokens",
+        int(getattr(log, "usage_unit_count", 0) or 0),
+        input_tokens,
+        output_tokens,
+        int(getattr(log, "cached_tokens", 0) or 0),
+        int(getattr(log, "cache_read_tokens", 0) or getattr(log, "cached_tokens", 0) or 0),
+        int(getattr(log, "cache_creation_tokens", 0) or 0),
+        total_tokens,
+        int(getattr(log, "image_count", 0) or 0),
+        int(getattr(log, "video_count", 0) or 0),
+        int(log.duration_ms or 0),
+    ]
+
+
+@router.get("/users/{user_id}/request-logs/export.csv", dependencies=[Depends(admin_guard)])
+async def export_user_request_logs_csv(
+    user_id: str,
+    endpoint: Optional[str] = None,
+    status_code: Optional[int] = None,
+    api_key_id: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    end_exclusive: bool = False,
+    db: AsyncSession = Depends(get_db),
+):
+    """导出用户请求明细 CSV。
+
+    该导出面向给客户核对用量的安全明细：不包含上游请求 ID、渠道、供应商、
+    内部价格、倍率、成本等字段；金额请使用每日用量汇总口径核对。
+    """
+    conditions = [RequestLog.user_id == user_id]
+    if endpoint:
+        conditions.append(RequestLog.endpoint == endpoint)
+    if status_code is not None:
+        conditions.append(RequestLog.status_code == status_code)
+    if api_key_id:
+        conditions.append(RequestLog.api_key_id == api_key_id)
+    if start_date:
+        start_bound, _ = _parse_admin_usage_datetime_filter(start_date)
+        if start_bound is not None:
+            conditions.append(RequestLog.created_at >= start_bound)
+    if end_date:
+        end_bound, parsed_end_exclusive = _parse_admin_usage_datetime_filter(end_date, is_end=True)
+        if end_bound is not None:
+            if end_exclusive or parsed_end_exclusive:
+                conditions.append(RequestLog.created_at < end_bound)
+            else:
+                conditions.append(RequestLog.created_at <= end_bound)
+
+    async def rows():
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(REQUEST_LOG_EXPORT_HEADERS)
+        yield "\ufeff" + output.getvalue()
+        sequence = 0
+        offset = 0
+        page_size = 1000
+        while True:
+            result = await db.execute(
+                select(RequestLog)
+                .where(*conditions)
+                .order_by(RequestLog.created_at.desc())
+                .limit(page_size)
+                .offset(offset)
+            )
+            logs = result.scalars().all()
+            if not logs:
+                break
+            output = io.StringIO()
+            writer = csv.writer(output)
+            for log in logs:
+                sequence += 1
+                writer.writerow([_csv_safe_cell(cell) for cell in _request_log_export_row(log, sequence)])
+            yield output.getvalue()
+            offset += len(logs)
+
+    filename_parts = ["coincoin", "request-logs", user_id]
+    if start_date:
+        filename_parts.append(start_date[:10])
+    if end_date:
+        filename_parts.append(end_date[:10])
+    filename = "_".join(part.replace("/", "-") for part in filename_parts) + ".csv"
+    return StreamingResponse(
+        rows(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # ============== Redemption Code Management ==============

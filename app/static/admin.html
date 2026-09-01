@@ -2511,6 +2511,9 @@
       <div class="modal-footer" style="justify-content:space-between">
         <span class="text-sm text-muted" id="logsPagination"></span>
         <div class="flex gap-2">
+          <input class="form-input" type="date" id="logsExportStart" title="导出开始日期" style="width:145px;height:32px;padding:4px 8px">
+          <input class="form-input" type="date" id="logsExportEnd" title="导出结束日期" style="width:145px;height:32px;padding:4px 8px">
+          <button class="btn btn-sm btn-secondary" id="logsExportCsv" onclick="exportRequestLogsCsv()">导出 CSV</button>
           <button class="btn btn-sm btn-secondary" id="logsPrev" onclick="logsPage(-1)">上一页</button>
           <button class="btn btn-sm btn-secondary" id="logsNext" onclick="logsPage(1)">下一页</button>
         </div>
@@ -6129,6 +6132,41 @@
     }
 
 	    function logsPage(dir) { logsOffset = Math.max(0, logsOffset + dir * LOGS_LIMIT); loadRequestLogs(); }
+
+    async function exportRequestLogsCsv() {
+      if (!logsUserId) return toast('请先打开用户日志', 'warning');
+      const params = new URLSearchParams();
+      const start = document.getElementById('logsExportStart')?.value || '';
+      const end = document.getElementById('logsExportEnd')?.value || '';
+      if (start) params.set('start_date', start);
+      if (end) params.set('end_date', end);
+      const url = `/admin/users/${logsUserId}/request-logs/export.csv${params.toString() ? `?${params.toString()}` : ''}`;
+      try {
+        const button = document.getElementById('logsExportCsv');
+        if (button) button.disabled = true;
+        const r = await fetch(url, { headers: adminHeaders() });
+        if (!r.ok) return toast('导出失败', 'error');
+        const blob = await r.blob();
+        const disposition = r.headers.get('Content-Disposition') || '';
+        const match = disposition.match(/filename="?([^";]+)"?/i);
+        const filename = match?.[1] || `coincoin_request_logs_${logsUserId}.csv`;
+        const objectUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = objectUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(objectUrl);
+        toast('CSV 已开始下载', 'success');
+      } catch (e) {
+        console.error(e);
+        toast('导出失败', 'error');
+      } finally {
+        const button = document.getElementById('logsExportCsv');
+        if (button) button.disabled = false;
+      }
+    }
 
 	    // ==================== Payment Orders ====================
 	    function debouncePaymentOrderSearch() {

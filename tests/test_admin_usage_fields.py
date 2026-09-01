@@ -1,4 +1,6 @@
 import asyncio
+import csv
+import io
 import json
 import subprocess
 import tempfile
@@ -2447,6 +2449,76 @@ function createApp(fetchImpl) {
         self.assertEqual(item["route_attempt"], 1)
         self.assertEqual(item["server_side_tool_usage_details"]["web_search_calls"], 4)
         self.assertEqual(item["num_server_side_tools_used"], 5)
+
+    async def test_request_logs_csv_export_uses_customer_safe_columns(self) -> None:
+        log = SimpleNamespace(
+            created_at=datetime(2026, 8, 31, 15, 59, 44),
+            endpoint="responses",
+            model="internal-provider-model",
+            provider_model="provider-secret-model",
+            customer_model_alias="gpt-5.6-luna",
+            input_tokens=465,
+            output_tokens=5,
+            cached_tokens=60,
+            cache_read_tokens=60,
+            cache_creation_tokens=3,
+            image_count=0,
+            video_count=0,
+            usage_unit_type="tokens",
+            usage_unit_count=470,
+            billable_sku="secret-sku",
+            upstream_request_id="upstream-secret-request",
+            cost_cents=123456,
+            duration_ms=1342,
+            status_code=200,
+            route_reason="secret-route-reason",
+            channel_id="secret-channel-id",
+            channel_type="secret-channel-type",
+            provider_platform="secret-provider-platform",
+            provider_account_fingerprint="secret-provider-account",
+            fallback_from_channel_id="secret-fallback-channel",
+            route_attempt=2,
+            price_version=7,
+            pricing_mode="multiplier",
+            model_multiplier=8.8,
+            output_multiplier=7.7,
+            cache_read_multiplier=6.6,
+            base_price_input_per_million=555,
+            base_price_output_per_million=666,
+        )
+        fake_db = _FakeDB(
+            execute_results=[
+                _FakeScalarsResult([log]),
+                _FakeScalarsResult([]),
+            ]
+        )
+
+        async def fake_get_db():
+            yield fake_db
+
+        app.dependency_overrides[admin_module.get_db] = fake_get_db
+        app.dependency_overrides[admin_module.admin_guard] = lambda: None
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get("/admin/users/u_1/request-logs/export.csv?start_date=2026-08-31&end_date=2026-08-31")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn("text/csv", response.headers["content-type"])
+        text = response.text.lstrip("\ufeff")
+        parsed = list(csv.reader(io.StringIO(text)))
+        self.assertEqual(parsed[0], admin_module.REQUEST_LOG_EXPORT_HEADERS)
+        self.assertEqual(parsed[1][0], "2026-08-31")
+        self.assertEqual(parsed[1][6], "gpt-5.6-luna")
+        self.assertEqual(parsed[1][10], "465")
+        self.assertEqual(parsed[1][15], "470")
+        self.assertNotIn("provider-secret-model", text)
+        self.assertNotIn("secret-channel-id", text)
+        self.assertNotIn("secret-provider-platform", text)
+        self.assertNotIn("upstream-secret-request", text)
+        self.assertNotIn("123456", text)
+        self.assertNotIn("base_price", text)
+        self.assertNotIn("multiplier", text)
 
     async def test_invalidate_user_key_cache_is_best_effort_when_query_fails(self) -> None:
         class _FailingDB:
