@@ -73,6 +73,7 @@ OFFICIAL_DEFAULT_TEXT_PRICES = {
     "gpt-5.6-luna": (20, 120),
     "deepseek-v4-pro": (44, 87),
     "deepseek-v4-flash": (14, 28),
+    "claude-fable-5-1": CLAUDE_FABLE_PRICE,
     "claude-fable-5": CLAUDE_FABLE_PRICE,
     "claude-opus-5": CLAUDE_OPUS_PRICE,
     "claude-opus-4-8": CLAUDE_OPUS_PRICE,
@@ -264,16 +265,25 @@ class GatewayCatalogSyncTests(unittest.TestCase):
             if isinstance(item, dict) and item.get("id")
         }
 
-        fable = public_models["claude-fable-5"]
-        self.assertEqual(fable.get("provider_model"), "claude-fable-5")
-        self.assertEqual(fable.get("upstream_model"), "claude-fable-5")
-        self.assertEqual(fable.get("routing_mode"), "route_only")
-        self.assertEqual(fable.get("delivery_lane"), "route_only")
-        self.assertNotIn("upstream_url", fable)
-        self.assertNotIn("api_key", fable)
-        self.assertEqual(fable.get("auth_style"), "x-api-key")
-        self.assertEqual(fable.get("price_input_per_million"), CLAUDE_FABLE_INPUT_PRICE_PLACEHOLDER)
-        self.assertEqual(fable.get("price_output_per_million"), CLAUDE_FABLE_OUTPUT_PRICE_PLACEHOLDER)
+        for model_id in ("claude-fable-5-1", "claude-fable-5"):
+            with self.subTest(model=model_id):
+                fable = public_models[model_id]
+                self.assertEqual(fable.get("provider_model"), model_id)
+                self.assertEqual(fable.get("upstream_model"), model_id)
+                self.assertEqual(fable.get("routing_mode"), "route_only")
+                self.assertEqual(fable.get("delivery_lane"), "route_only")
+                self.assertNotIn("upstream_url", fable)
+                self.assertNotIn("api_key", fable)
+                self.assertEqual(fable.get("auth_style"), "x-api-key")
+                self.assertEqual(fable.get("price_input_per_million"), CLAUDE_FABLE_INPUT_PRICE_PLACEHOLDER)
+                self.assertEqual(fable.get("price_output_per_million"), CLAUDE_FABLE_OUTPUT_PRICE_PLACEHOLDER)
+
+        fable_5_1 = public_models["claude-fable-5-1"]
+        self.assertEqual(fable_5_1.get("billable_sku"), "claude-fable-5-1-text")
+        self.assertEqual(fable_5_1.get("pricing", {}).get("cache_read_multiplier"), 0.025)
+        self.assertEqual(fable_5_1.get("pricing", {}).get("cache_creation_multiplier"), 1.25)
+        self.assertEqual(fable_5_1.get("metadata", {}).get("context_length"), 1_000_000)
+        self.assertEqual(fable_5_1.get("metadata", {}).get("max_completion_tokens"), 128_000)
 
         opus_5 = public_models["claude-opus-5"]
         self.assertEqual(opus_5.get("provider_model"), "claude-opus-5")

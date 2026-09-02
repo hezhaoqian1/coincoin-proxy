@@ -1046,7 +1046,7 @@ def _provider_channel_messages_url(base_url: str) -> tuple[str, str]:
 
 def _anthropic_provider_probe_model_id(public_models: list[dict]) -> str:
     for item in public_models:
-        if item.get("id") == "claude-fable-5":
+        if item.get("id") == "claude-fable-5-1":
             return str(item.get("upstream_model") or item.get("provider_model") or item["id"])
     for item in public_models:
         owned_by = str(item.get("owned_by") or "").strip().lower()
@@ -1055,7 +1055,7 @@ def _anthropic_provider_probe_model_id(public_models: list[dict]) -> str:
         capabilities = set(item.get("capabilities") or [])
         if delivery_lane == "route_only" and "chat/completions" in capabilities and (owned_by == "anthropic" or provider_name == "anthropic"):
             return str(item.get("upstream_model") or item.get("provider_model") or item.get("id") or "").strip()
-    return "claude-fable-5"
+    return "claude-fable-5-1"
 
 
 async def _anthropic_provider_messages_probe(client: httpx.AsyncClient, channel: ProviderChannel, headers: dict[str, str], attempts: list[dict]) -> Optional[dict]:

@@ -324,6 +324,21 @@ class RegistryChannelRouteTests(unittest.TestCase):
                         "price_output_per_million": 200,
                     },
                     {
+                        "id": "claude-fable-5-1",
+                        "owned_by": "anthropic",
+                        "provider_name": "Anthropic",
+                        "provider_model": "claude-fable-5-1",
+                        "capabilities": ["chat/completions"],
+                        "routing_mode": "route_only",
+                        "delivery_lane": "route_only",
+                        "upstream_model": "claude-fable-5-1",
+                        "auth_style": "x-api-key",
+                        "price_input_per_million": 1000,
+                        "price_output_per_million": 5000,
+                        "pricing": {"cache_read_multiplier": 0.025},
+                        "metadata": {"provider_protocol": "anthropic_messages"},
+                    },
+                    {
                         "id": "claude-fable-5",
                         "owned_by": "anthropic",
                         "provider_name": "Anthropic",
@@ -464,6 +479,8 @@ class RegistryChannelRouteTests(unittest.TestCase):
 
     def test_route_only_model_requires_active_provider_route(self) -> None:
         with self.assertRaises(ModelCapabilityError):
+            registry.resolve_public_model("claude-fable-5-1", "chat/completions")
+        with self.assertRaises(ModelCapabilityError):
             registry.resolve_public_model("claude-fable-5", "chat/completions")
 
     def test_claude_code_alias_requires_active_provider_route(self) -> None:
@@ -542,6 +559,14 @@ class RegistryChannelRouteTests(unittest.TestCase):
             ],
             [
                 ModelChannelRouteSnapshot(
+                    route_id="mcr_fable_5_1",
+                    public_model_id="claude-fable-5-1",
+                    endpoint="chat/completions",
+                    channel_id="ch_anthropic",
+                    upstream_model="claude-fable-5-1",
+                    transform_profile="anthropic_messages",
+                ),
+                ModelChannelRouteSnapshot(
                     route_id="mcr_fable",
                     public_model_id="claude-fable-5",
                     endpoint="chat/completions",
@@ -551,6 +576,15 @@ class RegistryChannelRouteTests(unittest.TestCase):
                 )
             ],
         )
+
+        resolved_5_1 = registry.resolve_public_model("claude-fable-5-1", "chat/completions")
+        self.assertEqual(resolved_5_1.public_model.cache_read_multiplier, 0.025)
+        self.assertEqual(resolved_5_1.backend.channel_id, "ch_anthropic")
+        self.assertEqual(resolved_5_1.backend.channel_type, "anthropic_compatible")
+        self.assertEqual(resolved_5_1.backend.transform_profile, "anthropic_messages")
+        self.assertEqual(resolved_5_1.backend.model_id, "claude-fable-5-1")
+        self.assertEqual(resolved_5_1.backend.auth_style, "x-api-key")
+        self.assertEqual(resolved_5_1.route_reason, "catalog:claude-fable-5-1:route_only:channel:ch_anthropic")
 
         resolved = registry.resolve_public_model("claude-fable-5", "chat/completions")
 
