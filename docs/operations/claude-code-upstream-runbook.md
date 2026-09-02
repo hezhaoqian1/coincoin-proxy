@@ -3,7 +3,7 @@ type: runbook
 status: active
 owner: platform
 audience: [operator, developer, reviewer, agent]
-updated: 2026-08-10
+updated: 2026-09-02
 canonical_for: claude-code-upstream-operations
 ---
 
@@ -25,6 +25,22 @@ model routes instead of a legacy GPT-backed Claude catalog path.
 
 The public model remains a CoinCoin model id. The route decides which upstream
 model name is sent to the provider.
+
+## Claude Fable 5.1
+
+`claude-fable-5-1` is the current Anthropic model for demanding reasoning and
+long-horizon agentic work. It is exposed as a route-only public model and must
+use an active `anthropic_compatible` provider channel with the exact upstream
+model id `claude-fable-5-1`.
+
+The checked-in base price is 1,000 cents per million input tokens and 5,000
+cents per million output tokens. Anthropic prices cache reads for this model at
+2.5% of base input, so the catalog uses `cache_read_multiplier: 0.025`.
+`claude-fable-5` remains available for existing clients.
+
+The catalog intentionally contains no upstream URL or API key for either Fable
+model. Adding the public id therefore does not silently send traffic to a
+legacy GPT-backed Claude alias.
 
 Some public ids are spelling aliases for the same provider model. The checked-in
 catalog can declare `metadata.provider_route_aliases`; when a public model has no

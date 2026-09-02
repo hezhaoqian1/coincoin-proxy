@@ -2357,8 +2357,8 @@ function createApp(fetchImpl) {
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["discovery_mode"], "messages_probe")
         self.assertEqual(payload["models_url"], "https://claude-relay.example/v1/messages")
-        self.assertEqual(payload["models"][0]["id"], "claude-fable-5")
-        self.assertEqual(payload["models"][0]["suggested_public_model_id"], "claude-fable-5")
+        self.assertEqual(payload["models"][0]["id"], "claude-fable-5-1")
+        self.assertEqual(payload["models"][0]["suggested_public_model_id"], "claude-fable-5-1")
         self.assertEqual(calls[0][0], "GET")
         self.assertEqual(calls[0][1], "https://claude-relay.example/v1/models")
         self.assertEqual(calls[0][2]["x-api-key"], "sk-anthropic-secret")
@@ -2366,7 +2366,7 @@ function createApp(fetchImpl) {
         self.assertEqual(calls[1][0], "POST")
         self.assertEqual(calls[1][1], "https://claude-relay.example/v1/messages")
         self.assertEqual(calls[1][2]["x-api-key"], "sk-anthropic-secret")
-        self.assertEqual(calls[1][3]["model"], "claude-fable-5")
+        self.assertEqual(calls[1][3]["model"], "claude-fable-5-1")
         self.assertNotIn("sk-anthropic-secret", json.dumps(payload))
 
     async def test_request_logs_expose_provider_alias_and_usage_units(self) -> None:
