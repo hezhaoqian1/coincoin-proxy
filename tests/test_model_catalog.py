@@ -373,7 +373,7 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertEqual(resolved.public_model.provider_model, "gemini-2.5-flash")
 
     def test_runtime_alias_override_changes_upstream_without_editing_catalog(self) -> None:
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8") as override_file:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as override_file:
             json.dump(
                 {
                     "aliases": {
@@ -386,11 +386,16 @@ class ModelCatalogTests(unittest.TestCase):
                 override_file,
             )
             override_file.flush()
-            settings.model_alias_overrides_path = override_file.name
+            override_path = override_file.name
+
+        try:
+            settings.model_alias_overrides_path = override_path
             registry._initialized = False
             registry.init_from_settings()
 
             resolved = registry.resolve_public_model("gemini-fast", "responses")
+        finally:
+            os.unlink(override_path)
 
         self.assertEqual(resolved.public_model.public_id, "gemini-fast")
         self.assertEqual(resolved.public_model.provider_model, "gemini-2.5-pro")
