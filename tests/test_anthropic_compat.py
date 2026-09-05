@@ -1872,6 +1872,58 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(usage_kwargs["resolved_public_model"], "gpt-5.4-mini")
         self.assertEqual(usage_kwargs["price_version"], 3)
 
+    async def test_messages_passes_stable_channel_affinity_for_prompt_cache(self):
+        """Claude Code's Anthropic surface must pin equal-priority routes.
+
+        DeepSeek-compatible upstreams warm a prefix cache per provider channel;
+        omitting affinity here makes channel selection random on every request.
+        """
+        fake_user = SimpleNamespace(id="u_cache", status="active", _api_key_id="k_cache")
+        station_model = SimpleNamespace(
+            resolved_model=registry.resolve_public_model("gpt-5.4-mini", "chat/completions"),
+            display_model="gpt-5.4-mini",
+            station_id="",
+            station_alias="",
+            resolved_public_model="gpt-5.4-mini",
+            retail_input_per_million=100,
+            retail_output_per_million=100,
+            retail_price_per_image_cents=0.0,
+            wholesale_input_per_million=100,
+            wholesale_output_per_million=100,
+            wholesale_price_per_image_cents=0.0,
+            price_version=1,
+        )
+        client = _RecordingClient([
+            _FakeUpstreamResponse({
+                "id": "chatcmpl_affinity",
+                "choices": [{"message": {"role": "assistant", "content": "OK"}}],
+                "usage": {"prompt_tokens": 4, "completion_tokens": 1, "total_tokens": 5},
+            })
+        ])
+        resolver = AsyncMock(return_value=station_model)
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_http_client", AsyncMock(return_value=client)),
+            patch.object(anthropic_module, "resolve_station_model_for_user", resolver),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()),
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={"authorization": "Bearer sk_test", "anthropic-version": "2023-06-01"},
+                    json={
+                        "model": "deepseek-v4-pro",
+                        "max_tokens": 32,
+                        "messages": [{"role": "user", "content": "Reply with exactly OK"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200)
+        affinity = resolver.await_args.kwargs.get("channel_affinity_key")
+        self.assertTrue(affinity.startswith("aff-"))
+        self.assertEqual(len(affinity), 36)
+
     async def test_messages_preserve_tool_roundtrip_semantics(self):
         fake_user = SimpleNamespace(id="u_test", status="active")
         client = _RecordingClient(

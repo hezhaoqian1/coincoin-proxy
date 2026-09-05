@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .config import settings
 from .db import get_db
 from .fallback_alerts import UpstreamFailureBurstAlert, schedule_user_upstream_failure
-from .prompt_cache import build_claude_code_prompt_cache_key
+from .prompt_cache import build_channel_affinity_key, build_claude_code_prompt_cache_key
 from .anthropic_adapter import (
     build_anthropic_messages_url,
     ensure_claude_code_messages_url,
@@ -1182,6 +1182,19 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
     requested_model = str(payload.get("model") or "").strip()
     messages = _anthropic_messages_to_openai_messages(payload)
     tools = _anthropic_tools_to_openai_tools(payload)
+    # Keep Claude Code sessions on the same provider channel.  DeepSeek-style
+    # upstream caches are prefix-based and local to a provider account/channel;
+    # selecting a different equal-priority channel on every request prevents
+    # those prefixes from ever warming.  This mirrors the OpenAI-compatible
+    # entry points while preserving an explicit client cache key when present.
+    api_key_id = getattr(user, _KEY_ID_ATTR, "")
+    channel_affinity_key = build_channel_affinity_key(
+        user,
+        api_key_id,
+        "chat/completions",
+        requested_model,
+        payload.get("prompt_cache_key"),
+    )
     try:
         station_model = await resolve_station_model_for_user(
             db,
@@ -1190,8 +1203,15 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
             "chat/completions",
             messages,
             tools,
+            channel_affinity_key=channel_affinity_key,
         )
-        resolved_model = station_model.resolved_model if station_model else model_registry.resolve_public_model(requested_model, "chat/completions", messages, tools)
+        resolved_model = station_model.resolved_model if station_model else model_registry.resolve_public_model(
+            requested_model,
+            "chat/completions",
+            messages,
+            tools,
+            channel_affinity_key=channel_affinity_key,
+        )
     except Exception as exc:
         return _model_resolution_to_anthropic_error(exc)
     (
@@ -1222,7 +1242,6 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
     if max_tokens is not None:
         openai_payload["max_tokens"] = max_tokens
 
-    api_key_id = getattr(user, _KEY_ID_ATTR, "")
     prompt_cache_key = build_claude_code_prompt_cache_key(
         user,
         api_key_id,
@@ -1261,6 +1280,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
             cfg,
             "chat/completions",
             reason=reason,
+            channel_affinity_key=channel_affinity_key,
         )
 
     async def _record_failed_attempt(
