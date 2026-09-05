@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "requestedOutcome": "Remove intermittent admin-console stalls without changing billing, routing, payment, or public API behavior.",
+  "goal": "Remove intermittent admin-console stalls without changing billing, routing, payment, or public API behavior.",
+  "successEvidence": [
+    "Bounded user-list SQL calls; one-query dashboard leaderboards; single-flight analytics cache; warm provider page avoids all-history scans; admin timing headers; passing regressions."
+  ],
+  "stopCondition": "Done when all planned tests and checks pass; otherwise stop as blocked, needs-verification, or scope-exceeded before schema or production changes.",
+  "nonGoals": [
+    "No database schema, persistent rollup, deployment, or production mutation."
+  ],
+  "scope": "Admin read-path performance in billing lists, dashboard leaderboards, operating analytics, provider-channel statistics, UI pagination, and request timing.",
+  "changeKinds": [
+    "performance-repair"
+  ],
+  "riskHints": [
+    "Preserve billing serialization and admin response compatibility; no schema or live-state mutation."
+  ]
+}

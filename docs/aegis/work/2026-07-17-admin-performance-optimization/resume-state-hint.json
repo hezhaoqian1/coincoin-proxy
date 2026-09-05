@@ -1,0 +1,23 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "2026-07-17-admin-performance-optimization",
+  "lastCheckpointRef": "docs/aegis/work/2026-07-17-admin-performance-optimization/todo-checkpoint-draft.json",
+  "resumeInstruction": "Before integration, confirm whether codex/documentation-engineering or master is the intended base; then rerun the targeted suite after alignment.",
+  "knownPartialWork": [
+    "Batch user billing and 50-row admin pagination.",
+    "One-query 1h/4h/24h leaderboards.",
+    "Analytics single-flight cache and provider historical-total cache.",
+    "Admin-only timing headers and slow logs.",
+    "Fresh targeted regression, static checks, full-suite differential, and final diff review."
+  ],
+  "mustReadBeforeContinuing": [
+    "docs/aegis/work/2026-07-17-admin-performance-optimization/10-intent.md",
+    "docs/aegis/work/2026-07-17-admin-performance-optimization/20-checkpoint.md",
+    "docs/aegis/work/2026-07-17-admin-performance-optimization/todo-checkpoint-draft.json"
+  ],
+  "unsafeToAssume": [
+    "Do not assume the full backend suite is green; three video-generation failures exist on the clean baseline.",
+    "Do not assume codex/admin-performance is rebased onto current master.",
+    "Do not treat admin statistics caches as billing or debit authority."
+  ]
+}

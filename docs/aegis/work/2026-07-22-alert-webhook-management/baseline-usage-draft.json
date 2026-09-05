@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "2026-07-22-alert-webhook-management",
+  "requiredBaselineRefs": [
+    "docs/aegis/specs/2026-07-22-alert-webhook-management-brief.md",
+    "docs/aegis/adr/ADR-0003-alert-delivery-audit-boundary.md",
+    "docs/aegis/baseline/service-reliability.md"
+  ],
+  "deliveredContextRefs": [],
+  "acknowledgedBeforePlanRefs": [],
+  "citedInPlanRefs": [],
+  "missingRefs": [
+    "docs/aegis/specs/2026-07-22-alert-webhook-management-brief.md",
+    "docs/aegis/adr/ADR-0003-alert-delivery-audit-boundary.md",
+    "docs/aegis/baseline/service-reliability.md"
+  ],
+  "decision": "needs-baseline-readback"
+}

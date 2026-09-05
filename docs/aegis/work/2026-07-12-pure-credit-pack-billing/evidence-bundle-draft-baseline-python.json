@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "artifactKey": "baseline-python",
+  "type": "test",
+  "source": "python -m pytest -q",
+  "summary": "426 passed, 3 failed, 4 skipped; failures are pre-existing video RequestLog constructor mismatch.",
+  "verifier": "Codex root agent"
+}

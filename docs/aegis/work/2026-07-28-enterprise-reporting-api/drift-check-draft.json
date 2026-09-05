@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "2026-07-28-enterprise-reporting-api",
+  "taskIntentRef": "docs/aegis/work/2026-07-28-enterprise-reporting-api/task-intent-draft.json",
+  "baselineRefs": [
+    "docs/aegis/specs/2026-07-28-enterprise-reporting-api-design.md",
+    "docs/aegis/plans/2026-07-28-enterprise-reporting-api.md"
+  ],
+  "scopeStatus": "Implemented only additive enterprise reporting persistence, admin management, read-only reporting, tests, and documentation.",
+  "compatStatus": "Existing user auth, model calls, billing owner, stations, and admin behavior stayed unchanged; 112 affected regressions passed.",
+  "retirementStatus": "No existing owner or persistent state was retired; disable enterprise and irrevocable key revoke remain the rollback controls.",
+  "newRiskSignals": [
+    "Full repository docs harness is absent from the isolated baseline; only the six new managed docs were validated with the current checker.",
+    "Aegis workspace check is blocked by a pre-existing unindexed 2026-06-07 spec; the task proof bundle itself assembled successfully."
+  ],
+  "decision": "continue"
+}

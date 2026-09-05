@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "affectedLayers": [
+    "FastAPI admin control plane",
+    "Runtime alert settings",
+    "Static admin UI"
+  ],
+  "owners": [
+    "app/alert_admin.py",
+    "app/fallback_alerts.py",
+    "app/system_settings.py"
+  ],
+  "invariants": [
+    "Database row presence wins, including empty; row absence falls back to environment.",
+    "No database or network await enters a customer request path."
+  ],
+  "compatBoundary": "Public APIs, routing, billing, RequestLog, alert counters, and AlertEvent semantics remain unchanged.",
+  "nonGoals": [
+    "Encrypting the database value.",
+    "Adding a new page or endpoint."
+  ]
+}

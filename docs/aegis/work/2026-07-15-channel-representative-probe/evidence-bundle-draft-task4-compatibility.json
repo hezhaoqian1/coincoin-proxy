@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "artifactKey": "task4-compatibility",
+  "type": "test-static-and-workspace-validation",
+  "source": "pytest six-module compatibility suite; node --check; Python py_compile; aegis-workspace.py check/bundle/check",
+  "summary": "283 tests passed with 89 warnings; JavaScript and seven touched Python modules passed syntax checks; Aegis bundle generation and the final read-only workspace check passed after correcting the drift decision to the supported advisory enum.",
+  "verifier": "Codex local execution on codex/channel-probe-model"
+}

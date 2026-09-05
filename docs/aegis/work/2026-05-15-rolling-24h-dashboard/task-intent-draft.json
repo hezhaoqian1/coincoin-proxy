@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "requestedOutcome": "Admin operating dashboard and daily report use the latest 24 hours for current-period metrics instead of natural-day-to-date data.",
+  "scope": "Update analytics API period semantics, worker fetch/render labels, tests, and deployment verification for CoinCoin daily dashboard.",
+  "changeKinds": [
+    "contract-change"
+  ],
+  "riskHints": [
+    "Cross-endpoint analytics contract change; must keep 7d trend and low-balance behavior stable."
+  ]
+}

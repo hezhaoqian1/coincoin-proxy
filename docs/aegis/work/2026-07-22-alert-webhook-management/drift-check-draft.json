@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "2026-07-22-alert-webhook-management",
+  "taskIntentRef": "docs/aegis/work/2026-07-22-alert-webhook-management/task-intent-draft.json",
+  "baselineRefs": [
+    "docs/aegis/adr/ADR-0004-admin-managed-alert-webhook.md"
+  ],
+  "scopeStatus": "The shipped implementation and live initialization stayed within the authorized administrator-managed alert Webhook and Claude tutorial repair scope.",
+  "compatStatus": "Database value is active; absent-row Railway fallback remains; public APIs and customer request performance are unchanged.",
+  "retirementStatus": "Railway-only ownership is retired; absent-row environment fallback remains intentionally active for recovery.",
+  "newRiskSignals": [],
+  "decision": "continue"
+}

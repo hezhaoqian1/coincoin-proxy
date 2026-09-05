@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "requestedOutcome": "Replace new VPN-style monthly purchases with three permanent USD credit packs while honoring existing monthly entitlements and safely retiring traffic-pack sales.",
+  "goal": "Replace new VPN-style monthly purchases with three permanent USD credit packs while honoring existing monthly entitlements and safely retiring traffic-pack sales.",
+  "successEvidence": [
+    "New products create permanent credit batches; legacy monthly entitlements remain spendable; legacy traffic packs can be dry-run migrated without value drift; billing/payment/admin/UI tests pass; full suite has no new failures beyond the three recorded video baseline failures."
+  ],
+  "stopCondition": "Done only with verified tests and zero-value-drift migration evidence; otherwise stop as blocked, needs-verification, or scope-exceeded.",
+  "nonGoals": [
+    "No live database migration, deployment, price profitability claim, or confirmation of pending legacy orders."
+  ],
+  "scope": "Billing models, product catalog, payment confirmation, balance debit/refund, migration tooling, admin/user billing payloads, recharge UI, and targeted tests.",
+  "changeKinds": [
+    "migration"
+  ],
+  "riskHints": [
+    "High-risk billing source-of-truth and persistent-state migration; no live apply or destructive database action in this task."
+  ]
+}

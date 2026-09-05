@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "slock-29749713-rolling-24h",
+  "currentTodo": "Write failing test for today using RequestLog rolling 24h instead of UsageDaily.",
+  "completedTodos": [],
+  "activeSlice": "API period semantics",
+  "evidenceRefs": [],
+  "blockedOn": null,
+  "nextStep": "Implement minimal owner changes and run focused tests.",
+  "updatedAt": "2026-05-15"
+}

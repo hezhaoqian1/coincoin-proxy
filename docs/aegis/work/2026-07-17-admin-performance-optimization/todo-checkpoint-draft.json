@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "2026-07-17-admin-performance-optimization",
+  "currentTodo": "Implementation and task-scoped verification complete; preserve branch for user-directed integration.",
+  "completedTodos": [
+    "Batch user billing and 50-row admin pagination.",
+    "One-query 1h/4h/24h leaderboards.",
+    "Analytics single-flight cache and provider historical-total cache.",
+    "Admin-only timing headers and slow logs.",
+    "Fresh targeted regression, static checks, full-suite differential, and final diff review."
+  ],
+  "activeSlice": "Task 5: integrated verification and handoff.",
+  "evidenceRefs": [
+    "final-targeted-regression",
+    "full-suite-baseline-differential",
+    "final-static-verification",
+    "performance-shape"
+  ],
+  "blockedOn": null,
+  "nextStep": "Await user direction for base alignment, commit, review, merge, or deployment.",
+  "updatedAt": "2026-07-17"
+}

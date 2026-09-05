@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "artifactKey": "admin-ui-shared-validator-review",
+  "type": "pytest-node-review",
+  "source": "tests/test_admin_usage_fields.py tests/test_alert_admin.py and independent UI reviews",
+  "summary": "Task 2 final: complete Webhook view/edit/clear flow, stale-response protection, and a 29-case shared frontend/backend validator corpus passed after closing Unicode whitespace and URL parser-normalization gaps.",
+  "verifier": "115 admin usage tests; 19 alert admin tests plus 21 subtests; node --check; SPEC_COMPLIANT; QUALITY_APPROVED"
+}

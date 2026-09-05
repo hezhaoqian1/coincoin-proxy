@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "artifactKey": "task1-focused-tests",
+  "type": "test",
+  "source": "pytest tests/test_reliability.py tests/test_channel_monitoring.py tests/test_monitoring_probes.py tests/test_admin_usage_fields.py",
+  "summary": "99 tests passed; cached reliability overview, aggregation, authentication, and provider-channel baseline are green.",
+  "verifier": "Codex local execution"
+}

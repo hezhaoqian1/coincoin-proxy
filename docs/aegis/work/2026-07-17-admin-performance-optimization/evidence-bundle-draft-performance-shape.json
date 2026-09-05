@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "artifactKey": "performance-shape",
+  "type": "performance",
+  "source": "query-count and cache-call tests in tests.test_admin_usage_fields",
+  "summary": "The original diagnosis found up to roughly 601 user-page statements on the older branch. Latest master had already introduced a five-query batch path for the normal 50-user page; this integration keeps that main-path query count while adding pagination, deterministic ordering, MySQL-compatible per-user history limits, and no unbounded history transfer. The API maximum of 200 users uses at most four history UNION chunks. Three leaderboard requests become one request/query; concurrent cold dashboard builds single-flight behind a 300-second cache; provider all-time totals leave the warm path behind a 900-second cache.",
+  "verifier": "targeted tests and final diff inspection"
+}

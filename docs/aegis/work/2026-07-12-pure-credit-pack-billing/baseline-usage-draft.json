@@ -1,0 +1,24 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "2026-07-12-pure-credit-pack-billing",
+  "requiredBaselineRefs": [
+    "/Users/windupbird/.gstack/projects/hezhaoqian1-coincoin-proxy/windupbird-master-design-20260712-055650.md",
+    "app/billing.py",
+    "app/payment_common.py",
+    "app/models.py",
+    "app/main.py",
+    "tests/test_subscription_billing.py"
+  ],
+  "deliveredContextRefs": [],
+  "acknowledgedBeforePlanRefs": [],
+  "citedInPlanRefs": [],
+  "missingRefs": [
+    "/Users/windupbird/.gstack/projects/hezhaoqian1-coincoin-proxy/windupbird-master-design-20260712-055650.md",
+    "app/billing.py",
+    "app/payment_common.py",
+    "app/models.py",
+    "app/main.py",
+    "tests/test_subscription_billing.py"
+  ],
+  "decision": "needs-baseline-readback"
+}

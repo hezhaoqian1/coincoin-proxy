@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "requestedOutcome": "Monitor each provider channel with one highest-priority representative model, allow administrator override, test, ship, and verify production.",
+  "goal": "Monitor each provider channel with one highest-priority representative model, allow administrator override, test, ship, and verify production.",
+  "successEvidence": [
+    "Focused and compatibility tests pass; channel-first browser QA passes; production representative probe succeeds without routing changes."
+  ],
+  "stopCondition": "Done only after merged deployment and production verification; otherwise report blocked, needs-verification, or scope-exceeded.",
+  "nonGoals": [
+    "No automatic route mutation from probe results.",
+    "No active image/video/embedding probes."
+  ],
+  "scope": "Channel monitor selection, probe execution, admin selection UI/API, reliability semantics, compatibility retirement, tests, docs, and deployment QA.",
+  "changeKinds": [
+    "architecture"
+  ],
+  "riskHints": [
+    "Wrong ownership could alter routing semantics or multiply probe traffic."
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "artifactKey": "alert-ui-focused-regression",
+  "type": "pytest",
+  "source": "tests/test_admin_usage_fields.py and focused backend suites",
+  "summary": "Service Reliability alert controls/history static contract and focused regression suites passed: 164 tests; JavaScript syntax and diff whitespace checks passed.",
+  "verifier": "pytest four focused test files; node --check service-reliability.js; git diff --check"
+}

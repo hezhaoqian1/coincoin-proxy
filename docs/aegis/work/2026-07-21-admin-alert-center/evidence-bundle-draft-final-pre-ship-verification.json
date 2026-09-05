@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "artifactKey": "final-pre-ship-verification",
+  "type": "verification",
+  "source": "focused tests, full-suite differential, static checks, independent re-review",
+  "summary": "Final focused suite passed 173 tests; JS syntax, Python compileall, both diff checks, secret scan, MySQL UPSERT compile, runtime probes, and independent re-review passed. Full suite remained 686 passed with only 3 base-branch video failures.",
+  "verifier": "pytest focused files; pytest -q; node --check; compileall; git diff --check; independent prelanding re-review"
+}

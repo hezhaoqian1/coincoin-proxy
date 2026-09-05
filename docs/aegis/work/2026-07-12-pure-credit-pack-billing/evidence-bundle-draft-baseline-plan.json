@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "artifactKey": "baseline-plan",
+  "type": "plan",
+  "source": "docs/aegis/plans/2026-07-12-pure-credit-pack-billing.md",
+  "summary": "Executable six-task implementation plan with compatibility and retirement boundaries.",
+  "verifier": "Aegis workspace check"
+}

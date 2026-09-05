@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "artifactKey": "admin-ui-browser",
+  "type": "screenshot",
+  "source": "/tmp/coincoin-enterprise-desktop.png,/tmp/coincoin-enterprise-edit-desktop.png,/tmp/coincoin-enterprise-mobile.png,/tmp/coincoin-enterprise-edit-mobile.png",
+  "summary": "Desktop and 390px mobile enterprise list/modal are nonblank; no page or account-row overflow, no row overlap, modal footer remains visible.",
+  "verifier": "gstack-browse"
+}

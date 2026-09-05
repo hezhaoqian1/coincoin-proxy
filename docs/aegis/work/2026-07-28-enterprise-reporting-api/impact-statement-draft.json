@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "affectedLayers": [
+    "persistence",
+    "api",
+    "admin-ui",
+    "documentation"
+  ],
+  "owners": [
+    "app/enterprise_reporting.py"
+  ],
+  "invariants": [
+    "Only explicit active grants determine visibility; enterprise keys never authorize model calls; plaintext secrets are never persisted."
+  ],
+  "compatBoundary": "Existing API keys, sessions, stations, billing behavior, public routes, and customer data remain unchanged.",
+  "nonGoals": [
+    "No production customer setup, deployment, webhook, self-service, raw logs, or write operations."
+  ]
+}

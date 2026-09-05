@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "artifactKey": "focused-regression",
+  "type": "test",
+  "source": "/tmp/coincoin-enterprise-regression.log",
+  "summary": "Enterprise, existing auth, and admin regression: 106 tests passed.",
+  "verifier": "unittest"
+}

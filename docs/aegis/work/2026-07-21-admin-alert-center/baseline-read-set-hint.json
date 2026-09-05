@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "candidateDocs": [
+    "docs/aegis/specs/2026-07-21-admin-alert-center-brief.md",
+    "docs/aegis/baseline/service-reliability.md",
+    "docs/architecture/claude-code-upstream-runbook.md"
+  ],
+  "whyRelevant": "These records lock approved behavior, request-path invariants, and operator ownership.",
+  "missingAuthority": []
+}

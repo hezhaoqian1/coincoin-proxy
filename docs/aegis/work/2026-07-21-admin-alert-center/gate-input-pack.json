@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "baselineRefs": [
+    "docs/aegis/specs/2026-07-21-admin-alert-center-brief.md",
+    "docs/aegis/baseline/service-reliability.md"
+  ],
+  "impactStatement": "docs/aegis/work/2026-07-21-admin-alert-center/impact-statement-draft.json",
+  "compatPlan": "No public API, routing, fallback order, billing, or RequestLog semantics change.",
+  "retirementPlan": "No old path retired; no duplicate failure store, alert page, or webhook secret owner introduced.",
+  "evidenceBundle": [
+    "docs/aegis/work/2026-07-21-admin-alert-center/evidence-bundle-draft-alert-admin-api-red-green.json",
+    "docs/aegis/work/2026-07-21-admin-alert-center/evidence-bundle-draft-alert-ui-focused-regression.json",
+    "docs/aegis/work/2026-07-21-admin-alert-center/evidence-bundle-draft-final-pre-ship-verification.json",
+    "docs/aegis/work/2026-07-21-admin-alert-center/evidence-bundle-draft-full-suite-baseline-differential.json",
+    "docs/aegis/work/2026-07-21-admin-alert-center/evidence-bundle-draft-prelanding-review-fixes.json",
+    "docs/aegis/work/2026-07-21-admin-alert-center/evidence-bundle-draft-runtime-policy-alert-history-red-green.json"
+  ]
+}

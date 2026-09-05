@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "artifactKey": "final-full-suite",
+  "type": "test",
+  "source": "python -m unittest discover -s tests -p 'test_*.py'",
+  "summary": "Fresh full suite: 463 tests ran; the same 3 baseline video_jobs errors remained, 1 test skipped, and no new failure appeared.",
+  "verifier": "unittest"
+}

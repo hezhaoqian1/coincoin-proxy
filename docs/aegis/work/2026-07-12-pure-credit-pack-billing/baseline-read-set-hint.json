@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "candidateDocs": [
+    "/Users/windupbird/.gstack/projects/hezhaoqian1-coincoin-proxy/windupbird-master-design-20260712-055650.md",
+    "app/billing.py",
+    "app/payment_common.py",
+    "app/models.py",
+    "app/main.py",
+    "tests/test_subscription_billing.py"
+  ],
+  "whyRelevant": "User-approved product and migration design.",
+  "missingAuthority": []
+}

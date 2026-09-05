@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "requestedOutcome": "Implement administrator-managed enterprise reporting credentials for explicitly granted CoinCoin users.",
+  "goal": "Enterprise customers can securely query balances and aggregate usage for only their administrator-selected accounts.",
+  "successEvidence": [
+    "Focused auth/isolation/admin/reporting tests, full backend regression, docs validation, and desktop/mobile admin UI checks pass."
+  ],
+  "stopCondition": "Done when the additive feature is verified; blocked on unresolved security or baseline failures; scope-exceeded on live customer configuration or deployment.",
+  "nonGoals": [
+    "No production customer setup, deployment, webhook, self-service, raw logs, or write operations."
+  ],
+  "scope": "Additive enterprise persistence, dedicated auth/reporting/admin APIs, admin page, tests, and documentation.",
+  "changeKinds": [
+    "feature"
+  ],
+  "riskHints": [
+    "Cross-tenant leakage, credential confusion, secret exposure, and billing drift."
+  ]
+}

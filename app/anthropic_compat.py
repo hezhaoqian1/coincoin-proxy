@@ -1,0 +1,1869 @@
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import time
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
+
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse, Response, StreamingResponse
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from .config import settings
+from .db import get_db
+from .fallback_alerts import UpstreamFailureBurstAlert, schedule_user_upstream_failure
+from .prompt_cache import build_claude_code_prompt_cache_key
+from .anthropic_adapter import (
+    build_anthropic_messages_url,
+    ensure_claude_code_messages_url,
+    ensure_claude_code_upstream_headers,
+    is_anthropic_compatible_config,
+)
+from .proxy import (
+    _build_upstream_headers,
+    _KEY_ID_ATTR,
+    _normalize_openai_base_url,
+    authenticate_user,
+    authorize_request,
+    extract_upstream_request_id,
+    filter_headers,
+    get_http_client,
+    get_stream_client,
+    _channel_usage_kwargs,
+    _is_local_pool_timeout,
+    _record_channel_failure,
+    _record_channel_success,
+    _upstream_transport_error_code,
+    _channel_fallback_route_reason,
+    _next_channel_fallback_config,
+)
+from .router import (
+    CLAUDE_COMPAT_PROVIDER_KIRO_GO,
+    CLAUDE_COMPAT_KIRO_MODEL_MAP,
+    ModelCapabilityError,
+    UnknownModelError,
+    build_model_cloak,
+    registry as model_registry,
+)
+from .station_runtime import resolve_station_model_for_user, usage_pricing_kwargs
+from .security import generate_id
+from .user_model_overrides import apply_user_overrides_to_resolution
+from .usage_buffer import (
+    extract_cache_creation_tokens,
+    extract_cache_read_tokens,
+    extract_total_input_tokens,
+    schedule_usage_add,
+    usage_buffer,
+)
+
+
+router = APIRouter(prefix="/v1", tags=["anthropic-compat"])
+logger = logging.getLogger("coincoin.anthropic_compat")
+
+_MESSAGES_FALLBACK_STATUSES = {429, 502, 503}
+
+
+def _kiro_go_upstream_model(model_id: str) -> str:
+    """Canonicalize public Claude aliases before the final Kiro-Go hop."""
+    normalized = str(model_id or "").strip()
+    mapped = CLAUDE_COMPAT_KIRO_MODEL_MAP.get(normalized.lower())
+    return mapped or normalized
+
+
+@dataclass
+class _AnthropicToolStreamState:
+    index: int
+    block_index: int
+    tool_id: str = ""
+    name: str = ""
+    started: bool = False
+    stopped: bool = False
+
+
+@dataclass
+class _AnthropicStreamState:
+    response_id: str = ""
+    created_at: int = 0
+    message_started: bool = False
+    message_stopped: bool = False
+    message_delta_sent: bool = False
+    text_block_started: bool = False
+    text_block_index: Optional[int] = None
+    thinking_block_started: bool = False
+    thinking_block_index: Optional[int] = None
+    saw_tool_call: bool = False
+    finish_reason: str = ""
+    usage: Dict[str, Any] = field(default_factory=dict)
+    next_block_index: int = 0
+    tool_states: Dict[int, _AnthropicToolStreamState] = field(default_factory=dict)
+
+
+def anthropic_error(
+    message: str,
+    *,
+    error_type: str = "invalid_request_error",
+    status_code: int = 400,
+    request_id: str = "",
+) -> JSONResponse:
+    content: Dict[str, Any] = {
+        "type": "error",
+        "error": {
+            "type": error_type,
+            "message": message,
+        },
+    }
+    headers: Dict[str, str] = {}
+    if request_id:
+        content["request_id"] = request_id
+        headers["request-id"] = request_id
+    return JSONResponse(
+        status_code=status_code,
+        content=content,
+        headers=headers,
+    )
+
+
+def _model_resolution_to_anthropic_error(exc: Exception) -> JSONResponse:
+    if isinstance(exc, UnknownModelError):
+        return anthropic_error(str(exc), status_code=400)
+    if isinstance(exc, ModelCapabilityError):
+        return anthropic_error(str(exc), status_code=400)
+    return anthropic_error("Unable to resolve model", error_type="api_error", status_code=500)
+
+
+def _anthropic_messages_to_openai_messages(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    messages: List[Dict[str, Any]] = []
+
+    system = payload.get("system")
+    if isinstance(system, str) and system.strip():
+        messages.append({"role": "system", "content": system})
+    elif isinstance(system, list):
+        system_parts: List[str] = []
+        for block in system:
+            if isinstance(block, dict) and block.get("type") == "text":
+                system_parts.append(str(block.get("text") or ""))
+        if system_parts:
+            messages.append({"role": "system", "content": "".join(system_parts)})
+
+    raw_messages = payload.get("messages")
+    if not isinstance(raw_messages, list):
+        return messages
+
+    for item in raw_messages:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "user")
+        content = item.get("content")
+
+        if isinstance(content, str):
+            messages.append({"role": role, "content": content})
+            continue
+
+        if not isinstance(content, list):
+            messages.append({"role": role, "content": ""})
+            continue
+
+        text_parts: List[str] = []
+        assistant_tool_calls: List[Dict[str, Any]] = []
+
+        def _flush_user_text() -> None:
+            if role == "user" and text_parts:
+                messages.append({"role": "user", "content": "".join(text_parts)})
+                text_parts.clear()
+
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            block_type = str(block.get("type") or "")
+
+            if block_type == "text":
+                text_parts.append(str(block.get("text") or ""))
+                continue
+
+            if role == "assistant" and block_type == "tool_use":
+                tool_id = str(block.get("id") or f"call_{len(assistant_tool_calls)}")
+                tool_name = str(block.get("name") or "")
+                tool_input = block.get("input")
+                if isinstance(tool_input, str):
+                    arguments = tool_input
+                else:
+                    arguments = json.dumps(tool_input or {}, ensure_ascii=False)
+                assistant_tool_calls.append(
+                    {
+                        "id": tool_id,
+                        "type": "function",
+                        "function": {"name": tool_name, "arguments": arguments},
+                    }
+                )
+                continue
+
+            if role == "user" and block_type == "tool_result":
+                _flush_user_text()
+                result_content = block.get("content")
+                result_parts = _stringify_anthropic_result_content(result_content)
+
+                tool_message: Dict[str, Any] = {
+                    "role": "tool",
+                    "tool_call_id": str(block.get("tool_use_id") or ""),
+                    "content": "".join(result_parts),
+                }
+                if tool_message["tool_call_id"]:
+                    messages.append(tool_message)
+                continue
+
+        if role == "user":
+            _flush_user_text()
+            continue
+
+        if role == "assistant" and not text_parts and not assistant_tool_calls:
+            continue
+
+        message: Dict[str, Any] = {"role": role, "content": "".join(text_parts)}
+        if assistant_tool_calls:
+            message["tool_calls"] = assistant_tool_calls
+            if not text_parts:
+                message["content"] = None
+        messages.append(message)
+    return messages
+
+
+def _stringify_anthropic_result_content(content: Any) -> List[str]:
+    if isinstance(content, str):
+        return [content]
+    if isinstance(content, dict):
+        return [json.dumps(content, ensure_ascii=False, separators=(",", ":"))]
+    if not isinstance(content, list):
+        return []
+
+    result_parts: List[str] = []
+    for block in content:
+        if isinstance(block, dict):
+            if block.get("type") == "text":
+                result_parts.append(str(block.get("text") or ""))
+            else:
+                result_parts.append(json.dumps(block, ensure_ascii=False, separators=(",", ":")))
+        elif block is not None:
+            result_parts.append(str(block))
+    return result_parts
+
+
+def _anthropic_tools_to_openai_tools(payload: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
+    raw_tools = payload.get("tools")
+    if not isinstance(raw_tools, list):
+        return None
+
+    tools: List[Dict[str, Any]] = []
+    for tool in raw_tools:
+        if not isinstance(tool, dict):
+            continue
+        name = str(tool.get("name") or "").strip()
+        if not name:
+            continue
+        tools.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": str(tool.get("description") or ""),
+                    "parameters": tool.get("input_schema") or {"type": "object", "properties": {}},
+                },
+            }
+        )
+    return tools or None
+
+
+def _anthropic_tool_choice_to_openai(tool_choice: Any) -> Any:
+    if not isinstance(tool_choice, dict):
+        return tool_choice
+    choice_type = str(tool_choice.get("type") or "").strip()
+    if choice_type in {"auto", "any", "none"}:
+        return "required" if choice_type == "any" else choice_type
+    if choice_type == "tool":
+        name = str(tool_choice.get("name") or "").strip()
+        if name:
+            return {"type": "function", "function": {"name": name}}
+    return tool_choice
+
+
+def _build_anthropic_upstream_headers(cfg, request: Request) -> Dict[str, str]:
+    headers = _build_upstream_headers(cfg)
+    headers["content-type"] = "application/json"
+
+    anthropic_version = request.headers.get("anthropic-version")
+    if anthropic_version:
+        headers["anthropic-version"] = anthropic_version
+    else:
+        headers["anthropic-version"] = "2023-06-01"
+
+    passthrough_exact = {
+        "anthropic-beta",
+        "anthropic-dangerous-direct-browser-access",
+        "user-agent",
+        "x-app",
+        "x-claude-code-session-id",
+    }
+    passthrough_prefixes = ("x-stainless-",)
+    for name, value in request.headers.items():
+        lower_name = name.lower()
+        if lower_name in passthrough_exact or lower_name.startswith(passthrough_prefixes):
+            headers[lower_name] = value
+
+    return ensure_claude_code_upstream_headers(headers, cfg)
+
+
+def _append_request_query(upstream_url: str, request: Request) -> str:
+    query = str(request.url.query or "").strip()
+    if not query:
+        return upstream_url
+    separator = "&" if "?" in upstream_url else "?"
+    return f"{upstream_url}{separator}{query}"
+
+
+def _copy_anthropic_messages_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    copied: Dict[str, Any] = {}
+    for key in (
+        "model",
+        "messages",
+        "system",
+        "max_tokens",
+        "metadata",
+        "stop_sequences",
+        "stream",
+        "temperature",
+        "top_p",
+        "top_k",
+        "tools",
+        "tool_choice",
+        "thinking",
+        "service_tier",
+        "container",
+        "context_management",
+        "mcp_servers",
+        "cache_control",
+    ):
+        if key in payload:
+            copied[key] = payload[key]
+    return copied
+
+
+def _looks_like_anthropic_message_response(data: Any) -> bool:
+    return isinstance(data, dict) and str(data.get("type") or "").strip() == "message"
+
+
+def _anthropic_message_start_usage_from_usage(usage: Dict[str, Any]) -> Dict[str, int]:
+    input_tokens = extract_total_input_tokens(usage)
+    cache_read_tokens = extract_cache_read_tokens(usage)
+    cache_creation_tokens = extract_cache_creation_tokens(usage)
+    regular_input_tokens = max(0, input_tokens - cache_read_tokens - cache_creation_tokens)
+    return {
+        "input_tokens": regular_input_tokens,
+        "cache_creation_input_tokens": max(0, cache_creation_tokens),
+        "cache_read_input_tokens": max(0, cache_read_tokens),
+        "output_tokens": 0,
+    }
+
+
+def _mask_anthropic_message_model(payload: Dict[str, Any], display_model: str) -> Dict[str, Any]:
+    if not isinstance(payload, dict):
+        return payload
+    masked = dict(payload)
+    if masked.get("model") not in (None, ""):
+        masked["model"] = display_model
+    return masked
+
+
+def _build_anthropic_response(
+    *,
+    display_model: str,
+    message_content: List[Dict[str, Any]],
+    stop_reason: str,
+    usage: Dict[str, Any],
+    response_id: str = "",
+) -> Dict[str, Any]:
+    input_tokens = extract_total_input_tokens(usage)
+    cache_read_tokens = extract_cache_read_tokens(usage)
+    cache_creation_tokens = extract_cache_creation_tokens(usage)
+    regular_input_tokens = max(0, input_tokens - cache_read_tokens - cache_creation_tokens)
+    usage_body = {
+        "input_tokens": regular_input_tokens,
+        "output_tokens": int(usage.get("completion_tokens") or usage.get("output_tokens") or 0),
+    }
+    if cache_creation_tokens:
+        usage_body["cache_creation_input_tokens"] = cache_creation_tokens
+    if cache_read_tokens:
+        usage_body["cache_read_input_tokens"] = cache_read_tokens
+    return {
+        "id": response_id or f"msg_coincoin_{int(time.time() * 1000)}",
+        "type": "message",
+        "role": "assistant",
+        "model": display_model,
+        "content": message_content,
+        "stop_reason": stop_reason,
+        "stop_sequence": None,
+        "usage": usage_body,
+    }
+
+
+def _extract_anthropic_content_from_openai_chat_response(data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return []
+    message = choices[0].get("message") if isinstance(choices[0], dict) else None
+    if not isinstance(message, dict):
+        return []
+    content_blocks: List[Dict[str, Any]] = []
+    content = message.get("content")
+    if isinstance(content, str):
+        if content:
+            content_blocks.append({"type": "text", "text": content})
+    if isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                content_blocks.append({"type": "text", "text": str(block.get("text") or "")})
+
+    tool_calls = message.get("tool_calls")
+    if isinstance(tool_calls, list):
+        for index, tool_call in enumerate(tool_calls):
+            if not isinstance(tool_call, dict):
+                continue
+            function = tool_call.get("function") if isinstance(tool_call.get("function"), dict) else {}
+            arguments = function.get("arguments", {})
+            if isinstance(arguments, str):
+                try:
+                    parsed_input = json.loads(arguments)
+                except Exception:
+                    parsed_input = {"raw": arguments}
+            elif isinstance(arguments, dict):
+                parsed_input = arguments
+            else:
+                parsed_input = {}
+            content_blocks.append(
+                {
+                    "type": "tool_use",
+                    "id": str(tool_call.get("id") or f"call_{index}"),
+                    "name": str(function.get("name") or ""),
+                    "input": parsed_input,
+                }
+            )
+    return content_blocks
+
+
+def _extract_anthropic_stop_reason_from_openai_chat_response(data: Dict[str, Any]) -> str:
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        return "end_turn"
+    finish_reason = str(choices[0].get("finish_reason") or choices[0].get("native_finish_reason") or "")
+    return _normalize_anthropic_stop_reason(finish_reason, finish_reason == "tool_calls")
+
+
+def _extract_usage_from_openai_chat_response(data: Dict[str, Any]) -> Dict[str, Any]:
+    usage = data.get("usage")
+    if not isinstance(usage, dict):
+        return {}
+    return usage
+
+
+def _elapsed_ms_since(start: float) -> int:
+    return max(1, int((time.monotonic() - start) * 1000))
+
+
+def _anthropic_sse_bytes(event_type: str, payload: Dict[str, Any]) -> bytes:
+    data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    return f"event: {event_type}\ndata: {data}\n\n".encode("utf-8")
+
+
+def _kiro_go_bridge_timeout() -> httpx.Timeout:
+    return httpx.Timeout(
+        connect=5.0,
+        read=max(300.0, float(settings.responses_stream_read_timeout)),
+        write=60.0,
+        pool=60.0,
+    )
+
+
+def _kiro_go_bridge_ping_interval() -> float:
+    return 15.0
+
+
+def _anthropic_ping_bytes() -> bytes:
+    return _anthropic_sse_bytes("ping", {"type": "ping"})
+
+
+def _anthropic_stream_error_bytes(
+    message: str,
+    *,
+    error_type: str = "api_error",
+    request_id: str = "",
+) -> bytes:
+    payload: Dict[str, Any] = {
+        "type": "error",
+        "error": {
+            "type": error_type,
+            "message": message,
+        },
+    }
+    if request_id:
+        payload["request_id"] = request_id
+    return _anthropic_sse_bytes(
+        "error",
+        payload,
+    )
+
+
+@dataclass(frozen=True)
+class _AnthropicUpstreamAttempt:
+    cfg: Any
+    is_native: bool
+    upstream_url: str
+    headers: Dict[str, str]
+    payload: Dict[str, Any]
+
+
+def _build_anthropic_upstream_attempt(
+    cfg: Any,
+    *,
+    request: Request,
+    client_payload: Dict[str, Any],
+    openai_payload: Dict[str, Any],
+    is_kiro_go: bool,
+) -> _AnthropicUpstreamAttempt:
+    is_native = is_kiro_go or is_anthropic_compatible_config(cfg)
+    headers = _build_anthropic_upstream_headers(cfg, request)
+    if is_native:
+        upstream_url = ensure_claude_code_messages_url(
+            _append_request_query(build_anthropic_messages_url(cfg.upstream_url), request),
+            cfg,
+        )
+        upstream_payload = _copy_anthropic_messages_payload(client_payload)
+        upstream_payload["model"] = _kiro_go_upstream_model(cfg.model_id) if is_kiro_go else cfg.model_id
+        upstream_payload["stream"] = bool(client_payload.get("stream"))
+    else:
+        upstream_url = f"{_normalize_openai_base_url(cfg.upstream_url)}/chat/completions"
+        upstream_payload = dict(openai_payload)
+        upstream_payload["model"] = cfg.model_id
+    return _AnthropicUpstreamAttempt(
+        cfg=cfg,
+        is_native=is_native,
+        upstream_url=upstream_url,
+        headers=headers,
+        payload=upstream_payload,
+    )
+
+
+def _anthropic_temporary_error(request_id: str, *, status_code: int = 502) -> JSONResponse:
+    error_type = "rate_limit_error" if status_code == 429 else "api_error"
+    return anthropic_error(
+        f"Upstream service temporarily unavailable. Request ID: {request_id}",
+        error_type=error_type,
+        status_code=status_code,
+        request_id=request_id,
+    )
+
+
+def _correlated_upstream_request_id(request_id: str, upstream_request_id: str = "") -> str:
+    if upstream_request_id:
+        return f"{request_id}|{upstream_request_id}"[:128]
+    return request_id[:128]
+
+
+def _mask_anthropic_sse_event_model(raw_event: str, display_model: str) -> str:
+    event_type, payload = _parse_anthropic_sse_event(raw_event)
+    if event_type != "message_start" or not isinstance(payload, dict):
+        return raw_event
+    message = payload.get("message")
+    if not isinstance(message, dict):
+        return raw_event
+    if message.get("model") in (None, ""):
+        return raw_event
+    message["model"] = display_model
+    data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    return f"event: {event_type}\ndata: {data}"
+
+
+def _update_state_from_anthropic_event(
+    state: _AnthropicStreamState,
+    *,
+    event_type: str,
+    event_payload: Dict[str, Any],
+) -> None:
+    if event_type == "message_start":
+        message = event_payload.get("message")
+        if isinstance(message, dict):
+            state.message_started = True
+            response_id = str(message.get("id") or "")
+            if response_id:
+                state.response_id = response_id
+            usage = message.get("usage")
+            if isinstance(usage, dict):
+                state.usage = {
+                    "input_tokens": int(usage.get("input_tokens") or 0),
+                    "output_tokens": int(usage.get("output_tokens") or 0),
+                    "cache_creation_input_tokens": int(usage.get("cache_creation_input_tokens") or 0),
+                    "cache_read_input_tokens": int(usage.get("cache_read_input_tokens") or 0),
+                }
+        return
+
+    if event_type == "message_delta":
+        delta = event_payload.get("delta")
+        if isinstance(delta, dict):
+            finish_reason = str(delta.get("stop_reason") or "")
+            if finish_reason:
+                state.finish_reason = finish_reason
+        usage = event_payload.get("usage")
+        if isinstance(usage, dict):
+            merged = dict(state.usage or {})
+            merged.update(usage)
+            state.usage = merged
+            state.message_delta_sent = True
+        return
+
+    if event_type == "message_stop":
+        state.message_stopped = True
+
+
+def _parse_anthropic_sse_event(raw_event: str) -> tuple[str, Optional[Dict[str, Any]]]:
+    event_type = ""
+    data_lines: List[str] = []
+    for raw_line in raw_event.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("event:"):
+            event_type = line[6:].strip()
+        elif line.startswith("data:"):
+            data_lines.append(line[5:].strip())
+    if not event_type or not data_lines:
+        return "", None
+    data_text = "\n".join(data_lines).strip()
+    if not data_text:
+        return event_type, {}
+    try:
+        payload = json.loads(data_text)
+    except json.JSONDecodeError:
+        return event_type, None
+    if not isinstance(payload, dict):
+        return event_type, None
+    return event_type, payload
+
+
+async def _consume_native_anthropic_sse_response(
+    upstream: Any,
+    *,
+    display_model: str,
+) -> tuple[bytes, Dict[str, Any], bool]:
+    state = _AnthropicStreamState()
+    events: List[bytes] = []
+    anthropic_event_lines: List[str] = []
+    saw_anthropic_event = False
+
+    def _flush_anthropic_event() -> None:
+        if not anthropic_event_lines:
+            return
+        raw_event = "\n".join(anthropic_event_lines)
+        event_type, payload_dict = _parse_anthropic_sse_event(raw_event)
+        if event_type and payload_dict is not None:
+            should_forward_event = not (event_type == "message_start" and state.message_started)
+            _update_state_from_anthropic_event(
+                state,
+                event_type=event_type,
+                event_payload=payload_dict,
+            )
+            if should_forward_event:
+                masked_event = _mask_anthropic_sse_event_model(raw_event, display_model)
+                events.append((masked_event + "\n\n").encode("utf-8"))
+        anthropic_event_lines.clear()
+
+    async for line in upstream.aiter_lines():
+        raw_line = str(line or "")
+        if anthropic_event_lines or raw_line.startswith("event:"):
+            if raw_line.startswith("event:"):
+                saw_anthropic_event = True
+            if raw_line == "":
+                _flush_anthropic_event()
+                continue
+            anthropic_event_lines.append(raw_line)
+            continue
+        if raw_line == "":
+            continue
+        if saw_anthropic_event:
+            continue
+        events.extend(
+            _translate_openai_chunk_to_anthropic_events(
+                state,
+                display_model=display_model,
+                raw_line=raw_line,
+            )
+        )
+
+    _flush_anthropic_event()
+    return b"".join(events), state.usage, state.message_stopped
+
+
+def _normalize_anthropic_stop_reason(finish_reason: str, saw_tool_call: bool) -> str:
+    reason = str(finish_reason or "").strip()
+    if saw_tool_call or reason == "tool_calls":
+        return "tool_use"
+    if reason in {"length", "max_tokens"}:
+        return "max_tokens"
+    return "end_turn"
+
+
+def _ensure_anthropic_message_start(
+    state: _AnthropicStreamState,
+    *,
+    display_model: str,
+    response_id: str,
+) -> List[bytes]:
+    if state.message_started:
+        return []
+    state.message_started = True
+    state.response_id = response_id or state.response_id or f"msg_coincoin_{int(time.time() * 1000)}"
+    usage = _anthropic_message_start_usage_from_usage(state.usage)
+    payload = {
+        "type": "message_start",
+        "message": {
+            "id": state.response_id,
+            "type": "message",
+            "role": "assistant",
+            "model": display_model,
+            "content": [],
+            "stop_reason": None,
+            "stop_sequence": None,
+            "usage": usage,
+        },
+    }
+    return [_anthropic_sse_bytes("message_start", payload)]
+
+
+def _start_text_block(state: _AnthropicStreamState) -> List[bytes]:
+    if state.text_block_started:
+        return []
+    if state.thinking_block_started:
+        return _stop_thinking_block(state) + _start_text_block(state)
+    state.text_block_started = True
+    if state.text_block_index is None:
+        state.text_block_index = state.next_block_index
+        state.next_block_index += 1
+    payload = {
+        "type": "content_block_start",
+        "index": state.text_block_index,
+        "content_block": {"type": "text", "text": ""},
+    }
+    return [_anthropic_sse_bytes("content_block_start", payload)]
+
+
+def _stop_text_block(state: _AnthropicStreamState) -> List[bytes]:
+    if not state.text_block_started or state.text_block_index is None:
+        return []
+    state.text_block_started = False
+    payload = {"type": "content_block_stop", "index": state.text_block_index}
+    return [_anthropic_sse_bytes("content_block_stop", payload)]
+
+
+def _start_thinking_block(state: _AnthropicStreamState) -> List[bytes]:
+    if state.thinking_block_started:
+        return []
+    if state.text_block_started:
+        return _stop_text_block(state) + _start_thinking_block(state)
+    state.thinking_block_started = True
+    if state.thinking_block_index is None:
+        state.thinking_block_index = state.next_block_index
+        state.next_block_index += 1
+    payload = {
+        "type": "content_block_start",
+        "index": state.thinking_block_index,
+        "content_block": {"type": "thinking", "thinking": "", "signature": ""},
+    }
+    return [_anthropic_sse_bytes("content_block_start", payload)]
+
+
+def _stop_thinking_block(state: _AnthropicStreamState) -> List[bytes]:
+    if not state.thinking_block_started or state.thinking_block_index is None:
+        return []
+    state.thinking_block_started = False
+    payload = {"type": "content_block_stop", "index": state.thinking_block_index}
+    return [_anthropic_sse_bytes("content_block_stop", payload)]
+
+
+def _ensure_tool_state(state: _AnthropicStreamState, tool_index: int) -> _AnthropicToolStreamState:
+    tool_state = state.tool_states.get(tool_index)
+    if tool_state is None:
+        tool_state = _AnthropicToolStreamState(index=tool_index, block_index=state.next_block_index)
+        state.tool_states[tool_index] = tool_state
+        state.next_block_index += 1
+    return tool_state
+
+
+def _start_tool_block(tool_state: _AnthropicToolStreamState) -> List[bytes]:
+    if tool_state.started:
+        return []
+    tool_state.started = True
+    payload = {
+        "type": "content_block_start",
+        "index": tool_state.block_index,
+        "content_block": {
+            "type": "tool_use",
+            "id": tool_state.tool_id or f"call_{tool_state.index}",
+            "name": tool_state.name or f"tool_{tool_state.index}",
+            "input": {},
+        },
+    }
+    return [_anthropic_sse_bytes("content_block_start", payload)]
+
+
+def _stop_tool_blocks(state: _AnthropicStreamState) -> List[bytes]:
+    events: List[bytes] = []
+    for tool_index in sorted(state.tool_states):
+        tool_state = state.tool_states[tool_index]
+        if not tool_state.started or tool_state.stopped:
+            continue
+        tool_state.stopped = True
+        payload = {"type": "content_block_stop", "index": tool_state.block_index}
+        events.append(_anthropic_sse_bytes("content_block_stop", payload))
+    return events
+
+
+def _finalize_anthropic_stream(
+    state: _AnthropicStreamState,
+    *,
+    display_model: str,
+) -> List[bytes]:
+    if state.message_stopped:
+        return []
+
+    events: List[bytes] = []
+    if not state.message_started:
+        events.extend(_ensure_anthropic_message_start(state, display_model=display_model, response_id=state.response_id))
+
+    events.extend(_stop_text_block(state))
+    events.extend(_stop_thinking_block(state))
+    events.extend(_stop_tool_blocks(state))
+
+    if not state.message_delta_sent:
+        state.message_delta_sent = True
+        input_tokens = extract_total_input_tokens(state.usage)
+        cache_read_tokens = extract_cache_read_tokens(state.usage)
+        cache_creation_tokens = extract_cache_creation_tokens(state.usage)
+        usage = {
+            "input_tokens": max(0, input_tokens - cache_read_tokens - cache_creation_tokens),
+            "output_tokens": int(state.usage.get("completion_tokens") or state.usage.get("output_tokens") or 0),
+        }
+        if cache_creation_tokens:
+            usage["cache_creation_input_tokens"] = cache_creation_tokens
+        if cache_read_tokens:
+            usage["cache_read_input_tokens"] = cache_read_tokens
+        payload = {
+            "type": "message_delta",
+            "delta": {
+                "stop_reason": _normalize_anthropic_stop_reason(state.finish_reason, state.saw_tool_call),
+                "stop_sequence": None,
+            },
+            "usage": usage,
+        }
+        events.append(_anthropic_sse_bytes("message_delta", payload))
+
+    state.message_stopped = True
+    events.append(_anthropic_sse_bytes("message_stop", {"type": "message_stop"}))
+    return events
+
+
+def _translate_openai_chunk_to_anthropic_events(
+    state: _AnthropicStreamState,
+    *,
+    display_model: str,
+    raw_line: str,
+) -> List[bytes]:
+    line = raw_line.strip()
+    if not line or not line.startswith("data:"):
+        return []
+
+    payload = line[5:].strip()
+    if not payload:
+        return []
+    if payload == "[DONE]":
+        return _finalize_anthropic_stream(state, display_model=display_model)
+
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError:
+        return []
+
+    if not isinstance(data, dict):
+        return []
+
+    events: List[bytes] = []
+    response_id = str(data.get("id") or state.response_id or "")
+    if response_id:
+        state.response_id = response_id
+    created = data.get("created")
+    if isinstance(created, int) and created > 0:
+        state.created_at = created
+
+    choices = data.get("choices")
+    choice = choices[0] if isinstance(choices, list) and choices and isinstance(choices[0], dict) else {}
+    delta = choice.get("delta") if isinstance(choice.get("delta"), dict) else {}
+
+    if delta:
+        events.extend(_ensure_anthropic_message_start(state, display_model=display_model, response_id=response_id))
+
+    content = delta.get("content")
+    if isinstance(content, str) and content:
+        events.extend(_start_text_block(state))
+        payload = {
+            "type": "content_block_delta",
+            "index": state.text_block_index,
+            "delta": {"type": "text_delta", "text": content},
+        }
+        events.append(_anthropic_sse_bytes("content_block_delta", payload))
+
+    reasoning_content = delta.get("reasoning_content")
+    if isinstance(reasoning_content, list):
+        events.extend(_stop_text_block(state))
+        for reasoning_item in reasoning_content:
+            if not isinstance(reasoning_item, dict):
+                continue
+            reasoning_text = str(reasoning_item.get("text") or reasoning_item.get("thinking") or "")
+            if reasoning_text:
+                events.extend(_start_thinking_block(state))
+                payload = {
+                    "type": "content_block_delta",
+                    "index": state.thinking_block_index,
+                    "delta": {"type": "thinking_delta", "thinking": reasoning_text},
+                }
+                events.append(_anthropic_sse_bytes("content_block_delta", payload))
+
+            signature = reasoning_item.get("signature")
+            if isinstance(signature, str) and signature:
+                events.extend(_start_thinking_block(state))
+                payload = {
+                    "type": "content_block_delta",
+                    "index": state.thinking_block_index,
+                    "delta": {"type": "signature_delta", "signature": signature},
+                }
+                events.append(_anthropic_sse_bytes("content_block_delta", payload))
+
+    tool_calls = delta.get("tool_calls")
+    if isinstance(tool_calls, list) and tool_calls:
+        state.saw_tool_call = True
+        events.extend(_stop_text_block(state))
+        events.extend(_stop_thinking_block(state))
+        for item in tool_calls:
+            if not isinstance(item, dict):
+                continue
+            tool_index = int(item.get("index") or 0)
+            tool_state = _ensure_tool_state(state, tool_index)
+            if item.get("id"):
+                tool_state.tool_id = str(item.get("id") or tool_state.tool_id)
+            function = item.get("function") if isinstance(item.get("function"), dict) else {}
+            if function.get("name"):
+                tool_state.name = str(function.get("name") or tool_state.name)
+            events.extend(_start_tool_block(tool_state))
+            arguments = function.get("arguments")
+            if isinstance(arguments, str) and arguments:
+                payload = {
+                    "type": "content_block_delta",
+                    "index": tool_state.block_index,
+                    "delta": {"type": "input_json_delta", "partial_json": arguments},
+                }
+                events.append(_anthropic_sse_bytes("content_block_delta", payload))
+
+    finish_reason = choice.get("finish_reason") or choice.get("native_finish_reason")
+    if isinstance(finish_reason, str) and finish_reason:
+        state.finish_reason = finish_reason
+
+    usage = data.get("usage")
+    if isinstance(usage, dict):
+        state.usage = usage
+
+    return events
+
+
+def _openai_chat_response_to_stream_chunk(data: Dict[str, Any]) -> Dict[str, Any]:
+    choices = data.get("choices")
+    choice = choices[0] if isinstance(choices, list) and choices and isinstance(choices[0], dict) else {}
+    message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
+    delta: Dict[str, Any] = {}
+
+    content = message.get("content")
+    if isinstance(content, str) and content:
+        delta["content"] = content
+    elif isinstance(content, list):
+        text = "".join(str(block.get("text") or "") for block in content if isinstance(block, dict) and block.get("type") == "text")
+        if text:
+            delta["content"] = text
+
+    tool_calls = message.get("tool_calls")
+    if isinstance(tool_calls, list) and tool_calls:
+        normalized_tools: List[Dict[str, Any]] = []
+        for index, tool_call in enumerate(tool_calls):
+            if not isinstance(tool_call, dict):
+                continue
+            function = tool_call.get("function") if isinstance(tool_call.get("function"), dict) else {}
+            normalized_tools.append(
+                {
+                    "index": index,
+                    "id": str(tool_call.get("id") or f"call_{index}"),
+                    "type": "function",
+                    "function": {
+                        "name": str(function.get("name") or tool_call.get("name") or ""),
+                        "arguments": function.get("arguments") if isinstance(function.get("arguments"), str) else json.dumps(function.get("arguments") or {}, ensure_ascii=False),
+                    },
+                }
+            )
+        if normalized_tools:
+            delta["tool_calls"] = normalized_tools
+
+    finish_reason = choice.get("finish_reason") or choice.get("native_finish_reason") or "stop"
+    return {
+        "id": str(data.get("id") or ""),
+        "model": str(data.get("model") or ""),
+        "choices": [{"delta": delta, "finish_reason": finish_reason}],
+        "usage": data.get("usage") if isinstance(data.get("usage"), dict) else {},
+    }
+
+
+def _openai_chat_response_to_anthropic_events(
+    data: Dict[str, Any],
+    *,
+    display_model: str,
+    state: Optional[_AnthropicStreamState] = None,
+) -> tuple[List[bytes], Dict[str, Any]]:
+    state = state or _AnthropicStreamState()
+    chunk = _openai_chat_response_to_stream_chunk(data)
+    raw_line = "data: " + json.dumps(chunk, ensure_ascii=False, separators=(",", ":"))
+    events = _translate_openai_chunk_to_anthropic_events(
+        state,
+        display_model=display_model,
+        raw_line=raw_line,
+    )
+    events.extend(_finalize_anthropic_stream(state, display_model=display_model))
+    return events, state.usage
+
+
+@router.get("/models")
+async def anthropic_models(request: Request):
+    user_agent = request.headers.get("user-agent", "")
+    if not user_agent.startswith("claude-cli"):
+        from .openai_compat import list_models
+
+        return await list_models(request)
+
+    models = []
+    for public_model in model_registry.list_public_models("chat/completions"):
+        models.append(
+            {
+                "type": "model",
+                "id": public_model.public_id,
+                "display_name": public_model.public_id,
+                "created_at": public_model.created,
+            }
+        )
+    return {"data": models, "has_more": False, "first_id": models[0]["id"] if models else None, "last_id": models[-1]["id"] if models else None}
+
+
+@router.post("/messages/count_tokens")
+async def anthropic_count_tokens(request: Request, db: AsyncSession = Depends(get_db)):
+    try:
+        user = await authenticate_user(request, db)
+    except HTTPException as exc:
+        if exc.status_code == 401:
+            return anthropic_error("Invalid API key", error_type="authentication_error", status_code=401)
+        if exc.status_code == 403:
+            return anthropic_error("Access denied", error_type="permission_error", status_code=403)
+        raise
+
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="invalid json payload") from exc
+
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="payload must be a json object")
+
+    requested_model = str(payload.get("model") or "").strip()
+    messages = _anthropic_messages_to_openai_messages(payload)
+    tools = _anthropic_tools_to_openai_tools(payload)
+    try:
+        station_model = await resolve_station_model_for_user(
+            db,
+            user,
+            requested_model,
+            "chat/completions",
+            messages,
+            tools,
+        )
+        if not station_model:
+            model_registry.resolve_public_model(requested_model, "chat/completions", messages, tools)
+    except Exception as exc:
+        return _model_resolution_to_anthropic_error(exc)
+
+    text = ""
+    for msg in messages:
+        text += str(msg.get("content") or "")
+    input_tokens = max(1, len(text.strip().split())) if text.strip() else 1
+    return {"input_tokens": input_tokens}
+
+
+@router.post("/messages")
+async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db)):
+    user = await authorize_request(request, db)
+
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="invalid json payload") from exc
+
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="payload must be a json object")
+
+    requested_model = str(payload.get("model") or "").strip()
+    messages = _anthropic_messages_to_openai_messages(payload)
+    tools = _anthropic_tools_to_openai_tools(payload)
+    try:
+        station_model = await resolve_station_model_for_user(
+            db,
+            user,
+            requested_model,
+            "chat/completions",
+            messages,
+            tools,
+        )
+        resolved_model = station_model.resolved_model if station_model else model_registry.resolve_public_model(requested_model, "chat/completions", messages, tools)
+    except Exception as exc:
+        return _model_resolution_to_anthropic_error(exc)
+    (
+        resolved_model,
+        station_model,
+        _routing_override,
+        user_cache_read_multiplier_override,
+        _effective_provider_model,
+    ) = apply_user_overrides_to_resolution(user, resolved_model, station_model)
+
+    public_model = resolved_model.public_model
+    display_model = station_model.display_model if station_model else public_model.public_id
+    used_cfg = resolved_model.backend
+    used_route_reason = resolved_model.route_reason
+    price_input_per_million = station_model.retail_input_per_million if station_model else public_model.price_input_per_million
+    price_output_per_million = station_model.retail_output_per_million if station_model else public_model.price_output_per_million
+
+    openai_payload: Dict[str, Any] = {
+        "model": used_cfg.model_id,
+        "messages": messages,
+        "stream": bool(payload.get("stream")),
+    }
+
+    if tools:
+        openai_payload["tools"] = tools
+
+    max_tokens = payload.get("max_tokens")
+    if max_tokens is not None:
+        openai_payload["max_tokens"] = max_tokens
+
+    api_key_id = getattr(user, _KEY_ID_ATTR, "")
+    prompt_cache_key = build_claude_code_prompt_cache_key(
+        user,
+        api_key_id,
+        display_model,
+        public_model,
+        effective_backend_model=used_cfg.model_id,
+    )
+    if prompt_cache_key:
+        openai_payload["prompt_cache_key"] = prompt_cache_key
+
+    is_kiro_go = public_model.delivery_lane == CLAUDE_COMPAT_PROVIDER_KIRO_GO
+    is_native_anthropic_upstream = is_kiro_go or is_anthropic_compatible_config(used_cfg)
+    if settings.model_cloak and display_model and not tools and not is_native_anthropic_upstream:
+        cloak = build_model_cloak(display_model, public_model)
+        if messages and messages[0].get("role") == "system":
+            messages[0]["content"] = str(messages[0].get("content") or "") + cloak
+        else:
+            openai_payload["messages"] = [{"role": "system", "content": cloak.strip()}] + messages
+
+    client_request_id = generate_id("ccreq_")
+    endpoint_name = "messages:stream" if bool(payload.get("stream")) else "messages"
+    request_t0 = time.monotonic()
+
+    def _build_attempt(cfg: Any) -> _AnthropicUpstreamAttempt:
+        return _build_anthropic_upstream_attempt(
+            cfg,
+            request=request,
+            client_payload=payload,
+            openai_payload=openai_payload,
+            is_kiro_go=is_kiro_go,
+        )
+
+    def _select_fallback(cfg: Any, reason: str) -> Any:
+        return _next_channel_fallback_config(
+            public_model,
+            cfg,
+            "chat/completions",
+            reason=reason,
+        )
+
+    async def _record_failed_attempt(
+        cfg: Any,
+        *,
+        route_reason: str,
+        status_code: int,
+        reason: str,
+        terminal: bool,
+        upstream_request_id: str = "",
+    ) -> None:
+        if status_code:
+            _record_channel_failure(cfg, status_code=status_code)
+        else:
+            _record_channel_failure(cfg, error_code=reason)
+        try:
+            schedule_user_upstream_failure(
+                UpstreamFailureBurstAlert(
+                    endpoint=endpoint_name,
+                    model=display_model,
+                    channel_id=str(getattr(cfg, "channel_id", "") or ""),
+                    status_code=status_code,
+                    reason=reason,
+                    provider_platform=str(getattr(cfg, "provider_platform", "") or ""),
+                    request_id=client_request_id,
+                )
+            )
+        except Exception:
+            logger.warning("upstream failure alert scheduling failed", exc_info=True)
+        await usage_buffer.add(
+            user.id,
+            api_key_id=api_key_id,
+            input_tokens=0,
+            output_tokens=0,
+            cache_read_tokens=0,
+            cache_creation_tokens=0,
+            requests=1 if terminal else 0,
+            endpoint=endpoint_name,
+            model=display_model,
+            customer_model_alias=display_model,
+            provider_model=cfg.model_id or _effective_provider_model,
+            route_reason=route_reason,
+            duration_ms=_elapsed_ms_since(request_t0),
+            status_code=status_code or 502,
+            price_input_per_million=price_input_per_million,
+            price_output_per_million=price_output_per_million,
+            usage_unit_type="tokens",
+            usage_unit_count=0,
+            billable_sku=public_model.billable_sku or display_model,
+            upstream_request_id=_correlated_upstream_request_id(client_request_id, upstream_request_id),
+            cost_cents_override=0.0,
+            wholesale_cost_cents_override=0.0,
+            retail_charge_cents_override=0.0,
+            request_log_only=not terminal,
+            **_channel_usage_kwargs(cfg),
+            **usage_pricing_kwargs(
+                public_model,
+                station_model,
+                user_cache_read_multiplier_override=user_cache_read_multiplier_override,
+            ),
+        )
+
+    def _fallback_reason(reason: str) -> str:
+        return _channel_fallback_route_reason(reason)
+
+    if payload.get("stream"):
+        stream_client = await get_stream_client()
+        upstream = None
+        upstream_request_id = ""
+        attempt = _build_attempt(used_cfg)
+
+        while True:
+            attempt = _build_attempt(used_cfg)
+            request_kwargs: Dict[str, Any] = {
+                "json": attempt.payload,
+                "headers": attempt.headers,
+            }
+            if attempt.is_native:
+                request_kwargs["timeout"] = _kiro_go_bridge_timeout()
+            req = stream_client.build_request("POST", attempt.upstream_url, **request_kwargs)
+            try:
+                upstream = await stream_client.send(req, stream=True)
+            except (httpx.TimeoutException, httpx.RequestError) as exc:
+                if _is_local_pool_timeout(exc):
+                    return anthropic_error(
+                        "Upstream request capacity exhausted",
+                        error_type="overloaded_error",
+                        status_code=503,
+                        request_id=client_request_id,
+                    )
+                error_code = _upstream_transport_error_code(exc)
+                fallback_cfg = _select_fallback(used_cfg, error_code)
+                await _record_failed_attempt(
+                    used_cfg,
+                    route_reason=used_route_reason,
+                    status_code=502,
+                    reason=error_code,
+                    terminal=fallback_cfg is None,
+                )
+                if fallback_cfg is None:
+                    return _anthropic_temporary_error(client_request_id, status_code=502)
+                used_cfg = fallback_cfg
+                used_route_reason = _fallback_reason(error_code)
+                continue
+
+            upstream_request_id = extract_upstream_request_id(upstream.headers)
+            if upstream.status_code >= 400:
+                status_code = int(upstream.status_code)
+                fallback_cfg = (
+                    _select_fallback(used_cfg, str(status_code))
+                    if status_code in _MESSAGES_FALLBACK_STATUSES
+                    else None
+                )
+                await _record_failed_attempt(
+                    used_cfg,
+                    route_reason=used_route_reason,
+                    status_code=status_code,
+                    reason=str(status_code),
+                    terminal=fallback_cfg is None,
+                    upstream_request_id=upstream_request_id,
+                )
+                await upstream.aclose()
+                if fallback_cfg is not None:
+                    used_cfg = fallback_cfg
+                    used_route_reason = _fallback_reason(str(status_code))
+                    continue
+                if status_code in _MESSAGES_FALLBACK_STATUSES or status_code >= 500:
+                    return _anthropic_temporary_error(client_request_id, status_code=status_code)
+                return anthropic_error(
+                    f"Upstream request failed. Request ID: {client_request_id}",
+                    error_type="api_error",
+                    status_code=status_code,
+                    request_id=client_request_id,
+                )
+            break
+
+        stream_headers = filter_headers(dict(upstream.headers))
+        stream_headers.pop("content-length", None)
+        stream_headers.setdefault("cache-control", "no-cache")
+        stream_headers.setdefault("x-accel-buffering", "no")
+        stream_headers["content-type"] = "text/event-stream; charset=utf-8"
+        stream_headers["request-id"] = client_request_id
+        final_cfg = used_cfg
+        final_route_reason = used_route_reason
+        final_attempt = attempt
+        final_upstream_request_id = upstream_request_id
+
+        if final_attempt.is_native:
+            async def iter_native_bytes():
+                stream_state = _AnthropicStreamState()
+                reader_task: Optional[asyncio.Task] = None
+                stream_failed = False
+                anthropic_event_lines: List[str] = []
+                saw_anthropic_event = False
+
+                try:
+                    queue: asyncio.Queue = asyncio.Queue()
+
+                    async def _pump_lines() -> None:
+                        try:
+                            async for line in upstream.aiter_lines():
+                                await queue.put(("line", line))
+                            await queue.put(("eof", None))
+                        except Exception as exc:
+                            await queue.put(("error", exc))
+
+                    reader_task = asyncio.create_task(_pump_lines())
+
+                    while True:
+                        try:
+                            item_type, item_value = await asyncio.wait_for(
+                                queue.get(),
+                                timeout=_kiro_go_bridge_ping_interval(),
+                            )
+                        except asyncio.TimeoutError:
+                            if not stream_state.message_started and not saw_anthropic_event:
+                                for event in _ensure_anthropic_message_start(
+                                    stream_state,
+                                    display_model=display_model,
+                                    response_id="",
+                                ):
+                                    yield event
+                            yield _anthropic_ping_bytes()
+                            continue
+
+                        if item_type == "line":
+                            raw_line = str(item_value or "")
+                            if anthropic_event_lines or raw_line.startswith("event:"):
+                                if raw_line.startswith("event:"):
+                                    saw_anthropic_event = True
+                                if raw_line == "":
+                                    raw_event = "\n".join(anthropic_event_lines)
+                                    event_type, payload_dict = _parse_anthropic_sse_event(raw_event)
+                                    if event_type and payload_dict is not None:
+                                        if event_type == "error":
+                                            await _record_failed_attempt(
+                                                final_cfg,
+                                                route_reason=final_route_reason,
+                                                status_code=502,
+                                                reason="upstream_stream_error",
+                                                terminal=True,
+                                                upstream_request_id=final_upstream_request_id,
+                                            )
+                                            yield _anthropic_stream_error_bytes(
+                                                f"Upstream service temporarily unavailable. Request ID: {client_request_id}",
+                                                request_id=client_request_id,
+                                            )
+                                            stream_failed = True
+                                            return
+                                        should_forward_event = not (
+                                            event_type == "message_start" and stream_state.message_started
+                                        )
+                                        _update_state_from_anthropic_event(
+                                            stream_state,
+                                            event_type=event_type,
+                                            event_payload=payload_dict,
+                                        )
+                                        if should_forward_event:
+                                            raw_event = _mask_anthropic_sse_event_model(raw_event, display_model)
+                                            yield (raw_event + "\n\n").encode("utf-8")
+                                    anthropic_event_lines.clear()
+                                    continue
+                                anthropic_event_lines.append(raw_line)
+                                continue
+                            if raw_line == "":
+                                continue
+                            if saw_anthropic_event:
+                                continue
+                            for event in _translate_openai_chunk_to_anthropic_events(
+                                stream_state,
+                                display_model=display_model,
+                                raw_line=raw_line,
+                            ):
+                                yield event
+                            continue
+
+                        if item_type == "error":
+                            anthropic_event_lines.clear()
+                            await _record_failed_attempt(
+                                final_cfg,
+                                route_reason=final_route_reason,
+                                status_code=502,
+                                reason="upstream_stream_error",
+                                terminal=True,
+                                upstream_request_id=final_upstream_request_id,
+                            )
+                            yield _anthropic_stream_error_bytes(
+                                f"Upstream service temporarily unavailable. Request ID: {client_request_id}",
+                                request_id=client_request_id,
+                            )
+                            stream_failed = True
+                            return
+
+                        if item_type == "eof":
+                            if anthropic_event_lines:
+                                raw_event = "\n".join(anthropic_event_lines)
+                                event_type, payload_dict = _parse_anthropic_sse_event(raw_event)
+                                if event_type and payload_dict is not None:
+                                    if event_type == "error":
+                                        await _record_failed_attempt(
+                                            final_cfg,
+                                            route_reason=final_route_reason,
+                                            status_code=502,
+                                            reason="upstream_stream_error",
+                                            terminal=True,
+                                            upstream_request_id=final_upstream_request_id,
+                                        )
+                                        yield _anthropic_stream_error_bytes(
+                                            f"Upstream service temporarily unavailable. Request ID: {client_request_id}",
+                                            request_id=client_request_id,
+                                        )
+                                        stream_failed = True
+                                        return
+                                    should_forward_event = not (
+                                        event_type == "message_start" and stream_state.message_started
+                                    )
+                                    _update_state_from_anthropic_event(
+                                        stream_state,
+                                        event_type=event_type,
+                                        event_payload=payload_dict,
+                                    )
+                                    if should_forward_event:
+                                        raw_event = _mask_anthropic_sse_event_model(raw_event, display_model)
+                                        yield (raw_event + "\n\n").encode("utf-8")
+                                anthropic_event_lines.clear()
+                            break
+                except (httpx.TimeoutException, httpx.RequestError):
+                    await _record_failed_attempt(
+                        final_cfg,
+                        route_reason=final_route_reason,
+                        status_code=502,
+                        reason="upstream_stream_error",
+                        terminal=True,
+                        upstream_request_id=final_upstream_request_id,
+                    )
+                    yield _anthropic_stream_error_bytes(
+                        f"Upstream service temporarily unavailable. Request ID: {client_request_id}",
+                        request_id=client_request_id,
+                    )
+                    stream_failed = True
+                    return
+                except Exception:
+                    await _record_failed_attempt(
+                        final_cfg,
+                        route_reason=final_route_reason,
+                        status_code=502,
+                        reason="upstream_stream_error",
+                        terminal=True,
+                        upstream_request_id=final_upstream_request_id,
+                    )
+                    yield _anthropic_stream_error_bytes(
+                        f"Upstream service temporarily unavailable. Request ID: {client_request_id}",
+                        request_id=client_request_id,
+                    )
+                    stream_failed = True
+                    return
+                finally:
+                    if reader_task is not None and not reader_task.done():
+                        reader_task.cancel()
+                        try:
+                            await reader_task
+                        except asyncio.CancelledError:
+                            pass
+                    await upstream.aclose()
+
+                if not stream_failed and not stream_state.message_stopped:
+                    await _record_failed_attempt(
+                        final_cfg,
+                        route_reason=final_route_reason,
+                        status_code=502,
+                        reason="upstream_stream_error",
+                        terminal=True,
+                        upstream_request_id=final_upstream_request_id,
+                    )
+                    yield _anthropic_stream_error_bytes(
+                        f"Upstream service temporarily unavailable. Request ID: {client_request_id}",
+                        request_id=client_request_id,
+                    )
+                    stream_failed = True
+
+                if stream_failed or not stream_state.usage:
+                    return
+
+                duration_ms = _elapsed_ms_since(request_t0)
+                _record_channel_success(final_cfg, duration_ms=duration_ms)
+                schedule_usage_add(
+                    user.id,
+                    api_key_id=api_key_id,
+                    input_tokens=extract_total_input_tokens(stream_state.usage),
+                    output_tokens=int(stream_state.usage.get("completion_tokens") or stream_state.usage.get("output_tokens") or 0),
+                    cache_read_tokens=extract_cache_read_tokens(stream_state.usage),
+                    cache_creation_tokens=extract_cache_creation_tokens(stream_state.usage),
+                    requests=1,
+                    endpoint=endpoint_name,
+                    model=display_model,
+                    customer_model_alias=display_model,
+                    provider_model=final_cfg.model_id or _effective_provider_model,
+                    route_reason=final_route_reason,
+                    duration_ms=duration_ms,
+                    status_code=upstream.status_code,
+                    price_input_per_million=price_input_per_million,
+                    price_output_per_million=price_output_per_million,
+                    usage_unit_type="tokens",
+                    billable_sku=public_model.billable_sku or display_model,
+                    upstream_request_id=final_upstream_request_id,
+                    **_channel_usage_kwargs(final_cfg),
+                    **usage_pricing_kwargs(
+                        public_model,
+                        station_model,
+                        user_cache_read_multiplier_override=user_cache_read_multiplier_override,
+                    ),
+                )
+
+            return StreamingResponse(
+                iter_native_bytes(),
+                status_code=200,
+                headers=stream_headers,
+                media_type="text/event-stream",
+            )
+
+        stream_state = _AnthropicStreamState()
+
+        async def iter_openai_bytes():
+            stream_failed = False
+            try:
+                async for line in upstream.aiter_lines():
+                    for event in _translate_openai_chunk_to_anthropic_events(
+                        stream_state,
+                        display_model=display_model,
+                        raw_line=line,
+                    ):
+                        yield event
+            except Exception:
+                await _record_failed_attempt(
+                    final_cfg,
+                    route_reason=final_route_reason,
+                    status_code=502,
+                    reason="upstream_stream_error",
+                    terminal=True,
+                    upstream_request_id=final_upstream_request_id,
+                )
+                yield _anthropic_stream_error_bytes(
+                    f"Upstream service temporarily unavailable. Request ID: {client_request_id}",
+                    request_id=client_request_id,
+                )
+                stream_failed = True
+            finally:
+                if not stream_failed and not stream_state.message_stopped:
+                    await _record_failed_attempt(
+                        final_cfg,
+                        route_reason=final_route_reason,
+                        status_code=502,
+                        reason="upstream_stream_error",
+                        terminal=True,
+                        upstream_request_id=final_upstream_request_id,
+                    )
+                    yield _anthropic_stream_error_bytes(
+                        f"Upstream service temporarily unavailable. Request ID: {client_request_id}",
+                        request_id=client_request_id,
+                    )
+                    stream_failed = True
+                duration_ms = _elapsed_ms_since(request_t0)
+                if not stream_failed and stream_state.usage:
+                    _record_channel_success(final_cfg, duration_ms=duration_ms)
+                    schedule_usage_add(
+                        user.id,
+                        api_key_id=api_key_id,
+                        input_tokens=extract_total_input_tokens(stream_state.usage),
+                        output_tokens=int(stream_state.usage.get("completion_tokens") or stream_state.usage.get("output_tokens") or 0),
+                        cache_read_tokens=extract_cache_read_tokens(stream_state.usage),
+                        cache_creation_tokens=extract_cache_creation_tokens(stream_state.usage),
+                        requests=1,
+                        endpoint=endpoint_name,
+                        model=display_model,
+                        customer_model_alias=display_model,
+                        provider_model=final_cfg.model_id or _effective_provider_model,
+                        route_reason=final_route_reason,
+                        duration_ms=duration_ms,
+                        status_code=upstream.status_code,
+                        price_input_per_million=price_input_per_million,
+                        price_output_per_million=price_output_per_million,
+                        usage_unit_type="tokens",
+                        billable_sku=public_model.billable_sku or display_model,
+                        upstream_request_id=final_upstream_request_id,
+                        **_channel_usage_kwargs(final_cfg),
+                        **usage_pricing_kwargs(
+                            public_model,
+                            station_model,
+                            user_cache_read_multiplier_override=user_cache_read_multiplier_override,
+                        ),
+                    )
+                await upstream.aclose()
+
+        return StreamingResponse(
+            iter_openai_bytes(),
+            status_code=200,
+            headers=stream_headers,
+            media_type="text/event-stream",
+        )
+
+    client = await get_http_client()
+    upstream = None
+    upstream_request_id = ""
+    attempt = _build_attempt(used_cfg)
+    buffered_native_body: Optional[bytes] = None
+    buffered_native_usage: Dict[str, Any] = {}
+
+    while True:
+        attempt = _build_attempt(used_cfg)
+        try:
+            upstream = await client.post(
+                attempt.upstream_url,
+                json=attempt.payload,
+                headers=attempt.headers,
+            )
+        except (httpx.TimeoutException, httpx.RequestError) as exc:
+            if _is_local_pool_timeout(exc):
+                return anthropic_error(
+                    "Upstream request capacity exhausted",
+                    error_type="overloaded_error",
+                    status_code=503,
+                    request_id=client_request_id,
+                )
+            error_code = _upstream_transport_error_code(exc)
+            fallback_cfg = _select_fallback(used_cfg, error_code)
+            await _record_failed_attempt(
+                used_cfg,
+                route_reason=used_route_reason,
+                status_code=502,
+                reason=error_code,
+                terminal=fallback_cfg is None,
+            )
+            if fallback_cfg is None:
+                return _anthropic_temporary_error(client_request_id, status_code=502)
+            used_cfg = fallback_cfg
+            used_route_reason = _fallback_reason(error_code)
+            continue
+
+        upstream_request_id = extract_upstream_request_id(upstream.headers)
+        if upstream.status_code >= 400:
+            status_code = int(upstream.status_code)
+            fallback_cfg = (
+                _select_fallback(used_cfg, str(status_code))
+                if status_code in _MESSAGES_FALLBACK_STATUSES
+                else None
+            )
+            await _record_failed_attempt(
+                used_cfg,
+                route_reason=used_route_reason,
+                status_code=status_code,
+                reason=str(status_code),
+                terminal=fallback_cfg is None,
+                upstream_request_id=upstream_request_id,
+            )
+            if fallback_cfg is not None:
+                used_cfg = fallback_cfg
+                used_route_reason = _fallback_reason(str(status_code))
+                continue
+            if status_code in _MESSAGES_FALLBACK_STATUSES or status_code >= 500:
+                return _anthropic_temporary_error(client_request_id, status_code=status_code)
+            return anthropic_error(
+                f"Upstream request failed. Request ID: {client_request_id}",
+                error_type="api_error",
+                status_code=status_code,
+                request_id=client_request_id,
+            )
+        attempt_content_type = upstream.headers.get("content-type", "application/json")
+        if attempt.is_native and "text/event-stream" in attempt_content_type:
+            try:
+                buffered_native_body, buffered_native_usage, stream_completed = (
+                    await _consume_native_anthropic_sse_response(
+                        upstream,
+                        display_model=display_model,
+                    )
+                )
+                if not stream_completed:
+                    raise httpx.ReadError("upstream stream ended before message_stop")
+            except Exception:
+                fallback_cfg = _select_fallback(used_cfg, "upstream_stream_error")
+                await _record_failed_attempt(
+                    used_cfg,
+                    route_reason=used_route_reason,
+                    status_code=502,
+                    reason="upstream_stream_error",
+                    terminal=fallback_cfg is None,
+                    upstream_request_id=upstream_request_id,
+                )
+                await upstream.aclose()
+                if fallback_cfg is None:
+                    return _anthropic_temporary_error(client_request_id, status_code=502)
+                used_cfg = fallback_cfg
+                used_route_reason = _fallback_reason("upstream_stream_error")
+                continue
+        break
+
+    duration_ms = _elapsed_ms_since(request_t0)
+    response_headers = filter_headers(dict(upstream.headers))
+    response_headers.pop("content-length", None)
+    response_headers["request-id"] = client_request_id
+    content_type = upstream.headers.get("content-type", "application/json")
+
+    if "application/json" not in content_type:
+        if attempt.is_native and "text/event-stream" in content_type:
+            body = buffered_native_body or b""
+            usage = buffered_native_usage
+            if usage:
+                _record_channel_success(used_cfg, duration_ms=duration_ms)
+                await usage_buffer.add(
+                    user.id,
+                    api_key_id=api_key_id,
+                    input_tokens=extract_total_input_tokens(usage),
+                    output_tokens=int(usage.get("completion_tokens") or usage.get("output_tokens") or 0),
+                    cache_read_tokens=extract_cache_read_tokens(usage),
+                    cache_creation_tokens=extract_cache_creation_tokens(usage),
+                    requests=1,
+                    endpoint=endpoint_name,
+                    model=display_model,
+                    customer_model_alias=display_model,
+                    provider_model=used_cfg.model_id or _effective_provider_model,
+                    route_reason=used_route_reason,
+                    duration_ms=duration_ms,
+                    status_code=upstream.status_code,
+                    price_input_per_million=price_input_per_million,
+                    price_output_per_million=price_output_per_million,
+                    usage_unit_type="tokens",
+                    billable_sku=public_model.billable_sku or display_model,
+                    upstream_request_id=upstream_request_id,
+                    **_channel_usage_kwargs(used_cfg),
+                    **usage_pricing_kwargs(
+                        public_model,
+                        station_model,
+                        user_cache_read_multiplier_override=user_cache_read_multiplier_override,
+                    ),
+                )
+            return Response(
+                content=body,
+                status_code=upstream.status_code,
+                headers=response_headers,
+                media_type=content_type,
+            )
+        body = await upstream.aread()
+        return Response(
+            content=body,
+            status_code=upstream.status_code,
+            headers=response_headers,
+            media_type=content_type,
+        )
+
+    try:
+        data = upstream.json()
+    except Exception:
+        await _record_failed_attempt(
+            used_cfg,
+            route_reason=used_route_reason,
+            status_code=502,
+            reason="upstream_invalid_json",
+            terminal=True,
+            upstream_request_id=upstream_request_id,
+        )
+        return _anthropic_temporary_error(client_request_id, status_code=502)
+
+    if attempt.is_native and _looks_like_anthropic_message_response(data):
+        response_body = _mask_anthropic_message_model(data, display_model)
+        usage = response_body.get("usage") if isinstance(response_body.get("usage"), dict) else {}
+    else:
+        content_blocks = _extract_anthropic_content_from_openai_chat_response(data)
+        usage = _extract_usage_from_openai_chat_response(data)
+        stop_reason = _extract_anthropic_stop_reason_from_openai_chat_response(data)
+        response_body = _build_anthropic_response(
+            display_model=display_model,
+            message_content=content_blocks,
+            stop_reason=stop_reason,
+            usage=usage,
+            response_id=str(data.get("id") or ""),
+        )
+
+    _record_channel_success(used_cfg, duration_ms=duration_ms)
+    await usage_buffer.add(
+        user.id,
+        api_key_id=api_key_id,
+        input_tokens=extract_total_input_tokens(usage),
+        output_tokens=int(usage.get("completion_tokens") or usage.get("output_tokens") or 0),
+        cache_read_tokens=extract_cache_read_tokens(usage),
+        cache_creation_tokens=extract_cache_creation_tokens(usage),
+        requests=1,
+        endpoint=endpoint_name,
+        model=display_model,
+        customer_model_alias=display_model,
+        provider_model=used_cfg.model_id or _effective_provider_model,
+        route_reason=used_route_reason,
+        duration_ms=duration_ms,
+        status_code=upstream.status_code,
+        price_input_per_million=price_input_per_million,
+        price_output_per_million=price_output_per_million,
+        usage_unit_type="tokens",
+        billable_sku=public_model.billable_sku or display_model,
+        upstream_request_id=upstream_request_id,
+        **_channel_usage_kwargs(used_cfg),
+        **usage_pricing_kwargs(
+            public_model,
+            station_model,
+            user_cache_read_multiplier_override=user_cache_read_multiplier_override,
+        ),
+    )
+
+    return JSONResponse(content=response_body, status_code=upstream.status_code, headers=response_headers)

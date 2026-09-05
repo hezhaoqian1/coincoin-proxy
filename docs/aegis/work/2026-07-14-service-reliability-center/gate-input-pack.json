@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "baselineRefs": [
+    "docs/aegis/plans/2026-07-14-service-reliability-center.md"
+  ],
+  "impactStatement": "docs/aegis/work/2026-07-14-service-reliability-center/impact-statement-draft.json",
+  "compatPlan": "Provider channel CRUD, connection test, upstream model discovery, route CRUD, fallback, priority, weight, cooldown, and protected ops probes remain stable.",
+  "retirementPlan": "Duplicate admin UI and dead styles are removed; manual monitor APIs and persistent monitor/history rows remain intact.",
+  "evidenceBundle": [
+    "docs/aegis/work/2026-07-14-service-reliability-center/evidence-bundle-draft-task1-focused-tests.json",
+    "docs/aegis/work/2026-07-14-service-reliability-center/evidence-bundle-draft-task2-reconcile-tests.json",
+    "docs/aegis/work/2026-07-14-service-reliability-center/evidence-bundle-draft-task3-browser-ui.json",
+    "docs/aegis/work/2026-07-14-service-reliability-center/evidence-bundle-draft-task4-compat-review.json"
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "requestedOutcome": "Allow administrators to fully view, modify, clear, and test the DingTalk Webhook from Service Reliability, then initialize the approved production value.",
+  "goal": "Allow administrators to fully view, modify, clear, and test the DingTalk Webhook from Service Reliability, then initialize the approved production value.",
+  "successEvidence": [
+    "Backend/UI regression tests pass, PR merged, Railway healthy, live admin GET returns the exact saved value, and a configuration test records sent."
+  ],
+  "stopCondition": "Done after verified production initialization; blocked on repeated test/deploy failure; needs verification when live mutation cannot be confirmed; scope exceeded if routing or alert counters must change.",
+  "nonGoals": [
+    "Encrypting the database value.",
+    "Adding a new page or endpoint."
+  ],
+  "scope": "Existing alert admin API, SystemSetting runtime precedence, fallback senders, Service Reliability form, architecture records, deployment, and one authorized live initialization.",
+  "changeKinds": [
+    "architecture"
+  ],
+  "riskHints": [
+    "Plaintext credential persistence and full admin exposure are explicit accepted risks; production URL must stay out of Git and logs."
+  ]
+}

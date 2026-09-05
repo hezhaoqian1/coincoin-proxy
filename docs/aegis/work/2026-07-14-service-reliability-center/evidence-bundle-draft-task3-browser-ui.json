@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "artifactKey": "task3-browser-ui",
+  "type": "browser",
+  "source": "gstack browse at 1440x900 and 390x844 against a local fixture server",
+  "summary": "No console errors or page-level overflow; route details and explicit probe worked; no probes or legacy monitoring snapshot request occurred during page load or polling.",
+  "verifier": "Codex local execution"
+}

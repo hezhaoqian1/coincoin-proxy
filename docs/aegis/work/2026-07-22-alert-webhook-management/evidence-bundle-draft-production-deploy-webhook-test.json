@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "artifactKey": "production-deploy-webhook-test",
+  "type": "live-canary",
+  "source": "GitHub PR #19, Railway /health, protected /admin/alerts/config, /admin/alerts/test, and /admin/alerts/events",
+  "summary": "PR #19 merged as c11b760; Railway exposed the new complete no-store config contract; the effective Webhook was persisted through PATCH without printing it; reload matched; the labelled configuration test was delivered and recorded sent with HTTP 200; health returned 200.",
+  "verifier": "PR merged; config GET/PATCH/GET 200; webhook_configured true; no-store true; configuration_test sent; AlertEvent sent; health 200"
+}

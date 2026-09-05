@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "candidateDocs": [
+    "docs/aegis/plans/2026-05-13-operating-dashboard-v2.md"
+  ],
+  "whyRelevant": "Operating dashboard v2 owns report structure and shared aggregation API.",
+  "missingAuthority": []
+}

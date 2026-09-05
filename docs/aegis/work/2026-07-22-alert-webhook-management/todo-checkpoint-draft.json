@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "2026-07-22-alert-webhook-management",
+  "currentTodo": "Close out the deployed administrator-managed alert Webhook task.",
+  "completedTodos": [
+    "Merged PR #19 and verified Railway deployment fingerprint and health.",
+    "Persisted the effective production Webhook through the protected API and verified a sent configuration_test AlertEvent."
+  ],
+  "activeSlice": "Task 3 deployment, live initialization, and closeout.",
+  "evidenceRefs": [
+    "docs/aegis/work/2026-07-22-alert-webhook-management/evidence-bundle-draft-production-deploy-webhook-test.json"
+  ],
+  "blockedOn": null,
+  "nextStep": "No task work remains; continue routine reliability monitoring.",
+  "updatedAt": "2026-07-22"
+}

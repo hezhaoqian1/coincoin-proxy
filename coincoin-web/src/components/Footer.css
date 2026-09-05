@@ -1,0 +1,118 @@
+.footer {
+    background:
+        radial-gradient(circle at top left, rgba(79, 70, 229, 0.08), transparent 24%),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.6), rgba(238, 241, 246, 0.92));
+    border-top: 1px solid rgba(15, 23, 42, 0.08);
+    padding: var(--space-4xl) 0 var(--space-xl);
+}
+
+.footer-grid {
+    display: grid;
+    grid-template-columns: 2fr 1fr 1fr 1fr;
+    gap: var(--space-2xl);
+    margin-bottom: var(--space-2xl);
+}
+
+.footer-brand {
+    max-width: 420px;
+}
+
+.footer-kicker {
+    display: inline-flex;
+    margin-bottom: 14px;
+    font-size: 0.74rem;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+}
+
+.footer-logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: var(--space-md);
+}
+
+.footer-brand-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.footer-brand-sub {
+    font-size: 0.78rem;
+    color: var(--text-tertiary);
+}
+
+.footer-col h4 {
+    font-size: 0.85rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-secondary);
+    margin-bottom: 14px;
+}
+
+.footer-col a,
+.footer-col span {
+    display: block;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    margin-bottom: 10px;
+    transition: color var(--transition-fast);
+    text-decoration: none;
+    line-height: 1.7;
+}
+
+.footer-col a:hover {
+    color: var(--text-primary);
+}
+
+.footer-model {
+    font-family: var(--font-mono);
+    font-size: 0.85rem !important;
+    color: var(--accent-cyan) !important;
+}
+
+.footer-model-note {
+    font-size: 0.8rem !important;
+    font-style: italic;
+}
+
+.footer-bottom {
+    padding-top: var(--space-xl);
+    border-top: 1px solid rgba(15, 23, 42, 0.08);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.85rem;
+    color: var(--text-tertiary);
+}
+
+.footer-bottom-links {
+    display: flex;
+    gap: var(--space-lg);
+}
+
+.footer-bottom-links a {
+    color: var(--text-tertiary);
+    text-decoration: none;
+}
+
+.footer-bottom-links a:hover {
+    color: var(--text-secondary);
+}
+
+@media (max-width: 768px) {
+    .footer-grid {
+        grid-template-columns: 1fr;
+        gap: var(--space-xl);
+    }
+
+    .footer-bottom {
+        flex-direction: column;
+        gap: var(--space-md);
+        text-align: center;
+    }
+}

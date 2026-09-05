@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "2026-07-21-admin-alert-center",
+  "currentTodo": "Ship branch, merge PR, and verify Railway deployment and production health.",
+  "completedTodos": [
+    "Runtime policy and AlertEvent persistence implemented and verified.",
+    "Protected alert admin API implemented and verified.",
+    "Existing Service Reliability UI extended and verified.",
+    "Documentation, ADR, full differential verification, and independent review completed."
+  ],
+  "activeSlice": "Task 4 ship and deploy verification.",
+  "evidenceRefs": [
+    "docs/aegis/work/2026-07-21-admin-alert-center/evidence-bundle-draft-final-pre-ship-verification.json"
+  ],
+  "blockedOn": null,
+  "nextStep": "Commit final fixes/docs, push branch, create and merge PR, verify Railway and production health.",
+  "updatedAt": "2026-07-22"
+}

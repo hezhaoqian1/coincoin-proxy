@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "artifactKey": "master-integration",
+  "type": "integration",
+  "source": "cherry-pick onto origin/master 9f8147a with conflict-aware owner reconciliation",
+  "summary": "Latest master already owned credit-aware admin batch billing. Integration retained that canonical owner, preserved permanent-credit fields plus image keepalive and reliability routes, collapsed active/recent traffic-pack reads into one MySQL-compatible query, and avoided introducing a duplicate billing owner. The merged admin/timing suite ran 114 tests with OK before documentation integration.",
+  "verifier": "manual conflict review, py_compile, and unittest exit 0"
+}

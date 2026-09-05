@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "artifactKey": "task2-reconcile-tests",
+  "type": "test",
+  "source": "pytest tests/test_channel_monitoring.py tests/test_reliability.py tests/test_admin_usage_fields.py tests/test_monitoring_probes.py",
+  "summary": "104 tests passed; route-derived auto monitors are capped, reuse manual coverage, disable derived state safely, and channel CRUD remains green.",
+  "verifier": "Codex local execution"
+}

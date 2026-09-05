@@ -1,0 +1,21 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "affectedLayers": [
+    "admin-ui",
+    "admin-api",
+    "billing-read-model",
+    "database-query-load"
+  ],
+  "owners": [
+    "app/billing.py: billing-state reads",
+    "app/admin.py: admin aggregation APIs",
+    "app/main.py: request timing"
+  ],
+  "invariants": [
+    "Billing debit, payment, routing, and public API behavior do not change."
+  ],
+  "compatBoundary": "Existing admin fields and /admin/usage/leaderboard remain compatible; only statistics receive bounded cache freshness.",
+  "nonGoals": [
+    "No database schema, persistent rollup, deployment, or production mutation."
+  ]
+}

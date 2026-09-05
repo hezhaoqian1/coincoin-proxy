@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "artifactKey": "runtime-policy-alert-history-red-green",
+  "type": "pytest",
+  "source": "tests/test_fallback_alerts.py",
+  "summary": "Focused suite passed 17 tests after runtime policy, bounded scheduling, and sanitized pending/sent/failed event lifecycle implementation.",
+  "verifier": "pytest tests/test_fallback_alerts.py -q"
+}

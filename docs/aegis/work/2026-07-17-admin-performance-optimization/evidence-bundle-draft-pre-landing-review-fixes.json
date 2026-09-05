@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "artifactKey": "pre-landing-review-fixes",
+  "type": "review",
+  "source": "independent pre-landing review and focused regression rerun",
+  "summary": "The reviewer confirmed both P2 findings are closed. Historical traffic-pack reads are bounded to 50 rows per user in MySQL-compatible UNION chunks, with at most four history queries for the 200-user API maximum. Both paged sort paths append User.id as a unique tie-breaker. No P0, P1, or P2 findings remain.",
+  "verifier": "6 focused tests OK; MySQL dialect compilation and git diff --check pass"
+}
