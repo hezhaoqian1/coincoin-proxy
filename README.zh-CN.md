@@ -207,7 +207,8 @@ uvicorn app.main:app --reload --port 8000
 
 - 终端客户只看 CoinCoin 的公开模型目录，不直接感知 Gemini CPA、LiteLLM 或 Vertex 的内部模型名
 - 老用户如果不传 `model`，仍然走默认 GPT 公共模型
-- 旧 GPT lane 当前公开 alias 包括 `gpt-5`、`gpt-5.1`、`gpt-5.1-codex`、`gpt-5.1-codex-mini`、`gpt-5.1-codex-max`、`gpt-5.2`、`gpt-5.2-codex`、`gpt-5.3-codex`、`gpt-5.4`、`gpt-5.4-mini`、`gpt-5.5`、`gpt-5.6`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`、`codex-auto-review`、`gpt-5-codex`、`gpt-5-codex-mini`，以及由 `COINCOIN_FIXED_MODEL` 指定的默认 GPT alias
+- 旧 GPT lane 当前公开 alias 包括 `gpt-6`、`gpt-6-astra`、`gpt-5`、`gpt-5.1`、`gpt-5.1-codex`、`gpt-5.1-codex-mini`、`gpt-5.1-codex-max`、`gpt-5.2`、`gpt-5.2-codex`、`gpt-5.3-codex`、`gpt-5.4`、`gpt-5.4-mini`、`gpt-5.5`、`gpt-5.6`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`、`codex-auto-review`、`gpt-5-codex`、`gpt-5-codex-mini`，以及由 `COINCOIN_FIXED_MODEL` 指定的默认 GPT alias
+- `gpt-6` / `gpt-6-astra` 映射到 OpenAI `gpt-6-astra`，标准档价格为输入 `$10/M`、缓存读取 `$1/M`、缓存写入 `$12.50/M`、输出 `$50/M`；上下文窗口 `1,050,000`，最大输出 `128,000`。价格依据 [OpenAI GPT-6 Astra 官方文档](https://developers.openai.com/api/docs/models/gpt-6-astra)。
 - embedding 请求不再复用旧 GPT / CPA lane；`/v1/embeddings` 默认和显式 `text-embedding-3-small` 都直连 Azure
 - Gemini 文本能力是增量暴露；显式传入 Gemini 文本 alias 时，会路由到 native Gemini CPA lane
 - DeepSeek 文本 alias `deepseek-v4-pro`、`deepseek-v4-flash` 是 route-only 公共模型，coding 流量 canonical preference 为上游 Responses；部署后需要在后台同时绑定 `responses` 和 `chat/completions` route 到 New API / OpenAI-compatible provider channel，Chat 接口仍由本地 Responses 兼容桥支持

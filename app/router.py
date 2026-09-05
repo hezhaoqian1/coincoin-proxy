@@ -126,6 +126,7 @@ LEGACY_PROVIDER_MODEL_ALIASES = {
     # Keep the user-facing model id stable, but send a provider model CPA knows.
     "gpt-5.2-codex": "gpt-5.3-codex",
     "gpt-5.6": "gpt-5.6-sol",
+    "gpt-6": "gpt-6-astra",
 }
 LEGACY_CODING_PUBLIC_ALIASES = frozenset({"gpt-5.2-codex", "gpt-5.3-codex", "gpt-5.3-codex-spark"})
 CLAUDE_COMPAT_FAMILY = "claude-code"
