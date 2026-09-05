@@ -80,6 +80,11 @@ def extract_cache_read_tokens(usage: dict) -> int:
     """Extract cache-read tokens across Anthropic, Chat Completions, and Responses shapes."""
     if not isinstance(usage, dict):
         return 0
+    # DeepSeek reports prefix-cache hits as a top-level usage counter.
+    # Check for presence (rather than truthiness) so an explicit zero is authoritative.
+    ct = usage.get("prompt_cache_hit_tokens")
+    if ct is not None:
+        return max(0, _safe_int(ct))
     ct = usage.get("cache_read_input_tokens")
     if ct is not None:
         return max(0, _safe_int(ct))

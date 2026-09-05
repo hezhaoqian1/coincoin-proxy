@@ -25,6 +25,19 @@ class UsageBufferUnitsTests(unittest.TestCase):
 
     def test_extract_cache_tokens_accepts_openai_and_anthropic_shapes(self) -> None:
         self.assertEqual(
+            extract_cache_read_tokens({"prompt_cache_hit_tokens": 1234}),
+            1234,
+        )
+        self.assertEqual(
+            extract_cache_read_tokens(
+                {
+                    "prompt_cache_hit_tokens": 0,
+                    "prompt_tokens_details": {"cached_tokens": 28491},
+                }
+            ),
+            0,
+        )
+        self.assertEqual(
             extract_cache_read_tokens({"prompt_tokens_details": {"cached_tokens": 28491}}),
             28491,
         )
