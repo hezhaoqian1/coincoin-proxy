@@ -117,7 +117,7 @@ TEXT_ENDPOINTS = frozenset({"chat/completions", "responses"})
 EMBEDDING_ENDPOINTS = frozenset({"embeddings"})
 IMAGE_ENDPOINTS = frozenset({"images/generations", "images/edits"})
 VIDEO_ENDPOINTS = frozenset({"videos/generations"})
-DELIVERY_LANES = frozenset({"legacy", "gateway", "cpa_gemini", "vertex_direct", "upstream_direct", "kiro_go", "route_only"})
+DELIVERY_LANES = frozenset({"legacy", "gateway", "cpa_gemini", "vertex_direct", "upstream_direct", "kiro_go", "route_only", "x5m5x"})
 _ENV_PATTERN = re.compile(r"\$\{([A-Z0-9_]+)(:-([^}]*))?\}")
 _ROOT_DIR = Path(__file__).resolve().parent.parent
 ALIAS_OVERRIDE_FIELDS = frozenset({"provider_model", "upstream_model", "enabled"})
@@ -737,7 +737,7 @@ class ModelRegistry:
             model = self._build_public_model(raw)
             if model is None:
                 continue
-            if model.routing_mode not in {"legacy_auto", "route_only"}:
+            if model.routing_mode not in {"legacy_auto", "route_only"} and model.delivery_lane != "x5m5x":
                 if not (model.upstream_model and model.upstream_url and model.api_key):
                     logger.warning(
                         "skipping public model %s because upstream config is incomplete for delivery_lane=%s",
@@ -1239,7 +1239,7 @@ class ModelRegistry:
                 channel_affinity_key=channel_affinity_key,
             )
 
-        if public_model.routing_mode == "route_only" or public_model.delivery_lane == "route_only":
+        if public_model.routing_mode == "route_only" or public_model.delivery_lane in {"route_only", "x5m5x"}:
             backend = ModelConfig(
                 model_id=public_model.upstream_model or public_model.provider_model or public_model.public_id,
                 upstream_url="",

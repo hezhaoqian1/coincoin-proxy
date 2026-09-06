@@ -320,6 +320,7 @@
         "context_length": 128000,
         "supported_parameters": ["stream", "tools"],
         "preferred_api_backend": "responses",
+        "stable_prefix_cache": true,
         "provider_platform": "new_api",
         "upstream_base_url": "https://zzone.cc.cd/v1",
         "upstream_price_source": "https://zzone.cc.cd/api/pricing",
@@ -356,6 +357,7 @@
         "context_length": 128000,
         "supported_parameters": ["stream", "tools"],
         "preferred_api_backend": "responses",
+        "stable_prefix_cache": true,
         "provider_platform": "new_api",
         "upstream_base_url": "https://zzone.cc.cd/v1",
         "upstream_price_source": "https://zzone.cc.cd/api/pricing",
@@ -1525,8 +1527,6 @@
     {"id":"glm-5.3","owned_by":"zhipu","provider_name":"X5M5X","provider_model":"glm-5.3","capabilities":["chat/completions","responses"],"routing_mode":"direct","delivery_lane":"x5m5x","upstream_model":"glm-5.3","upstream_url":"${COINCOIN_UPSTREAM_BASE_URL}","api_key":"${COINCOIN_UPSTREAM_API_KEY}","price_input_per_million":"${COINCOIN_X5M5X_GLM_53_INPUT_PRICE:-980}","price_output_per_million":"${COINCOIN_X5M5X_GLM_53_OUTPUT_PRICE:-3090}","billable_sku":"x5m5x-glm-5.3-text"},
     {"id":"glm-5.3-flash","owned_by":"zhipu","provider_name":"X5M5X","provider_model":"glm-5.3-flash","capabilities":["chat/completions","responses"],"routing_mode":"direct","delivery_lane":"x5m5x","upstream_model":"glm-5.3-flash","upstream_url":"${COINCOIN_UPSTREAM_BASE_URL}","api_key":"${COINCOIN_UPSTREAM_API_KEY}","price_input_per_million":"${COINCOIN_X5M5X_GLM_53_FLASH_INPUT_PRICE:-110}","price_output_per_million":"${COINCOIN_X5M5X_GLM_53_FLASH_OUTPUT_PRICE:-350}","billable_sku":"x5m5x-glm-5.3-flash-text"},
     {"id":"kimi-k3","owned_by":"moonshot","provider_name":"X5M5X","provider_model":"kimi-k3","capabilities":["chat/completions","responses"],"routing_mode":"direct","delivery_lane":"x5m5x","upstream_model":"kimi-k3","upstream_url":"${COINCOIN_UPSTREAM_BASE_URL}","api_key":"${COINCOIN_UPSTREAM_API_KEY}","price_input_per_million":"${COINCOIN_X5M5X_KIMI_K3_INPUT_PRICE:-2100}","price_output_per_million":"${COINCOIN_X5M5X_KIMI_K3_OUTPUT_PRICE:-10500}","billable_sku":"x5m5x-kimi-k3-text"},
-    {"id":"MiniMax-M3","owned_by":"minimax","provider_name":"X5M5X","provider_model":"MiniMax-M3","capabilities":["chat/completions","responses"],"routing_mode":"direct","delivery_lane":"x5m5x","upstream_model":"MiniMax-M3","upstream_url":"${COINCOIN_UPSTREAM_BASE_URL}","api_key":"${COINCOIN_UPSTREAM_API_KEY}","price_input_per_million":"${COINCOIN_X5M5X_MINIMAX_M3_INPUT_PRICE:-210}","price_output_per_million":"${COINCOIN_X5M5X_MINIMAX_M3_OUTPUT_PRICE:-840}","billable_sku":"x5m5x-minimax-m3-text"},  ]
+    {"id":"MiniMax-M3","owned_by":"minimax","provider_name":"X5M5X","provider_model":"MiniMax-M3","capabilities":["chat/completions","responses"],"routing_mode":"direct","delivery_lane":"x5m5x","upstream_model":"MiniMax-M3","upstream_url":"${COINCOIN_UPSTREAM_BASE_URL}","api_key":"${COINCOIN_UPSTREAM_API_KEY}","price_input_per_million":"${COINCOIN_X5M5X_MINIMAX_M3_INPUT_PRICE:-210}","price_output_per_million":"${COINCOIN_X5M5X_MINIMAX_M3_OUTPUT_PRICE:-840}","billable_sku":"x5m5x-minimax-m3-text"}
+  ]
 }
-
-
-

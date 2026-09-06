@@ -1254,7 +1254,9 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
 
     is_kiro_go = public_model.delivery_lane == CLAUDE_COMPAT_PROVIDER_KIRO_GO
     is_native_anthropic_upstream = is_kiro_go or is_anthropic_compatible_config(used_cfg)
-    if settings.model_cloak and display_model and not tools and not is_native_anthropic_upstream:
+    public_metadata = getattr(public_model, "metadata", None)
+    stable_prefix_cache = isinstance(public_metadata, dict) and public_metadata.get("stable_prefix_cache") is True
+    if settings.model_cloak and display_model and not tools and not is_native_anthropic_upstream and not stable_prefix_cache:
         cloak = build_model_cloak(display_model, public_model)
         if messages and messages[0].get("role") == "system":
             messages[0]["content"] = str(messages[0].get("content") or "") + cloak

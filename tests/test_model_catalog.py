@@ -779,23 +779,23 @@ class ModelCatalogTests(unittest.TestCase):
         with self.assertRaises(ModelCapabilityError):
             registry.resolve_public_model("grok-build", "responses")
 
-    def test_checked_in_deepseek_models_are_route_only_for_newapi_channel(self) -> None:
+    def test_checked_in_deepseek_models_use_x5m5x_channel_routes(self) -> None:
         settings.model_catalog_json = ""
         registry._initialized = False
         registry.init_from_settings()
 
         expected_models = {
             "deepseek-v4-pro": {
-                "input": 44,
-                "output": 87,
+                "input": 470,
+                "output": 1390,
                 "cache_multiplier": 0.008333333333333333,
-                "effective_cached_input": 0.3667,
+                "effective_cached_input": 3.9167,
             },
             "deepseek-v4-flash": {
-                "input": 14,
-                "output": 28,
+                "input": 160,
+                "output": 470,
                 "cache_multiplier": 0.02,
-                "effective_cached_input": 0.28,
+                "effective_cached_input": 3.2,
             },
         }
         for model_id, expected in expected_models.items():
@@ -807,8 +807,8 @@ class ModelCatalogTests(unittest.TestCase):
                 self.assertEqual(model.provider_name, "DeepSeek")
                 self.assertEqual(model.provider_model, model_id)
                 self.assertEqual(model.upstream_model, model_id)
-                self.assertEqual(model.routing_mode, "route_only")
-                self.assertEqual(model.delivery_lane, "route_only")
+                self.assertEqual(model.routing_mode, "direct")
+                self.assertEqual(model.delivery_lane, "x5m5x")
                 self.assertEqual(model.capabilities, ("chat/completions", "responses"))
                 self.assertEqual(model.billable_sku, f"{model_id}-text")
                 self.assertEqual(model.price_input_per_million, expected["input"])
@@ -817,6 +817,7 @@ class ModelCatalogTests(unittest.TestCase):
                 self.assertEqual(model.effective_cached_input_per_million, expected["effective_cached_input"])
                 self.assertEqual(model.metadata["provider_platform"], "new_api")
                 self.assertEqual(model.metadata["preferred_api_backend"], "responses")
+                self.assertTrue(model.metadata["stable_prefix_cache"])
 
                 with self.assertRaises(ModelCapabilityError):
                     registry.resolve_public_model(model_id, "responses")
