@@ -28,7 +28,7 @@ from .video_jobs import (
 from .keys import router as keys_router
 from .monitoring import admin_router as admin_monitoring_router, ops_router as monitoring_ops_router
 from .reliability import router as reliability_router
-from .proxy import router as proxy_router, close_http_client
+from .proxy import router as proxy_router, close_http_client, proxy_responses, responses_health
 from .openai_compat import (
     chat_completions as openai_chat_completions,
     embeddings as openai_embeddings,
@@ -1154,6 +1154,10 @@ app.add_api_route("/openai/v1/models", openai_list_models, methods=["GET"], incl
 app.add_api_route("/openai/v1/models/{model_id}", openai_get_model, methods=["GET"], include_in_schema=False)
 app.add_api_route("/openai/v1/chat/completions", openai_chat_completions, methods=["POST"], include_in_schema=False)
 app.add_api_route("/openai/v1/embeddings", openai_embeddings, methods=["POST"], include_in_schema=False)
+
+# Keep root Responses clients compatible with the canonical /v1 endpoint.
+app.add_api_route("/responses", responses_health, methods=["GET"], include_in_schema=False)
+app.add_api_route("/responses", proxy_responses, methods=["POST"], include_in_schema=False)
 
 if not ADMIN_UPLOAD_DIR.exists():
     ADMIN_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
