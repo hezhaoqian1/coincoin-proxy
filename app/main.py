@@ -1051,6 +1051,12 @@ app.add_api_route("/openai/v1/models/{model_id}", openai_get_model, methods=["GE
 app.add_api_route("/openai/v1/chat/completions", openai_chat_completions, methods=["POST"], include_in_schema=False)
 app.add_api_route("/openai/v1/embeddings", openai_embeddings, methods=["POST"], include_in_schema=False)
 
+# A few Responses clients treat the site root as their API base and call
+# `/responses` directly. Keep that path compatible with the canonical `/v1`
+# endpoint so those clients do not fall through to the SPA route (405).
+app.add_api_route("/responses", responses_health, methods=["GET"], include_in_schema=False)
+app.add_api_route("/responses", proxy_responses, methods=["POST"], include_in_schema=False)
+
 if not ADMIN_UPLOAD_DIR.exists():
     ADMIN_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/admin-uploads", StaticFiles(directory=ADMIN_UPLOAD_DIR), name="admin-uploads")
