@@ -34,15 +34,12 @@ export function usePublicModels() {
     }, [])
 
     const publicModelPriority = {
-        opus: 0,
-        sonnet: 1,
-        haiku: 2,
-        'claude-opus-5': 3,
-        'claude-opus-4-8': 4,
-        'claude-opus-4.8': 5,
-        'claude-opus-4-7': 6,
-        'claude-sonnet-4-6': 7,
-        'claude-haiku-4-5': 8,
+        'claude-opus-5': 0,
+        'claude-opus-4-8': 1,
+        'claude-opus-4.8': 2,
+        'claude-opus-4-7': 3,
+        'claude-sonnet-4-6': 4,
+        'claude-haiku-4-5': 5,
         'gpt-5.5': 10,
         'gpt-5.4': 11,
         'gpt-5.4-mini': 12,

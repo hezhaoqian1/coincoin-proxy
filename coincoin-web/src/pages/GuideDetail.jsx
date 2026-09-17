@@ -9,7 +9,6 @@ import './GuideDetail.css'
 const SITE_ROOT = typeof window !== 'undefined' ? window.location.origin : ''
 const OPENAI_BASE_URL = SITE_ROOT ? `${SITE_ROOT}/v1` : '/v1'
 const CODEX_MODEL_ID = 'gpt-5.4'
-const CLAUDE_DEFAULT_ALIAS = 'sonnet'
 const CLAUDE_DEFAULT_MODEL_ID = 'claude-sonnet-4-6'
 const CLAUDE_OPUS_OPTIONAL_MODEL_ID = 'claude-opus-5'
 
@@ -971,7 +970,7 @@ Write-Host "saved $Output"`
             },
             'claude-code': {
                 title: 'Claude Code 配置',
-                description: 'Claude Code 走 Anthropic 兼容入口，地址填根域名，不要手动加 `/v1`。脚本只写 URL 和 Key，模型交给 Claude Code 默认 sonnet。',
+                description: 'Claude Code 走 Anthropic 兼容入口，地址填根域名，不要手动加 `/v1`。脚本只写 URL 和 Key，模型使用 claude-sonnet-4-6。',
                 commandGroup: [
                     {
                         title: 'macOS / Linux 一键配置',
@@ -982,7 +981,7 @@ Write-Host "saved $Output"`
                     {
                         title: 'Windows PowerShell 一键配置',
                         platform: 'Windows',
-                        summary: '先备份旧 URL / Key 环境变量，再写入当前 PowerShell 和用户级环境变量；不指定模型，交给 Claude Code 默认 sonnet。',
+                        summary: '先备份旧 URL / Key 环境变量，再写入当前 PowerShell 和用户级环境变量；模型使用 claude-sonnet-4-6。',
                         code: claudeWindowsCommand,
                     },
                 ],
