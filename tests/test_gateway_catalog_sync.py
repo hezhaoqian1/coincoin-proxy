@@ -32,7 +32,6 @@ CLAUDE_OPUS_ALIASES = {
     "claude-opus-4-6",
     "claude-opus-4.6",
     "claude-opus-4.5",
-    "opus",
     "best",
     "default",
     "opus[1m]",
@@ -43,14 +42,12 @@ CLAUDE_SONNET_ALIASES = {
     "claude-sonnet-4.6",
     "claude-sonnet-4.5",
     "claude-sonnet-4",
-    "sonnet",
     "sonnet[1m]",
 }
 CLAUDE_HAIKU_ALIASES = {
     "claude-haiku-4-5",
     "claude-haiku-4.5",
     "claude-haiku-4-5-20251001",
-    "haiku",
 }
 OFFICIAL_DEFAULT_TEXT_PRICES = {
     "${COINCOIN_FIXED_MODEL}": FIXED_TEXT_PRICE,
@@ -90,9 +87,6 @@ OFFICIAL_DEFAULT_TEXT_PRICES = {
     "claude-haiku-4-5": CLAUDE_HAIKU_PRICE,
     "claude-haiku-4.5": CLAUDE_HAIKU_PRICE,
     "claude-haiku-4-5-20251001": CLAUDE_HAIKU_PRICE,
-    "opus": CLAUDE_OPUS_PRICE,
-    "sonnet": CLAUDE_SONNET_PRICE,
-    "haiku": CLAUDE_HAIKU_PRICE,
     "best": CLAUDE_OPUS_PRICE,
     "default": CLAUDE_OPUS_PRICE,
     "opus[1m]": CLAUDE_OPUS_PRICE,
@@ -292,6 +286,9 @@ class GatewayCatalogSyncTests(unittest.TestCase):
         self.assertEqual(opus_5.get("price_output_per_million"), CLAUDE_OPUS_OUTPUT_PRICE_PLACEHOLDER)
         self.assertEqual(opus_5.get("billable_sku"), "claude-code-compat-text")
         self.assertEqual((opus_5.get("pricing") or {}).get("cache_creation_multiplier"), 1.25)
+
+        for removed_alias in ("opus", "sonnet", "haiku"):
+            self.assertNotIn(removed_alias, public_models)
 
         for alias in CLAUDE_OPUS_ALIASES:
             with self.subTest(alias=alias):

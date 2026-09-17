@@ -143,7 +143,6 @@ CLAUDE_COMPAT_KIRO_MODEL_MAP = {
     "claude-opus-4-6": "claude-opus-4.6",
     "claude-opus-4.6": "claude-opus-4.6",
     "claude-opus-4.5": "claude-opus-4.5",
-    "opus": "claude-opus-4.7",
     "best": "claude-opus-4.7",
     "default": "claude-opus-4.7",
     "opus[1m]": "claude-opus-4.7",
@@ -153,12 +152,10 @@ CLAUDE_COMPAT_KIRO_MODEL_MAP = {
     "claude-sonnet-4.6": "claude-sonnet-4.6",
     "claude-sonnet-4.5": "claude-sonnet-4.5",
     "claude-sonnet-4": "claude-sonnet-4",
-    "sonnet": "claude-sonnet-4.6",
     "sonnet[1m]": "claude-sonnet-4.6",
     "claude-haiku-4-5": "claude-haiku-4.5",
     "claude-haiku-4.5": "claude-haiku-4.5",
     "claude-haiku-4-5-20251001": "claude-haiku-4.5",
-    "haiku": "claude-haiku-4.5",
 }
 
 

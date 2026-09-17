@@ -8,7 +8,6 @@ import './Docs.css'
 
 const SITE = typeof window !== 'undefined' ? window.location.origin : ''
 const CODEX_MODEL_ID = 'gpt-5.4'
-const CLAUDE_DEFAULT_ALIAS = 'sonnet'
 const CLAUDE_DEFAULT_MODEL_ID = 'claude-sonnet-4-6'
 const CLAUDE_OPUS_OPTIONAL_MODEL_ID = 'claude-opus-5'
 const TABS = [
@@ -126,7 +125,7 @@ function getModelCategory(model, type) {
     const id = model.id || ''
     if (type === 'video') return 'video'
     if (type === 'image') return 'image'
-    if (id.startsWith('claude-') || ['opus', 'sonnet', 'haiku'].includes(id)) return 'claude'
+    if (id.startsWith('claude-')) return 'claude'
     if (id.startsWith('grok-') || model.owned_by === 'xai') return 'xai'
     if (id.includes('gemini') || model.owned_by === 'google') return 'gemini'
     return 'openai'
@@ -316,7 +315,7 @@ function AudienceGuide() {
             title: 'OpenCode',
             tag: '已实测',
             desc: '本地 coding agent 工作流，已验证基础可用。',
-            bullets: ['先看 OpenCode quickstart', '默认先用 clawfather/gpt-5.4', '需要 Claude 风格模型时再试 sonnet']
+            bullets: ['先看 OpenCode quickstart', '默认先用 clawfather/gpt-5.4', '需要 Claude 风格模型时再试 claude-sonnet-4-6']
         },
         {
             title: 'Continue / Aider',
@@ -328,7 +327,7 @@ function AudienceGuide() {
             title: 'Claude Code',
             tag: '推荐',
             desc: 'Claude Code 走 Anthropic 兼容入口。',
-            bullets: ['官方推荐用 ~/.claude/settings.json', 'ANTHROPIC_BASE_URL 填根域名', '默认先用 sonnet，重任务再试 claude-opus-5']
+            bullets: ['官方推荐用 ~/.claude/settings.json', 'ANTHROPIC_BASE_URL 填根域名', '默认先用 claude-sonnet-4-6，重任务再试 claude-opus-5']
         },
         {
             title: 'OpenClaw',
@@ -502,7 +501,7 @@ claude`}</pre>
                         <td>Claude Code</td>
                         <td><span className="badge badge-success">一等支持</span></td>
                         <td><code>ANTHROPIC_BASE_URL=root</code></td>
-                        <td>官方 Claude CLI 直接走 Anthropic 兼容面，默认推荐 <code>sonnet</code>；需要更强模型时再显式切到 <code>claude-opus-5</code>。</td>
+                        <td>官方 Claude CLI 直接走 Anthropic 兼容面，默认推荐 <code>claude-sonnet-4-6</code>；需要更强模型时再显式切到 <code>claude-opus-5</code>。</td>
                     </tr>
                     <tr>
                         <td>Codex CLI</td>
@@ -545,7 +544,7 @@ claude`}</pre>
 
             <h3>切换模型时你要改什么？</h3>
             <ul className="doc-list">
-                <li>只需要把请求或客户端配置中的 <code>model</code> 改成目标模型，例如 <code>gpt-5.4</code>、<code>grok-4.5</code>、<code>grok-4.6</code>、<code>sonnet</code> 或 <code>claude-opus-5</code>。</li>
+                <li>只需要把请求或客户端配置中的 <code>model</code> 改成目标模型，例如 <code>gpt-5.4</code>、<code>grok-4.5</code>、<code>grok-4.6</code>、<code>claude-sonnet-4-6</code> 或 <code>claude-opus-5</code>。</li>
                 <li>Base URL 和 API Key 不需要改，仍然走同一个 ClawFather 入口。</li>
                 <li>文本请求推荐走 <code>/v1/chat/completions</code> 或 <code>/v1/responses</code>，图片请求走 <code>/v1/images/generations</code> 或 <code>/v1/images/edits</code>，并使用 <code>{imageModelId}</code> 这类图片模型。</li>
                 <li>图片请求统一走 ClawFather 公开入口，不需要终端用户配置额外服务。</li>
@@ -1073,7 +1072,7 @@ claude`}</pre>
             <ul className="doc-list">
                 <li>官方用户级配置文件路径是 <code>~/.claude/settings.json</code>；Windows 对应 <code>%USERPROFILE%\.claude\settings.json</code>。</li>
                 <li>这里的 <code>ANTHROPIC_BASE_URL</code> 必须填站点根地址，不能带 <code>/v1</code>。</li>
-                <li>默认模型交给 Claude Code 自己选择；通常会走系统默认的 sonnet，不需要额外指定。</li>
+                <li>默认模型交给 Claude Code 自己选择；需要固定模型时使用 <code>claude-sonnet-4-6</code>。</li>
                 <li>如果之前用过 <code>/login</code> 托管登录，先执行一次 <code>/logout</code>，避免本地登录态和环境变量打架。</li>
             </ul>
 

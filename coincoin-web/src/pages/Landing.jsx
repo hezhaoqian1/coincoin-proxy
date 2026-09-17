@@ -22,7 +22,7 @@ const HERO_LANES = [
     {
         client: 'Claude Code',
         endpoint: 'root',
-        model: 'sonnet · claude-opus-5',
+        model: 'claude-sonnet-4-6 · claude-opus-5',
         tone: 'cyan',
     },
     {
