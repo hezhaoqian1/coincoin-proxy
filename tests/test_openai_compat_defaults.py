@@ -18,6 +18,7 @@ import app.openai_compat as openai_module
 
 LEGACY_PUBLIC_TEXT_MODELS = [
     "gpt-5.5",
+    "codex-auto-review",
     "gpt-5.6",
     "gpt-5.6-sol",
     "gpt-5.6-terra",
@@ -25,6 +26,7 @@ LEGACY_PUBLIC_TEXT_MODELS = [
 ]
 LEGACY_PUBLIC_TEXT_PRICES = {
     "gpt-5.5": (500, 3000),
+    "codex-auto-review": (500, 3000),
     "gpt-5.6": (500, 3000),
     "gpt-5.6-sol": (500, 3000),
     "gpt-5.6-terra": (200, 1200),
@@ -5735,6 +5737,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             [item["id"] for item in payload["data"]],
             [
                 "gpt-5.5",
+                "codex-auto-review",
                 "gpt-5.6",
                 "gpt-5.6-sol",
                 "gpt-5.6-terra",

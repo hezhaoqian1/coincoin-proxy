@@ -136,7 +136,6 @@ RETIRED_OPENAI_PUBLIC_MODELS = frozenset({
     "gpt-5.2-codex",
     "gpt-5.3-codex",
     "gpt-5.3-codex-spark",
-    "codex-auto-review",
     "gpt-5.4",
     "gpt-5.4-mini",
     "gpt-5-codex",
