@@ -126,7 +126,11 @@ from .security import decrypt_api_key, encrypt_api_key, generate_api_key, genera
 from .usage_buffer import serialize_server_side_tool_usage
 
 
+from .admin_usage import router as usage_analysis_router
+
+
 router = APIRouter(prefix="/admin", tags=["admin"])
+router.include_router(usage_analysis_router)
 logger = logging.getLogger("coincoin.admin")
 ADMIN_UPLOAD_ROOT = Path(_settings.admin_upload_dir)
 ANALYTICS_BALANCE_CACHE_TTL_SECONDS = 60

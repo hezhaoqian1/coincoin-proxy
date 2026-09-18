@@ -216,6 +216,52 @@
       box-shadow: 0 4px 16px rgba(99, 102, 241, 0.4);
     }
 
+    /* Usage analysis: scoped to the admin usage view. */
+    #page-usage .usage-summary-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin: 16px 0 20px; }
+    #page-usage .stat-card { min-height: 130px; }
+    #page-usage .stat-value { font-size: 28px; margin: 10px 0; font-variant-numeric: tabular-nums; }
+    #page-usage .stat-label { font-size: 13px; }
+    .usage-filters { padding: 20px; }
+    .usage-filter-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+    .usage-filter-grid label, #usageCustomDates label { display: grid; gap: 8px; color: var(--text-secondary); font-size: 12px; }
+    .usage-filter-grid input, .usage-filter-grid select { width: 100%; min-width: 0; }
+    .usage-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+    .usage-filters > .usage-actions, .usage-advanced { margin-top: 16px; }
+    #usageCustomDates[hidden] { display: none; }
+    .usage-advanced summary { cursor: pointer; font-size: 12px; color: var(--text-secondary); }
+    .usage-advanced .usage-filter-grid { margin-top: 14px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    #usageScope:not(:empty) { margin: 18px 0 10px; }
+    .usage-status { margin: 14px 0; font-size: 12px; color: var(--text-secondary); }
+    .usage-status.error { color: #fb7185; }
+    .usage-trend-card { margin-bottom: 20px; }
+    .usage-inline-label { display: flex; align-items: center; gap: 10px; font-size: 12px; }
+    .usage-inline-label select { width: auto; }
+    .usage-trend { min-height: 160px; overflow-x: auto; }
+    .usage-trend svg { width: 100%; min-width: 560px; display: block; }
+    .usage-trend rect:hover, .usage-trend rect:focus { opacity: .7; }
+    .usage-tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+    .usage-tabs .btn { background: transparent; color: var(--text-secondary); }
+    .usage-tabs .btn:hover { background: var(--bg-tertiary); }
+    .usage-tabs [aria-pressed="true"] { color: #fff; background: var(--gradient-1); }
+    .usage-table-help { padding: 14px 20px; }
+    .usage-table-card { scroll-margin-top: 80px; }
+    .usage-table-card .table-wrapper { overscroll-behavior-x: contain; }
+    #usageTable { min-width: 1050px; }
+    #usageTable th { white-space: nowrap; }
+    #usageTable td { font-variant-numeric: tabular-nums; }
+    #usageTable .usage-link { max-width: 250px; white-space: normal; overflow-wrap: anywhere; text-align: left; padding: 0; }
+    .usage-secondary { color: var(--text-tertiary); font-size: 11px; margin-top: 5px; overflow-wrap: anywhere; max-width: 260px; }
+    .usage-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 18px 20px; }
+    .usage-empty { text-align: center; padding: 40px; color: var(--text-tertiary); }
+    .usage-footnote { line-height: 1.8; margin-top: 16px; }
+    .usage-record-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 24px; margin: 16px 0 24px; }
+    .usage-record-grid dt { color: var(--text-tertiary); font-size: 12px; margin-bottom: 6px; }
+    .usage-record-grid dd { margin: 0; overflow-wrap: anywhere; font-size: 13px; }
+    .rank-badge { display:inline-flex; width:24px; height:24px; align-items:center; justify-content:center; border-radius:7px; background:var(--bg-tertiary); color:var(--text-secondary); font-size:12px; font-weight:700; }
+    .rank-1 { background:rgba(245,158,11,.2); color:#fbbf24; } .rank-2 { background:rgba(148,163,184,.2); color:#cbd5e1; } .rank-3 { background:rgba(180,83,9,.2); color:#fdba74; }
+    @media (max-width: 1100px) { .usage-filter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } #page-usage .usage-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @media (max-width: 600px) { .usage-filter-grid, .usage-advanced .usage-filter-grid, .usage-record-grid { grid-template-columns: 1fr; } #page-usage .usage-summary-grid { gap: 10px; } #page-usage .stat-card { padding: 16px; } #page-usage .stat-value { font-size: 22px; } #page-usage .card-header { flex-wrap: wrap; gap: 14px; } }
+
     /* Main */
     .main {
       padding: 32px 40px;
@@ -223,7 +269,7 @@
     }
 
     .page { display: none; }
-    .page.active { display: block; animation: pageSlideIn 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+    .page.active { display: block; }
 
     @keyframes pageSlideIn {
       from { opacity: 0; transform: translateY(16px) scale(0.99); }
@@ -254,7 +300,6 @@
 
     .stat-card {
       background: var(--bg-card);
-      backdrop-filter: blur(20px);
       border: 1px solid var(--border);
       border-radius: 16px;
       padding: 24px;
@@ -316,7 +361,6 @@
     /* Cards */
     .card {
       background: var(--bg-card);
-      backdrop-filter: blur(20px);
       border: 1px solid var(--border);
       border-radius: 16px;
       overflow: hidden;
@@ -1191,7 +1235,7 @@
           <div class="nav-group-title">分析</div>
           <div class="nav-item" data-page="usage">
             <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
-            用量统计
+            使用记录
           </div>
           <div class="nav-item" data-page="service-reliability">
             <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 13h4l2-7 4 12 2-5h4"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2z"/></svg>
@@ -2110,27 +2154,48 @@
       <!-- =============== Usage =============== -->
       <div id="page-usage" class="page">
         <div class="page-header">
-          <h1 class="page-title">用量统计</h1>
-          <p class="page-desc">按天查看详细用量数据</p>
+          <h1 class="page-title">使用记录</h1>
+          <p class="page-desc">从用户排行到模型消耗，再到每一笔请求。统一按上海时区统计。</p>
         </div>
-        <div class="card">
-          <div class="card-header">
-            <div class="filter-bar">
-              <input type="date" id="usageDay" class="form-input" style="width:180px" />
-              <button class="btn btn-secondary" onclick="loadFullUsage()">筛选</button>
-            </div>
+        <form class="card usage-filters" onsubmit="event.preventDefault();loadFullUsage()">
+          <div class="usage-filter-grid">
+            <label>时间范围<select id="usagePeriod" class="form-select" onchange="usagePeriodChanged()"><option value="today">今天</option><option value="24h">近 24 小时</option><option value="yesterday">昨天</option><option value="3d">近 3 天</option><option value="this_week">本周</option><option value="7d">近 7 天</option><option value="30d">近 30 天</option><option value="this_month">本月</option><option value="custom">自定义日期</option></select></label>
+            <label>用户<input id="usageSearch" class="form-input" placeholder="用户名、邮箱或用户 ID" maxlength="128" /></label>
+            <label>模型<input id="usageModelFilter" class="form-input" placeholder="模型名、上游模型或 SKU" maxlength="128" /></label>
+            <label>请求结果<select id="usageResultFilter" class="form-select" onchange="scheduleUsageLoad()"><option value="all">全部结果</option><option value="success">成功</option><option value="failed">失败</option><option value="refund">退款记录</option></select></label>
           </div>
-          <div class="card-body flush">
-            <div class="table-wrapper">
-              <table>
-                <thead>
-                  <tr><th>日期</th><th>用户</th><th>请求数</th><th>输入 Tokens</th><th>输出 Tokens</th><th>图片数</th><th>视频数</th><th>费用</th></tr>
-                </thead>
-                <tbody id="usageBody"></tbody>
-              </table>
-            </div>
-          </div>
+          <div id="usageCustomDates" class="usage-actions" hidden><label>开始日期<input type="date" id="usageStartDate" class="form-input" /></label><label>结束日期<input type="date" id="usageEndDate" class="form-input" /></label><span class="text-sm text-muted">含结束当天，最多 93 天</span></div>
+          <details class="usage-advanced"><summary>更多筛选 · 接口 / API Key / 渠道</summary><div class="usage-filter-grid">
+            <label>接口<input id="usageEndpoint" class="form-input" placeholder="例如 messages:stream" maxlength="64" /></label>
+            <label>API Key ID<input id="usageKey" class="form-input" placeholder="Key 的记录 ID（非密钥）" maxlength="32" /></label>
+            <label>渠道 ID<input id="usageChannel" class="form-input" placeholder="渠道记录 ID" maxlength="32" /></label>
+          </div></details>
+          <div class="usage-actions"><button type="submit" class="btn btn-primary">查询 / 刷新</button><button type="button" class="btn btn-secondary" onclick="resetUsageFilters()">重置筛选</button><button type="button" id="usageExport" class="btn btn-ghost" onclick="exportUsageCsv()" disabled>导出筛选结果 CSV</button><span class="text-sm text-muted">CSV 最多 10,000 条</span></div>
+        </form>
+        <div id="usageScope" class="usage-actions" aria-label="当前下钻条件"></div>
+        <div id="usageStatus" class="usage-status" role="status" aria-live="polite">请选择范围后查询</div>
+        <div class="stats-grid usage-summary-grid">
+          <div class="stat-card"><div class="stat-label">净消耗 · USD</div><div class="stat-value" id="usageStatCost">—</div><div class="text-sm text-muted" id="usageCostHint">用户侧扣费减退款</div></div>
+          <div class="stat-card"><div class="stat-label">总 Tokens</div><div class="stat-value" id="usageStatTokens">—</div><div class="text-sm text-muted" id="usageTokenHint">输入 + 输出</div></div>
+          <div class="stat-card"><div class="stat-label">请求数</div><div class="stat-value" id="usageStatRequests">—</div><div class="text-sm text-muted" id="usageRequestHint">退款记录不计入请求数</div></div>
+          <div class="stat-card"><div class="stat-label">活跃用户 / 使用模型</div><div class="stat-value" id="usageStatAudience">—</div><div class="text-sm text-muted" id="usageAudienceHint">当前筛选内去重</div></div>
+          <div class="stat-card"><div class="stat-label">缓存读取 Tokens</div><div class="stat-value" id="usageStatCache">—</div><div class="text-sm text-muted" id="usageCacheHint">已包含在输入 Tokens 内</div></div>
+          <div class="stat-card"><div class="stat-label">图片 / 视频净数量</div><div class="stat-value" id="usageStatMedia">—</div><div class="text-sm text-muted" id="usageMediaHint">含退款冲减</div></div>
         </div>
+        <div class="card usage-trend-card"><div class="card-header"><div><span class="card-title">用量趋势</span><div class="text-sm text-muted" id="usageWindow">—</div></div><label class="usage-inline-label">查看<select id="usageTrendMetric" class="form-select" onchange="renderUsageTrend()"><option value="cost_cents">净消耗</option><option value="tokens">Tokens</option><option value="requests">请求数</option></select></label></div><div class="card-body"><div id="usageTrend" class="usage-trend">暂无数据</div><div id="usageTrendHint" class="text-sm text-muted"></div></div></div>
+        <div class="card usage-table-card">
+          <div class="card-header usage-actions">
+            <div class="usage-tabs" role="group" aria-label="用量视图"><button type="button" class="btn btn-sm" data-usage-tab="users" aria-pressed="true" onclick="setUsageTab('users')">用户排行</button><button type="button" class="btn btn-sm" data-usage-tab="models" aria-pressed="false" onclick="setUsageTab('models')">模型消耗</button><button type="button" class="btn btn-sm" data-usage-tab="records" aria-pressed="false" onclick="setUsageTab('records')">请求明细</button></div>
+            <label id="usageSortLabel" class="usage-inline-label">排序<select id="usageSort" class="form-select" onchange="loadUsageTable(0)"><option value="cost_cents">消耗从高到低</option><option value="tokens">Tokens 从高到低</option><option value="requests">请求数从高到低</option><option value="images">图片从高到低</option><option value="videos">视频从高到低</option></select></label>
+          </div>
+          <div class="usage-table-help text-sm text-muted" id="usageTableHint">点击用户名，查看这个用户的模型消耗。</div>
+          <div class="table-wrapper"><table id="usageTable"><thead id="usageTableHead"></thead><tbody id="usageTableBody"></tbody></table></div>
+          <div class="usage-pagination"><span id="usagePageInfo" class="text-sm text-muted">—</span><div class="usage-actions"><button id="usagePrev" class="btn btn-sm btn-secondary" type="button" onclick="loadUsageTable(usageState.offset - 20)" disabled>上一页</button><button id="usageNext" class="btn btn-sm btn-secondary" type="button" onclick="loadUsageTable(usageState.offset + 20)" disabled>下一页</button></div></div>
+        </div>
+        <p class="usage-footnote text-sm text-muted">金额为请求日志记录的用户侧消耗；输入 Tokens 已包含缓存，勿重复相加。日志异步写入，最新请求可能短暂延迟。失败 / 退款等筛选会同步作用于总览、排行、明细和导出。</p>
+      </div>
+      <div id="usageRecordModal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="usageRecordTitle">
+        <div class="modal" style="max-width:880px"><div class="modal-header"><span id="usageRecordTitle" class="modal-title">请求详情</span><button class="modal-close" aria-label="关闭请求详情" onclick="closeUsageRecord()">&times;</button></div><div class="modal-body" id="usageRecordDetail"></div><div class="modal-footer"><button class="btn btn-secondary" onclick="closeUsageRecord()">关闭</button></div></div>
       </div>
 
       <!-- =============== Announcements =============== -->
@@ -3214,7 +3279,7 @@
 	        'station-commission': loadStationCommissionLedger,
 	        'station-payouts': loadStationPayoutBatches,
 	        recharge: loadRecharges,
-	        usage: loadFullUsage,
+	        usage: enterUsagePage,
 	        'service-reliability': loadServiceReliability,
 	        orders: loadPaymentOrders,
 	        codes: loadRedemptionCodes,
@@ -3228,6 +3293,12 @@
 	      const item = document.querySelector(`.nav-item[data-page="${page}"]`);
 	      const pageNode = document.getElementById('page-' + page);
 	      if (!item || !pageNode) return;
+	      if (pageNode.classList.contains('active')) {
+	        document.getElementById('sidebar').classList.remove('open');
+	        document.getElementById('sidebarBackdrop').classList.remove('active');
+	        return;
+	      }
+	      if (getActivePage() === 'usage') suspendUsageRequests();
 	      document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
 	      document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
 	      item.classList.add('active');
@@ -3246,6 +3317,10 @@
 	    });
 
     function saveToken() {
+      suspendUsageRequests();
+      usageState.cache.clear();
+      usageState.loadedAt = 0;
+      usageState.params = null;
       localStorage.setItem('cc_admin_token', tokenInput.value.trim());
       toast('连接成功', 'success');
       loadAll();
@@ -6037,29 +6112,358 @@
     }
 
     // ==================== Usage ====================
-    async function loadFullUsage() {
+    const usageState = {
+      offset: 0, tab: 'users', overview: null, rows: [], params: null,
+      user: null, model: '', controller: null, tableController: null,
+      tableVersion: 0, focusReturn: null, cache: new Map(), loadedAt: 0, tableReady: false, filterTimer: null,
+    };
+    const usageEl = id => document.getElementById(id);
+    const usageCount = value => Number(value || 0).toLocaleString('zh-CN');
+    const usageRate = value => value == null ? '—' : formatPct(value);
+    const usageLatency = value => value == null ? '—' : Number(value) >= 1000 ? `${(Number(value) / 1000).toFixed(2)} s` : `${value} ms`;
+    const usageDateFormatter = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false, dateStyle: 'short', timeStyle: 'medium' });
+    const usageDate = value => value ? usageDateFormatter.format(new Date(value)) : '—';
+
+    function suspendUsageRequests() {
+      clearTimeout(usageState.filterTimer);
+      usageState.controller?.abort();
+      usageState.tableController?.abort();
+      usageState.tableVersion++;
+    }
+
+    function enterUsagePage() {
+      if (usageState.params && usageState.tableReady && Date.now() - usageState.loadedAt < 30000) return;
+      return loadFullUsage();
+    }
+
+    function usageQueryParams() {
+      const period = usageEl('usagePeriod').value;
+      const params = new URLSearchParams({ period });
+      const fields = { model: 'usageModelFilter', search: 'usageSearch', result: 'usageResultFilter',
+        endpoint: 'usageEndpoint', api_key_id: 'usageKey', channel_id: 'usageChannel' };
+      Object.entries(fields).forEach(([key, id]) => {
+        const value = usageEl(id).value.trim();
+        if (value && !(key === 'result' && value === 'all')) params.set(key, value);
+      });
+      if (period === 'custom') {
+        const start = usageEl('usageStartDate').value;
+        const end = usageEl('usageEndDate').value;
+        if (!start || !end) throw new Error('请填写开始日期和结束日期，然后点击查询。');
+        if (start > end) throw new Error('开始日期不能晚于结束日期。');
+        params.set('start_date', start);
+        params.set('end_date', end);
+      }
+      if (usageState.user) params.set('user_id', usageState.user.id);
+      if (usageState.model) params.set('model_exact', usageState.model);
+      return params;
+    }
+
+    function scheduleUsageLoad() {
+      suspendUsageRequests();
+      // A cancelled debounce must not reuse totals for the previous filter.
+      usageState.loadedAt = 0;
+      usageState.filterTimer = setTimeout(loadFullUsage, 180);
+    }
+
+    function usagePeriodChanged() {
+      const custom = usageEl('usagePeriod').value === 'custom';
+      usageEl('usageCustomDates').hidden = !custom;
+      if (custom) {
+        const today = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai' }).format(new Date());
+        if (!usageEl('usageStartDate').value) usageEl('usageStartDate').value = today;
+        if (!usageEl('usageEndDate').value) usageEl('usageEndDate').value = today;
+      }
+      scheduleUsageLoad();
+    }
+
+    function resetUsageFilters() {
+      ['usageSearch', 'usageModelFilter', 'usageEndpoint', 'usageKey', 'usageChannel', 'usageStartDate', 'usageEndDate'].forEach(id => usageEl(id).value = '');
+      usageEl('usagePeriod').value = 'today';
+      usageEl('usageResultFilter').value = 'all';
+      usageEl('usageCustomDates').hidden = true;
+      usageState.user = null;
+      usageState.model = '';
+      usageState.tab = 'users';
+      loadFullUsage();
+    }
+
+    function setUsageStatus(message, isError = false) {
+      usageEl('usageStatus').textContent = message;
+      usageEl('usageStatus').classList.toggle('error', isError);
+    }
+
+    async function usageFetch(path, params, signal) {
+      const response = await fetch(`/admin/usage/${path}?${params}`, { headers: adminHeaders(), signal });
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        const message = response.status === 401 ? '管理员令牌无效，请重新连接。'
+          : typeof error.detail === 'string' ? error.detail : `查询失败（${response.status}），请检查筛选条件或稍后重试。`;
+        throw new Error(message);
+      }
+      return response;
+    }
+
+    function renderUsageScope() {
+      const target = usageEl('usageScope');
+      target.replaceChildren();
+      for (const [key, label] of [['user', usageState.user ? `用户：${usageState.user.name}` : ''], ['model', usageState.model ? `模型：${usageState.model}` : '']]) {
+        if (!label) continue;
+        const button = document.createElement('button');
+        button.className = 'btn btn-sm btn-secondary';
+        button.textContent = `${label} ×`;
+        button.setAttribute('aria-label', `取消筛选 ${label}`);
+        button.onclick = () => {
+          usageState[key] = key === 'user' ? null : '';
+          loadFullUsage();
+        };
+        target.appendChild(button);
+      }
+    }
+
+    function clearUsageDisplay() {
+      ['usageStatCost', 'usageStatTokens', 'usageStatRequests', 'usageStatAudience', 'usageStatCache', 'usageStatMedia'].forEach(id => usageEl(id).textContent = '—');
+      ['usageCostHint', 'usageTokenHint', 'usageRequestHint', 'usageAudienceHint', 'usageCacheHint', 'usageMediaHint', 'usageWindow', 'usageTrendHint', 'usagePageInfo'].forEach(id => usageEl(id).textContent = '');
+      usageEl('usageTrend').textContent = '加载中…';
+      usageEl('usageTableBody').innerHTML = '<tr><td colspan="10" class="usage-empty">加载中…</td></tr>';
+      usageEl('usageExport').disabled = true;
+      usageEl('usagePrev').disabled = true;
+      usageEl('usageNext').disabled = true;
+    }
+
+    function renderUsageSummary(data) {
+      const s = data.summary;
+      usageEl('usageStatCost').textContent = formatMoney(s.cost_cents);
+      usageEl('usageCostHint').textContent = `已扣除退款 ${formatMoney(s.refund_cents)} · ${usageCount(s.refund_records)} 笔`;
+      usageEl('usageStatTokens').textContent = formatNum(s.tokens);
+      usageEl('usageStatTokens').title = usageCount(s.tokens);
+      usageEl('usageTokenHint').textContent = `输入 ${formatNum(s.input_tokens)} · 输出 ${formatNum(s.output_tokens)}`;
+      usageEl('usageStatRequests').textContent = usageCount(s.requests);
+      usageEl('usageRequestHint').textContent = `成功 ${usageCount(s.succeeded)} · 失败 ${usageCount(s.failed)} (${usageRate(s.failure_rate)})`;
+      usageEl('usageStatAudience').textContent = `${usageCount(s.users)} / ${usageCount(s.models)}`;
+      usageEl('usageAudienceHint').textContent = `平均耗时 ${usageLatency(s.avg_latency_ms)} · Fallback ${usageCount(s.fallback_requests)} 次`;
+      usageEl('usageStatCache').textContent = formatNum(s.cache_read_tokens);
+      usageEl('usageStatCache').title = usageCount(s.cache_read_tokens);
+      usageEl('usageCacheHint').textContent = `占输入 ${usageRate(s.cache_read_rate)} · 缓存写入 ${formatNum(s.cache_creation_tokens)}`;
+      usageEl('usageStatMedia').textContent = `${usageCount(s.images)} / ${usageCount(s.videos)}`;
+      usageEl('usageMediaHint').textContent = '含退款冲减，媒体不转换为 Tokens';
+      usageEl('usageWindow').textContent = `${data.period_label} · ${usageDate(data.window_start)} 至 ${usageDate(data.window_end)}（不含）`;
+    }
+
+    function renderUsageTrend() {
+      const target = usageEl('usageTrend');
+      const rows = usageState.overview?.trend || [];
+      if (!rows.length) { target.textContent = '当前范围暂无趋势数据'; return; }
+      const metric = usageEl('usageTrendMetric').value;
+      const values = rows.map(row => Number(row[metric] || 0));
+      const high = Math.max(1, ...values), low = Math.min(0, ...values);
+      const width = Math.max(760, rows.length * 32 + 70), left = 66, right = width - 14;
+      const y = value => 16 + (high - value) / (high - low) * 112;
+      const zero = y(0), step = (right - left) / rows.length;
+      const format = value => metric === 'cost_cents' ? formatMoney(value) : formatNum(Math.round(value));
+      const skip = Math.max(1, Math.ceil(rows.length / 8));
+      const bars = rows.map((row, index) => {
+        const value = values[index], top = Math.min(zero, y(value));
+        const label = usageState.overview.granularity === 'hour' ? row.bucket.slice(5) : row.bucket.slice(5, 10);
+        return `<g><rect tabindex="0" aria-label="${escapeHtml(row.bucket + '：' + format(value))}" x="${left + step * index + 3}" y="${value ? top : zero}" width="${Math.max(2, step - 6)}" height="${value ? Math.max(1, Math.abs(y(value) - zero)) : 0}" rx="3" fill="${value < 0 ? '#f59e0b' : '#818cf8'}"><title>${escapeHtml(row.bucket)} · ${format(value)} · ${usageCount(row.requests)} 请求</title></rect>${index % skip === 0 ? `<text x="${left + step * index + step / 2}" y="154" text-anchor="middle" fill="currentColor" font-size="10">${escapeHtml(label)}</text>` : ''}</g>`;
+      }).join('');
+      const grid = [high, (high + low) / 2, low].map(value => `<line x1="${left}" x2="${right}" y1="${y(value)}" y2="${y(value)}" stroke="currentColor" opacity=".12"/><text x="${left - 8}" y="${y(value) + 4}" text-anchor="end" fill="currentColor" font-size="10">${format(value)}</text>`).join('');
+      target.innerHTML = `<svg viewBox="0 0 ${width} 166" role="img" aria-label="${metric === 'cost_cents' ? '净消耗' : metric === 'tokens' ? 'Tokens' : '请求数'}趋势">${grid}<line x1="${left}" x2="${right}" y1="${zero}" y2="${zero}" stroke="currentColor" opacity=".35"/>${bars}</svg>`;
+      usageEl('usageTrendHint').textContent = `按${usageState.overview.granularity === 'hour' ? '小时' : '天'}汇总 · 悬停柱形查看数值${metric === 'cost_cents' ? ' · 负数表示该时段退款超过消耗' : ''}`;
+    }
+
+    function renderUsageTabState() {
+      const tab = usageState.tab;
+      document.querySelectorAll('[data-usage-tab]').forEach(node => node.setAttribute('aria-pressed', String(node.dataset.usageTab === tab)));
+      usageEl('usageSortLabel').style.display = tab === 'records' ? 'none' : '';
+      const columns = tab === 'users' ? ['#', '用户', '净消耗', 'Tokens（输入 / 输出）', '请求', '模型', '图片 / 视频', '失败率', '平均耗时']
+        : tab === 'models' ? ['#', '模型', '净消耗', 'Tokens（输入 / 输出）', '缓存读 / 写', '请求 / 用户', '图片 / 视频', '失败率', '平均耗时']
+        : ['时间（上海）', '用户 / Key', '模型 / 接口', 'Tokens / 媒体', '净消耗', '结果', '耗时', '操作'];
+      usageEl('usageTableHead').innerHTML = `<tr>${columns.map(c => `<th>${c}</th>`).join('')}</tr>`;
+      usageEl('usageTableHint').textContent = tab === 'users' ? '按当前筛选统计全部用户，可翻页；点击用户名查看该用户的模型消耗。'
+        : tab === 'models' ? '按用户调用的模型聚合；点击模型查看逐笔请求。缓存读写已包含在输入 Tokens 内。'
+        : '按时间倒序查看全部记录；打开详情可核对模型、渠道、缓存和计费信息。';
+    }
+
+    function usageStatusBadge(row) {
+      if (row.is_refund) return '<span class="badge badge-warning">退款</span>';
+      const code = Number(row.status_code || 0);
+      return `<span class="badge ${code >= 400 ? 'badge-error' : code >= 200 ? 'badge-success' : 'badge-info'}">${code || '未记录'}</span>`;
+    }
+
+    function renderUsageTable(rows, tab) {
+      const body = usageEl('usageTableBody');
+      if (!rows.length) { body.innerHTML = '<tr><td colspan="10" class="usage-empty">当前筛选暂无记录。可以扩大时间范围或重置筛选。</td></tr>'; return; }
+      body.innerHTML = rows.map((row, index) => {
+        const money = `<strong>${formatMoney(row.cost_cents)}</strong>`;
+        const tokens = `${usageCount(row.tokens)}<div class="usage-secondary">入 ${usageCount(row.input_tokens)} · 出 ${usageCount(row.output_tokens)}</div>`;
+        if (tab === 'records') return `<tr><td class="text-sm">${escapeHtml(usageDate(row.created_at))}</td><td>${escapeHtml(row.user || row.user_id)}<div class="usage-secondary">${escapeHtml(row.api_key_id || '未记录 Key')}</div></td><td>${escapeHtml(row.model)}<div class="usage-secondary">${escapeHtml(row.endpoint)}</div></td><td>${tokens}<div class="usage-secondary">图 ${usageCount(row.image_count)} · 视频 ${usageCount(row.video_count)}</div></td><td>${money}</td><td>${usageStatusBadge(row)}${row.route_attempt > 0 ? '<div class="usage-secondary">Fallback</div>' : ''}</td><td>${usageLatency(row.duration_ms)}</td><td><button class="btn btn-sm btn-secondary" data-usage-row="${index}">详情</button></td></tr>`;
+        const name = tab === 'users' ? row.display_name : row.key;
+        const identity = `<button class="btn btn-ghost usage-link" data-usage-row="${index}">${escapeHtml(name || '未记录')}</button>${tab === 'users' ? `<div class="usage-secondary">${escapeHtml(row.email || row.key)}</div>` : ''}`;
+        const extras = tab === 'users' ? `<td>${usageCount(row.requests)}</td><td>${usageCount(row.models)}</td>`
+          : `<td>${usageCount(row.cache_read_tokens)} / ${usageCount(row.cache_creation_tokens)}</td><td>${usageCount(row.requests)} / ${usageCount(row.users)}</td>`;
+        return `<tr><td><span class="rank-badge rank-${Number(row.rank)}">${Number(row.rank)}</span></td><td>${identity}</td><td>${money}</td><td>${tokens}</td>${extras}<td>${usageCount(row.images)} / ${usageCount(row.videos)}</td><td>${usageRate(row.failure_rate)}</td><td>${usageLatency(row.avg_latency_ms)}</td></tr>`;
+      }).join('');
+      body.querySelectorAll('[data-usage-row]').forEach(button => {
+        button.onclick = () => {
+          const row = rows[Number(button.dataset.usageRow)];
+          if (tab === 'records') return showUsageRecord(row, button);
+          if (tab === 'users') {
+            usageState.user = { id: row.key, name: row.display_name || row.key };
+            usageState.tab = 'models';
+          } else {
+            usageState.model = row.key;
+            usageState.tab = 'records';
+          }
+          loadFullUsage();
+        };
+      });
+    }
+
+    async function loadUsageTable(offset = 0) {
+      if (!usageState.params) return;
+      usageState.tableController?.abort();
+      usageState.tableReady = false;
+      const controller = new AbortController();
+      usageState.tableController = controller;
+      const version = ++usageState.tableVersion;
+      const tab = usageState.tab;
+      const params = new URLSearchParams(usageState.params);
+      offset = Math.max(0, offset);
+      params.set('offset', offset);
+      params.set('limit', '20');
+      params.set('include_total', 'false');
+      if (tab !== 'records') {
+        params.set('dimension', tab);
+        params.set('metric', usageEl('usageSort').value);
+      }
+      renderUsageTabState();
+      usageEl('usagePrev').disabled = true;
+      usageEl('usageNext').disabled = true;
+      usageEl('usageTableBody').innerHTML = '<tr><td colspan="10" class="usage-empty">加载中…</td></tr>';
+      usageEl('usagePageInfo').textContent = '';
       try {
-        const day = document.getElementById('usageDay')?.value || '';
-        const url = day ? `/admin/usage/daily?day=${day}` : '/admin/usage/daily';
-        const r = await fetch(url, { headers: adminHeaders() });
-        if (!r.ok) return;
-        const data = await r.json();
-        const body = document.getElementById('usageBody');
-        if (!data.length) {
-          body.innerHTML = '<tr><td colspan="8"><div class="empty-state"><div class="empty-state-icon">📊</div><h3>暂无数据</h3><p>用量数据会显示在这里</p></div></td></tr>';
-          return;
+        const path = tab === 'records' ? 'records' : 'groups';
+        const cacheKey = `${path}?${params}`;
+        const cached = usageState.cache.get(cacheKey);
+        let data;
+        if (cached && Date.now() - cached.at < 30000) {
+          data = cached.data;
+        } else {
+          const response = await usageFetch(path, params, controller.signal);
+          data = await response.json();
+          if (controller.signal.aborted || version !== usageState.tableVersion) return;
+          if (usageState.cache.size >= 16) usageState.cache.delete(usageState.cache.keys().next().value);
+          usageState.cache.set(cacheKey, { data, at: Date.now() });
         }
-        body.innerHTML = data.map(r => `<tr>
-          <td>${r.day}</td>
-          <td>${r.username||r.user_id}</td>
-          <td>${formatNum(r.requests_total)}</td>
-          <td>${formatNum(r.input_tokens||0)}</td>
-          <td>${formatNum(r.output_tokens||0)}</td>
-          <td>${formatNum(r.images_total||0)}</td>
-          <td>${formatNum(r.videos_total||0)}</td>
-          <td class="text-success">$${((r.cost_cents||0)/100).toFixed(4)}</td>
-        </tr>`).join('');
-      } catch (e) { console.error(e); }
+        if (controller.signal.aborted || version !== usageState.tableVersion) return;
+        usageState.offset = offset;
+        usageState.rows = data.data;
+        usageState.tableReady = true;
+        renderUsageTable(data.data, tab);
+        const total = Number(data.total ?? usageState.overview.summary[tab === 'records' ? 'records' : tab]);
+        usageEl('usagePageInfo').textContent = `第 ${total && data.data.length ? offset + 1 : 0}–${Math.min(total, offset + data.data.length)} 条，共 ${usageCount(total)} 条`;
+        usageEl('usagePrev').disabled = offset === 0;
+        usageEl('usageNext').disabled = offset + data.data.length >= total;
+      } catch (error) {
+        if (controller.signal.aborted || version !== usageState.tableVersion) return;
+        usageEl('usageTableBody').innerHTML = `<tr><td colspan="10" class="usage-empty">${escapeHtml(error.message)} <button class="btn btn-sm btn-secondary" onclick="loadUsageTable(usageState.offset)">重试</button></td></tr>`;
+      }
+    }
+
+    function setUsageTab(tab) {
+      usageState.tab = tab;
+      usageEl('usageTable').parentElement.scrollLeft = 0;
+      renderUsageTabState();
+      return loadUsageTable(0);
+    }
+
+    async function loadFullUsage() {
+      clearTimeout(usageState.filterTimer);
+      let params;
+      try { params = usageQueryParams(); }
+      catch (error) { setUsageStatus(`${error.message} 当前展示仍为上次查询结果。`, true); return; }
+      usageState.controller?.abort();
+      usageState.tableController?.abort();
+      usageState.tableVersion++;
+      const controller = new AbortController();
+      usageState.controller = controller;
+      usageState.params = null;
+      usageState.overview = null;
+      usageState.rows = [];
+      usageState.cache.clear();
+      usageState.tableReady = false;
+      usageEl('usageTable').parentElement.scrollLeft = 0;
+      renderUsageScope();
+      renderUsageTabState();
+      clearUsageDisplay();
+      setUsageStatus('正在查询用量…');
+      try {
+        const response = await usageFetch('overview', params, controller.signal);
+        const data = await response.json();
+        if (controller.signal.aborted) return;
+        params.set('as_of', data.as_of);
+        usageState.params = params;
+        usageState.overview = data;
+        usageState.loadedAt = Date.now();
+        renderUsageSummary(data);
+        renderUsageTrend();
+        setUsageStatus(`已更新：${usageDate(data.as_of)} · 上海时区 · 请求日志统计`);
+        usageEl('usageExport').disabled = false;
+        await loadUsageTable(0);
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        setUsageStatus(error.message, true);
+        usageEl('usageTrend').textContent = '查询失败，请重试';
+        usageEl('usageTableBody').innerHTML = '<tr><td colspan="10" class="usage-empty">查询失败，点击“查询 / 刷新”重试。</td></tr>';
+      }
+    }
+
+    function showUsageRecord(row, trigger) {
+      usageState.focusReturn = trigger;
+      const groups = [
+        ['请求与用量', [['日志 ID', row.id], ['时间（上海）', usageDate(row.created_at)], ['用户 / ID', `${row.user} / ${row.user_id}`], ['API Key ID', row.api_key_id], ['客户模型', row.model], ['上游模型', row.provider_model], ['接口', row.endpoint], ['结果 / 状态码', `${row.is_refund ? '退款记录' : '请求'} / ${row.status_code}`], ['输入 / 输出 Tokens', `${usageCount(row.input_tokens)} / ${usageCount(row.output_tokens)}`], ['缓存读 / 写 Tokens', `${usageCount(row.cache_read_tokens)} / ${usageCount(row.cache_creation_tokens)}`], ['图片 / 视频净数量', `${usageCount(row.image_count)} / ${usageCount(row.video_count)}`], ['用量单位 / 数量', `${row.usage_unit_type || '未记录'} / ${usageCount(row.usage_unit_count)}`], ['用户侧净消耗', formatMoney(row.cost_cents)], ['耗时', usageLatency(row.duration_ms)]]],
+        ['渠道与追踪', [['渠道 ID', row.channel_id], ['供应商 / 类型', `${row.provider_platform || '未记录'} / ${row.channel_type || '未记录'}`], ['路由尝试序号（0 为首次）', row.route_attempt], ['Fallback 来源渠道', row.fallback_from_channel_id], ['路由原因', row.route_reason], ['上游请求 ID', row.upstream_request_id], ['站点 ID', row.station_id]]],
+        ['计费快照', [['计费 SKU', row.billable_sku], ['价格版本', row.price_version], ['计费模式', row.pricing_mode], ['用户倍率', row.user_billing_multiplier], ['模型 / 输出倍率', `${row.model_multiplier ?? '—'} / ${row.output_multiplier ?? '—'}`], ['缓存读取倍率', row.cache_read_multiplier], ['图片 / 视频倍率', `${row.image_multiplier ?? '—'} / ${row.video_multiplier ?? '—'}`], ['基础输入价（美分 / 百万 Tokens）', row.base_price_input_per_million], ['基础输出价（美分 / 百万 Tokens）', row.base_price_output_per_million], ['有效缓存读取价（美分 / 百万 Tokens）', row.effective_cached_input_per_million], ['有效缓存写入价（美分 / 百万 Tokens）', row.effective_cache_creation_input_per_million], ['基础图片价（美分 / 张）', row.base_price_per_image_cents], ['视频价（美分 / 个）', row.price_per_video_cents]]],
+      ];
+      usageEl('usageRecordDetail').innerHTML = groups.map(([title, fields]) => `<h3>${escapeHtml(title)}</h3><dl class="usage-record-grid">${fields.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value === '' || value == null ? '未记录' : value)}</dd></div>`).join('')}</dl>`).join('');
+      openModal('usageRecordModal');
+      usageEl('usageRecordModal').querySelector('button').focus();
+    }
+    function closeUsageRecord() {
+      closeModal('usageRecordModal');
+      usageState.focusReturn?.focus();
+    }
+    usageEl('usageRecordModal').addEventListener('keydown', event => {
+      if (event.key === 'Escape') closeUsageRecord();
+      if (event.key === 'Tab') {
+        const buttons = [...usageEl('usageRecordModal').querySelectorAll('button')];
+        if (event.shiftKey && document.activeElement === buttons[0]) { event.preventDefault(); buttons.at(-1).focus(); }
+        if (!event.shiftKey && document.activeElement === buttons.at(-1)) { event.preventDefault(); buttons[0].focus(); }
+      }
+    });
+    usageEl('usageRecordModal').addEventListener('click', event => {
+      if (event.target === usageEl('usageRecordModal')) closeUsageRecord();
+    });
+
+    async function exportUsageCsv() {
+      if (!usageState.params) return;
+      const params = new URLSearchParams(usageState.params);
+      const button = usageEl('usageExport');
+      button.disabled = true;
+      try {
+        const response = await usageFetch('export.csv', params);
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = 'coincoin-admin-usage.csv';
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        toast('CSV 已开始下载', 'success');
+      } catch (error) { toast(error.message, 'error'); }
+      finally { button.disabled = !usageState.params; }
     }
 
     // ==================== Request Logs ====================
