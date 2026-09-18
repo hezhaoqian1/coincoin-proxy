@@ -217,7 +217,13 @@ async def groups(dimension: Literal["users", "models"] = "users", metric: Litera
 @router.get("/users/{user_id}/models")
 async def user_models(user_id: str, filters: UsageFilter = Depends(), db: AsyncSession = Depends(get_db)):
     key = public_model()
-    rows = (await db.execute(filtered_query(filters, key.label("key"), *aggregate_columns())
+    # Keep this legacy drill-down endpoint scoped to the requested user.  The
+    # groups endpoint already supports the same combination of filters, but
+    # callers of this explicit URL expect user_id to be authoritative.
+    scoped = select(key.label("key"), *aggregate_columns()).select_from(Log).where(
+        *filters.conditions, Log.user_id == user_id
+    )
+    rows = (await db.execute(scoped
                              .group_by(key).order_by(func.sum(charge_expr()).desc()))).mappings().all()
     return {**filters.metadata(), "user_id": user_id, "data": [
         {**metrics(row), "model": row.get("key") or "未记录模型"} for row in rows

@@ -168,3 +168,38 @@ test('a table completing during debounce cannot mark obsolete results ready', as
   await finishLoad(h, returning, 2, '24h', 200);
   assert.equal(h.element('usageStatCost').textContent, '200');
 });
+
+test('model drilldown opens its user distribution before request records', () => {
+  const h = createHarness();
+  const target = h.context.applyUsageDrilldown({ key: 'public-a' }, 'models');
+
+  assert.equal(target, 'users');
+  assert.equal(h.state().model, 'public-a');
+  assert.equal(h.state().user, null);
+  h.context.renderUsageTabState();
+  assert.match(h.element('usageTableHint').textContent, /模型「public-a」的用户消耗/);
+});
+
+test('cross drilldowns preserve both user and model in request filters', () => {
+  const h = createHarness();
+
+  h.context.applyUsageDrilldown({ key: 'public-a' }, 'models');
+  h.context.applyUsageDrilldown({ key: 'u1', display_name: 'Alice' }, 'users');
+  let params = h.context.usageQueryParams();
+  assert.equal(h.state().tab, 'records');
+  assert.equal(params.get('model_exact'), 'public-a');
+  assert.equal(params.get('user_id'), 'u1');
+
+  h.state().user = null;
+  h.state().model = '';
+  h.state().tab = 'users';
+  h.context.applyUsageDrilldown({ key: 'u2', display_name: 'Bob' }, 'users');
+  assert.equal(h.state().tab, 'models');
+  h.context.renderUsageTabState();
+  assert.match(h.element('usageTableHint').textContent, /用户「Bob」的模型消耗/);
+  h.context.applyUsageDrilldown({ key: 'public-b' }, 'models');
+  params = h.context.usageQueryParams();
+  assert.equal(h.state().tab, 'records');
+  assert.equal(params.get('user_id'), 'u2');
+  assert.equal(params.get('model_exact'), 'public-b');
+});
