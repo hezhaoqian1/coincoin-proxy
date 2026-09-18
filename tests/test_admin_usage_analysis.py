@@ -144,8 +144,19 @@ class AdminUsageAnalysisTests(unittest.IsolatedAsyncioTestCase):
         models = await self.get('users/u1/models', result='failed')
         self.assertEqual([v['model'] for v in models['data']], ['public-b'])
         self.assertEqual(models['data'][0]['cost_cents'], 20)
+        user_models = await self.get('users/u2/models')
+        self.assertEqual([v['model'] for v in user_models['data']], ['video'])
+        self.assertEqual(user_models['data'][0]['cost_cents'], 0)
         videos = await self.get('groups', dimension='models', user_id='u2')
         self.assertEqual((videos['total'], videos['data'][0]['cost_cents']), (1, 0))
+
+        model_users = await self.get('groups', dimension='users', model_exact='video')
+        self.assertEqual([v['key'] for v in model_users['data']], ['u2'])
+        self.assertEqual(model_users['data'][0]['records'], 2)
+
+        model_users = await self.get('groups', dimension='users', model_exact='public-a')
+        self.assertEqual([v['key'] for v in model_users['data']], ['u1'])
+        self.assertEqual(model_users['data'][0]['cost_cents'], 100)
 
     async def test_filters_and_export_match_records(self):
         for field, value in [('model', 'upstream-a'), ('model', 'sku-a'), ('model_exact', 'public-a'),
