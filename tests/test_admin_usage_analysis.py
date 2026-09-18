@@ -158,6 +158,17 @@ class AdminUsageAnalysisTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([v['key'] for v in model_users['data']], ['u1'])
         self.assertEqual(model_users['data'][0]['cost_cents'], 100)
 
+        pairs = await self.get('pairs', limit=10)
+        self.assertEqual(pairs['total'], 3)
+        self.assertEqual([(row['user_id'], row['model'], row['cost_cents']) for row in pairs['data']], [
+            ('u1', 'public-a', 100), ('u1', 'public-b', 20), ('u2', 'video', 0),
+        ])
+        self.assertEqual(pairs['data'][0]['display_name'], 'alice')
+        pairs_page = await self.get('pairs', limit=2, include_total='false')
+        self.assertIsNone(pairs_page['total'])
+        self.assertTrue(pairs_page['has_more'])
+        self.assertEqual(len(pairs_page['data']), 2)
+
     async def test_filters_and_export_match_records(self):
         for field, value in [('model', 'upstream-a'), ('model', 'sku-a'), ('model_exact', 'public-a'),
                              ('search', 'alice@example'), ('api_key_id', 'k2'), ('channel_id', 'channel-a'),
@@ -230,7 +241,7 @@ class AdminUsageAnalysisTests(unittest.IsolatedAsyncioTestCase):
 
         event.listen(self.engine, 'before_cursor_execute', capture)
         try:
-            for path in ['groups', 'records']:
+            for path in ['groups', 'pairs', 'records']:
                 queries.clear()
                 data = await self.get(path, include_total='false')
                 self.assertIsNone(data['total'])
@@ -245,7 +256,7 @@ class AdminUsageAnalysisTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(data['trend']), 12)
 
     async def test_all_routes_require_admin_and_validate_filters(self):
-        for path in ['overview', 'groups', 'records', 'users/u1/models', 'export.csv']:
+        for path in ['overview', 'groups', 'pairs', 'records', 'users/u1/models', 'export.csv']:
             response = await self.client.get('/admin/usage/' + path, headers={'x-admin-token': 'wrong'})
             self.assertEqual(response.status_code, 401, path)
         for params, status in [({'period': 'invalid'}, 400), ({'period': 'custom'}, 400),

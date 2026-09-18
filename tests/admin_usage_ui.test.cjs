@@ -203,3 +203,28 @@ test('cross drilldowns preserve both user and model in request filters', () => {
   assert.equal(params.get('user_id'), 'u2');
   assert.equal(params.get('model_exact'), 'public-b');
 });
+
+test('user model pairs open the matching request records', () => {
+  const h = createHarness();
+  const target = h.context.applyUsageDrilldown({ user_id: 'u1', display_name: 'Alice', model: 'public-a' }, 'pairs');
+
+  assert.equal(target, 'records');
+  assert.equal(h.state().user.id, 'u1');
+  assert.equal(h.state().model, 'public-a');
+  const params = h.context.usageQueryParams();
+  assert.equal(params.get('user_id'), 'u1');
+  assert.equal(params.get('model_exact'), 'public-a');
+});
+
+test('user model tab loads the pair endpoint without a dimension parameter', async () => {
+  const h = createHarness();
+  await finishLoad(h, h.context.loadFullUsage(), 0, 'today');
+
+  const loading = h.context.setUsageTab('pairs');
+  assert.equal(h.requests[2].url.pathname, '/admin/usage/pairs');
+  assert.equal(h.requests[2].url.searchParams.has('dimension'), false);
+  assert.equal(h.requests[2].url.searchParams.get('include_total'), 'false');
+  h.requests[2].respond({ data: [], total: null, has_more: false });
+  await loading;
+  assert.match(h.element('usageTableHint').textContent, /每一行就是一组用户 × 模型/);
+});
