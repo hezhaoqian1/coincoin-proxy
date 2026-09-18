@@ -51,18 +51,6 @@ CLAUDE_HAIKU_ALIASES = {
 }
 OFFICIAL_DEFAULT_TEXT_PRICES = {
     "${COINCOIN_FIXED_MODEL}": FIXED_TEXT_PRICE,
-    "gpt-5.4": (250, 1500),
-    "gpt-5": (125, 1000),
-    "gpt-5.1": (125, 1000),
-    "gpt-5.1-codex": (125, 1000),
-    "gpt-5.1-codex-mini": CHEAP_TEXT_PRICE,
-    "gpt-5.1-codex-max": FIXED_TEXT_PRICE,
-    "gpt-5.2": (175, 1400),
-    "gpt-5.2-codex": (175, 1400),
-    "gpt-5.3-codex": (175, 1400),
-    "gpt-5.3-codex-spark": (175, 1400),
-    "codex-auto-review": FIXED_TEXT_PRICE,
-    "gpt-5.4-mini": CHEAP_TEXT_PRICE,
     "gpt-5.5": FIXED_TEXT_PRICE,
     "gpt-5.6": FIXED_TEXT_PRICE,
     "gpt-5.6-sol": FIXED_TEXT_PRICE,
@@ -215,18 +203,19 @@ class GatewayCatalogSyncTests(unittest.TestCase):
         self.assertIn(default_video_model, public_models)
         self.assertIn("videos/generations", public_models[default_video_model].get("capabilities") or [])
 
-    def test_legacy_gpt_5_4_stays_public_when_fixed_model_changes(self) -> None:
+    def test_retired_gpt_aliases_are_absent(self) -> None:
         public_models = {
             item["id"]: item
             for item in (self.catalog.get("models") or [])
             if isinstance(item, dict) and item.get("id")
         }
 
-        model = public_models["gpt-5.4"]
-        self.assertEqual(model.get("provider_model"), "gpt-5.4")
-        self.assertEqual(model.get("routing_mode"), "legacy_auto")
-        self.assertIn("chat/completions", model.get("capabilities") or [])
-        self.assertIn("responses", model.get("capabilities") or [])
+        retired = {
+            "gpt-5", "gpt-5.1", "gpt-5.1-codex", "gpt-5.1-codex-mini", "gpt-5.1-codex-max",
+            "gpt-5.2", "gpt-5.2-codex", "gpt-5.3-codex", "gpt-5.3-codex-spark",
+            "codex-auto-review", "gpt-5.4", "gpt-5.4-mini", "gpt-5-codex", "gpt-5-codex-mini",
+        }
+        self.assertTrue(retired.isdisjoint(public_models))
 
     def test_gpt_5_6_family_stays_public_for_provider_routes(self) -> None:
         public_models = {
@@ -316,37 +305,15 @@ class GatewayCatalogSyncTests(unittest.TestCase):
                 self.assertEqual(model.get("price_input_per_million"), CLAUDE_HAIKU_INPUT_PRICE_PLACEHOLDER)
                 self.assertEqual(model.get("price_output_per_million"), CLAUDE_HAIKU_OUTPUT_PRICE_PLACEHOLDER)
 
-    def test_legacy_codex_models_stay_off_gateway_lane(self) -> None:
+    def test_legacy_codex_models_are_removed(self) -> None:
         public_models = {
             item["id"]: item
             for item in (self.catalog.get("models") or [])
             if isinstance(item, dict) and item.get("id")
         }
 
-        for model_id in ("gpt-5.2-codex", "gpt-5.3-codex", "gpt-5.3-codex-spark", "codex-auto-review"):
-            with self.subTest(model=model_id):
-                model = public_models[model_id]
-                metadata = model.get("metadata") or {}
-                self.assertEqual(model.get("routing_mode"), "legacy_auto")
-                self.assertEqual(model.get("delivery_lane"), "legacy")
-                self.assertEqual(metadata.get("execution_profile"), "legacy_coding")
-                self.assertEqual(metadata.get("execution_pool"), "cpa_coding_pool")
-
-        codex_auto_review = public_models["codex-auto-review"]
-        self.assertEqual(codex_auto_review.get("provider_model"), "codex-auto-review")
-        self.assertEqual(codex_auto_review.get("created"), 1776902400)
-        metadata = codex_auto_review.get("metadata") or {}
-        self.assertEqual(metadata.get("supported_parameters"), ["tools"])
-        self.assertEqual(metadata.get("thinking"), {"levels": ["low", "medium", "high", "xhigh"]})
-
-        codex_spark = public_models["gpt-5.3-codex-spark"]
-        self.assertEqual(codex_spark.get("provider_model"), "gpt-5.3-codex-spark")
-        self.assertEqual(codex_spark.get("created"), 1770912000)
-        metadata = codex_spark.get("metadata") or {}
-        self.assertEqual(metadata.get("display_name"), "GPT 5.3 Codex Spark")
-        self.assertEqual(metadata.get("context_length"), 128000)
-        self.assertEqual(metadata.get("supported_parameters"), ["tools"])
-        self.assertEqual(metadata.get("thinking"), {"levels": ["low", "medium", "high", "xhigh"]})
+        retired = {"gpt-5.2-codex", "gpt-5.3-codex", "gpt-5.3-codex-spark", "codex-auto-review"}
+        self.assertTrue(retired.isdisjoint(public_models))
 
     def test_text_models_match_native_cpa_gemini_shape(self) -> None:
         for model in self.cpa_gemini_models:

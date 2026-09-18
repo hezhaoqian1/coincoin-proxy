@@ -45,13 +45,13 @@ TEXT_MODEL=$(curl -s "$BASE/v1/models" \
 import json, sys
 data = json.load(sys.stdin).get("data", [])
 ids = [item.get("id") for item in data if isinstance(item, dict)]
-for preferred in ("gpt-5.4", "gpt-5.2-codex", "gpt-5.2"):
+for preferred in ("gpt-5.6-sol", "gpt-5.6", "gpt-5.5"):
     if preferred in ids:
         print(preferred)
         raise SystemExit(0)
-print(ids[0] if ids else "gpt-5.4")
+print(ids[0] if ids else "gpt-5.6-sol")
 ' 2>/dev/null)
-TEXT_MODEL="${TEXT_MODEL:-gpt-5.4}"
+TEXT_MODEL="${TEXT_MODEL:-gpt-5.6-sol}"
 echo "    text_model=$TEXT_MODEL"
 
 curl -s -o /dev/null -X PATCH "$BASE/admin/users/$USER_ID" \

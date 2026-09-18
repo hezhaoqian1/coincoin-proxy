@@ -16,7 +16,7 @@ const HERO_LANES = [
     {
         client: 'Codex / SDK',
         endpoint: '/v1',
-        model: 'gpt-5.4',
+        model: 'gpt-5.6-sol',
         tone: 'indigo',
     },
     {

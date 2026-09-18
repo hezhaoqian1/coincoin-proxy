@@ -68,7 +68,7 @@ class CoinCoinGeminiCpaLiveTests(unittest.TestCase):
             "model_catalog_json": settings.model_catalog_json,
         }
 
-        settings.fixed_model = "gpt-5.2-codex"
+        settings.fixed_model = "gpt-5.6-sol"
         settings.router_enabled = True
         settings.upstream_base_url = "https://legacy.example/v1"
         settings.upstream_api_key = "legacy-key"
@@ -150,9 +150,9 @@ class CoinCoinGeminiCpaLiveTests(unittest.TestCase):
         model_ids = {item["id"] for item in payload["data"]}
 
         self.assertTrue(
-            {"gpt-5", "gpt-5.1", "gpt-5.4-mini", "gpt-5-codex-mini"}.issubset(model_ids)
+            {"gpt-5.5", "gpt-5.6-sol", "gpt-6-astra"}.issubset(model_ids)
         )
-        self.assertIn("gpt-5.2-codex", model_ids)
+        self.assertNotIn("gpt-5.2-codex", model_ids)
         self.assertIn("gemini-fast", model_ids)
         self.assertIn("vertex-gemini-3.1-pro-preview", model_ids)
         self.assertIn("gemini-image", model_ids)

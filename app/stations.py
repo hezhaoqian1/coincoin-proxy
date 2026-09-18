@@ -314,6 +314,7 @@ async def _list_active_alias_models(station_id: str, db: AsyncSession) -> list[d
         _serialize_station_model_alias(alias, price)
         for alias, price in rows
         if _capability_group(alias.capability) != "video"
+        and model_registry.get_public_model(alias.target_public_model_id) is not None
     ]
 
 

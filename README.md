@@ -79,7 +79,7 @@ End users only talk to CoinCoin's public API and public model names. Internal ga
 | Capability | What it gives you |
 | --- | --- |
 | OpenAI-compatible API | Users can keep their OpenAI SDK, CLI tool, or coding agent configuration. |
-| Public model catalog | Expose stable aliases like `gpt-5.2-codex`, `gemini-fast`, and `gemini-image` without leaking internal provider names. |
+| Public model catalog | Expose stable aliases like `gpt-5.6-sol`, `gemini-fast`, and `gemini-image` without leaking internal provider names. |
 | Prepaid billing | Track input tokens, output tokens, images, jobs, balance, and per-request cost in one system. |
 | Provider routing | Add OpenAI-compatible upstream channels, route public models to them, and fail over when a channel cools down. |
 | Image workflows | Serve synchronous generation/editing plus async image-generation jobs. |
@@ -142,7 +142,7 @@ Set the minimum local variables:
 COINCOIN_ADMIN_TOKEN=change-me
 COINCOIN_UPSTREAM_BASE_URL=https://your-azure-openai.example.com/openai/v1
 COINCOIN_UPSTREAM_API_KEY=your-azure-api-key
-COINCOIN_FIXED_MODEL=gpt-5.2-codex
+COINCOIN_FIXED_MODEL=gpt-5.6-sol
 
 COINCOIN_DB_HOST=localhost
 COINCOIN_DB_PORT=3306

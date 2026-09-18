@@ -7,7 +7,7 @@ import { usePublicModels } from '../hooks/usePublicModels'
 import './Docs.css'
 
 const SITE = typeof window !== 'undefined' ? window.location.origin : ''
-const CODEX_MODEL_ID = 'gpt-5.4'
+const CODEX_MODEL_ID = 'gpt-5.6-sol'
 const CLAUDE_DEFAULT_MODEL_ID = 'claude-sonnet-4-6'
 const CLAUDE_OPUS_OPTIONAL_MODEL_ID = 'claude-opus-5'
 const TABS = [
@@ -315,13 +315,13 @@ function AudienceGuide() {
             title: 'OpenCode',
             tag: '已实测',
             desc: '本地 coding agent 工作流，已验证基础可用。',
-            bullets: ['先看 OpenCode quickstart', '默认先用 clawfather/gpt-5.4', '需要 Claude 风格模型时再试 claude-sonnet-4-6']
+            bullets: ['先看 OpenCode quickstart', '默认先用 clawfather/gpt-5.6-sol', '需要 Claude 风格模型时再试 claude-sonnet-4-6']
         },
         {
             title: 'Continue / Aider',
             tag: '常见客户端',
             desc: '只要支持 OpenAI-compatible 配置，基本都能按这套接。',
-            bullets: ['填 Base URL + API Key + model', '默认先用 gpt-5.4', '接不上时先排查 key 类型']
+            bullets: ['填 Base URL + API Key + model', '默认先用 gpt-5.6-sol', '接不上时先排查 key 类型']
         },
         {
             title: 'Claude Code',
@@ -507,7 +507,7 @@ claude`}</pre>
                         <td>Codex CLI</td>
                         <td><span className="badge badge-success">一等支持</span></td>
                         <td><code>/v1 + responses</code></td>
-                        <td>推荐的命令行接法，默认建议直接固定到 <code>gpt-5.4</code>。</td>
+                        <td>推荐的命令行接法，默认建议直接固定到 <code>gpt-5.6-sol</code>。</td>
                     </tr>
                     <tr>
                         <td>Grok Build</td>
@@ -519,7 +519,7 @@ claude`}</pre>
                         <td>OpenCode</td>
                         <td><span className="badge badge-success">已实测支持</span></td>
                         <td><code>/v1 + 自定义 provider</code></td>
-                        <td>已实测通过 <code>opencode run</code>、模型发现和基础文件读取。默认推荐 <code>clawfather/gpt-5.4</code>。</td>
+                        <td>已实测通过 <code>opencode run</code>、模型发现和基础文件读取。默认推荐 <code>clawfather/gpt-5.6-sol</code>。</td>
                     </tr>
                     <tr>
                         <td>OpenClaw</td>
@@ -544,7 +544,7 @@ claude`}</pre>
 
             <h3>切换模型时你要改什么？</h3>
             <ul className="doc-list">
-                <li>只需要把请求或客户端配置中的 <code>model</code> 改成目标模型，例如 <code>gpt-5.4</code>、<code>grok-4.5</code>、<code>grok-4.6</code>、<code>claude-sonnet-4-6</code> 或 <code>claude-opus-5</code>。</li>
+                <li>只需要把请求或客户端配置中的 <code>model</code> 改成目标模型，例如 <code>gpt-5.6-sol</code>、<code>grok-4.5</code>、<code>grok-4.6</code>、<code>claude-sonnet-4-6</code> 或 <code>claude-opus-5</code>。</li>
                 <li>Base URL 和 API Key 不需要改，仍然走同一个 ClawFather 入口。</li>
                 <li>文本请求推荐走 <code>/v1/chat/completions</code> 或 <code>/v1/responses</code>，图片请求走 <code>/v1/images/generations</code> 或 <code>/v1/images/edits</code>，并使用 <code>{imageModelId}</code> 这类图片模型。</li>
                 <li>图片请求统一走 ClawFather 公开入口，不需要终端用户配置额外服务。</li>
