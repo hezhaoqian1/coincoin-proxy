@@ -17,54 +17,23 @@ import app.openai_compat as openai_module
 
 
 LEGACY_PUBLIC_TEXT_MODELS = [
-    "gpt-5.4",
-    "gpt-5",
     "gpt-5.5",
-    "gpt-5.1",
-    "gpt-5.1-codex",
-    "gpt-5.1-codex-mini",
-    "gpt-5.1-codex-max",
-    "gpt-5.2",
-    "gpt-5.2-codex",
-    "gpt-5.3-codex",
-    "gpt-5.3-codex-spark",
-    "codex-auto-review",
-    "gpt-5.4-mini",
     "gpt-5.6",
     "gpt-5.6-sol",
     "gpt-5.6-terra",
     "gpt-5.6-luna",
-    "gpt-5-codex",
-    "gpt-5-codex-mini",
 ]
 LEGACY_PUBLIC_TEXT_PRICES = {
-    "gpt-5.4": (250, 1500),
-    "gpt-5": (125, 1000),
     "gpt-5.5": (500, 3000),
-    "gpt-5.1": (125, 1000),
-    "gpt-5.1-codex": (125, 1000),
-    "gpt-5.1-codex-mini": (75, 450),
-    "gpt-5.1-codex-max": (500, 3000),
-    "gpt-5.2": (175, 1400),
-    "gpt-5.2-codex": (175, 1400),
-    "gpt-5.3-codex": (175, 1400),
-    "gpt-5.3-codex-spark": (175, 1400),
-    "codex-auto-review": (500, 3000),
-    "gpt-5.4-mini": (75, 450),
     "gpt-5.6": (500, 3000),
     "gpt-5.6-sol": (500, 3000),
-    "gpt-5.6-terra": (250, 1500),
-    "gpt-5.6-luna": (100, 600),
-    "gpt-5-codex": (175, 1400),
-    "gpt-5-codex-mini": (75, 450),
+    "gpt-5.6-terra": (200, 1200),
+    "gpt-5.6-luna": (20, 120),
 }
 
 
 def _legacy_text_model(model_id: str) -> dict:
-    provider_model_aliases = {
-        "gpt-5.2-codex": "gpt-5.3-codex",
-        "gpt-5.6": "gpt-5.6-sol",
-    }
+    provider_model_aliases = {"gpt-5.6": "gpt-5.6-sol"}
     provider_model = provider_model_aliases.get(model_id, model_id)
     model = {
         "id": model_id,
@@ -81,46 +50,6 @@ def _legacy_text_model(model_id: str) -> dict:
         model["price_output_per_million"] = prices[1]
     if model_id in {"gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}:
         model["pricing"] = {"cache_creation_multiplier": 1.25}
-    if model_id == "gpt-5.4":
-        model["metadata"] = {
-            "execution_profile": "legacy_general",
-            "execution_pool": "cpa_general_pool",
-            "legacy_default_slot": "cheap",
-            "honor_tool_routing": True,
-        }
-    elif model_id in {"gpt-5.2-codex", "gpt-5.3-codex", "gpt-5.3-codex-spark", "codex-auto-review"}:
-        model["metadata"] = {
-            "execution_profile": "legacy_coding",
-            "execution_pool": "cpa_coding_pool",
-            "legacy_default_slot": "premium",
-            "honor_tool_routing": False,
-        }
-        if model_id == "gpt-5.3-codex-spark":
-            model["created"] = 1770912000
-            model["metadata"].update(
-                {
-                    "display_name": "GPT 5.3 Codex Spark",
-                    "version": "gpt-5.3",
-                    "description": "Ultra-fast coding model.",
-                    "context_length": 128000,
-                    "max_completion_tokens": 128000,
-                    "supported_parameters": ["tools"],
-                    "thinking": {"levels": ["low", "medium", "high", "xhigh"]},
-                }
-            )
-        if model_id == "codex-auto-review":
-            model["created"] = 1776902400
-            model["metadata"].update(
-                {
-                    "display_name": "Codex Auto Review",
-                    "version": "Codex Auto Review",
-                    "description": "Automatic approval review model for Codex.",
-                    "context_length": 272000,
-                    "max_completion_tokens": 128000,
-                    "supported_parameters": ["tools"],
-                    "thinking": {"levels": ["low", "medium", "high", "xhigh"]},
-                }
-            )
     return model
 
 
@@ -267,7 +196,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             "fallback_alert_dedup_seconds": settings.fallback_alert_dedup_seconds,
         }
 
-        settings.fixed_model = "gpt-5.4"
+        settings.fixed_model = "gpt-5.5"
         settings.embedding_model = "text-embedding-3-small"
         settings.embedding_upstream_url = ""
         settings.embedding_api_key = ""
@@ -286,7 +215,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         settings.cheap_api_key = "legacy-key"
         settings.cheap_price_input = 75
         settings.cheap_price_output = 450
-        settings.fallback_model = "gpt-5.4"
+        settings.fallback_model = "gpt-5.5"
         settings.fallback_upstream_url = "https://fallback.example/v1"
         settings.fallback_api_key = "fallback-key"
         settings.fallback_price_input = 500
@@ -308,7 +237,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         settings.fallback_alert_dedup_seconds = 900
         settings.model_catalog_json = json.dumps(
             {
-                "default_text_model": "gpt-5.4",
+                "default_text_model": "gpt-5.5",
                 "default_embedding_model": "text-embedding-3-small",
                 "default_image_model": "gpt-image-2",
                 "models": [
@@ -1260,7 +1189,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
-        self.assertEqual(payload["model"], "gpt-5.4")
+        self.assertEqual(payload["model"], "gpt-5.5")
         self.assertEqual(payload["choices"][0]["message"]["content"], "OK")
         self.assertEqual(len(upstream_client.calls), 1)
         self.assertEqual(upstream_client.calls[0]["url"], "https://legacy.example/v1/responses")
@@ -1317,7 +1246,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         settings.fallback_alert_dedup_seconds = 900
         alert = FallbackExhaustedAlert(
             endpoint="responses",
-            model="gpt-5.3-codex",
+            model="gpt-5.5",
             status_code=503,
             reason="upstream_unreachable",
             route_reason="system_fallback:500",
@@ -1396,7 +1325,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                 response = await client.post(
                     "/v1/chat/completions",
                     headers={"Authorization": "Bearer sk_cc_test"},
-                    json={"model": "gpt-5.4", "messages": [{"role": "user", "content": "Reply with only: OK"}]},
+                    json={"model": "gpt-5.5", "messages": [{"role": "user", "content": "Reply with only: OK"}]},
                 )
 
         self.assertEqual(response.status_code, 200, response.text)
@@ -1439,7 +1368,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
-        self.assertEqual(payload["model"], "gpt-5.4")
+        self.assertEqual(payload["model"], "gpt-5.5")
         self.assertEqual(payload["output"][0]["content"][0]["text"], "OK")
         self.assertEqual(len(upstream_client.calls), 1)
         self.assertEqual(upstream_client.calls[0]["url"], "https://legacy.example/v1/responses")
@@ -1474,12 +1403,12 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                 response = await client.post(
                     "/v1/responses",
                     headers={"Authorization": "Bearer sk_cc_test"},
-                    json={"model": "gpt-5.2-codex", "input": "Reply with only: OK"},
+                    json={"model": "gpt-5.5", "input": "Reply with only: OK"},
         )
 
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.json()["model"], "gpt-5.2-codex")
-        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-5.3-codex")
+        self.assertEqual(response.json()["model"], "gpt-5.5")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-5.5")
         self.assertEqual(upstream_client.calls[0]["url"], "https://legacy.example/v1/responses")
 
     async def test_responses_explicit_gpt_5_4_mini_alias_keeps_public_model_name(self) -> None:
@@ -1510,12 +1439,12 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                 response = await client.post(
                     "/v1/responses",
                     headers={"Authorization": "Bearer sk_cc_test"},
-                    json={"model": "gpt-5.4-mini", "input": "Reply with only: OK"},
+                    json={"model": "gpt-5.5", "input": "Reply with only: OK"},
         )
 
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.json()["model"], "gpt-5.4-mini")
-        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-5.4-mini")
+        self.assertEqual(response.json()["model"], "gpt-5.5")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-5.5")
         self.assertEqual(upstream_client.calls[0]["url"], "https://legacy.example/v1/responses")
 
     async def test_responses_explicit_gpt_5_3_codex_spark_alias_keeps_public_model_name(self) -> None:
@@ -1546,15 +1475,19 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                 response = await client.post(
                     "/v1/responses",
                     headers={"Authorization": "Bearer sk_cc_test"},
-                    json={"model": "gpt-5.3-codex-spark", "input": "Reply with only: OK"},
+                    json={"model": "gpt-5.5", "input": "Reply with only: OK"},
                 )
 
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.json()["model"], "gpt-5.3-codex-spark")
-        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-5.3-codex-spark")
+        self.assertEqual(response.json()["model"], "gpt-5.5")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-5.5")
         self.assertEqual(upstream_client.calls[0]["url"], "https://legacy.example/v1/responses")
 
-    async def test_responses_explicit_legacy_alias_does_not_fallback_to_a_different_model(self) -> None:
+    async def test_responses_explicit_model_does_not_fallback_to_a_different_model(self) -> None:
+        settings.router_enabled = False
+        settings.fallback_upstream_url = settings.upstream_base_url
+        registry._initialized = False
+        registry.init_from_settings()
         upstream_client = _RecordingClient(
             [
                 _FakeUpstreamResponse(
@@ -1574,12 +1507,12 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                 response = await client.post(
                     "/v1/responses",
                     headers={"Authorization": "Bearer sk_cc_test"},
-                    json={"model": "gpt-5.2-codex", "input": "Reply with only: OK"},
+                    json={"model": "gpt-5.5", "input": "Reply with only: OK"},
                 )
 
         self.assertEqual(response.status_code, 500, response.text)
         self.assertEqual(len(upstream_client.calls), 1)
-        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-5.3-codex")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-5.5")
         self.assertEqual(upstream_client.calls[0]["url"], "https://legacy.example/v1/responses")
 
     async def test_responses_provider_channel_falls_back_to_next_channel_on_retryable_status(self) -> None:
@@ -1607,13 +1540,13 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             [
                 ModelChannelRouteSnapshot(
                     route_id="mcr_test_primary",
-                    public_model_id="gpt-5.3-codex",
+                    public_model_id="gpt-5.5",
                     endpoint="responses",
                     channel_id="ch_test_primary",
                 ),
                 ModelChannelRouteSnapshot(
                     route_id="mcr_test_backup",
-                    public_model_id="gpt-5.3-codex",
+                    public_model_id="gpt-5.5",
                     endpoint="responses",
                     channel_id="ch_test_backup",
                 ),
@@ -1650,7 +1583,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                 response = await client.post(
                     "/v1/responses",
                     headers={"Authorization": "Bearer sk_cc_test"},
-                    json={"model": "gpt-5.3-codex", "input": "Reply with only: OK"},
+                    json={"model": "gpt-5.5", "input": "Reply with only: OK"},
                 )
 
         self.assertEqual(response.status_code, 200, response.text)
@@ -1690,13 +1623,13 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             [
                 ModelChannelRouteSnapshot(
                     route_id="mcr_pool_primary",
-                    public_model_id="gpt-5.3-codex",
+                    public_model_id="gpt-5.5",
                     endpoint="responses",
                     channel_id="ch_pool_primary",
                 ),
                 ModelChannelRouteSnapshot(
                     route_id="mcr_pool_backup",
-                    public_model_id="gpt-5.3-codex",
+                    public_model_id="gpt-5.5",
                     endpoint="responses",
                     channel_id="ch_pool_backup",
                 ),
@@ -1730,7 +1663,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                 response = await client.post(
                     "/v1/responses",
                     headers={"Authorization": "Bearer sk_cc_test"},
-                    json={"model": "gpt-5.3-codex", "input": "Reply with only: OK"},
+                    json={"model": "gpt-5.5", "input": "Reply with only: OK"},
                 )
 
         self.assertEqual(response.status_code, 503, response.text)
@@ -1763,13 +1696,13 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             [
                 ModelChannelRouteSnapshot(
                     route_id="mcr_stream_pool_primary",
-                    public_model_id="gpt-5.3-codex",
+                    public_model_id="gpt-5.5",
                     endpoint="responses",
                     channel_id="ch_stream_pool_primary",
                 ),
                 ModelChannelRouteSnapshot(
                     route_id="mcr_stream_pool_backup",
-                    public_model_id="gpt-5.3-codex",
+                    public_model_id="gpt-5.5",
                     endpoint="responses",
                     channel_id="ch_stream_pool_backup",
                 ),
@@ -1792,7 +1725,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                 response = await client.post(
                     "/v1/responses",
                     headers={"Authorization": "Bearer sk_cc_test"},
-                    json={"model": "gpt-5.3-codex", "input": "Reply with only: OK", "stream": True},
+                    json={"model": "gpt-5.5", "input": "Reply with only: OK", "stream": True},
                 )
 
         self.assertEqual(response.status_code, 503, response.text)
@@ -1836,19 +1769,19 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             [
                 ModelChannelRouteSnapshot(
                     route_id="mcr_responses_primary",
-                    public_model_id="gpt-5.4",
+                    public_model_id="gpt-5.5",
                     endpoint="responses",
                     channel_id="ch_responses_primary",
                 ),
                 ModelChannelRouteSnapshot(
                     route_id="mcr_responses_second",
-                    public_model_id="gpt-5.4",
+                    public_model_id="gpt-5.5",
                     endpoint="responses",
                     channel_id="ch_responses_second",
                 ),
                 ModelChannelRouteSnapshot(
                     route_id="mcr_responses_third",
-                    public_model_id="gpt-5.4",
+                    public_model_id="gpt-5.5",
                     endpoint="responses",
                     channel_id="ch_responses_third",
                 ),
@@ -1895,7 +1828,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                 response = await client.post(
                     "/v1/responses",
                     headers={"Authorization": "Bearer sk_cc_test"},
-                    json={"model": "gpt-5.4", "input": "Reply with only: OK"},
+                    json={"model": "gpt-5.5", "input": "Reply with only: OK"},
                 )
 
         self.assertEqual(response.status_code, 200, response.text)
@@ -1946,19 +1879,19 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             [
                 ModelChannelRouteSnapshot(
                     route_id="mcr_responses_primary",
-                    public_model_id="gpt-5.4",
+                    public_model_id="gpt-5.5",
                     endpoint="responses",
                     channel_id="ch_responses_primary",
                 ),
                 ModelChannelRouteSnapshot(
                     route_id="mcr_responses_second",
-                    public_model_id="gpt-5.4",
+                    public_model_id="gpt-5.5",
                     endpoint="responses",
                     channel_id="ch_responses_second",
                 ),
                 ModelChannelRouteSnapshot(
                     route_id="mcr_responses_third",
-                    public_model_id="gpt-5.4",
+                    public_model_id="gpt-5.5",
                     endpoint="responses",
                     channel_id="ch_responses_third",
                 ),
@@ -2008,7 +1941,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                 response = await client.post(
                     "/v1/responses",
                     headers={"Authorization": "Bearer sk_cc_test"},
-                    json={"model": "gpt-5.4", "input": "Reply with only: OK"},
+                    json={"model": "gpt-5.5", "input": "Reply with only: OK"},
                 )
 
         self.assertEqual(response.status_code, 200, response.text)
@@ -2041,7 +1974,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             [
                 ModelChannelRouteSnapshot(
                     route_id="mcr_test_primary",
-                    public_model_id="gpt-5.3-codex",
+                    public_model_id="gpt-5.5",
                     endpoint="responses",
                     channel_id="ch_test_primary",
                 ),
@@ -2072,7 +2005,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                 response = await client.post(
                     "/v1/responses",
                     headers={"Authorization": "Bearer sk_cc_test"},
-                    json={"model": "gpt-5.3-codex", "input": "Reply with only: OK"},
+                    json={"model": "gpt-5.5", "input": "Reply with only: OK"},
                 )
 
         self.assertEqual(response.status_code, 503, response.text)
@@ -2081,7 +2014,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         alert = notify.call_args.args[0]
         self.assertIsInstance(alert, FallbackExhaustedAlert)
         self.assertEqual(alert.endpoint, "responses")
-        self.assertEqual(alert.model, "gpt-5.3-codex")
+        self.assertEqual(alert.model, "gpt-5.5")
         self.assertEqual(alert.status_code, 503)
         self.assertEqual(alert.reason, "system_failed")
         self.assertEqual(alert.route_reason, "system_fallback:500")
@@ -2107,7 +2040,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             [
                 ModelChannelRouteSnapshot(
                     route_id="mcr_test_primary",
-                    public_model_id="gpt-5.3-codex",
+                    public_model_id="gpt-5.5",
                     endpoint="responses",
                     channel_id="ch_test_primary",
                 ),
@@ -2144,7 +2077,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                 response = await client.post(
                     "/v1/responses",
                     headers={"Authorization": "Bearer sk_cc_test"},
-                    json={"model": "gpt-5.3-codex", "input": "Reply with only: OK"},
+                    json={"model": "gpt-5.5", "input": "Reply with only: OK"},
                 )
 
         self.assertEqual(response.status_code, 200, response.text)
@@ -2152,7 +2085,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(upstream_client.calls[0]["url"], "https://primary-channel.example/v1/responses")
         self.assertEqual(upstream_client.calls[1]["url"], "https://legacy.example/v1/responses")
         self.assertEqual(upstream_client.calls[1]["headers"]["api-key"], "legacy-key")
-        self.assertEqual(upstream_client.calls[1]["json"]["model"], "gpt-5.3-codex")
+        self.assertEqual(upstream_client.calls[1]["json"]["model"], "gpt-5.5")
         add_usage.assert_awaited_once()
         usage_kwargs = add_usage.await_args.kwargs
         self.assertEqual(usage_kwargs["route_reason"], "system_fallback:500")
@@ -2163,6 +2096,10 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(usage_kwargs["route_attempt"], 1)
 
     async def test_responses_upstream_error_does_not_leak_provider_url_or_key(self) -> None:
+        settings.router_enabled = False
+        settings.fallback_upstream_url = settings.upstream_base_url
+        registry._initialized = False
+        registry.init_from_settings()
         upstream_client = _RecordingClient(
             [
                 _FakeUpstreamResponse(
@@ -2194,7 +2131,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                 response = await client.post(
                     "/v1/responses",
                     headers={"Authorization": "Bearer sk_cc_test"},
-                    json={"model": "gpt-5.2-codex", "input": "hello"},
+                    json={"model": "gpt-5.5", "input": "hello"},
                 )
 
         self.assertEqual(response.status_code, 403, response.text)
@@ -2211,6 +2148,10 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("x-request-id", response.headers)
 
     async def test_responses_upstream_balance_error_is_reported_as_service_unavailable(self) -> None:
+        settings.router_enabled = False
+        settings.fallback_upstream_url = settings.upstream_base_url
+        registry._initialized = False
+        registry.init_from_settings()
         upstream_client = _RecordingClient(
             [
                 _FakeUpstreamResponse(
@@ -2237,7 +2178,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                 response = await client.post(
                     "/v1/responses",
                     headers={"Authorization": "Bearer sk_cc_test"},
-                    json={"model": "gpt-5.2-codex", "input": "hello"},
+                    json={"model": "gpt-5.5", "input": "hello"},
                 )
 
         self.assertEqual(response.status_code, 503, response.text)
@@ -2250,6 +2191,10 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("x-request-id", response.headers)
 
     async def test_responses_upstream_deleted_group_is_reported_as_service_unavailable(self) -> None:
+        settings.router_enabled = False
+        settings.fallback_upstream_url = settings.upstream_base_url
+        registry._initialized = False
+        registry.init_from_settings()
         upstream_client = _RecordingClient(
             [
                 _FakeUpstreamResponse(
@@ -2270,7 +2215,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                 response = await client.post(
                     "/v1/responses",
                     headers={"Authorization": "Bearer sk_cc_test"},
-                    json={"model": "gpt-5.2-codex", "input": "hello"},
+                    json={"model": "gpt-5.5", "input": "hello"},
                 )
 
         self.assertEqual(response.status_code, 503, response.text)
@@ -2317,7 +2262,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                 response = await client.post(
                     "/openai/v1/responses",
                     headers={"Authorization": "Bearer sk_cc_test"},
-                    json={"model": "gpt-5.4", "input": "hello"},
+                    json={"model": "gpt-5.5", "input": "hello"},
                 )
 
         self.assertEqual(response.status_code, 503, response.text)
@@ -2356,13 +2301,13 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             [
                 ModelChannelRouteSnapshot(
                     route_id="mcr_stream_primary",
-                    public_model_id="gpt-5.3-codex",
+                    public_model_id="gpt-5.5",
                     endpoint="responses",
                     channel_id="ch_stream_primary",
                 ),
                 ModelChannelRouteSnapshot(
                     route_id="mcr_stream_backup",
-                    public_model_id="gpt-5.3-codex",
+                    public_model_id="gpt-5.5",
                     endpoint="responses",
                     channel_id="ch_stream_backup",
                 ),
@@ -2376,9 +2321,9 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                 ),
                 _FakeEventStreamResponse(
                     [
-                        'data: {"type":"response.created","response":{"id":"resp_stream_channel_fallback","status":"in_progress","model":"gpt-5.3-codex","output":[]}}',
+                        'data: {"type":"response.created","response":{"id":"resp_stream_channel_fallback","status":"in_progress","model":"gpt-5.5","output":[]}}',
                         'data: {"type":"response.output_text.delta","delta":"OK"}',
-                        'data: {"type":"response.completed","response":{"id":"resp_stream_channel_fallback","status":"completed","model":"gpt-5.3-codex","output":[{"type":"message","content":[{"type":"output_text","text":"OK"}]}],"usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}}}',
+                        'data: {"type":"response.completed","response":{"id":"resp_stream_channel_fallback","status":"completed","model":"gpt-5.5","output":[{"type":"message","content":[{"type":"output_text","text":"OK"}]}],"usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}}}',
                         "data: [DONE]",
                     ]
                 ),
@@ -2395,7 +2340,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                 response = await client.post(
                     "/v1/responses",
                     headers={"Authorization": "Bearer sk_cc_test"},
-                    json={"model": "gpt-5.3-codex", "input": "Reply with only: OK", "stream": True},
+                    json={"model": "gpt-5.5", "input": "Reply with only: OK", "stream": True},
                 )
 
         self.assertEqual(response.status_code, 200, response.text)
@@ -2430,7 +2375,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             [
                 ModelChannelRouteSnapshot(
                     route_id="mcr_stream_primary",
-                    public_model_id="gpt-5.3-codex",
+                    public_model_id="gpt-5.5",
                     endpoint="responses",
                     channel_id="ch_stream_primary",
                 ),
@@ -2444,9 +2389,9 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                 ),
                 _FakeEventStreamResponse(
                     [
-                        'data: {"type":"response.created","response":{"id":"resp_stream_system_fallback","status":"in_progress","model":"gpt-5.3-codex","output":[]}}',
+                        'data: {"type":"response.created","response":{"id":"resp_stream_system_fallback","status":"in_progress","model":"gpt-5.5","output":[]}}',
                         'data: {"type":"response.output_text.delta","delta":"OK"}',
-                        'data: {"type":"response.completed","response":{"id":"resp_stream_system_fallback","status":"completed","model":"gpt-5.3-codex","output":[{"type":"message","content":[{"type":"output_text","text":"OK"}]}],"usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}}}',
+                        'data: {"type":"response.completed","response":{"id":"resp_stream_system_fallback","status":"completed","model":"gpt-5.5","output":[{"type":"message","content":[{"type":"output_text","text":"OK"}]}],"usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}}}',
                         "data: [DONE]",
                     ]
                 ),
@@ -2463,7 +2408,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                 response = await client.post(
                     "/v1/responses",
                     headers={"Authorization": "Bearer sk_cc_test"},
-                    json={"model": "gpt-5.3-codex", "input": "Reply with only: OK", "stream": True},
+                    json={"model": "gpt-5.5", "input": "Reply with only: OK", "stream": True},
                 )
 
         self.assertEqual(response.status_code, 200, response.text)
@@ -2472,7 +2417,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(upstream_client.calls[0]["url"], "https://primary-channel.example/v1/responses")
         self.assertEqual(upstream_client.calls[1]["url"], "https://legacy.example/v1/responses")
         self.assertEqual(upstream_client.calls[1]["headers"]["api-key"], "legacy-key")
-        self.assertEqual(upstream_client.calls[1]["json"]["model"], "gpt-5.3-codex")
+        self.assertEqual(upstream_client.calls[1]["json"]["model"], "gpt-5.5")
         add_usage.assert_awaited_once()
         usage_kwargs = add_usage.await_args.kwargs
         self.assertEqual(usage_kwargs["route_reason"], "system_fallback:500")
@@ -2670,8 +2615,8 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             _model_routing_overrides={
                 "claude-opus-4-7": {
                     "public_model_id": "claude-opus-4-7",
-                    "provider_model": "gpt-5.4-mini",
-                    "upstream_model": "gpt-5.4-mini",
+                    "provider_model": "gpt-5.6-sol",
+                    "upstream_model": "gpt-5.6-sol",
                     "enabled": True,
                 }
             },
@@ -2748,7 +2693,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         baseline_request = upstream_client.calls[0]["json"]
         override_request = upstream_client.calls[1]["json"]
         self.assertEqual(baseline_request["model"], "gpt-5.5")
-        self.assertEqual(override_request["model"], "gpt-5.4-mini")
+        self.assertEqual(override_request["model"], "gpt-5.6-sol")
         self.assertNotEqual(
             baseline_request.get("prompt_cache_key"),
             override_request.get("prompt_cache_key"),
@@ -2757,7 +2702,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(add_usage.await_count, 2)
         override_usage_kwargs = add_usage.await_args_list[1].kwargs
         self.assertEqual(override_usage_kwargs["customer_model_alias"], "claude-opus-4-7")
-        self.assertEqual(override_usage_kwargs["provider_model"], "gpt-5.4-mini")
+        self.assertEqual(override_usage_kwargs["provider_model"], "gpt-5.6-sol")
         self.assertEqual(override_usage_kwargs["cache_read_multiplier"], 1.0)
         self.assertEqual(override_usage_kwargs["effective_cached_input_per_million"], 500.0)
 
@@ -3023,7 +2968,11 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         add_usage.assert_awaited_once()
         self.assertEqual(add_usage.await_args.kwargs["endpoint"], "responses:stream")
 
-    async def test_chat_explicit_legacy_alias_does_not_fallback_to_a_different_model(self) -> None:
+    async def test_chat_explicit_model_does_not_fallback_to_a_different_model(self) -> None:
+        settings.router_enabled = False
+        settings.fallback_upstream_url = settings.upstream_base_url
+        registry._initialized = False
+        registry.init_from_settings()
         upstream_client = _RecordingClient(
             [
                 _FakeUpstreamResponse(
@@ -3044,14 +2993,14 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                     "/v1/chat/completions",
                     headers={"Authorization": "Bearer sk_cc_test"},
                     json={
-                        "model": "gpt-5.2-codex",
+                        "model": "gpt-5.5",
                         "messages": [{"role": "user", "content": "Reply with only: OK"}],
                     },
                 )
 
         self.assertEqual(response.status_code, 500, response.text)
         self.assertEqual(len(upstream_client.calls), 1)
-        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-5.3-codex")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-5.5")
         self.assertEqual(upstream_client.calls[0]["url"], "https://legacy.example/v1/responses")
 
     async def test_chat_provider_channel_falls_back_to_next_channel_on_upstream_auth_failure(self) -> None:
@@ -3079,13 +3028,13 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             [
                 ModelChannelRouteSnapshot(
                     route_id="mcr_chat_primary",
-                    public_model_id="gpt-5.4",
+                    public_model_id="gpt-5.5",
                     endpoint="chat/completions",
                     channel_id="ch_chat_primary",
                 ),
                 ModelChannelRouteSnapshot(
                     route_id="mcr_chat_backup",
-                    public_model_id="gpt-5.4",
+                    public_model_id="gpt-5.5",
                     endpoint="chat/completions",
                     channel_id="ch_chat_backup",
                 ),
@@ -3123,7 +3072,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                     "/v1/chat/completions",
                     headers={"Authorization": "Bearer sk_cc_test"},
                     json={
-                        "model": "gpt-5.4",
+                        "model": "gpt-5.5",
                         "messages": [{"role": "user", "content": "Reply with only: OK"}],
                     },
                 )
@@ -3224,6 +3173,10 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(usage_kwargs["fallback_from_channel_id"], "ch_chat_html_primary")
 
     async def test_chat_upstream_error_does_not_leak_provider_url_or_key(self) -> None:
+        settings.router_enabled = False
+        settings.fallback_upstream_url = settings.upstream_base_url
+        registry._initialized = False
+        registry.init_from_settings()
         upstream_client = _RecordingClient(
             [
                 _FakeUpstreamResponse(
@@ -3251,7 +3204,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                     "/v1/chat/completions",
                     headers={"Authorization": "Bearer sk_cc_test"},
                     json={
-                        "model": "gpt-5.2-codex",
+                        "model": "gpt-5.5",
                         "messages": [{"role": "user", "content": "hello"}],
                     },
                 )
@@ -3301,19 +3254,19 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             [
                 ModelChannelRouteSnapshot(
                     route_id="mcr_chat_primary",
-                    public_model_id="gpt-5.4",
+                    public_model_id="gpt-5.5",
                     endpoint="chat/completions",
                     channel_id="ch_chat_primary",
                 ),
                 ModelChannelRouteSnapshot(
                     route_id="mcr_chat_second",
-                    public_model_id="gpt-5.4",
+                    public_model_id="gpt-5.5",
                     endpoint="chat/completions",
                     channel_id="ch_chat_second",
                 ),
                 ModelChannelRouteSnapshot(
                     route_id="mcr_chat_third",
-                    public_model_id="gpt-5.4",
+                    public_model_id="gpt-5.5",
                     endpoint="chat/completions",
                     channel_id="ch_chat_third",
                 ),
@@ -3358,7 +3311,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                     "/v1/chat/completions",
                     headers={"Authorization": "Bearer sk_cc_test"},
                     json={
-                        "model": "gpt-5.4",
+                        "model": "gpt-5.5",
                         "messages": [{"role": "user", "content": "Reply with only: OK"}],
                     },
                 )
@@ -3436,8 +3389,8 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             _model_routing_overrides={
                 "claude-opus-4-7": {
                     "public_model_id": "claude-opus-4-7",
-                    "provider_model": "gpt-5.4-mini",
-                    "upstream_model": "gpt-5.4-mini",
+                    "provider_model": "gpt-5.5",
+                    "upstream_model": "gpt-5.5",
                     "enabled": True,
                 }
             },
@@ -3490,11 +3443,11 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         payload = response.json()
         self.assertEqual(payload["model"], "claude-opus-4-7")
         request_json = upstream_client.calls[0]["json"]
-        self.assertEqual(request_json["model"], "gpt-5.4-mini")
+        self.assertEqual(request_json["model"], "gpt-5.5")
         add_usage.assert_awaited_once()
         usage_kwargs = add_usage.await_args.kwargs
         self.assertEqual(usage_kwargs["customer_model_alias"], "claude-opus-4-7")
-        self.assertEqual(usage_kwargs["provider_model"], "gpt-5.4-mini")
+        self.assertEqual(usage_kwargs["provider_model"], "gpt-5.5")
         self.assertEqual(usage_kwargs["cache_read_multiplier"], 1.0)
         self.assertEqual(usage_kwargs["effective_cached_input_per_million"], 500.0)
 
@@ -3527,7 +3480,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                     "/v1/responses",
                     headers={"Authorization": "Bearer sk_cc_test"},
                     json={
-                        "model": "gpt-5.2-codex",
+                        "model": "gpt-5.5",
                         "input": "Reply with only: OK",
                         "context_management": {"type": "auto"},
                     },
@@ -3565,7 +3518,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                     "/v1/responses",
                     headers={"Authorization": "Bearer sk_cc_test"},
                     json={
-                        "model": "gpt-5.2-codex",
+                        "model": "gpt-5.5",
                         "input": "Reply with only: OK",
                         "previous_response_id": "resp_missing",
                     },
@@ -3643,7 +3596,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                 response = await client.post(
                     "/v1/responses",
                     headers={"Authorization": "Bearer sk_cc_test"},
-                    json={"model": "gpt-5.4", "input": "Reply with only: OK"},
+                    json={"model": "gpt-5.5", "input": "Reply with only: OK"},
                 )
 
         self.assertEqual(response.status_code, 200, response.text)
@@ -3651,8 +3604,8 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["output"][0]["content"][0]["text"], "OK")
         self.assertEqual(upstream_client.calls[0]["url"], "https://legacy.example/v1/responses")
         add_usage.assert_awaited_once()
-        self.assertEqual(add_usage.await_args.kwargs["price_input_per_million"], 250)
-        self.assertEqual(add_usage.await_args.kwargs["price_output_per_million"], 1500)
+        self.assertEqual(add_usage.await_args.kwargs["price_input_per_million"], 500)
+        self.assertEqual(add_usage.await_args.kwargs["price_output_per_million"], 3000)
 
     async def test_responses_alias_override_keeps_alias_prices_when_target_changes(self) -> None:
         registry.set_runtime_alias_overrides(
@@ -3748,7 +3701,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                     "/v1/responses",
                     headers={"Authorization": "Bearer sk_cc_test"},
                     json={
-                        "model": "gpt-5.3-codex",
+                        "model": "gpt-5.5",
                         "input": "Reply with only: OK",
                         "reasoning": {"effort": "high"},
                     },
@@ -3756,10 +3709,10 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
-        self.assertEqual(payload["model"], "gpt-5.3-codex")
+        self.assertEqual(payload["model"], "gpt-5.5")
         self.assertEqual(payload["output"][0]["content"][0]["text"], "OK")
         self.assertEqual(payload["reasoning"]["effort"], "high")
-        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-5.3-codex")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-5.5")
         self.assertEqual(upstream_client.calls[0]["json"]["reasoning"]["effort"], "high")
         add_usage.assert_awaited_once()
 
@@ -3798,7 +3751,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                     "/v1/responses",
                     headers={"Authorization": "Bearer sk_cc_test"},
                     json={
-                        "model": "codex-auto-review",
+                        "model": "gpt-5.5",
                         "input": "Reply with only: OK",
                         "reasoning": {"effort": "xhigh"},
                         "tools": [{"type": "function", "name": "approve", "parameters": {"type": "object"}}],
@@ -3807,14 +3760,14 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
-        self.assertEqual(payload["model"], "codex-auto-review")
+        self.assertEqual(payload["model"], "gpt-5.5")
         self.assertEqual(payload["output"][0]["content"][0]["text"], "OK")
-        self.assertEqual(upstream_client.calls[0]["json"]["model"], "codex-auto-review")
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-5.5")
         self.assertEqual(upstream_client.calls[0]["json"]["reasoning"]["effort"], "xhigh")
         self.assertEqual(upstream_client.calls[0]["json"]["tools"][0]["name"], "approve")
         add_usage.assert_awaited_once()
-        self.assertEqual(add_usage.await_args.kwargs["customer_model_alias"], "codex-auto-review")
-        self.assertEqual(add_usage.await_args.kwargs["provider_model"], "codex-auto-review")
+        self.assertEqual(add_usage.await_args.kwargs["customer_model_alias"], "gpt-5.5")
+        self.assertEqual(add_usage.await_args.kwargs["provider_model"], "gpt-5.5")
 
     async def test_responses_preserves_reasoning_encrypted_content_upstream(self) -> None:
         encrypted_content = "gAAAAAB_reasoning_state"
@@ -3848,7 +3801,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                     "/v1/responses",
                     headers={"Authorization": "Bearer sk_cc_test"},
                     json={
-                        "model": "gpt-5.3-codex",
+                        "model": "gpt-5.5",
                         "input": [
                             {
                                 "type": "message",
@@ -3907,7 +3860,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                     "/v1/responses",
                     headers={"Authorization": "Bearer sk_cc_test"},
                     json={
-                        "model": "gpt-5.4",
+                        "model": "gpt-5.5",
                         "input": [{"role": "user", "content": "Read foo.txt"}],
                         "tools": [
                             {
@@ -4190,7 +4143,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                     "/v1/chat/completions",
                     headers={"Authorization": "Bearer sk_cc_test"},
                     json={
-                        "model": "gpt-5.4",
+                        "model": "gpt-5.5",
                         "messages": [{"role": "user", "content": "Read foo.txt"}],
                         "tools": [
                             {
@@ -4225,11 +4178,11 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             [
                 _FakeEventStreamResponse(
                     [
-                        'data: {"type":"response.created","response":{"id":"resp_tool_stream","status":"in_progress","model":"gpt-5.4","output":[]}}',
+                        'data: {"type":"response.created","response":{"id":"resp_tool_stream","status":"in_progress","model":"gpt-5.5","output":[]}}',
                         'data: {"type":"response.output_item.added","item":{"type":"function_call","id":"call_123","name":"read_file"}}',
                         'data: {"type":"response.function_call_arguments.delta","delta":"{\\"path\\":\\"foo.txt\\"}"}',
                         'data: {"type":"response.function_call_arguments.done"}',
-                        'data: {"type":"response.completed","response":{"id":"resp_tool_stream","status":"completed","model":"gpt-5.4","output":[{"type":"function_call","id":"call_123","name":"read_file","arguments":"{\\"path\\":\\"foo.txt\\"}"}],"usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}}}',
+                        'data: {"type":"response.completed","response":{"id":"resp_tool_stream","status":"completed","model":"gpt-5.5","output":[{"type":"function_call","id":"call_123","name":"read_file","arguments":"{\\"path\\":\\"foo.txt\\"}"}],"usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}}}',
                         "data: [DONE]",
                     ]
                 )
@@ -4247,7 +4200,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                     "/v1/chat/completions",
                     headers={"Authorization": "Bearer sk_cc_test"},
                     json={
-                        "model": "gpt-5.4",
+                        "model": "gpt-5.5",
                         "stream": True,
                         "messages": [{"role": "user", "content": "Read foo.txt"}],
                         "tools": [
@@ -4283,10 +4236,10 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             [
                 _FakeEventStreamResponse(
                     [
-                        'data: {"type":"response.created","response":{"id":"resp_text_stream","status":"in_progress","model":"gpt-5.4","output":[]}}',
+                        'data: {"type":"response.created","response":{"id":"resp_text_stream","status":"in_progress","model":"gpt-5.5","output":[]}}',
                         'data: {"type":"response.output_text.delta","delta":"ok"}',
                         'data: {"type":"response.output_text.done","text":"ok"}',
-                        'data: {"type":"response.completed","response":{"id":"resp_text_stream","status":"completed","model":"gpt-5.4","output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":11,"output_tokens":2,"total_tokens":13}}}',
+                        'data: {"type":"response.completed","response":{"id":"resp_text_stream","status":"completed","model":"gpt-5.5","output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":11,"output_tokens":2,"total_tokens":13}}}',
                         "data: [DONE]",
                     ]
                 )
@@ -4304,7 +4257,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                     "/v1/chat/completions",
                     headers={"Authorization": "Bearer sk_cc_test"},
                     json={
-                        "model": "gpt-5.4",
+                        "model": "gpt-5.5",
                         "stream": True,
                         "messages": [{"role": "user", "content": "Say ok"}],
                     },
@@ -4327,9 +4280,9 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             [
                 _FakeEventStreamResponse(
                     [
-                        'data: {"type":"response.created","response":{"id":"resp_usage_stream","status":"in_progress","model":"gpt-5.4","output":[]}}',
+                        'data: {"type":"response.created","response":{"id":"resp_usage_stream","status":"in_progress","model":"gpt-5.5","output":[]}}',
                         'data: {"type":"response.output_text.delta","delta":"ok"}',
-                        'data: {"type":"response.completed","response":{"id":"resp_usage_stream","status":"completed","model":"gpt-5.4","output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":11,"output_tokens":2,"total_tokens":13}}}',
+                        'data: {"type":"response.completed","response":{"id":"resp_usage_stream","status":"completed","model":"gpt-5.5","output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":11,"output_tokens":2,"total_tokens":13}}}',
                         "data: [DONE]",
                     ]
                 )
@@ -4347,7 +4300,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                     "/v1/chat/completions",
                     headers={"Authorization": "Bearer sk_cc_test"},
                     json={
-                        "model": "gpt-5.4",
+                        "model": "gpt-5.5",
                         "stream": True,
                         "stream_options": {"include_usage": True},
                         "messages": [{"role": "user", "content": "Say ok"}],
@@ -5781,51 +5734,31 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             [item["id"] for item in payload["data"]],
             [
-                "gpt-5.4",
-                "gpt-5",
                 "gpt-5.5",
-                "gpt-5.1",
-                "gpt-5.1-codex",
-                "gpt-5.1-codex-mini",
-                "gpt-5.1-codex-max",
-                "gpt-5.2",
-                "gpt-5.2-codex",
-                "gpt-5.3-codex",
-                "gpt-5.3-codex-spark",
-                "codex-auto-review",
-                "gpt-5.4-mini",
                 "gpt-5.6",
                 "gpt-5.6-sol",
                 "gpt-5.6-terra",
                 "gpt-5.6-luna",
-                "gpt-5-codex",
-                "gpt-5-codex-mini",
                 "text-embedding-3-small",
                 "gpt-image-2",
                 "gemini-fast",
                 "gemini-image",
             ],
         )
-        self.assertEqual(payload["data"][0]["coincoin_billable_sku"], "gpt-5.4")
+        self.assertEqual(payload["data"][0]["coincoin_billable_sku"], "gpt-5.5")
         self.assertEqual(payload["data"][0]["coincoin_default_for"], ["text"])
-        self.assertEqual(payload["data"][0]["coincoin_price_input_per_million"], 250)
-        self.assertEqual(payload["data"][0]["coincoin_price_output_per_million"], 1500)
-        self.assertEqual(payload["data"][0]["coincoin_price_cached_input_per_million"], 25.0)
+        self.assertEqual(payload["data"][0]["coincoin_price_input_per_million"], 500)
+        self.assertEqual(payload["data"][0]["coincoin_price_output_per_million"], 3000)
+        self.assertEqual(payload["data"][0]["coincoin_price_cached_input_per_million"], 50.0)
         self.assertNotIn("coincoin_provider_model", payload["data"][0])
         self.assertNotIn("coincoin_provider", payload["data"][0])
         models_by_id = {item["id"]: item for item in payload["data"]}
-        self.assertEqual(models_by_id["gpt-5.2-codex"]["coincoin_billable_sku"], "gpt-5.2-codex")
-        self.assertEqual(models_by_id["gpt-5.3-codex-spark"]["created"], 1770912000)
-        self.assertEqual(models_by_id["gpt-5.3-codex-spark"]["coincoin_metadata"]["display_name"], "GPT 5.3 Codex Spark")
-        self.assertEqual(models_by_id["gpt-5.3-codex-spark"]["coincoin_metadata"]["context_length"], 128000)
-        self.assertEqual(models_by_id["codex-auto-review"]["created"], 1776902400)
-        self.assertEqual(models_by_id["codex-auto-review"]["coincoin_billable_sku"], "codex-auto-review")
-        self.assertEqual(models_by_id["codex-auto-review"]["coincoin_delivery_lane"], "legacy")
-        self.assertEqual(models_by_id["codex-auto-review"]["coincoin_metadata"]["supported_parameters"], ["tools"])
-        self.assertEqual(models_by_id["codex-auto-review"]["coincoin_metadata"]["thinking"]["levels"], ["low", "medium", "high", "xhigh"])
+        self.assertEqual(models_by_id["gpt-5.5"]["coincoin_billable_sku"], "gpt-5.5")
+        self.assertEqual(models_by_id["gpt-5.5"]["coincoin_delivery_lane"], "legacy")
+        self.assertEqual(models_by_id["gpt-5.5"]["coincoin_metadata"], {})
         self.assertEqual(models_by_id["gpt-5.6"]["coincoin_price_cache_creation_input_per_million"], 625.0)
         self.assertEqual(models_by_id["gpt-5.6"]["coincoin_cache_creation_multiplier"], 1.25)
-        self.assertEqual(models_by_id["gpt-5.6-terra"]["coincoin_price_cache_creation_input_per_million"], 312.5)
+        self.assertEqual(models_by_id["gpt-5.6-terra"]["coincoin_price_cache_creation_input_per_million"], 250.0)
         self.assertEqual(models_by_id["text-embedding-3-small"]["coincoin_capabilities"], ["embeddings"])
         self.assertEqual(models_by_id["text-embedding-3-small"]["coincoin_billable_sku"], "azure-text-embedding-3-small")
         self.assertEqual(models_by_id["text-embedding-3-small"]["coincoin_default_for"], ["embedding"])
@@ -5880,9 +5813,9 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                 "owned_by": "station",
                 "coincoin_station_id": "st_1",
                 "coincoin_station_alias": "fast",
-                "coincoin_resolved_public_model": "gpt-5.4-mini",
+                "coincoin_resolved_public_model": "gpt-5.5",
                 "coincoin_capabilities": ["chat/completions", "responses"],
-                "coincoin_billable_sku": "legacy-gpt-5.4-mini-text",
+                "coincoin_billable_sku": "legacy-gpt-5.5-text",
                 "coincoin_routing_mode": "station_alias",
                 "coincoin_default_for": ["text"],
                 "coincoin_price_input_per_million": 120,
@@ -5906,7 +5839,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["object"], "list")
         self.assertEqual([item["id"] for item in payload["data"]], ["fast"])
         self.assertEqual(payload["data"][0]["owned_by"], "station")
-        self.assertEqual(payload["data"][0]["coincoin_resolved_public_model"], "gpt-5.4-mini")
+        self.assertEqual(payload["data"][0]["coincoin_resolved_public_model"], "gpt-5.5")
         self.assertEqual(payload["data"][0]["coincoin_price_output_per_million"], 720)
 
     async def test_balance_returns_station_price_context_for_station_session(self) -> None:
@@ -5918,9 +5851,9 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
                 "owned_by": "station",
                 "coincoin_station_id": "st_1",
                 "coincoin_station_alias": "fast",
-                "coincoin_resolved_public_model": "gpt-5.4-mini",
+                "coincoin_resolved_public_model": "gpt-5.5",
                 "coincoin_capabilities": ["chat/completions", "responses"],
-                "coincoin_billable_sku": "legacy-gpt-5.4-mini-text",
+                "coincoin_billable_sku": "legacy-gpt-5.5-text",
                 "coincoin_routing_mode": "station_alias",
                 "coincoin_default_for": ["text"],
                 "coincoin_price_input_per_million": 120,
@@ -5977,7 +5910,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
         self.assertEqual(payload["object"], "list")
-        self.assertEqual(payload["data"][0]["id"], "gpt-5.4")
+        self.assertEqual(payload["data"][0]["id"], "gpt-5.5")
         model_ids = [item["id"] for item in payload["data"]]
         self.assertIn("gemini-fast", model_ids)
 
@@ -6043,7 +5976,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
-        self.assertEqual(payload["model"], "gpt-5.4")
+        self.assertEqual(payload["model"], "gpt-5.5")
         self.assertEqual(payload["choices"][0]["message"]["content"], "OK")
         self.assertEqual(upstream_client.calls[0]["url"], "https://legacy.example/v1/responses")
 

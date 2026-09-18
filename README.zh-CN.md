@@ -121,14 +121,14 @@ COINCOIN_MONITORING_TOKEN=your-monitoring-token
 COINCOIN_MONITORING_API_KEY=your-low-cost-monitoring-key
 COINCOIN_MONITORING_PUBLIC_BASE_URL=https://your-public-coincoin-domain
 COINCOIN_MONITORING_GATEWAY_HEALTH_URL=https://your-private-gateway-health-url
-COINCOIN_MONITORING_CHAT_MODEL=gpt-5.2-codex
-COINCOIN_MONITORING_RESPONSES_MODEL=gpt-5.2-codex
+COINCOIN_MONITORING_CHAT_MODEL=gpt-5.6-sol
+COINCOIN_MONITORING_RESPONSES_MODEL=gpt-5.6-sol
 
 # 可选：CPA / legacy GPT-Codex lane 直连监控（绕过 CoinCoin 公网控制面）
 COINCOIN_MONITORING_CPA_BASE_URL=https://your-cpa-domain
 COINCOIN_MONITORING_CPA_API_KEY=your-cpa-monitoring-key
-COINCOIN_MONITORING_CPA_CHAT_MODEL=gpt-5.2-codex
-COINCOIN_MONITORING_CPA_RESPONSES_MODEL=gpt-5.2-codex
+COINCOIN_MONITORING_CPA_CHAT_MODEL=gpt-5.6-sol
+COINCOIN_MONITORING_CPA_RESPONSES_MODEL=gpt-5.6-sol
 
 # Provider Channel 主动监控（管理员后台用）
 COINCOIN_PROVIDER_CHANNEL_MONITOR_ENABLED=true
@@ -140,7 +140,7 @@ COINCOIN_PROVIDER_CHANNEL_MONITOR_HISTORY_RETENTION_DAYS=35
 # 旧 GPT 链路（默认公共模型）
 COINCOIN_UPSTREAM_BASE_URL=https://your-instance.cognitiveservices.azure.com/openai/v1
 COINCOIN_UPSTREAM_API_KEY=your-azure-api-key
-COINCOIN_FIXED_MODEL=gpt-5.2-codex
+COINCOIN_FIXED_MODEL=gpt-5.6-sol
 COINCOIN_EMBEDDING_MODEL=text-embedding-3-small
 COINCOIN_MODEL_CATALOG_PATH=config/model_catalog.json
 
@@ -207,7 +207,7 @@ uvicorn app.main:app --reload --port 8000
 
 - 终端客户只看 CoinCoin 的公开模型目录，不直接感知 Gemini CPA、LiteLLM 或 Vertex 的内部模型名
 - 老用户如果不传 `model`，仍然走默认 GPT 公共模型
-- 旧 GPT lane 当前公开 alias 包括 `gpt-6`、`gpt-6-astra`、`gpt-5`、`gpt-5.1`、`gpt-5.1-codex`、`gpt-5.1-codex-mini`、`gpt-5.1-codex-max`、`gpt-5.2`、`gpt-5.2-codex`、`gpt-5.3-codex`、`gpt-5.4`、`gpt-5.4-mini`、`gpt-5.5`、`gpt-5.6`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`、`codex-auto-review`、`gpt-5-codex`、`gpt-5-codex-mini`，以及由 `COINCOIN_FIXED_MODEL` 指定的默认 GPT alias
+- 当前公开 GPT alias 包括 `gpt-6`、`gpt-6-astra`、`gpt-5.5`、`gpt-5.6`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`，以及由 `COINCOIN_FIXED_MODEL` 指定的默认 GPT alias
 - `gpt-6` / `gpt-6-astra` 映射到 OpenAI `gpt-6-astra`，标准档价格为输入 `$10/M`、缓存读取 `$1/M`、缓存写入 `$12.50/M`、输出 `$50/M`；上下文窗口 `1,050,000`，最大输出 `128,000`。价格依据 [OpenAI GPT-6 Astra 官方文档](https://developers.openai.com/api/docs/models/gpt-6-astra)。
 - embedding 请求不再复用旧 GPT / CPA lane；`/v1/embeddings` 默认和显式 `text-embedding-3-small` 都直连 Azure
 - Gemini 文本能力是增量暴露；显式传入 Gemini 文本 alias 时，会路由到 native Gemini CPA lane
@@ -694,7 +694,7 @@ Authorization: Bearer sk_cc_xxx
     {
       "created_at": "2026-02-11T03:16:09",
       "endpoint": "chat/completions",
-      "model": "gpt-5.2",
+      "model": "gpt-5.6-sol",
       "input_tokens": 12,
       "output_tokens": 12,
       "total_tokens": 24,
@@ -879,7 +879,7 @@ Content-Type: application/json
 | `COINCOIN_ADMIN_TOKEN` | `change-me` | 管理后台认证 Token |
 | `COINCOIN_UPSTREAM_BASE_URL` | - | Azure OpenAI API 地址 |
 | `COINCOIN_UPSTREAM_API_KEY` | - | Azure OpenAI API Key |
-| `COINCOIN_FIXED_MODEL` | `gpt-5.2-codex` | 固定使用的模型名 |
+| `COINCOIN_FIXED_MODEL` | `gpt-5.6-sol` | 固定使用的模型名 |
 | `COINCOIN_MODEL_CATALOG_PATH` | `config/model_catalog.json` | 公开模型目录配置文件 |
 | `COINCOIN_GEMINI_CPA_BASE_URL` | - | Gemini CPA 根地址，不能填 Codex/GPT CPA 地址 |
 | `COINCOIN_GEMINI_CPA_API_KEY` | - | Gemini CPA 访问密钥 |

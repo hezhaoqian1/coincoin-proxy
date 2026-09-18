@@ -122,13 +122,26 @@ _ENV_PATTERN = re.compile(r"\$\{([A-Z0-9_]+)(:-([^}]*))?\}")
 _ROOT_DIR = Path(__file__).resolve().parent.parent
 ALIAS_OVERRIDE_FIELDS = frozenset({"provider_model", "upstream_model", "enabled"})
 LEGACY_PROVIDER_MODEL_ALIASES = {
-    # CPA no longer publishes this historical public alias directly.
-    # Keep the user-facing model id stable, but send a provider model CPA knows.
-    "gpt-5.2-codex": "gpt-5.3-codex",
     "gpt-5.6": "gpt-5.6-sol",
     "gpt-6": "gpt-6-astra",
 }
-LEGACY_CODING_PUBLIC_ALIASES = frozenset({"gpt-5.2-codex", "gpt-5.3-codex", "gpt-5.3-codex-spark"})
+SAFE_DEFAULT_OPENAI_PUBLIC_MODEL = "gpt-5.6-sol"
+RETIRED_OPENAI_PUBLIC_MODELS = frozenset({
+    "gpt-5",
+    "gpt-5.1",
+    "gpt-5.1-codex",
+    "gpt-5.1-codex-mini",
+    "gpt-5.1-codex-max",
+    "gpt-5.2",
+    "gpt-5.2-codex",
+    "gpt-5.3-codex",
+    "gpt-5.3-codex-spark",
+    "codex-auto-review",
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5-codex",
+    "gpt-5-codex-mini",
+})
 CLAUDE_COMPAT_FAMILY = "claude-code"
 CLAUDE_COMPAT_PROVIDER_UPSTREAM_DIRECT = "upstream_direct"
 CLAUDE_COMPAT_PROVIDER_KIRO_GO = "kiro_go"
@@ -188,17 +201,6 @@ def _kiro_go_claude_model_for_public_id(public_id: str, upstream_model: str, pro
     if upstream_clean:
         return upstream_clean
     return str(provider_model or public_id).strip()
-
-
-def _default_legacy_metadata(public_id: str) -> Dict[str, Any]:
-    if public_id in LEGACY_CODING_PUBLIC_ALIASES:
-        return {
-            "execution_profile": "legacy_coding",
-            "execution_pool": "cpa_coding_pool",
-            "legacy_default_slot": PREMIUM,
-            "honor_tool_routing": False,
-        }
-    return {}
 
 
 def _as_bool(value: Any, default: bool = False) -> bool:
@@ -396,9 +398,17 @@ class ModelRegistry:
         self._initialized = True
 
     def _init_legacy_backends(self) -> None:
+        fixed_model = str(getattr(settings, "fixed_model", "") or "").strip()
+        if not fixed_model or fixed_model in RETIRED_OPENAI_PUBLIC_MODELS:
+            logger.warning(
+                "fixed model %r is unavailable; using %s",
+                fixed_model,
+                SAFE_DEFAULT_OPENAI_PUBLIC_MODEL,
+            )
+            fixed_model = SAFE_DEFAULT_OPENAI_PUBLIC_MODEL
         primary_strip = bool(
             getattr(settings, "primary_strip_unsupported", False)
-        ) or _is_codex_like(settings.fixed_model)
+        ) or _is_codex_like(fixed_model)
         embedding_upstream_url = (
             getattr(settings, "embedding_upstream_url", "") or
             getattr(settings, "fallback_upstream_url", "") or
@@ -421,7 +431,7 @@ class ModelRegistry:
         )
 
         premium = ModelConfig(
-            model_id=_provider_model_for_legacy_alias(settings.fixed_model),
+            model_id=_provider_model_for_legacy_alias(fixed_model),
             upstream_url=settings.upstream_base_url,
             api_key=settings.upstream_api_key,
             price_input_per_million=settings.price_input_per_million,
@@ -467,12 +477,15 @@ class ModelRegistry:
             )
 
     def _default_catalog_document(self) -> Dict[str, Any]:
+        default_text_model = str(settings.fixed_model or "").strip()
+        if not default_text_model or default_text_model in RETIRED_OPENAI_PUBLIC_MODELS:
+            default_text_model = SAFE_DEFAULT_OPENAI_PUBLIC_MODEL
         return {
-            "default_text_model": settings.fixed_model,
+            "default_text_model": default_text_model,
             "default_video_model": "",
             "models": [
                 {
-                    "id": settings.fixed_model,
+                    "id": default_text_model,
                     "owned_by": "openai",
                     "provider_name": "OpenAI",
                     "capabilities": ["chat/completions", "responses"],
@@ -651,8 +664,6 @@ class ModelRegistry:
             if upstream_model:
                 upstream_model = _provider_model_for_legacy_alias(upstream_model)
         metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
-        if routing_mode == "legacy_auto":
-            metadata = {**_default_legacy_metadata(public_id), **metadata}
         upstream_url = str(raw.get("upstream_url") or "").strip()
         api_key = str(raw.get("api_key") or "").strip()
         auth_style = str(raw.get("auth_style") or settings.gateway_auth_style or "bearer").strip() or "bearer"
@@ -726,6 +737,9 @@ class ModelRegistry:
             if not isinstance(raw, dict):
                 continue
             public_id = str(raw.get("id") or "").strip()
+            if public_id in RETIRED_OPENAI_PUBLIC_MODELS:
+                logger.warning("skipping retired public model %s", public_id)
+                continue
             if public_id:
                 self._raw_public_models[public_id] = dict(raw)
             enabled = raw.get("enabled")

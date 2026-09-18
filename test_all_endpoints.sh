@@ -124,7 +124,7 @@ if [[ -n "$API_KEY" ]]; then
     -X POST "$BASE/v1/responses" \
     -H "Authorization: Bearer $API_KEY" \
     -H "Content-Type: application/json" \
-    -d '{"model":"gpt-5.2-codex","input":"Say hi in one word","stream":false}')
+    -d '{"model":"gpt-5.6-sol","input":"Say hi in one word","stream":false}')
   BODY=$(cat /tmp/cc_resp.json)
   if [[ "$HTTP" == "200" ]]; then report "PASS" "POST /v1/responses" "$HTTP" "OK"
   else report "FAIL" "POST /v1/responses" "$HTTP" "${BODY:0:200}"; fi
@@ -137,7 +137,7 @@ if [[ -n "$API_KEY" ]]; then
     -X POST "$BASE/v1/responses" \
     -H "Authorization: Bearer $API_KEY" \
     -H "Content-Type: application/json" \
-    -d '{"model":"gpt-5.2-codex","input":"Say ok","stream":true}')
+    -d '{"model":"gpt-5.6-sol","input":"Say ok","stream":true}')
   STREAM_HEAD=$(head -c 200 /tmp/cc_resp_stream.txt 2>/dev/null || echo "empty")
   if [[ "$HTTP" == "200" ]]; then report "PASS" "POST /v1/responses (stream)" "$HTTP" "stream received"
   else report "FAIL" "POST /v1/responses (stream)" "$HTTP" "${STREAM_HEAD:0:200}"; fi
@@ -150,7 +150,7 @@ if [[ -n "$API_KEY" ]]; then
     -X POST "$BASE/v1/chat/completions" \
     -H "Authorization: Bearer $API_KEY" \
     -H "Content-Type: application/json" \
-    -d '{"model":"gpt-5.2-codex","messages":[{"role":"user","content":"Say hi"}],"stream":false}')
+    -d '{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"Say hi"}],"stream":false}')
   BODY=$(cat /tmp/cc_resp.json)
   if [[ "$HTTP" == "200" ]]; then report "PASS" "POST /v1/chat/completions" "$HTTP" "OK"
   else report "FAIL" "POST /v1/chat/completions" "$HTTP" "${BODY:0:200}"; fi
@@ -163,7 +163,7 @@ if [[ -n "$API_KEY" ]]; then
     -X POST "$BASE/v1/chat/completions" \
     -H "Authorization: Bearer $API_KEY" \
     -H "Content-Type: application/json" \
-    -d '{"model":"gpt-5.2-codex","messages":[{"role":"user","content":"Say ok"}],"stream":true}')
+    -d '{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"Say ok"}],"stream":true}')
   STREAM_HEAD=$(head -c 200 /tmp/cc_resp_stream2.txt 2>/dev/null || echo "empty")
   if [[ "$HTTP" == "200" ]]; then report "PASS" "POST /v1/chat/completions (stream)" "$HTTP" "stream received"
   else report "FAIL" "POST /v1/chat/completions (stream)" "$HTTP" "${STREAM_HEAD:0:200}"; fi

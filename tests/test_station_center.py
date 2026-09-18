@@ -196,6 +196,73 @@ class StationCenterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["aliases"][0]["coincoin_price_input_per_million"], 120)
         self.assertEqual(result["aliases"][0]["coincoin_resolved_public_model"], "gpt-5.4-mini")
 
+    async def test_get_public_station_hides_aliases_for_removed_models(self):
+        station = SimpleNamespace(
+            id="st_1",
+            slug="stone",
+            display_name="Stone Station",
+            status="active",
+            mode="commission_station",
+            balance_cents=0,
+            currency="usd_cents",
+            wholesale_tier="standard",
+            default_text_alias="fast",
+            default_image_alias="",
+            commission_rate=0.15,
+            settlement_method="alipay_manual",
+            settlement_payee_name="",
+            settlement_payee_account="",
+            settlement_qr_url="",
+            created_at=datetime.utcnow(),
+        )
+        valid_alias = SimpleNamespace(
+            id="sa_valid",
+            station_id="st_1",
+            alias="fast",
+            target_public_model_id="gpt-5.6-sol",
+            capability="chat/completions",
+            status="active",
+            is_default_text=1,
+            is_default_image=0,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        retired_alias = SimpleNamespace(
+            id="sa_retired",
+            station_id="st_1",
+            alias="old",
+            target_public_model_id="gpt-5.4",
+            capability="chat/completions",
+            status="active",
+            is_default_text=0,
+            is_default_image=0,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        fake_db = _FakeDB(
+            execute_results=[
+                _ScalarOneOrNoneResult(station),
+                _ScalarOneOrNoneResult(None),
+                _AllResult([(retired_alias, None), (valid_alias, None)]),
+            ]
+        )
+        valid_target = SimpleNamespace(
+            public_id="gpt-5.6-sol",
+            capabilities=("chat/completions", "responses"),
+            billable_sku="legacy-gpt-5.6-sol-text",
+            price_input_per_million=500,
+            price_output_per_million=3000,
+            price_per_image_cents=0.0,
+        )
+
+        def lookup(model_id):
+            return valid_target if model_id == "gpt-5.6-sol" else None
+
+        with patch.object(stations_module.model_registry, "get_public_model", side_effect=lookup):
+            result = await stations_module.get_public_station("stone", db=fake_db)
+
+        self.assertEqual([item["id"] for item in result["aliases"]], ["fast"])
+
     async def test_update_station_branding_upserts_owner_branding(self):
         owner = SimpleNamespace(id="u_owner")
         station = SimpleNamespace(

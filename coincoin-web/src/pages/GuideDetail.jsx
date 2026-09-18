@@ -8,7 +8,7 @@ import './GuideDetail.css'
 
 const SITE_ROOT = typeof window !== 'undefined' ? window.location.origin : ''
 const OPENAI_BASE_URL = SITE_ROOT ? `${SITE_ROOT}/v1` : '/v1'
-const CODEX_MODEL_ID = 'gpt-5.4'
+const CODEX_MODEL_ID = 'gpt-5.6-sol'
 const CLAUDE_DEFAULT_MODEL_ID = 'claude-sonnet-4-6'
 const CLAUDE_OPUS_OPTIONAL_MODEL_ID = 'claude-opus-5'
 

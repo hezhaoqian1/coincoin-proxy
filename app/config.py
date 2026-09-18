@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     # Upstream (Azure OpenAI compatible)
     upstream_base_url: str = "https://hc-instance-eastus2.cognitiveservices.azure.com/openai/v1"
     upstream_api_key: str = ""
-    fixed_model: str = "gpt-5.2-codex"
+    fixed_model: str = "gpt-5.6-sol"
     embedding_model: str = "text-embedding-3-small"
     embedding_upstream_url: str = ""
     embedding_api_key: str = ""

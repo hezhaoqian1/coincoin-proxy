@@ -6,58 +6,27 @@ from unittest.mock import patch
 
 from app.config import settings
 from app.model_alias_overrides import override_rows_to_snapshot
-from app.router import ModelCapabilityError, _resolve_placeholders, registry
+from app.router import ModelCapabilityError, UnknownModelError, _resolve_placeholders, registry
 
 
 LEGACY_PUBLIC_TEXT_MODELS = [
-    "gpt-5.4",
-    "gpt-5",
     "gpt-5.5",
-    "gpt-5.1",
-    "gpt-5.1-codex",
-    "gpt-5.1-codex-mini",
-    "gpt-5.1-codex-max",
-    "gpt-5.2",
-    "gpt-5.2-codex",
-    "gpt-5.3-codex",
-    "gpt-5.3-codex-spark",
-    "codex-auto-review",
-    "gpt-5.4-mini",
     "gpt-5.6",
     "gpt-5.6-sol",
     "gpt-5.6-terra",
     "gpt-5.6-luna",
-    "gpt-5-codex",
-    "gpt-5-codex-mini",
 ]
 LEGACY_PUBLIC_TEXT_PRICES = {
-    "gpt-5.4": (250, 1500),
-    "gpt-5": (125, 1000),
     "gpt-5.5": (500, 3000),
-    "gpt-5.1": (125, 1000),
-    "gpt-5.1-codex": (125, 1000),
-    "gpt-5.1-codex-mini": (75, 450),
-    "gpt-5.1-codex-max": (500, 3000),
-    "gpt-5.2": (175, 1400),
-    "gpt-5.2-codex": (175, 1400),
-    "gpt-5.3-codex": (175, 1400),
-    "gpt-5.3-codex-spark": (175, 1400),
-    "codex-auto-review": (500, 3000),
-    "gpt-5.4-mini": (75, 450),
     "gpt-5.6": (500, 3000),
     "gpt-5.6-sol": (500, 3000),
     "gpt-5.6-terra": (200, 1200),
     "gpt-5.6-luna": (20, 120),
-    "gpt-5-codex": (175, 1400),
-    "gpt-5-codex-mini": (75, 450),
 }
 
 
 def _legacy_text_model(model_id: str) -> dict:
-    provider_model_aliases = {
-        "gpt-5.2-codex": "gpt-5.3-codex",
-        "gpt-5.6": "gpt-5.6-sol",
-    }
+    provider_model_aliases = {"gpt-5.6": "gpt-5.6-sol"}
     provider_model = provider_model_aliases.get(model_id, model_id)
     model = {
         "id": model_id,
@@ -74,46 +43,6 @@ def _legacy_text_model(model_id: str) -> dict:
         model["price_output_per_million"] = prices[1]
     if model_id in {"gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}:
         model["pricing"] = {"cache_creation_multiplier": 1.25}
-    if model_id == "gpt-5.4":
-        model["metadata"] = {
-            "execution_profile": "legacy_general",
-            "execution_pool": "cpa_general_pool",
-            "legacy_default_slot": "cheap",
-            "honor_tool_routing": True,
-        }
-    elif model_id in {"gpt-5.2-codex", "gpt-5.3-codex", "gpt-5.3-codex-spark", "codex-auto-review"}:
-        model["metadata"] = {
-            "execution_profile": "legacy_coding",
-            "execution_pool": "cpa_coding_pool",
-            "legacy_default_slot": "premium",
-            "honor_tool_routing": False,
-        }
-        if model_id == "gpt-5.3-codex-spark":
-            model["created"] = 1770912000
-            model["metadata"].update(
-                {
-                    "display_name": "GPT 5.3 Codex Spark",
-                    "version": "gpt-5.3",
-                    "description": "Ultra-fast coding model.",
-                    "context_length": 128000,
-                    "max_completion_tokens": 128000,
-                    "supported_parameters": ["tools"],
-                    "thinking": {"levels": ["low", "medium", "high", "xhigh"]},
-                }
-            )
-        if model_id == "codex-auto-review":
-            model["created"] = 1776902400
-            model["metadata"].update(
-                {
-                    "display_name": "Codex Auto Review",
-                    "version": "Codex Auto Review",
-                    "description": "Automatic approval review model for Codex.",
-                    "context_length": 272000,
-                    "max_completion_tokens": 128000,
-                    "supported_parameters": ["tools"],
-                    "thinking": {"levels": ["low", "medium", "high", "xhigh"]},
-                }
-            )
     return model
 
 
@@ -154,7 +83,7 @@ class ModelCatalogTests(unittest.TestCase):
             "model_alias_overrides_path": settings.model_alias_overrides_path,
         }
 
-        settings.fixed_model = "gpt-5.4"
+        settings.fixed_model = "gpt-5.5"
         settings.embedding_model = "text-embedding-3-small"
         settings.embedding_upstream_url = ""
         settings.embedding_api_key = ""
@@ -172,7 +101,7 @@ class ModelCatalogTests(unittest.TestCase):
         settings.cheap_api_key = "legacy-key"
         settings.cheap_price_input = 75
         settings.cheap_price_output = 450
-        settings.fallback_model = "gpt-5.4"
+        settings.fallback_model = "gpt-5.5"
         settings.fallback_upstream_url = "https://fallback.example/v1"
         settings.fallback_api_key = "fallback-key"
         settings.fallback_price_input = 500
@@ -187,7 +116,7 @@ class ModelCatalogTests(unittest.TestCase):
         settings.model_alias_overrides_path = ""
         settings.model_catalog_json = json.dumps(
             {
-                "default_text_model": "gpt-5.4",
+                "default_text_model": "gpt-5.5",
                 "default_embedding_model": "text-embedding-3-small",
                 "default_image_model": "gpt-image-2",
                 "default_video_model": "seedance-v2-720p",
@@ -327,7 +256,7 @@ class ModelCatalogTests(unittest.TestCase):
             tools=None,
         )
 
-        self.assertEqual(resolved.public_model.public_id, "gpt-5.4")
+        self.assertEqual(resolved.public_model.public_id, "gpt-5.5")
         self.assertEqual(resolved.backend.model_id, "gpt-4o-mini")
         self.assertEqual(resolved.backend.auth_style, "azure")
         self.assertEqual(resolved.execution_profile, "legacy_general")
@@ -469,7 +398,7 @@ class ModelCatalogTests(unittest.TestCase):
         resolved = registry.resolve_public_model("claude-opus-4-8", "responses")
 
         self.assertEqual(resolved.public_model.delivery_lane, "kiro_go")
-        self.assertEqual(resolved.backend.model_id, "gpt-5.4")
+        self.assertEqual(resolved.backend.model_id, "gpt-5.5")
         self.assertEqual(resolved.backend.upstream_url, "https://kiro-go.example")
         self.assertEqual(resolved.backend.api_key, "kiro-key")
         self.assertEqual(resolved.backend.auth_style, "bearer")
@@ -592,39 +521,26 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertEqual(resolved.public_model.provider_model, "gemini-2.5-flash")
         self.assertEqual(resolved.backend.model_id, "gemini-2.5-flash")
 
-    def test_explicit_legacy_public_model_keeps_legacy_lane(self) -> None:
-        resolved = registry.resolve_public_model(
-            "gpt-5.2-codex",
-            "chat/completions",
-            messages=[{"role": "user", "content": "hello"}],
-            tools=None,
-        )
+    def test_retired_gpt_aliases_are_rejected(self) -> None:
+        for model_id in (
+            "gpt-5", "gpt-5.1", "gpt-5.1-codex", "gpt-5.1-codex-mini", "gpt-5.1-codex-max",
+            "gpt-5.2", "gpt-5.2-codex", "gpt-5.3-codex", "gpt-5.3-codex-spark",
+            "codex-auto-review", "gpt-5.4", "gpt-5.4-mini", "gpt-5-codex", "gpt-5-codex-mini",
+        ):
+            with self.subTest(model=model_id), self.assertRaises(UnknownModelError):
+                registry.resolve_public_model(model_id, "responses")
 
-        self.assertEqual(resolved.public_model.public_id, "gpt-5.2-codex")
-        self.assertEqual(resolved.public_model.provider_model, "gpt-5.3-codex")
-        self.assertEqual(resolved.backend.model_id, "gpt-5.3-codex")
-        self.assertEqual(resolved.execution_profile, "legacy_coding")
-        self.assertEqual(resolved.execution_pool, "cpa_coding_pool")
-        self.assertEqual(resolved.route_reason, "catalog:gpt-5.2-codex:legacy_explicit")
-        self.assertTrue(resolved.lock_model_selection)
-
-    def test_fixed_model_gpt_5_2_codex_maps_to_cpa_supported_codex_model(self) -> None:
-        settings.fixed_model = "gpt-5.2-codex"
+    def test_empty_catalog_does_not_resurrect_retired_fixed_model(self) -> None:
+        settings.fixed_model = "gpt-5.4"
+        settings.model_catalog_json = json.dumps({"models": []})
         registry._initialized = False
         registry.init_from_settings()
 
-        resolved = registry.resolve_public_model(
-            "gpt-5.2-codex",
-            "chat/completions",
-            messages=[{"role": "user", "content": "hello"}],
-            tools=None,
-        )
-
-        self.assertEqual(resolved.public_model.public_id, "gpt-5.2-codex")
-        self.assertEqual(resolved.public_model.provider_model, "gpt-5.3-codex")
-        self.assertEqual(resolved.backend.model_id, "gpt-5.3-codex")
-        self.assertEqual(resolved.execution_profile, "legacy_coding")
-        self.assertEqual(resolved.execution_pool, "cpa_coding_pool")
+        self.assertNotIn("gpt-5.4", registry.list_model_ids())
+        self.assertIn("gpt-5.6-sol", registry.list_model_ids())
+        self.assertEqual(registry.models["premium"].model_id, "gpt-5.6-sol")
+        with self.assertRaises(UnknownModelError):
+            registry.resolve_public_model("gpt-5.4", "responses")
 
     def test_fixed_model_gpt_5_6_maps_to_sol_provider_model(self) -> None:
         settings.fixed_model = "gpt-5.6"
@@ -789,21 +705,6 @@ class ModelCatalogTests(unittest.TestCase):
                 with self.assertRaises(ModelCapabilityError):
                     registry.resolve_public_model(model_id, "responses")
 
-    def test_explicit_gpt_5_2_alias_keeps_legacy_lane(self) -> None:
-        resolved = registry.resolve_public_model(
-            "gpt-5.2",
-            "responses",
-            messages=[{"role": "user", "content": "hello"}],
-            tools=None,
-        )
-
-        self.assertEqual(resolved.public_model.public_id, "gpt-5.2")
-        self.assertEqual(resolved.backend.model_id, "gpt-5.2")
-        self.assertEqual(resolved.execution_profile, "legacy_general")
-        self.assertEqual(resolved.execution_pool, "cpa_general_pool")
-        self.assertEqual(resolved.route_reason, "catalog:gpt-5.2:legacy_explicit")
-        self.assertTrue(resolved.lock_model_selection)
-
     def test_explicit_gpt_5_5_alias_keeps_legacy_lane(self) -> None:
         resolved = registry.resolve_public_model(
             "gpt-5.5",
@@ -819,93 +720,6 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertEqual(resolved.route_reason, "catalog:gpt-5.5:legacy_explicit")
         self.assertTrue(resolved.lock_model_selection)
 
-    def test_explicit_gpt_5_4_alias_routes_to_real_gpt_5_4_when_fixed_model_changes(self) -> None:
-        settings.fixed_model = "gpt-5.5"
-        registry._initialized = False
-        registry.init_from_settings()
-
-        resolved = registry.resolve_public_model(
-            "gpt-5.4",
-            "responses",
-            messages=[{"role": "user", "content": "hello"}],
-            tools=None,
-        )
-
-        self.assertEqual(resolved.public_model.public_id, "gpt-5.4")
-        self.assertEqual(resolved.backend.model_id, "gpt-5.4")
-        self.assertEqual(resolved.route_reason, "catalog:gpt-5.4:legacy_explicit")
-        self.assertTrue(resolved.lock_model_selection)
-
-    def test_explicit_gpt_5_4_mini_alias_keeps_legacy_lane(self) -> None:
-        resolved = registry.resolve_public_model(
-            "gpt-5.4-mini",
-            "responses",
-            messages=[{"role": "user", "content": "hello"}],
-            tools=None,
-        )
-
-        self.assertEqual(resolved.public_model.public_id, "gpt-5.4-mini")
-        self.assertEqual(resolved.backend.model_id, "gpt-5.4-mini")
-        self.assertEqual(resolved.execution_profile, "legacy_general")
-        self.assertEqual(resolved.execution_pool, "cpa_general_pool")
-        self.assertEqual(resolved.route_reason, "catalog:gpt-5.4-mini:legacy_explicit")
-        self.assertTrue(resolved.lock_model_selection)
-
-    def test_gpt_5_3_codex_uses_coding_profile_and_cpa_coding_pool(self) -> None:
-        resolved = registry.resolve_public_model(
-            "gpt-5.3-codex",
-            "responses",
-            messages=[{"role": "user", "content": "hello"}],
-            tools=None,
-        )
-
-        self.assertEqual(resolved.public_model.public_id, "gpt-5.3-codex")
-        self.assertEqual(resolved.execution_profile, "legacy_coding")
-        self.assertEqual(resolved.execution_pool, "cpa_coding_pool")
-        self.assertEqual(resolved.backend.model_id, "gpt-5.3-codex")
-        self.assertEqual(resolved.route_reason, "catalog:gpt-5.3-codex:legacy_explicit")
-        self.assertTrue(resolved.lock_model_selection)
-
-    def test_gpt_5_3_codex_spark_uses_coding_profile_and_admin_route_candidates(self) -> None:
-        resolved = registry.resolve_public_model(
-            "gpt-5.3-codex-spark",
-            "responses",
-            messages=[{"role": "user", "content": "hello"}],
-            tools=None,
-        )
-
-        self.assertEqual(resolved.public_model.public_id, "gpt-5.3-codex-spark")
-        self.assertEqual(resolved.public_model.provider_model, "gpt-5.3-codex-spark")
-        self.assertEqual(resolved.public_model.metadata["display_name"], "GPT 5.3 Codex Spark")
-        self.assertEqual(resolved.public_model.metadata["context_length"], 128000)
-        self.assertEqual(resolved.execution_profile, "legacy_coding")
-        self.assertEqual(resolved.execution_pool, "cpa_coding_pool")
-        self.assertEqual(resolved.backend.model_id, "gpt-5.3-codex-spark")
-        self.assertEqual(resolved.route_reason, "catalog:gpt-5.3-codex-spark:legacy_explicit")
-        self.assertTrue(resolved.lock_model_selection)
-
-        candidate_ids = {item["id"] for item in registry.candidate_alias_targets("gpt-5.3-codex")}
-        self.assertIn("gpt-5.3-codex-spark", candidate_ids)
-
-    def test_codex_auto_review_uses_cpa_model_id_and_coding_profile(self) -> None:
-        resolved = registry.resolve_public_model(
-            "codex-auto-review",
-            "responses",
-            messages=[{"role": "user", "content": "hello"}],
-            tools=[{"type": "function", "function": {"name": "approve", "parameters": {}}}],
-        )
-
-        self.assertEqual(resolved.public_model.public_id, "codex-auto-review")
-        self.assertEqual(resolved.public_model.provider_model, "codex-auto-review")
-        self.assertEqual(resolved.public_model.created, 1776902400)
-        self.assertEqual(resolved.public_model.metadata["supported_parameters"], ["tools"])
-        self.assertEqual(resolved.public_model.metadata["thinking"]["levels"], ["low", "medium", "high", "xhigh"])
-        self.assertEqual(resolved.execution_profile, "legacy_coding")
-        self.assertEqual(resolved.execution_pool, "cpa_coding_pool")
-        self.assertEqual(resolved.backend.model_id, "codex-auto-review")
-        self.assertEqual(resolved.route_reason, "catalog:codex-auto-review:legacy_explicit")
-        self.assertTrue(resolved.lock_model_selection)
-
     def test_catalog_lists_all_expected_legacy_gpt_aliases(self) -> None:
         text_model_ids = [
             model.public_id
@@ -914,13 +728,6 @@ class ModelCatalogTests(unittest.TestCase):
         ]
 
         self.assertEqual(text_model_ids, LEGACY_PUBLIC_TEXT_MODELS)
-
-    def test_legacy_public_aliases_expose_default_text_prices(self) -> None:
-        model = registry.get_public_model("gpt-5.4")
-
-        self.assertIsNotNone(model)
-        self.assertEqual(model.price_input_per_million, 250)
-        self.assertEqual(model.price_output_per_million, 1500)
 
     def test_default_image_model_is_used_when_model_is_omitted(self) -> None:
         resolved = registry.resolve_public_model(None, "images/generations")
@@ -1067,7 +874,7 @@ class ModelCatalogTests(unittest.TestCase):
 
     def test_legacy_text_model_rejects_embeddings_endpoint(self) -> None:
         with self.assertRaises(ModelCapabilityError):
-            registry.resolve_public_model("gpt-5.2-codex", "embeddings")
+            registry.resolve_public_model("gpt-5.5", "embeddings")
 
 
 if __name__ == "__main__":
