@@ -213,7 +213,7 @@ class GatewayCatalogSyncTests(unittest.TestCase):
         retired = {
             "gpt-5", "gpt-5.1", "gpt-5.1-codex", "gpt-5.1-codex-mini", "gpt-5.1-codex-max",
             "gpt-5.2", "gpt-5.2-codex", "gpt-5.3-codex", "gpt-5.3-codex-spark",
-            "codex-auto-review", "gpt-5.4", "gpt-5.4-mini", "gpt-5-codex", "gpt-5-codex-mini",
+            "gpt-5.4", "gpt-5.4-mini", "gpt-5-codex", "gpt-5-codex-mini",
         }
         self.assertTrue(retired.isdisjoint(public_models))
 
@@ -312,8 +312,19 @@ class GatewayCatalogSyncTests(unittest.TestCase):
             if isinstance(item, dict) and item.get("id")
         }
 
-        retired = {"gpt-5.2-codex", "gpt-5.3-codex", "gpt-5.3-codex-spark", "codex-auto-review"}
+        retired = {"gpt-5.2-codex", "gpt-5.3-codex", "gpt-5.3-codex-spark"}
         self.assertTrue(retired.isdisjoint(public_models))
+
+    def test_codex_auto_review_stays_public(self) -> None:
+        public_models = {
+            item["id"]: item
+            for item in (self.catalog.get("models") or [])
+            if isinstance(item, dict) and item.get("id")
+        }
+        model = public_models["codex-auto-review"]
+        self.assertEqual(model.get("provider_model"), "codex-auto-review")
+        self.assertEqual(model.get("billable_sku"), "legacy-codex-auto-review-text")
+        self.assertIn("responses", model.get("capabilities") or [])
 
     def test_text_models_match_native_cpa_gemini_shape(self) -> None:
         for model in self.cpa_gemini_models:

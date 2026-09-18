@@ -11,6 +11,7 @@ from app.router import ModelCapabilityError, UnknownModelError, _resolve_placeho
 
 LEGACY_PUBLIC_TEXT_MODELS = [
     "gpt-5.5",
+    "codex-auto-review",
     "gpt-5.6",
     "gpt-5.6-sol",
     "gpt-5.6-terra",
@@ -18,6 +19,7 @@ LEGACY_PUBLIC_TEXT_MODELS = [
 ]
 LEGACY_PUBLIC_TEXT_PRICES = {
     "gpt-5.5": (500, 3000),
+    "codex-auto-review": (500, 3000),
     "gpt-5.6": (500, 3000),
     "gpt-5.6-sol": (500, 3000),
     "gpt-5.6-terra": (200, 1200),
@@ -525,10 +527,17 @@ class ModelCatalogTests(unittest.TestCase):
         for model_id in (
             "gpt-5", "gpt-5.1", "gpt-5.1-codex", "gpt-5.1-codex-mini", "gpt-5.1-codex-max",
             "gpt-5.2", "gpt-5.2-codex", "gpt-5.3-codex", "gpt-5.3-codex-spark",
-            "codex-auto-review", "gpt-5.4", "gpt-5.4-mini", "gpt-5-codex", "gpt-5-codex-mini",
+            "gpt-5.4", "gpt-5.4-mini", "gpt-5-codex", "gpt-5-codex-mini",
         ):
             with self.subTest(model=model_id), self.assertRaises(UnknownModelError):
                 registry.resolve_public_model(model_id, "responses")
+
+    def test_codex_auto_review_alias_stays_available(self) -> None:
+        resolved = registry.resolve_public_model("codex-auto-review", "responses")
+
+        self.assertEqual(resolved.public_model.public_id, "codex-auto-review")
+        self.assertEqual(resolved.public_model.provider_model, "codex-auto-review")
+        self.assertEqual(resolved.backend.model_id, "codex-auto-review")
 
     def test_empty_catalog_does_not_resurrect_retired_fixed_model(self) -> None:
         settings.fixed_model = "gpt-5.4"
