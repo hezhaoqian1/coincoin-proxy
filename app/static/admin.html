@@ -2189,7 +2189,7 @@
         <div class="card usage-trend-card"><div class="card-header"><div><span class="card-title">用量趋势</span><div class="text-sm text-muted" id="usageWindow">—</div></div><label class="usage-inline-label">查看<select id="usageTrendMetric" class="form-select" onchange="renderUsageTrend()"><option value="cost_cents">净消耗</option><option value="tokens">Tokens</option><option value="requests">请求数</option></select></label></div><div class="card-body"><div id="usageTrend" class="usage-trend">暂无数据</div><div id="usageTrendHint" class="text-sm text-muted"></div></div></div>
         <div class="card usage-table-card">
           <div class="card-header usage-actions">
-            <div class="usage-tabs" role="group" aria-label="用量视图"><button type="button" class="btn btn-sm" data-usage-tab="users" aria-pressed="true" onclick="setUsageTab('users')">用户排行</button><button type="button" class="btn btn-sm" data-usage-tab="models" aria-pressed="false" onclick="setUsageTab('models')">模型消耗</button><button type="button" class="btn btn-sm" data-usage-tab="records" aria-pressed="false" onclick="setUsageTab('records')">请求明细</button></div>
+            <div class="usage-tabs" role="group" aria-label="用量视图"><button type="button" class="btn btn-sm" data-usage-tab="users" aria-pressed="true" onclick="setUsageTab('users')">用户排行</button><button type="button" class="btn btn-sm" data-usage-tab="pairs" aria-pressed="false" onclick="setUsageTab('pairs')">用户 × 模型</button><button type="button" class="btn btn-sm" data-usage-tab="models" aria-pressed="false" onclick="setUsageTab('models')">模型消耗</button><button type="button" class="btn btn-sm" data-usage-tab="records" aria-pressed="false" onclick="setUsageTab('records')">请求明细</button></div>
             <label id="usageSortLabel" class="usage-inline-label">排序<select id="usageSort" class="form-select" onchange="loadUsageTable(0)"><option value="cost_cents">消耗从高到低</option><option value="tokens">Tokens 从高到低</option><option value="requests">请求数从高到低</option><option value="images">图片从高到低</option><option value="videos">视频从高到低</option></select></label>
           </div>
           <div class="usage-table-help text-sm text-muted" id="usageTableHint">点击用户名，查看这个用户的模型消耗。</div>
@@ -6302,13 +6302,16 @@
       const tab = usageState.tab;
       document.querySelectorAll('[data-usage-tab]').forEach(node => node.setAttribute('aria-pressed', String(node.dataset.usageTab === tab)));
       usageEl('usageSortLabel').style.display = tab === 'records' ? 'none' : '';
-      const columns = tab === 'users' ? ['#', '用户', '净消耗', 'Tokens（输入 / 输出）', '请求', '模型', '图片 / 视频', '失败率', '平均耗时']
-        : tab === 'models' ? ['#', '模型', '净消耗', 'Tokens（输入 / 输出）', '缓存读 / 写', '请求 / 用户', '图片 / 视频', '失败率', '平均耗时']
+      const columns = tab === 'users' ? ['#', '用户', '净消耗', 'Tokens（输入 / 输出）', '请求', '模型数', '图片 / 视频', '失败率', '平均耗时', '操作']
+        : tab === 'pairs' ? ['#', '用户', '模型', '净消耗', 'Tokens（输入 / 输出）', '请求', '图片 / 视频', '失败率', '平均耗时', '操作']
+        : tab === 'models' ? ['#', '模型', '净消耗', 'Tokens（输入 / 输出）', '缓存读 / 写', '请求 / 用户', '图片 / 视频', '失败率', '平均耗时', '操作']
         : ['时间（上海）', '用户 / Key', '模型 / 接口', 'Tokens / 媒体', '净消耗', '结果', '耗时', '操作'];
       usageEl('usageTableHead').innerHTML = `<tr>${columns.map(c => `<th>${c}</th>`).join('')}</tr>`;
       usageEl('usageTableHint').textContent = tab === 'users'
         ? usageState.model ? `显示模型「${usageState.model}」的用户消耗；点击用户查看该用户使用此模型的请求明细。`
           : '按当前筛选统计全部用户；点击用户名查看该用户的模型消耗。'
+        : tab === 'pairs'
+          ? '每一行就是一组用户 × 模型，直接查看该用户使用该模型的消耗；点击“请求明细”核对逐笔记录。'
         : tab === 'models'
           ? usageState.user ? `显示用户「${usageState.user.name}」的模型消耗；点击模型查看该模型在此用户下的请求明细。`
             : '按当前筛选聚合模型；点击模型查看使用它的用户及各自消耗。缓存读写已包含在输入 Tokens 内。'
@@ -6328,6 +6331,10 @@
       } else if (tab === 'models') {
         usageState.model = row.key;
         usageState.tab = usageState.user ? 'records' : 'users';
+      } else if (tab === 'pairs') {
+        usageState.user = { id: row.user_id, name: row.display_name || row.user_id };
+        usageState.model = row.model;
+        usageState.tab = 'records';
       }
       return usageState.tab;
     }
@@ -6339,11 +6346,17 @@
         const money = `<strong>${formatMoney(row.cost_cents)}</strong>`;
         const tokens = `${usageCount(row.tokens)}<div class="usage-secondary">入 ${usageCount(row.input_tokens)} · 出 ${usageCount(row.output_tokens)}</div>`;
         if (tab === 'records') return `<tr><td class="text-sm">${escapeHtml(usageDate(row.created_at))}</td><td>${escapeHtml(row.user || row.user_id)}<div class="usage-secondary">${escapeHtml(row.api_key_id || '未记录 Key')}</div></td><td>${escapeHtml(row.model)}<div class="usage-secondary">${escapeHtml(row.endpoint)}</div></td><td>${tokens}<div class="usage-secondary">图 ${usageCount(row.image_count)} · 视频 ${usageCount(row.video_count)}</div></td><td>${money}</td><td>${usageStatusBadge(row)}${row.route_attempt > 0 ? '<div class="usage-secondary">Fallback</div>' : ''}</td><td>${usageLatency(row.duration_ms)}</td><td><button class="btn btn-sm btn-secondary" data-usage-row="${index}">详情</button></td></tr>`;
+        if (tab === 'pairs') {
+          const user = `<div><strong>${escapeHtml(row.display_name || row.user_id || '未记录')}</strong><div class="usage-secondary">${escapeHtml(row.user_id || '')}</div></div>`;
+          const model = `<strong>${escapeHtml(row.model || '未记录模型')}</strong>`;
+          return `<tr><td><span class="rank-badge rank-${Number(row.rank)}">${Number(row.rank)}</span></td><td>${user}</td><td>${model}</td><td>${money}</td><td>${tokens}</td><td>${usageCount(row.requests)}</td><td>${usageCount(row.images)} / ${usageCount(row.videos)}</td><td>${usageRate(row.failure_rate)}</td><td>${usageLatency(row.avg_latency_ms)}</td><td><button class="btn btn-sm btn-secondary" data-usage-row="${index}">请求明细</button></td></tr>`;
+        }
         const name = tab === 'users' ? row.display_name : row.key;
         const identity = `<button class="btn btn-ghost usage-link" data-usage-row="${index}">${escapeHtml(name || '未记录')}</button>${tab === 'users' ? `<div class="usage-secondary">${escapeHtml(row.email || row.key)}</div>` : ''}`;
         const extras = tab === 'users' ? `<td>${usageCount(row.requests)}</td><td>${usageCount(row.models)}</td>`
           : `<td>${usageCount(row.cache_read_tokens)} / ${usageCount(row.cache_creation_tokens)}</td><td>${usageCount(row.requests)} / ${usageCount(row.users)}</td>`;
-        return `<tr><td><span class="rank-badge rank-${Number(row.rank)}">${Number(row.rank)}</span></td><td>${identity}</td><td>${money}</td><td>${tokens}</td>${extras}<td>${usageCount(row.images)} / ${usageCount(row.videos)}</td><td>${usageRate(row.failure_rate)}</td><td>${usageLatency(row.avg_latency_ms)}</td></tr>`;
+        const action = tab === 'users' ? '查看模型' : '查看用户';
+        return `<tr><td><span class="rank-badge rank-${Number(row.rank)}">${Number(row.rank)}</span></td><td>${identity}</td><td>${money}</td><td>${tokens}</td>${extras}<td>${usageCount(row.images)} / ${usageCount(row.videos)}</td><td>${usageRate(row.failure_rate)}</td><td>${usageLatency(row.avg_latency_ms)}</td><td><button class="btn btn-sm btn-secondary" data-usage-row="${index}">${action}</button></td></tr>`;
       }).join('');
       body.querySelectorAll('[data-usage-row]').forEach(button => {
         button.onclick = () => {
@@ -6369,7 +6382,7 @@
       params.set('limit', '20');
       params.set('include_total', 'false');
       if (tab !== 'records') {
-        params.set('dimension', tab);
+        if (tab !== 'pairs') params.set('dimension', tab);
         params.set('metric', usageEl('usageSort').value);
       }
       renderUsageTabState();
@@ -6378,7 +6391,7 @@
       usageEl('usageTableBody').innerHTML = '<tr><td colspan="10" class="usage-empty">加载中…</td></tr>';
       usageEl('usagePageInfo').textContent = '';
       try {
-        const path = tab === 'records' ? 'records' : 'groups';
+        const path = tab === 'records' ? 'records' : tab === 'pairs' ? 'pairs' : 'groups';
         const cacheKey = `${path}?${params}`;
         const cached = usageState.cache.get(cacheKey);
         let data;
@@ -6396,10 +6409,13 @@
         usageState.rows = data.data;
         usageState.tableReady = true;
         renderUsageTable(data.data, tab);
-        const total = Number(data.total ?? usageState.overview.summary[tab === 'records' ? 'records' : tab]);
-        usageEl('usagePageInfo').textContent = `第 ${total && data.data.length ? offset + 1 : 0}–${Math.min(total, offset + data.data.length)} 条，共 ${usageCount(total)} 条`;
+        const total = tab === 'pairs' && data.total == null
+          ? null : Number(data.total ?? usageState.overview.summary[tab === 'records' ? 'records' : tab]);
+        usageEl('usagePageInfo').textContent = total == null
+          ? `第 ${data.data.length ? offset + 1 : 0}–${offset + data.data.length} 条${data.has_more ? '，还有更多' : ''}`
+          : `第 ${total && data.data.length ? offset + 1 : 0}–${Math.min(total, offset + data.data.length)} 条，共 ${usageCount(total)} 条`;
         usageEl('usagePrev').disabled = offset === 0;
-        usageEl('usageNext').disabled = offset + data.data.length >= total;
+        usageEl('usageNext').disabled = total == null ? !data.has_more : offset + data.data.length >= total;
       } catch (error) {
         if (controller.signal.aborted || version !== usageState.tableVersion) return;
         usageEl('usageTableBody').innerHTML = `<tr><td colspan="10" class="usage-empty">${escapeHtml(error.message)} <button class="btn btn-sm btn-secondary" onclick="loadUsageTable(usageState.offset)">重试</button></td></tr>`;

@@ -220,13 +220,14 @@ class AdminUsageFieldTests(unittest.IsolatedAsyncioTestCase):
         try:
             transport = httpx.ASGITransport(app=app)
             async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-                response = await client.get("/admin?token=admin-secret")
+                for path in ("/admin", "/admin/ui"):
+                    response = await client.get(f"{path}?token=admin-secret")
 
-            self.assertEqual(response.status_code, 200, response.text)
-            self.assertIn("模型转发例外", response.text)
-            self.assertIn("缓存计费例外", response.text)
-            self.assertIn("model-routing-overrides", response.text)
-            self.assertIn("model-pricing-overrides", response.text)
+                    self.assertEqual(response.status_code, 200, response.text)
+                    self.assertIn("模型转发例外", response.text)
+                    self.assertIn("缓存计费例外", response.text)
+                    self.assertIn("model-routing-overrides", response.text)
+                    self.assertIn("model-pricing-overrides", response.text)
         finally:
             admin_module._settings.admin_token = original_token
 

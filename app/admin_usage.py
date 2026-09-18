@@ -214,6 +214,46 @@ async def groups(dimension: Literal["users", "models"] = "users", metric: Litera
     return {**filters.metadata(), "data": items, "total": total, "offset": offset, "limit": limit}
 
 
+@router.get("/pairs")
+async def user_model_pairs(metric: Literal["cost_cents", "tokens", "requests", "images", "videos"] = "cost_cents",
+                           offset: int = Query(0, ge=0), limit: int = Query(20, ge=1, le=100),
+                           include_total: bool = True,
+                           filters: UsageFilter = Depends(), db: AsyncSession = Depends(get_db)):
+    """Return the user/model cross-tabulation used by the admin usage view."""
+    user_key = Log.user_id
+    model_key = public_model()
+    aggregate = (
+        filtered_query(filters, user_key.label("user_id"), model_key.label("model"), *aggregate_columns())
+        .group_by(user_key, model_key)
+        .subquery()
+    )
+    total = None
+    if include_total:
+        pair_count = (
+            filtered_query(filters, user_key.label("user_id"), model_key.label("model"))
+            .group_by(user_key, model_key)
+            .subquery()
+        )
+        total = int((await db.scalar(select(func.count()).select_from(pair_count))) or 0)
+    query = (
+        select(aggregate)
+        .add_columns(User.username, User.email, User.external_id)
+        .outerjoin(User, User.id == aggregate.c.user_id)
+    )
+    fetch_limit = limit if include_total else limit + 1
+    rows = (await db.execute(query.order_by(aggregate.c[metric].desc(), aggregate.c.user_id.asc(), aggregate.c.model.asc())
+                             .offset(offset).limit(fetch_limit))).mappings().all()
+    has_more = not include_total and len(rows) > limit
+    rows = rows[:limit]
+    items = []
+    for index, row in enumerate(rows):
+        item = metrics(row)
+        item["rank"] = offset + index + 1
+        item["display_name"] = item.get("username") or item.get("email") or item.get("external_id") or item["user_id"]
+        items.append(item)
+    return {**filters.metadata(), "data": items, "total": total, "has_more": has_more, "offset": offset, "limit": limit}
+
+
 @router.get("/users/{user_id}/models")
 async def user_models(user_id: str, filters: UsageFilter = Depends(), db: AsyncSession = Depends(get_db)):
     key = public_model()
