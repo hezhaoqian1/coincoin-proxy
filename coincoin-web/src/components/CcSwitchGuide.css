@@ -1,0 +1,18 @@
+.cc-switch-guide { padding: var(--space-xl); }
+.cc-switch-guide-heading { display: flex; justify-content: space-between; align-items: center; gap: 24px; }
+.cc-switch-guide h2 { margin: 8px 0; font-size: 1.45rem; }
+.cc-switch-guide p, .cc-switch-guide li { color: var(--text-secondary); line-height: 1.75; }
+.cc-switch-guide-heading p { margin: 0; }
+.cc-switch-guide-heading > button { flex-shrink: 0; }
+.cc-switch-guide-steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 30px; padding-left: 22px; margin: 28px 0; }
+.cc-switch-guide-steps li { padding-left: 4px; }
+.cc-switch-guide-steps li::marker { color: var(--accent-primary, #6366f1); font-weight: 800; }
+.cc-switch-guide-steps strong, .cc-switch-guide-check strong { color: var(--text-primary); }
+.cc-switch-guide-steps p { margin: 8px 0 0; font-size: .9rem; }
+.cc-switch-guide-check { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; padding: 18px; border: 1px solid var(--border-color); border-radius: var(--radius-md); }
+.cc-switch-guide-check p { margin-bottom: 0; font-size: .88rem; overflow-wrap: anywhere; }
+.guide-manual-config > summary { cursor: pointer; padding: 20px 0; font-weight: 700; }
+@media (max-width: 800px) {
+    .cc-switch-guide-heading { align-items: flex-start; flex-direction: column; }
+    .cc-switch-guide-steps, .cc-switch-guide-check { grid-template-columns: 1fr; gap: 18px; }
+}

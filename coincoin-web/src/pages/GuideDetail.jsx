@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react'
 import { Link, Navigate, useParams } from 'react-router-dom'
 import AppShell from '../components/AppShell'
+import CcSwitchGuide from '../components/CcSwitchGuide'
+import { CODEX_MODEL_ID } from '../utils/ccSwitch'
 import { useAuth } from '../hooks/useAuth'
 import { usePublicModels } from '../hooks/usePublicModels'
 import { getGuideCodePreview } from './guideCodePreview'
@@ -8,7 +10,6 @@ import './GuideDetail.css'
 
 const SITE_ROOT = typeof window !== 'undefined' ? window.location.origin : ''
 const OPENAI_BASE_URL = SITE_ROOT ? `${SITE_ROOT}/v1` : '/v1'
-const CODEX_MODEL_ID = 'gpt-5.6-sol'
 const CLAUDE_DEFAULT_MODEL_ID = 'claude-sonnet-4-6'
 const CLAUDE_OPUS_OPTIONAL_MODEL_ID = 'claude-opus-5'
 
@@ -932,7 +933,7 @@ Write-Host "saved $Output"`
             },
             codex: {
                 title: 'Codex 配置',
-                description: '直接把 token 写进 `~/.codex/config.toml`，不再要求额外改 `~/.zshrc`。',
+                description: '推荐用 CC Switch 一键导入地址、开发者 Key 和模型。也可以展开下方终端命令手动配置。',
                 commandGroup: [
                     {
                         title: 'macOS / Linux 一键配置',
@@ -970,7 +971,7 @@ Write-Host "saved $Output"`
             },
             'claude-code': {
                 title: 'Claude Code 配置',
-                description: 'Claude Code 走 Anthropic 兼容入口，地址填根域名，不要手动加 `/v1`。脚本只写 URL 和 Key，模型使用 claude-sonnet-4-6。',
+                description: '推荐用 CC Switch 一键配置 Claude Code；Anthropic 兼容入口使用站点根地址。下方保留终端命令作为手动配置方式。',
                 commandGroup: [
                     {
                         title: 'macOS / Linux 一键配置',
@@ -981,7 +982,7 @@ Write-Host "saved $Output"`
                     {
                         title: 'Windows PowerShell 一键配置',
                         platform: 'Windows',
-                        summary: '先备份旧 URL / Key 环境变量，再写入当前 PowerShell 和用户级环境变量；模型使用 claude-sonnet-4-6。',
+                        summary: '先备份旧 URL / Key 环境变量，再写入当前 PowerShell 和用户级环境变量；模型由 Claude Code 默认选择。',
                         code: claudeWindowsCommand,
                     },
                 ],
@@ -1106,6 +1107,7 @@ Write-Host "saved $Output"`
     }, [codingModelId, defaultImageModel?.id, imageModels, key])
 
     const guide = guideId ? guides[guideId] : null
+    const ccSwitchApp = guideId === 'codex' ? 'codex' : guideId === 'claude-code' ? 'claude' : null
     if (!guide) {
         return <Navigate to="/guides/api-quickstart" replace />
     }
@@ -1131,7 +1133,14 @@ Write-Host "saved $Output"`
                     </section>
                 )}
 
-                {(effectiveApiKey || guide.examples || guide.integrations) && (guide.examples ? (
+                {ccSwitchApp && <CcSwitchGuide key={ccSwitchApp} app={ccSwitchApp} apiKey={effectiveApiKey} loading={developerKeyLoading} />}
+
+                {ccSwitchApp && effectiveApiKey ? (
+                    <details className="guide-manual-config">
+                        <summary>其他方式：使用终端命令手动配置</summary>
+                        <GuideCommandTabs items={guide.commandGroup} secret={effectiveApiKey} />
+                    </details>
+                ) : !ccSwitchApp && (effectiveApiKey || guide.examples || guide.integrations) && (guide.examples ? (
                     <GuideCodeGrid items={guide.examples} secret={effectiveApiKey} />
                 ) : guide.integrations ? (
                     <OtherGuideGrid items={guide.integrations} />

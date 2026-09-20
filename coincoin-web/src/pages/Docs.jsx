@@ -303,7 +303,8 @@ function AudienceGuide() {
             title: 'Codex CLI',
             tag: '推荐',
             desc: '命令行工作流，走 OpenAI 兼容入口。',
-            bullets: ['准备开发者 Key', '直接照抄 config.toml', '通常用 responses']
+            bullets: ['在 API 密钥页选择导入 CC Switch', '选择 Codex，确认导入并启用', '使用 /v1 地址与 Responses 协议'],
+            guide: '/guides/codex',
         },
         {
             title: 'Grok Build',
@@ -327,7 +328,8 @@ function AudienceGuide() {
             title: 'Claude Code',
             tag: '推荐',
             desc: 'Claude Code 走 Anthropic 兼容入口。',
-            bullets: ['官方推荐用 ~/.claude/settings.json', 'ANTHROPIC_BASE_URL 填根域名', '默认先用 claude-sonnet-4-6，重任务再试 claude-opus-5']
+            bullets: ['在 API 密钥页一键导入 CC Switch', '选择 Claude Code，地址使用根域名', '确认导入后启用，重启 Claude Code'],
+            guide: '/guides/claude-code',
         },
         {
             title: 'OpenClaw',
@@ -357,6 +359,7 @@ function AudienceGuide() {
                                 <li key={item}>{item}</li>
                             ))}
                         </ul>
+                        {route.guide && <Link to={route.guide}>查看一键配置教程 →</Link>}
                     </div>
                 ))}
             </div>
@@ -1027,6 +1030,7 @@ while (!['completed', 'failed'].includes(result.status)) {
 console.log(result.output?.url || result);`}</pre>
 
             <h3>Codex CLI</h3>
+            <p>推荐 <Link to="/guides/codex#cc-switch">用 CC Switch 一键配置 Codex</Link>，或在 <Link to="/api-keys">API 密钥</Link> 页面选择具体 Key 导入。下方是手动配置参考。</p>
             <pre className="code-block">{`model = "${CODEX_MODEL_ID}"
 model_provider = "clawfather"
 disable_response_storage = true
@@ -1058,6 +1062,7 @@ supports_backend_search = true`}</pre>
             <p><Link to="/guides/grok-build">查看完整安装、备份和配置教程</Link></p>
 
             <h3>Claude Code</h3>
+            <p>推荐 <Link to="/guides/claude-code#cc-switch">用 CC Switch 一键配置 Claude Code</Link>。确认导入并启用供应商后，重启 Claude Code 即可使用。</p>
             <pre className="code-block">{`mkdir -p ~/.claude && cat > ~/.claude/settings.json <<'EOF'
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",

@@ -14,6 +14,7 @@ import {
     loginUser,
     setUsername as storeUsername,
 } from '../api/client'
+import { selectDeveloperKey } from '../utils/ccSwitch'
 
 const LEGACY_DEMO_KEY = 'sk_cc_demo_key'
 const AuthContext = createContext(null)
@@ -186,7 +187,7 @@ function useAuthState() {
 
     const isConsoleSession = !!username
     const hasLocalDeveloperKey = !!generatedApiKey || (!!apiKey && !isConsoleSession)
-    const effectiveApiKey = generatedApiKey || recoverableApiKey || (!isConsoleSession && apiKey ? apiKey : '')
+    const effectiveApiKey = selectDeveloperKey({ generatedApiKey, recoverableApiKey, apiKey, isConsoleSession })
     const hasCopyableDeveloperKey = !!effectiveApiKey
     const hasDeveloperKey = hasLocalDeveloperKey || !!recoverableApiKey || (isConsoleSession && developerKeyState.hasActiveKey)
     const workbenchApiKey = effectiveApiKey || (isConsoleSession && hasDeveloperKey ? apiKey : '')
