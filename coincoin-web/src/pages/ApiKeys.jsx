@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import AppShell from '../components/AppShell'
+import CcSwitchImport from '../components/CcSwitchImport'
+import { getKeyAvailability, isFullDeveloperKey } from '../utils/ccSwitch'
 import {
     centsToDollars,
     clearGeneratedKey,
@@ -11,7 +13,7 @@ import {
     updateDeveloperKey,
 } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
-import { formatLocalTime } from '../utils/time'
+import { formatLocalTime, parseBackendTimestamp } from '../utils/time'
 import './ApiKeys.css'
 
 const blankForm = {
@@ -86,11 +88,10 @@ function formToPayload(form) {
     }
 }
 
-function KeyStatusPill({ status }) {
-    const normalized = status === 'active' ? 'active' : 'disabled'
+function KeyStatusPill({ availability }) {
     return (
-        <span className={`api-key-status api-key-status-${normalized}`}>
-            {normalized === 'active' ? '可用' : '已禁用'}
+        <span className={`api-key-status api-key-status-${availability.tone}`}>
+            {availability.label}
         </span>
     )
 }
@@ -186,14 +187,21 @@ export default function ApiKeys() {
     const filteredKeys = useMemo(() => {
         const needle = search.trim().toLowerCase()
         return (keysState.data || []).filter((item) => {
-            if (filterStatus !== 'all' && item.status !== filterStatus) return false
+            const availability = getKeyAvailability(item)
+            if (filterStatus === 'active' && !availability.usable) return false
+            if (filterStatus === 'disabled' && item.status === 'active') return false
+            if (filterStatus === 'unavailable' && (availability.usable || item.status !== 'active')) return false
             if (!needle) return true
             return [item.masked_key, item.name, item.purpose].some((value) => String(value || '').toLowerCase().includes(needle))
         })
     }, [filterStatus, keysState.data, search])
 
     const limitedCount = (keysState.data || []).filter((item) => item.monthly_quota_cents || item.total_quota_cents || (item.ip_allowlist || []).length || item.expires_at).length
-    const latestUsed = keysState.data.find((item) => item.last_used_at)?.last_used_at || null
+    const availableCount = keysState.data.filter((item) => getKeyAvailability(item).usable).length
+    const latestUsed = keysState.data.reduce((latest, item) => {
+        const date = parseBackendTimestamp(item.last_used_at)
+        return date && (!latest || date > latest) ? date : latest
+    }, null)
 
     const handleCreate = async () => {
         setCreating(true)
@@ -216,9 +224,13 @@ export default function ApiKeys() {
 
     const handleCopy = async (value, label) => {
         if (!value) return
-        await navigator.clipboard.writeText(value)
-        setCopied(label)
-        setTimeout(() => setCopied(''), 2000)
+        try {
+            await navigator.clipboard.writeText(value)
+            setCopied(label)
+            setTimeout(() => setCopied(''), 2000)
+        } catch {
+            setError('复制失败，请允许浏览器访问剪贴板后重试。')
+        }
     }
 
     const updateKey = async (keyId, payload, fallbackMessage) => {
@@ -292,6 +304,10 @@ export default function ApiKeys() {
             }
         >
             <div className="api-keys-page">
+                <div className="glass-card api-keys-connect">
+                    <div><span className="api-keys-kicker">Connect your tools</span><h3>一个 Key，接入你的编程工具</h3><p>找到要使用的 Key，点击「导入 CC Switch」，选择 Codex 或 Claude Code，即可带入配置。</p></div>
+                    <div className="api-keys-connect-links"><Link to="/guides/codex">Codex 教程 ↗</Link><Link to="/guides/claude-code">Claude Code 教程 ↗</Link></div>
+                </div>
                 {authMode === 'api' && (
                     <div className="glass-card api-keys-alert">
                         <h3>当前是开发者 Key 直登</h3>
@@ -307,14 +323,14 @@ export default function ApiKeys() {
                                 role="button"
                                 tabIndex={0}
                                 aria-expanded={showCreate}
-                                onDoubleClick={toggleCreate}
+                                onClick={toggleCreate}
                                 onKeyDown={handleCreateToggleKeyDown}
-                                title={showCreate ? '双击收起新建区域' : '双击展开新建区域'}
+                                title={showCreate ? '收起新建区域' : '展开新建区域'}
                             >
                                 <span className="api-keys-kicker">New Key</span>
                                 <h3>新建开发者 Key</h3>
                                 <p className="api-keys-section-tip">
-                                    {showCreate ? '双击标题栏可收起' : '双击标题栏可展开，也可以点右侧按钮'}
+                                    {showCreate ? '可为不同工具分别设置用途、额度和有效期' : '为项目或客户端单独创建，方便管理用量与权限'}
                                 </p>
                             </div>
                             <div className="api-keys-create-actions">
@@ -364,7 +380,7 @@ export default function ApiKeys() {
                     </div>
                     <div className="glass-card api-keys-stat">
                         <span className="api-keys-stat-label">可用</span>
-                        <strong>{keysState.active}</strong>
+                        <strong>{availableCount}</strong>
                         <span className="api-keys-stat-hint">可发请求</span>
                     </div>
                     <div className="glass-card api-keys-stat">
@@ -390,11 +406,13 @@ export default function ApiKeys() {
                             value={search}
                             onChange={(e) => setSearch(e.target.value)}
                             placeholder="搜索名称、用途或 Key..."
+                            aria-label="搜索 API 密钥"
                         />
-                        <select className="api-keys-filter" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
+                        <select className="api-keys-filter" aria-label="密钥状态" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
                             <option value="all">全部</option>
                             <option value="active">可用</option>
                             <option value="disabled">已禁用</option>
+                            <option value="unavailable">已过期 / 额度用尽</option>
                         </select>
                         <button className="btn btn-secondary btn-sm" onClick={loadKeys} disabled={loading}>
                             {loading ? '刷新中...' : '刷新'}
@@ -403,14 +421,15 @@ export default function ApiKeys() {
                 </div>
 
                 <div className="api-keys-list">
-                    {error && <p className="api-keys-error">{error}</p>}
+                    {error && <p className="api-keys-error" role="alert">{error}</p>}
                     {!loading && filteredKeys.length === 0 && (
                         <div className="glass-card api-keys-empty">暂无符合条件的 Key。</div>
                     )}
                     {filteredKeys.map((item) => {
                         const isEditing = editingId === item.key_id
-                        const copyValue = item.api_key || item.masked_key
-                        const copyLabel = item.api_key ? '复制完整 Key' : '复制脱敏 Key'
+                        const copyValue = isFullDeveloperKey(item.api_key) ? item.api_key : ''
+                        const availability = getKeyAvailability(item)
+                        const disabledReason = !availability.usable ? `此 Key ${availability.label}，请先处理后再导入` : ''
                         return (
                             <article className="glass-card api-key-card" key={item.key_id}>
                                 <div className="api-key-card-top">
@@ -422,10 +441,11 @@ export default function ApiKeys() {
                                         {revealedMaskedKey && item.masked_key === revealedMaskedKey && <span className="meta-pill">本次新建</span>}
                                     </div>
                                     <div className="api-key-card-primary-actions">
-                                        <button className="btn btn-primary btn-sm" onClick={() => handleCopy(copyValue, `${item.key_id}-primary`)}>
-                                            {copied === `${item.key_id}-primary` ? '已复制完整 Key' : copyLabel}
+                                        <KeyStatusPill availability={availability} />
+                                        <button className="btn btn-secondary btn-sm" disabled={!copyValue} title={!copyValue ? '此 Key 的明文不可恢复，请创建新的开发者 Key' : '复制完整 Key'} onClick={() => handleCopy(copyValue, `${item.key_id}-primary`)}>
+                                            {copied === `${item.key_id}-primary` ? '已复制完整 Key' : copyValue ? '复制 Key' : '明文不可用'}
                                         </button>
-                                        <KeyStatusPill status={item.status} />
+                                        <CcSwitchImport apiKey={copyValue} keyName={item.name || ''} disabledReason={disabledReason} />
                                     </div>
                                 </div>
 
@@ -433,6 +453,8 @@ export default function ApiKeys() {
                                     <KeyForm form={editForm} setForm={setEditForm} mode="edit" />
                                 ) : (
                                     <>
+                                        <details className="api-key-details">
+                                        <summary>{item.purpose || '未填写用途'} · 详情与限制</summary>
                                         <div className="api-key-meta-grid">
                                             <div>
                                                 <span>用途</span>
@@ -456,6 +478,7 @@ export default function ApiKeys() {
                                                 {item.ip_allowlist.map((ip) => <code key={ip}>{ip}</code>)}
                                             </div>
                                         ) : null}
+                                        </details>
                                         <div className="api-key-quota-grid">
                                             <QuotaLine label="本月" used={item.monthly_used_cents} quota={item.monthly_quota_cents} />
                                             <QuotaLine label="累计" used={item.total_used_cents} quota={item.total_quota_cents} />

@@ -1,13 +1,14 @@
 import { useMemo, useState } from 'react'
 import { Link, Navigate, useParams } from 'react-router-dom'
 import AppShell from '../components/AppShell'
+import CcSwitchGuide from '../components/CcSwitchGuide'
+import { CODEX_MODEL_ID } from '../utils/ccSwitch'
 import { useAuth } from '../hooks/useAuth'
 import { usePublicModels } from '../hooks/usePublicModels'
 import './GuideDetail.css'
 
 const SITE_ROOT = typeof window !== 'undefined' ? window.location.origin : ''
 const OPENAI_BASE_URL = SITE_ROOT ? `${SITE_ROOT}/v1` : '/v1'
-const CODEX_MODEL_ID = 'gpt-5.4'
 const CLAUDE_DEFAULT_ALIAS = 'sonnet'
 const CLAUDE_DEFAULT_MODEL_ID = 'claude-sonnet-4-6'
 const CLAUDE_OPUS_OPTIONAL_MODEL_ID = 'claude-opus-4-8'
@@ -537,7 +538,7 @@ aider --model openai/${codingModelId}`
             },
             codex: {
                 title: 'Codex 配置',
-                description: '直接把 token 写进 `~/.codex/config.toml`，不再要求额外改 `~/.zshrc`。',
+                description: '推荐用 CC Switch 一键导入地址、开发者 Key 和模型。也可以展开下方终端命令手动配置。',
                 commandGroup: [
                     {
                         title: 'macOS / Linux 一键配置',
@@ -556,7 +557,7 @@ aider --model openai/${codingModelId}`
             },
             'claude-code': {
                 title: 'Claude Code 配置',
-                description: 'Claude Code 走 Anthropic 兼容入口，地址填根域名，不要手动加 `/v1`。脚本只写 URL 和 Key，模型交给 Claude Code 默认 sonnet。',
+                description: '推荐用 CC Switch 一键配置 Claude Code；Anthropic 兼容入口使用站点根地址。下方保留终端命令作为手动配置方式。',
                 commandGroup: [
                     {
                         title: 'macOS / Linux 一键配置',
@@ -631,6 +632,7 @@ aider --model openai/${codingModelId}`
     }, [codingModelId, defaultImageModel?.id, imageModels, key])
 
     const guide = guideId ? guides[guideId] : null
+    const ccSwitchApp = guideId === 'codex' ? 'codex' : guideId === 'claude-code' ? 'claude' : null
     if (!guide) {
         return <Navigate to="/guides/api-quickstart" replace />
     }
@@ -656,7 +658,14 @@ aider --model openai/${codingModelId}`
                     </section>
                 )}
 
-                {(effectiveApiKey || guide.examples || guide.integrations) && (guide.examples ? (
+                {ccSwitchApp && <CcSwitchGuide key={ccSwitchApp} app={ccSwitchApp} apiKey={effectiveApiKey} loading={developerKeyLoading} />}
+
+                {ccSwitchApp && effectiveApiKey ? (
+                    <details className="guide-manual-config">
+                        <summary>其他方式：使用终端命令手动配置</summary>
+                        <GuideCommandTabs items={guide.commandGroup} />
+                    </details>
+                ) : !ccSwitchApp && (effectiveApiKey || guide.examples || guide.integrations) && (guide.examples ? (
                     <GuideCodeGrid items={guide.examples} />
                 ) : guide.integrations ? (
                     <OtherGuideGrid items={guide.integrations} />
