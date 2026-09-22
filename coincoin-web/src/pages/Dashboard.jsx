@@ -6,6 +6,7 @@ import { getBalance, getUsageLogs, getAnnouncements, activateKey, setGeneratedKe
 import useOrderConfirm from '../hooks/useOrderConfirm'
 import { useAuth } from '../hooks/useAuth'
 import AppShell from '../components/AppShell'
+import CcSwitchImport from '../components/CcSwitchImport'
 import { formatLocalTime, getLocalDateRangeIso, getLocalIsoDate, getLocalTodayRangeIso, getRecentLocalIsoDates } from '../utils/time'
 import './Dashboard.css'
 
@@ -171,13 +172,16 @@ function KeyManagement({ copied, copy, username, generatedApiKey, hasCopyableDev
                             <span className="action-icon">&#128273;</span>
                             <span className="key-copy-body">
                                 <strong>当前开发者 Key</strong>
-                                <code>{effectiveApiKey.substring(0, 12)}...</code>
+                                <code>{effectiveApiKey ? `${effectiveApiKey.substring(0, 12)}...` : '未检测到完整 Key'}</code>
                             </span>
-                            <span className="action-btn">{copied === 'key' ? '&#10003; 已复制' : '复制'}</span>
+                            <span className="action-btn">{copied === 'key' ? '&#10003; 已复制' : effectiveApiKey ? '复制' : '不可用'}</span>
                         </button>
                     </div>
                     <div className="action-links">
-                        <Link to="/guides/api-quickstart" className="btn btn-primary btn-sm">查看接入指南</Link>
+                        <Link to="/guides/codex" className="btn btn-primary btn-sm">Codex 教程</Link>
+                        <Link to="/guides/claude-code" className="btn btn-secondary btn-sm">Claude Code 教程</Link>
+                        <CcSwitchImport apiKey={effectiveApiKey} initialApp="codex" label="配置 Codex" />
+                        <CcSwitchImport apiKey={effectiveApiKey} initialApp="claude" label="配置 Claude Code" />
                         <Link to="/docs" className="btn btn-ghost btn-sm">查看文档</Link>
                     </div>
                 </div>
