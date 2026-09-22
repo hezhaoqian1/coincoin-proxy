@@ -146,7 +146,7 @@ function KeyForm({ form, setForm, mode }) {
 }
 
 export default function ApiKeys() {
-    const { authMode, generatedApiKey, username } = useAuth()
+    const { authMode, effectiveApiKey, generatedApiKey, username } = useAuth()
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState('')
     const [creating, setCreating] = useState(false)
@@ -177,8 +177,12 @@ export default function ApiKeys() {
     }
 
     useEffect(() => {
-        loadKeys()
-    }, [])
+        if (canManageKeys) {
+            loadKeys()
+        } else {
+            setLoading(false)
+        }
+    }, [canManageKeys])
 
     useEffect(() => {
         setRevealedKey(generatedApiKey || '')
@@ -277,6 +281,31 @@ export default function ApiKeys() {
             event.preventDefault()
             toggleCreate()
         }
+    }
+
+    if (authMode === 'api') {
+        const maskedKey = effectiveApiKey
+            ? `${effectiveApiKey.slice(0, 8)}...${effectiveApiKey.slice(-4)}`
+            : '当前开发者 Key'
+        return (
+            <AppShell title="API 密钥" description="开发者 Key 管理仅对控制台账号开放。">
+                <div className="api-keys-page">
+                    <div className="glass-card api-keys-connect">
+                        <div><span className="api-keys-kicker">Connect your tools</span><h3>一个 Key，接入你的编程工具</h3><p>当前已经使用开发者 Key 进入。可以继续调用接口和配置客户端。</p></div>
+                        <div className="api-keys-connect-links"><Link to="/guides/codex">Codex 教程 ↗</Link><Link to="/guides/claude-code">Claude Code 教程 ↗</Link></div>
+                    </div>
+                    <div className="glass-card api-keys-readonly">
+                        <span className="api-keys-kicker">Key-only access</span>
+                        <h3>当前 Key 仅用于调用接口</h3>
+                        <p>直接 Key 登录不会打开账号资料或多 Key 管理权限。要查看、创建、禁用或轮换开发者 Key，请退出后使用控制台账号密码登录。</p>
+                        <div className="api-keys-readonly-meta">
+                            <code>{maskedKey}</code>
+                            <Link className="btn btn-secondary btn-sm" to="/dashboard">返回概览</Link>
+                        </div>
+                    </div>
+                </div>
+            </AppShell>
+        )
     }
 
     return (
