@@ -300,6 +300,16 @@ export default function ApiKeys() {
                         <p>直接 Key 登录不会打开账号资料或多 Key 管理权限。要查看、创建、禁用或轮换开发者 Key，请退出后使用控制台账号密码登录。</p>
                         <div className="api-keys-readonly-meta">
                             <code>{maskedKey}</code>
+                            <button
+                                className="btn btn-secondary btn-sm"
+                                type="button"
+                                disabled={!effectiveApiKey}
+                                onClick={() => handleCopy(effectiveApiKey, 'direct-key')}
+                            >
+                                {copied === 'direct-key' ? '已复制完整 Key' : '复制完整 Key'}
+                            </button>
+                            <CcSwitchImport apiKey={effectiveApiKey} initialApp="codex" label="配置 Codex" />
+                            <CcSwitchImport apiKey={effectiveApiKey} initialApp="claude" label="配置 Claude Code" />
                             <Link className="btn btn-secondary btn-sm" to="/dashboard">返回概览</Link>
                         </div>
                     </div>
