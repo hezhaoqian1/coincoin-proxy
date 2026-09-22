@@ -3,6 +3,8 @@ from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from fastapi import HTTPException
+
 import app.keys as keys_module
 
 
@@ -42,6 +44,18 @@ class _FakeDB:
 
 
 class DeveloperKeyManagementTests(unittest.IsolatedAsyncioTestCase):
+    async def test_key_management_rejects_api_key_only_authentication(self):
+        request = SimpleNamespace()
+        db = _FakeDB()
+        rejection = HTTPException(status_code=401, detail="invalid session")
+
+        with patch.object(keys_module, "_user_from_session", AsyncMock(side_effect=rejection)) as session_auth:
+            with self.assertRaises(HTTPException) as raised:
+                await keys_module.list_my_developer_keys(request, db)
+
+        self.assertEqual(raised.exception.status_code, 401)
+        session_auth.assert_awaited_once_with(request, db)
+
     async def test_returns_active_key_summary_for_console_session(self):
         user = SimpleNamespace(id="u_123")
         created_at = datetime(2026, 4, 29, 12, 0, 0)
@@ -62,7 +76,7 @@ class DeveloperKeyManagementTests(unittest.IsolatedAsyncioTestCase):
         )
         request = SimpleNamespace()
 
-        with patch.object(keys_module, "authenticate_user", AsyncMock(return_value=user)), patch(
+        with patch.object(keys_module, "authenticate_console_session", AsyncMock(return_value=user)), patch(
             "app.security.decrypt_api_key", return_value="sk_cc_abcdefghijklmnopqrstuvwxyz1234"
         ):
             result = await keys_module.get_my_developer_key_state(request, db)
@@ -84,7 +98,7 @@ class DeveloperKeyManagementTests(unittest.IsolatedAsyncioTestCase):
         )
         request = SimpleNamespace()
 
-        with patch.object(keys_module, "authenticate_user", AsyncMock(return_value=user)):
+        with patch.object(keys_module, "authenticate_console_session", AsyncMock(return_value=user)):
             result = await keys_module.get_my_developer_key_state(request, db)
 
         self.assertFalse(result.has_active_key)
@@ -124,7 +138,7 @@ class DeveloperKeyManagementTests(unittest.IsolatedAsyncioTestCase):
         db = _FakeDB(execute_results=[_ScalarResult(keys), _ScalarResult([]), _ScalarResult([])])
         request = SimpleNamespace()
 
-        with patch.object(keys_module, "authenticate_user", AsyncMock(return_value=user)), patch(
+        with patch.object(keys_module, "authenticate_console_session", AsyncMock(return_value=user)), patch(
             "app.security.decrypt_api_key",
             side_effect=[
                 "sk_cc_newabcdefghijklmnopqrstuvwxyz1234",
@@ -149,7 +163,7 @@ class DeveloperKeyManagementTests(unittest.IsolatedAsyncioTestCase):
         db = _FakeDB()
         request = SimpleNamespace()
 
-        with patch.object(keys_module, "authenticate_user", AsyncMock(return_value=user)), patch.object(
+        with patch.object(keys_module, "authenticate_console_session", AsyncMock(return_value=user)), patch.object(
             keys_module, "generate_api_key", return_value="sk_cc_createdabcdefghijklmnopqrstuvwxyz9999"
         ), patch.object(keys_module, "generate_id", return_value="k_created"), patch.object(
             keys_module, "hash_key", return_value="hashed-key"
@@ -205,7 +219,7 @@ class DeveloperKeyManagementTests(unittest.IsolatedAsyncioTestCase):
             ip_allowlist=["198.51.100.0/24"],
         )
 
-        with patch.object(keys_module, "authenticate_user", AsyncMock(return_value=user)), patch(
+        with patch.object(keys_module, "authenticate_console_session", AsyncMock(return_value=user)), patch(
             "app.security.decrypt_api_key", return_value="sk_cc_disableabcdefghijklmnopqrstuvwxyz7777"
         ), patch("app.proxy.key_cache.delete", AsyncMock()) as cache_delete:
             result = await keys_module.update_my_developer_key("k_disable", payload, request, db)

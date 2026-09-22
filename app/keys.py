@@ -11,9 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .config import settings
 from .db import get_db
 from .finance_summary import ensure_finance_summary_initialized, increment_finance_summary
+from .auth import _user_from_session
 from .models import ApiKey, RequestLog, User
 from .rate_limiter import rate_limiter
-from .proxy import authenticate_user
 from .schemas import (
     DeveloperKeyCreateResponse,
     DeveloperKeyCreateRequest,
@@ -32,6 +32,13 @@ router = APIRouter(prefix="/v1/keys", tags=["keys"])
 logger = logging.getLogger("coincoin.keys")
 
 ACTIVATE_RATE_LIMIT = 5  # per IP per minute
+
+
+async def authenticate_console_session(request: Request, db: AsyncSession) -> User:
+    user, session_key = await _user_from_session(request, db)
+    if getattr(session_key, "_session_refreshed", False):
+        await db.commit()
+    return user
 
 
 def _client_ip(request: Request) -> str:
@@ -163,7 +170,7 @@ async def get_my_developer_key_state(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
-    user = await authenticate_user(request, db)
+    user = await authenticate_console_session(request, db)
 
     active_count = (
         await db.execute(
@@ -222,7 +229,7 @@ async def list_my_developer_keys(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
-    user = await authenticate_user(request, db)
+    user = await authenticate_console_session(request, db)
     rows = (
         await db.execute(
             select(ApiKey)
@@ -267,7 +274,7 @@ async def create_my_developer_key(
     payload: DeveloperKeyCreateRequest | None = None,
     db: AsyncSession = Depends(get_db),
 ):
-    user = await authenticate_user(request, db)
+    user = await authenticate_console_session(request, db)
     payload = payload or DeveloperKeyCreateRequest()
     ip_allowlist = _normalize_ip_allowlist(payload.ip_allowlist)
 
@@ -313,7 +320,7 @@ async def update_my_developer_key(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
-    user = await authenticate_user(request, db)
+    user = await authenticate_console_session(request, db)
     key = (
         await db.execute(
             select(ApiKey).where(
