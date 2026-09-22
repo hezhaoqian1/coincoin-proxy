@@ -94,7 +94,7 @@ See [`docs/usage-quota-infra.md`](./docs/usage-quota-infra.md).
 
 - **Chat Completions compatibility**: `/v1/chat/completions` with streaming, tools, function calling, and OpenAI-shaped responses.
 - **Embeddings**: `/v1/embeddings` with the public `text-embedding-3-small` alias.
-- **Image generation and editing**: `/v1/images/generations`, `/v1/images/edits`, and async `/v1/image-jobs/generations`.
+- **Image generation and editing**: `/v1/images/generations`, `/v1/images/edits`, and async `/v1/image-jobs/generations`. `gpt-image-2` remains the default; `gpt-image-2.5` is available as an explicit alias and defaults to **$0.80 per output image** through its independent upstream per-image setting.
 - **Slow image connection protection**: synchronous image JSON responses emit JSON-safe whitespace heartbeats so idle network intermediaries can keep the connection open while the upstream finishes.
 - **Usage accounting**: input/output token units, image units, job costs, balance, and request history.
 - **Provider channels**: admin-managed OpenAI-compatible upstream URLs and keys.

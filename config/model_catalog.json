@@ -818,6 +818,31 @@
       }
     },
     {
+      "id": "gpt-image-2.5",
+      "enabled": "${COINCOIN_PUBLIC_OPENAI_IMAGE_25_ENABLED:-true}",
+      "owned_by": "openai",
+      "provider_name": "OpenAI",
+      "provider_model": "${COINCOIN_IMAGE_25_MODEL:-gpt-image-2.5}",
+      "capabilities": ["images/generations", "images/edits"],
+      "routing_mode": "direct",
+      "delivery_lane": "upstream_direct",
+      "upstream_model": "${COINCOIN_IMAGE_25_MODEL:-gpt-image-2.5}",
+      "upstream_url": "${COINCOIN_IMAGE_25_UPSTREAM_URL:-${COINCOIN_IMAGE_UPSTREAM_URL:-${COINCOIN_FALLBACK_UPSTREAM_URL:-${COINCOIN_UPSTREAM_BASE_URL}}}}",
+      "api_key": "${COINCOIN_IMAGE_25_API_KEY:-${COINCOIN_IMAGE_API_KEY:-${COINCOIN_FALLBACK_API_KEY:-${COINCOIN_UPSTREAM_API_KEY}}}}",
+      "auth_style": "${COINCOIN_IMAGE_25_AUTH_STYLE:-${COINCOIN_IMAGE_AUTH_STYLE:-${COINCOIN_FALLBACK_AUTH_STYLE:-${COINCOIN_PRIMARY_AUTH_STYLE:-azure}}}}",
+      "price_per_image_cents": "${COINCOIN_IMAGE_25_PRICE_PER_IMAGE_CENTS:-80}",
+      "billable_sku": "openai-image-2.5",
+      "metadata": {
+        "tier": "preview",
+        "upstream_billing_mode": "per_image",
+        "upstream_price_source": "CoinCoin upstream account pricing",
+        "upstream_price_basis": "The configured upstream charges by output image count",
+        "official_price_source": "https://developers.openai.com/api/docs/pricing#image-generation",
+        "official_price_checked_at": "2026-09-22",
+        "official_price_basis": "OpenAI gpt-image-2.5 variant reference: image input $8/M, cached image input $2/M, image output $30/M; CoinCoin uses the upstream per-image contract for billing"
+      }
+    },
+    {
       "id": "seedance-v2-720p",
       "enabled": "${COINCOIN_PUBLIC_SEEDANCE_ENABLED:-true}",
       "owned_by": "bytedance",
