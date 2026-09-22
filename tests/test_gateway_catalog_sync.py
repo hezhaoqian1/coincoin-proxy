@@ -93,6 +93,7 @@ OFFICIAL_DEFAULT_TEXT_PRICES = {
 }
 OFFICIAL_DEFAULT_IMAGE_PRICES = {
     "${COINCOIN_IMAGE_MODEL:-gpt-image-2}": 5.3,
+    "gpt-image-2.5": 80,
     "gemini-image": 6.7,
     "gemini-3.1-flash-image": 6.7,
     "vertex-gemini-2.5-flash-image": 6.7,
@@ -202,6 +203,13 @@ class GatewayCatalogSyncTests(unittest.TestCase):
         self.assertIn("images/generations", public_models[default_image_model].get("capabilities") or [])
         self.assertIn(default_video_model, public_models)
         self.assertIn("videos/generations", public_models[default_video_model].get("capabilities") or [])
+
+    def test_gpt_image_25_uses_upstream_per_image_billing_contract(self) -> None:
+        model = next(item for item in self.catalog["models"] if item.get("id") == "gpt-image-2.5")
+        self.assertEqual(model.get("provider_model"), "${COINCOIN_IMAGE_25_MODEL:-gpt-image-2.5}")
+        self.assertEqual(model.get("upstream_model"), "${COINCOIN_IMAGE_25_MODEL:-gpt-image-2.5}")
+        self.assertEqual(model.get("metadata", {}).get("upstream_billing_mode"), "per_image")
+        self.assertEqual(model.get("metadata", {}).get("official_price_checked_at"), "2026-09-22")
 
     def test_retired_gpt_aliases_are_absent(self) -> None:
         public_models = {
@@ -379,6 +387,16 @@ class GatewayCatalogSyncTests(unittest.TestCase):
                 if capabilities.intersection(IMAGE_CAPABILITIES):
                     self.assertEqual(model.get("provider_name"), "OpenAI")
                     self.assertEqual(model.get("upstream_model"), model.get("provider_model"))
+                    if model.get("id") == "gpt-image-2.5":
+                        self.assertEqual(
+                            model.get("upstream_url"),
+                            "${COINCOIN_IMAGE_25_UPSTREAM_URL:-${COINCOIN_IMAGE_UPSTREAM_URL:-${COINCOIN_FALLBACK_UPSTREAM_URL:-${COINCOIN_UPSTREAM_BASE_URL}}}}",
+                        )
+                        self.assertEqual(
+                            model.get("api_key"),
+                            "${COINCOIN_IMAGE_25_API_KEY:-${COINCOIN_IMAGE_API_KEY:-${COINCOIN_FALLBACK_API_KEY:-${COINCOIN_UPSTREAM_API_KEY}}}}",
+                        )
+                        continue
                     self.assertEqual(
                         model.get("upstream_url"),
                         "${COINCOIN_IMAGE_UPSTREAM_URL:-${COINCOIN_FALLBACK_UPSTREAM_URL:-${COINCOIN_UPSTREAM_BASE_URL}}}",

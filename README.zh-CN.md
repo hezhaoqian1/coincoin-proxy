@@ -212,7 +212,7 @@ uvicorn app.main:app --reload --port 8000
 - embedding 请求不再复用旧 GPT / CPA lane；`/v1/embeddings` 默认和显式 `text-embedding-3-small` 都直连 Azure
 - Gemini 文本能力是增量暴露；显式传入 Gemini 文本 alias 时，会路由到 native Gemini CPA lane
 - DeepSeek 文本 alias `deepseek-v4-pro`、`deepseek-v4-flash` 是 route-only 公共模型，coding 流量 canonical preference 为上游 Responses；部署后需要在后台同时绑定 `responses` 和 `chat/completions` route 到 New API / OpenAI-compatible provider channel，Chat 接口仍由本地 Responses 兼容桥支持
-- 图片请求如果省略 `model`，默认走 `gpt-image-2` 的 OpenAI/Azure 图片直连 lane
+- 图片请求如果省略 `model`，默认走 `gpt-image-2` 的 OpenAI/Azure 图片直连 lane；需要 2.5 时显式传 `model=gpt-image-2.5`，2.5 默认按 **$0.80/张** 的独立上游配置计费
 - Gemini 图片 alias 保留为显式模型；传入 `model=gemini-image` 时，会路由到 native Gemini CPA lane，并在 CoinCoin 内转换成 OpenAI-compatible 图片响应
 - 图片模型支持 `/v1/images/generations` 与 `/v1/images/edits`，不会伪装成文本模型
 - 同步图片请求默认每 15 秒发送一次 JSON 合法空白，降低上游生成期间因连接长期无数据而被网络中间层断开的概率；空白不会影响最终 JSON 解析
