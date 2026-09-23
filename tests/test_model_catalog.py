@@ -11,6 +11,8 @@ from app.router import ModelCapabilityError, UnknownModelError, _resolve_placeho
 
 LEGACY_PUBLIC_TEXT_MODELS = [
     "gpt-5.5",
+    "gpt-6-sol",
+    "gpt-6-luna",
     "codex-auto-review",
     "gpt-5.6",
     "gpt-5.6-sol",
@@ -19,6 +21,8 @@ LEGACY_PUBLIC_TEXT_MODELS = [
 ]
 LEGACY_PUBLIC_TEXT_PRICES = {
     "gpt-5.5": (500, 3000),
+    "gpt-6-sol": (200, 1000),
+    "gpt-6-luna": (10, 50),
     "codex-auto-review": (500, 3000),
     "gpt-5.6": (500, 3000),
     "gpt-5.6-sol": (500, 3000),
@@ -43,7 +47,7 @@ def _legacy_text_model(model_id: str) -> dict:
     if prices:
         model["price_input_per_million"] = prices[0]
         model["price_output_per_million"] = prices[1]
-    if model_id in {"gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}:
+    if model_id in {"gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-sol", "gpt-6-luna"}:
         model["pricing"] = {"cache_creation_multiplier": 1.25}
     return model
 
@@ -578,6 +582,67 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertEqual(resolved.public_model.price_input_per_million, 200)
         self.assertEqual(resolved.public_model.cache_creation_multiplier, 1.25)
         self.assertEqual(resolved.public_model.effective_cache_creation_input_per_million, 250.0)
+
+    def test_checked_in_gpt_6_sol_and_luna_use_official_models_and_pricing(self) -> None:
+        settings.model_catalog_json = ""
+        registry._initialized = False
+        registry.init_from_settings()
+
+        for model_id, expected_prices in {
+            "gpt-6-sol": (200, 1000),
+            "gpt-6-luna": (10, 50),
+        }.items():
+            with self.subTest(model=model_id):
+                resolved = registry.resolve_public_model(model_id, "responses")
+                model = resolved.public_model
+
+                self.assertEqual(model.public_id, model_id)
+                self.assertEqual(model.provider_model, model_id)
+                self.assertEqual(resolved.backend.model_id, model_id)
+                self.assertEqual(model.routing_mode, "legacy_auto")
+                self.assertEqual(model.delivery_lane, "legacy")
+                self.assertEqual(
+                    (model.price_input_per_million, model.price_output_per_million),
+                    expected_prices,
+                )
+                self.assertEqual(model.cache_creation_multiplier, 1.25)
+                self.assertEqual(model.metadata["context_length"], 1_050_000)
+                self.assertEqual(model.metadata["max_completion_tokens"], 128_000)
+                self.assertEqual(model.metadata["thinking"]["default"], "medium")
+                self.assertEqual(
+                    model.metadata["thinking"]["levels"],
+                    ["none", "low", "medium", "high", "xhigh", "max"],
+                )
+
+    def test_checked_in_claude_opus_5_5_uses_anthropic_route_and_pricing(self) -> None:
+        settings.model_catalog_json = ""
+        registry._initialized = False
+        registry.init_from_settings()
+
+        opus = registry.get_public_model("claude-opus-5-5")
+
+        self.assertIsNotNone(opus)
+        self.assertEqual(opus.owned_by, "anthropic")
+        self.assertEqual(opus.provider_model, "claude-opus-5-5")
+        self.assertEqual(opus.upstream_model, "claude-opus-5-5")
+        self.assertEqual(opus.routing_mode, "route_only")
+        self.assertEqual(opus.delivery_lane, "route_only")
+        self.assertEqual(opus.capabilities, ("chat/completions",))
+        self.assertEqual(opus.auth_style, "x-api-key")
+        self.assertEqual(opus.billable_sku, "claude-opus-5-5-text")
+        self.assertEqual(opus.price_input_per_million, 400)
+        self.assertEqual(opus.price_output_per_million, 2000)
+        self.assertEqual(opus.cache_read_multiplier, 0.05)
+        self.assertEqual(opus.cache_creation_multiplier, 1.25)
+        self.assertEqual(opus.effective_cached_input_per_million, 20.0)
+        self.assertEqual(opus.effective_cache_creation_input_per_million, 500.0)
+        self.assertEqual(opus.metadata["provider_protocol"], "anthropic_messages")
+        self.assertEqual(opus.metadata["context_length"], 1_000_000)
+        self.assertEqual(opus.metadata["max_completion_tokens"], 128_000)
+        self.assertEqual(opus.metadata["thinking"]["type"], "adaptive")
+
+        with self.assertRaises(ModelCapabilityError):
+            registry.resolve_public_model("claude-opus-5-5", "chat/completions")
 
     def test_checked_in_claude_opus_5_uses_official_model_and_pricing(self) -> None:
         settings.model_catalog_json = ""

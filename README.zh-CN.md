@@ -58,6 +58,7 @@ CoinCoin Proxy 感谢来自大学校友会、科技公司和海外华人开发�
 - **余额计费** - 支持按 Input/Output Token 分别计费，实时扣费
 - **永久美金额度** - 新购买额度永久有效、可叠加，不再绑定月卡周期
 - **图片能力** - 支持同步文生图、异步文生图和单图图生图，并为图片请求记录独立 usage unit
+- **新模型** - 公开目录提供 GPT-6 Sol、GPT-6 Luna 和 Claude Opus 5.5；Claude Opus 5.5 通过 Anthropic-compatible provider channel 路由
 - **用量统计** - 分项统计 Input/Output Token 和消费金额
 - **限流控制** - 支持每分钟/每日请求限制
 - **管理后台** - Web UI 管理界面
