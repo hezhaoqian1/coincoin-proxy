@@ -9,6 +9,7 @@ VIDEO_CAPABILITIES = {"videos/generations"}
 FIXED_TEXT_PRICE = (500, 3000)
 CHEAP_TEXT_PRICE = (75, 450)
 CLAUDE_OPUS_PRICE = (500, 2500)
+CLAUDE_OPUS_55_PRICE = (400, 2000)
 CLAUDE_SONNET_PRICE = (300, 1500)
 CLAUDE_HAIKU_PRICE = (100, 500)
 CLAUDE_FABLE_PRICE = (1000, 5000)
@@ -18,6 +19,8 @@ CHEAP_INPUT_PRICE_PLACEHOLDER = "${COINCOIN_CHEAP_PRICE_INPUT:-${COINCOIN_GPT_54
 CHEAP_OUTPUT_PRICE_PLACEHOLDER = "${COINCOIN_CHEAP_PRICE_OUTPUT:-${COINCOIN_GPT_54_MINI_OUTPUT_PRICE:-450}}"
 CLAUDE_OPUS_INPUT_PRICE_PLACEHOLDER = "${COINCOIN_CLAUDE_OPUS_INPUT_PRICE:-500}"
 CLAUDE_OPUS_OUTPUT_PRICE_PLACEHOLDER = "${COINCOIN_CLAUDE_OPUS_OUTPUT_PRICE:-2500}"
+CLAUDE_OPUS_55_INPUT_PRICE_PLACEHOLDER = "${COINCOIN_CLAUDE_OPUS_55_INPUT_PRICE:-400}"
+CLAUDE_OPUS_55_OUTPUT_PRICE_PLACEHOLDER = "${COINCOIN_CLAUDE_OPUS_55_OUTPUT_PRICE:-2000}"
 CLAUDE_SONNET_INPUT_PRICE_PLACEHOLDER = "${COINCOIN_CLAUDE_SONNET_INPUT_PRICE:-300}"
 CLAUDE_SONNET_OUTPUT_PRICE_PLACEHOLDER = "${COINCOIN_CLAUDE_SONNET_OUTPUT_PRICE:-1500}"
 CLAUDE_HAIKU_INPUT_PRICE_PLACEHOLDER = "${COINCOIN_CLAUDE_HAIKU_INPUT_PRICE:-100}"
@@ -56,11 +59,14 @@ OFFICIAL_DEFAULT_TEXT_PRICES = {
     "gpt-5.6-sol": FIXED_TEXT_PRICE,
     "gpt-5.6-terra": (200, 1200),
     "gpt-5.6-luna": (20, 120),
+    "gpt-6-sol": (200, 1000),
+    "gpt-6-luna": (10, 50),
     "deepseek-v4-pro": (44, 87),
     "deepseek-v4-flash": (14, 28),
     "claude-fable-5-1": CLAUDE_FABLE_PRICE,
     "claude-fable-5": CLAUDE_FABLE_PRICE,
     "claude-opus-5": CLAUDE_OPUS_PRICE,
+    "claude-opus-5-5": CLAUDE_OPUS_55_PRICE,
     "claude-opus-4-8": CLAUDE_OPUS_PRICE,
     "claude-opus-4.8": CLAUDE_OPUS_PRICE,
     "claude-opus-4-7": CLAUDE_OPUS_PRICE,
@@ -249,6 +255,36 @@ class GatewayCatalogSyncTests(unittest.TestCase):
                 pricing = model.get("pricing") or {}
                 self.assertEqual(pricing.get("cache_creation_multiplier"), 1.25)
 
+    def test_gpt_6_sol_and_luna_use_legacy_provider_routes(self) -> None:
+        public_models = {
+            item["id"]: item
+            for item in (self.catalog.get("models") or [])
+            if isinstance(item, dict) and item.get("id")
+        }
+
+        for model_id, expected_prices in {
+            "gpt-6-sol": (200, 1000),
+            "gpt-6-luna": (10, 50),
+        }.items():
+            with self.subTest(model=model_id):
+                model = public_models[model_id]
+                self.assertEqual(model.get("provider_model"), model_id)
+                self.assertEqual(model.get("routing_mode"), "legacy_auto")
+                self.assertEqual(model.get("delivery_lane"), "legacy")
+                self.assertEqual(set(model.get("capabilities") or []), TEXT_CAPABILITIES)
+                self.assertEqual(model.get("billable_sku"), f"legacy-{model_id}-text")
+                self.assertEqual(
+                    (
+                        int(_placeholder_default(model.get("price_input_per_million"))),
+                        int(_placeholder_default(model.get("price_output_per_million"))),
+                    ),
+                    expected_prices,
+                )
+                self.assertEqual((model.get("pricing") or {}).get("cache_creation_multiplier"), 1.25)
+                metadata = model.get("metadata") or {}
+                self.assertEqual(metadata.get("context_length"), 1_050_000)
+                self.assertEqual(metadata.get("max_completion_tokens"), 128_000)
+
     def test_claude_compat_aliases_use_official_claude_price_defaults(self) -> None:
         public_models = {
             item["id"]: item
@@ -283,6 +319,24 @@ class GatewayCatalogSyncTests(unittest.TestCase):
         self.assertEqual(opus_5.get("price_output_per_million"), CLAUDE_OPUS_OUTPUT_PRICE_PLACEHOLDER)
         self.assertEqual(opus_5.get("billable_sku"), "claude-code-compat-text")
         self.assertEqual((opus_5.get("pricing") or {}).get("cache_creation_multiplier"), 1.25)
+
+        opus_5_5 = public_models["claude-opus-5-5"]
+        self.assertEqual(opus_5_5.get("provider_model"), "claude-opus-5-5")
+        self.assertEqual(opus_5_5.get("upstream_model"), "claude-opus-5-5")
+        self.assertEqual(opus_5_5.get("routing_mode"), "route_only")
+        self.assertEqual(opus_5_5.get("delivery_lane"), "route_only")
+        self.assertEqual(opus_5_5.get("capabilities"), ["chat/completions"])
+        self.assertNotIn("upstream_url", opus_5_5)
+        self.assertNotIn("api_key", opus_5_5)
+        self.assertEqual(opus_5_5.get("auth_style"), "x-api-key")
+        self.assertEqual(opus_5_5.get("price_input_per_million"), CLAUDE_OPUS_55_INPUT_PRICE_PLACEHOLDER)
+        self.assertEqual(opus_5_5.get("price_output_per_million"), CLAUDE_OPUS_55_OUTPUT_PRICE_PLACEHOLDER)
+        self.assertEqual(opus_5_5.get("billable_sku"), "claude-opus-5-5-text")
+        self.assertEqual((opus_5_5.get("pricing") or {}).get("cache_read_multiplier"), 0.05)
+        self.assertEqual((opus_5_5.get("pricing") or {}).get("cache_creation_multiplier"), 1.25)
+        self.assertEqual((opus_5_5.get("metadata") or {}).get("provider_protocol"), "anthropic_messages")
+        self.assertEqual((opus_5_5.get("metadata") or {}).get("context_length"), 1_000_000)
+        self.assertEqual((opus_5_5.get("metadata") or {}).get("max_completion_tokens"), 128_000)
 
         for removed_alias in ("opus", "sonnet", "haiku"):
             self.assertNotIn(removed_alias, public_models)

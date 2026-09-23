@@ -18,6 +18,8 @@ import app.openai_compat as openai_module
 
 LEGACY_PUBLIC_TEXT_MODELS = [
     "gpt-5.5",
+    "gpt-6-sol",
+    "gpt-6-luna",
     "codex-auto-review",
     "gpt-5.6",
     "gpt-5.6-sol",
@@ -26,6 +28,8 @@ LEGACY_PUBLIC_TEXT_MODELS = [
 ]
 LEGACY_PUBLIC_TEXT_PRICES = {
     "gpt-5.5": (500, 3000),
+    "gpt-6-sol": (200, 1000),
+    "gpt-6-luna": (10, 50),
     "codex-auto-review": (500, 3000),
     "gpt-5.6": (500, 3000),
     "gpt-5.6-sol": (500, 3000),
@@ -50,7 +54,7 @@ def _legacy_text_model(model_id: str) -> dict:
     if prices:
         model["price_input_per_million"] = prices[0]
         model["price_output_per_million"] = prices[1]
-    if model_id in {"gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}:
+    if model_id in {"gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-sol", "gpt-6-luna"}:
         model["pricing"] = {"cache_creation_multiplier": 1.25}
     return model
 
@@ -5737,6 +5741,8 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             [item["id"] for item in payload["data"]],
             [
                 "gpt-5.5",
+                "gpt-6-sol",
+                "gpt-6-luna",
                 "codex-auto-review",
                 "gpt-5.6",
                 "gpt-5.6-sol",
@@ -5759,6 +5765,14 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(models_by_id["gpt-5.5"]["coincoin_billable_sku"], "gpt-5.5")
         self.assertEqual(models_by_id["gpt-5.5"]["coincoin_delivery_lane"], "legacy")
         self.assertEqual(models_by_id["gpt-5.5"]["coincoin_metadata"], {})
+        self.assertEqual(models_by_id["gpt-6-sol"]["coincoin_price_input_per_million"], 200)
+        self.assertEqual(models_by_id["gpt-6-sol"]["coincoin_price_output_per_million"], 1000)
+        self.assertEqual(models_by_id["gpt-6-sol"]["coincoin_price_cache_creation_input_per_million"], 250.0)
+        self.assertEqual(models_by_id["gpt-6-sol"]["coincoin_cache_creation_multiplier"], 1.25)
+        self.assertEqual(models_by_id["gpt-6-luna"]["coincoin_price_input_per_million"], 10)
+        self.assertEqual(models_by_id["gpt-6-luna"]["coincoin_price_output_per_million"], 50)
+        self.assertEqual(models_by_id["gpt-6-luna"]["coincoin_price_cached_input_per_million"], 1.0)
+        self.assertEqual(models_by_id["gpt-6-luna"]["coincoin_price_cache_creation_input_per_million"], 12.5)
         self.assertEqual(models_by_id["gpt-5.6"]["coincoin_price_cache_creation_input_per_million"], 625.0)
         self.assertEqual(models_by_id["gpt-5.6"]["coincoin_cache_creation_multiplier"], 1.25)
         self.assertEqual(models_by_id["gpt-5.6-terra"]["coincoin_price_cache_creation_input_per_million"], 250.0)
