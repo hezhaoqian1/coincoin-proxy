@@ -25,7 +25,19 @@ async def get_redis_client() -> Any:
             from redis.asyncio import Redis
         except Exception as exc:
             raise RuntimeError("redis package is required for Redis-backed CoinCoin infrastructure") from exc
-        _redis_client = Redis.from_url(settings.redis_url, decode_responses=True)
+        # Bounded timeouts keep a hung Redis from stalling request handlers; the
+        # shared-state helpers additionally wrap calls in a circuit breaker.
+        options = {
+            "decode_responses": True,
+            "socket_connect_timeout": max(0.1, float(settings.redis_connect_timeout_seconds or 1.0)),
+            "socket_timeout": max(0.1, float(settings.redis_socket_timeout_seconds or 2.0)),
+            "socket_keepalive": True,
+            "health_check_interval": max(0, int(settings.redis_health_check_interval_seconds or 0)),
+        }
+        max_connections = int(settings.redis_max_connections or 0)
+        if max_connections > 0:
+            options["max_connections"] = max_connections
+        _redis_client = Redis.from_url(settings.redis_url, **options)
         return _redis_client
 
 

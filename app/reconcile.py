@@ -5,7 +5,9 @@ from datetime import datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .config import settings
 from .db import SessionLocal
+from .distributed_state import LeaderLock
 from .models import PaymentOrder
 from .payment import _confirm_with_query_fallback
 
@@ -48,13 +50,23 @@ async def reconcile_loop(interval_seconds: int = 300) -> None:
     Periodically reconcile pending orders. This is a safety net for missed callbacks
     and for users closing the browser before the frontend confirms the payment.
     """
+    interval = max(10, int(interval_seconds))
+    # With several uvicorn workers only the lease holder queries the payment
+    # provider; confirmation is idempotent (row lock + status check), so if
+    # Redis is unavailable every worker runs it, as before.
+    leader = LeaderLock("payment-reconcile", ttl_seconds=interval * 2 + 30) if settings.reconcile_leader_lock_enabled else None
     # Small startup delay so app can finish boot and DB can be ready.
     await asyncio.sleep(2)
-    while True:
-        try:
-            n = await reconcile_once()
-            if n:
-                logger.info("reconcile: confirmed %d pending order(s)", n)
-        except Exception as e:
-            logger.warning("reconcile loop error: %s", e)
-        await asyncio.sleep(max(10, int(interval_seconds)))
+    try:
+        while True:
+            try:
+                if leader is None or await leader.acquire():
+                    n = await reconcile_once()
+                    if n:
+                        logger.info("reconcile: confirmed %d pending order(s)", n)
+            except Exception as e:
+                logger.warning("reconcile loop error: %s", e)
+            await asyncio.sleep(interval)
+    finally:
+        if leader is not None:
+            await leader.release()

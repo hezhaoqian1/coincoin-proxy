@@ -5620,11 +5620,21 @@ async def ops_health(db: AsyncSession = Depends(get_db)):
         "payment": epay_configured(),
         "monitoring": _configured(_settings.monitoring_token),
         "gateway_health_url": _configured(_settings.monitoring_gateway_health_url),
+        "redis": _configured(_settings.redis_url),
     }
+
+    from .distributed_state import runtime_snapshot
+    from .proxy import _conv_cache
 
     return {
         "generated_at": now,
         "window_hours": 24,
+        # Per-worker view: each uvicorn worker answers with its own snapshot.
+        "runtime": {
+            "web_concurrency": os.getenv("WEB_CONCURRENCY") or "",
+            "shared_state": runtime_snapshot(),
+            "response_cache": _conv_cache.snapshot(),
+        },
         "traffic": {
             "total_requests": int(total_requests),
             "failed_requests": int(failed_requests),

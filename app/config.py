@@ -1,4 +1,6 @@
-from pydantic import Field
+from typing import Optional
+
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -119,7 +121,11 @@ class Settings(BaseSettings):
     usage_event_shadow_enabled: bool = False
     usage_event_stream: str = "coincoin:usage:events"
     usage_event_publish_timeout_seconds: float = 0.25
-    redis_rate_limiter_enabled: bool = False
+    # Approximate MAXLEN for the usage event stream (0 = unbounded).
+    usage_event_stream_maxlen: int = 50000
+    # None = auto: use the shared Redis limiter whenever redis_url is set, so
+    # per-minute limits stay correct with several uvicorn workers/replicas.
+    redis_rate_limiter_enabled: Optional[bool] = None
     redis_rate_limiter_fallback_to_local: bool = True
     quota_reservation_enabled: bool = False
     quota_service_url: str = ""
@@ -145,7 +151,36 @@ class Settings(BaseSettings):
     response_cache_max_total_bytes: int = 64 * 1024 * 1024
     response_cache_max_entry_bytes: int = 256 * 1024
     response_cache_max_turns: int = 8
-    
+    # Responses polyfill cache shared across workers through Redis (L2).
+    # None = auto (enabled when redis_url is set). Entries are compressed and
+    # bound to the owning user so a response id cannot be replayed by others.
+    response_cache_shared_enabled: Optional[bool] = None
+    response_cache_redis_max_entry_bytes: int = 4 * 1024 * 1024
+    response_cache_redis_timeout_seconds: float = 0.3
+    response_cache_compress_min_bytes: int = 1024
+
+    # Multi-worker shared runtime state (Redis). Every Redis call on a request
+    # path is bounded by redis_op_timeout_seconds and a circuit breaker so a
+    # slow/unavailable Redis degrades to process-local state.
+    redis_connect_timeout_seconds: float = 1.0
+    redis_socket_timeout_seconds: float = 2.0
+    redis_max_connections: int = 200
+    redis_health_check_interval_seconds: int = 30
+    redis_op_timeout_seconds: float = 0.25
+    redis_circuit_failure_threshold: int = 3
+    redis_circuit_open_seconds: float = 10.0
+    # Channel cooldowns shared across workers (None = auto when redis_url set).
+    channel_state_shared_enabled: Optional[bool] = None
+    channel_state_sync_interval_seconds: float = 1.0
+    channel_state_failure_window_seconds: int = 600
+    channel_state_success_publish_interval_seconds: float = 1.0
+    # API key cache invalidation fan-out via Redis pub/sub.
+    key_cache_invalidation_enabled: Optional[bool] = None
+    # Singleton background jobs (payment reconcile) run on one worker at a time.
+    reconcile_leader_lock_enabled: bool = True
+    # Serialize startup DDL migrations across workers with MySQL GET_LOCK.
+    startup_migration_lock_timeout_seconds: int = 300
+
     # Pricing (cents per million tokens)
     # Default follows official GPT-5.5 API pricing: input $5/M, output $30/M.
     price_input_per_million: int = 500  # 单位：分/百万 tokens
@@ -226,6 +261,21 @@ class Settings(BaseSettings):
     fallback_price_input: int = 500  # cents per million tokens
     fallback_price_output: int = 3000  # cents per million tokens
     fallback_auth_style: str = ""  # empty = inherit primary_auth_style
+
+    @field_validator(
+        "redis_rate_limiter_enabled",
+        "response_cache_shared_enabled",
+        "channel_state_shared_enabled",
+        "key_cache_invalidation_enabled",
+        mode="before",
+    )
+    @classmethod
+    def _blank_means_auto(cls, value):
+        # Tri-state flags: an empty value (e.g. ``FOO=`` in Railway) or "auto"
+        # means "enabled whenever Redis is configured" instead of failing boot.
+        if isinstance(value, str) and value.strip().lower() in {"", "auto", "none", "null"}:
+            return None
+        return value
 
     class Config:
         env_prefix = "COINCOIN_"

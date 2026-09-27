@@ -1,7 +1,10 @@
-from typing import AsyncGenerator
+import logging
+from contextlib import asynccontextmanager
+from typing import AsyncGenerator, AsyncIterator
 from urllib.parse import urlparse, urlunparse
 
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
 from .config import settings
@@ -56,3 +59,41 @@ SessionLocal = async_sessionmaker(bind=engine, expire_on_commit=False, class_=As
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     async with SessionLocal() as session:
         yield session
+
+
+_lock_logger = logging.getLogger("coincoin.db")
+
+
+@asynccontextmanager
+async def mysql_named_lock(conn: AsyncConnection, name: str, timeout_seconds: int) -> AsyncIterator[bool]:
+    """Hold a MySQL ``GET_LOCK`` for the duration of the block.
+
+    Used to serialize startup DDL across uvicorn workers/replicas (the MySQL
+    counterpart of sub2api's ``pg_try_advisory_lock`` around migrations).
+    Named locks are session-scoped, so DDL implicit commits do not release it.
+    Yields False (and proceeds unlocked, as before) on non-MySQL dialects or
+    when the lock cannot be obtained within ``timeout_seconds``.
+    """
+    if conn.dialect.name != "mysql":
+        yield False
+        return
+    lock_name = name[:64]
+    acquired = False
+    try:
+        result = await conn.execute(
+            text("SELECT GET_LOCK(:name, :timeout)"),
+            {"name": lock_name, "timeout": max(0, int(timeout_seconds))},
+        )
+        acquired = result.scalar() == 1
+    except Exception:  # noqa: BLE001
+        _lock_logger.warning("could not acquire MySQL lock %s; continuing unlocked", lock_name, exc_info=True)
+    if not acquired:
+        _lock_logger.warning("MySQL lock %s not acquired within %ss; continuing unlocked", lock_name, timeout_seconds)
+    try:
+        yield acquired
+    finally:
+        if acquired:
+            try:
+                await conn.execute(text("SELECT RELEASE_LOCK(:name)"), {"name": lock_name})
+            except Exception:  # noqa: BLE001
+                _lock_logger.warning("failed to release MySQL lock %s", lock_name, exc_info=True)

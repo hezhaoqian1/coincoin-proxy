@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from .distributed_state import SharedCooldownRegistry, register_cooldown_registry
+
 
 ACTIVE_STATUS = "active"
 
@@ -103,11 +105,25 @@ def _split_csv_or_jsonish(raw: Any) -> Tuple[str, ...]:
 
 
 class ChannelRouter:
-    def __init__(self) -> None:
+    def __init__(self, *, shared_namespace: str = "") -> None:
         self._channels: Dict[str, ProviderChannelSnapshot] = {}
         self._routes_by_model: Dict[str, List[ModelChannelRouteSnapshot]] = {}
         self._version: int = 0
         self._state: Dict[str, Dict[str, Any]] = {}
+        # Routing decisions always read local state (sync hot path). When Redis
+        # is configured, failures/cooldowns are mirrored across uvicorn workers
+        # so every worker routes a conversation to the same channel; otherwise
+        # workers disagree on cooldowns and conversations bounce between
+        # channels, losing upstream prompt-cache hits.
+        self._shared: Optional[SharedCooldownRegistry] = None
+        if shared_namespace:
+            self._shared = register_cooldown_registry(
+                SharedCooldownRegistry(
+                    shared_namespace,
+                    apply_cooldown=self._apply_shared_cooldown,
+                    clear_cooldown=self._clear_shared_cooldown,
+                )
+            )
 
     def set_snapshot(
         self,
@@ -314,6 +330,8 @@ class ChannelRouter:
         state["last_success_at"] = time.time()
         if latency_ms > 0:
             state["rolling_latency_ms"] = latency_ms
+        if self._shared is not None:
+            self._shared.record_success(channel_id)
 
     def record_failure(self, channel_id: str, *, error_code: str = "") -> None:
         if not channel_id:
@@ -329,10 +347,38 @@ class ChannelRouter:
         if failures >= max(1, channel.allowed_fails):
             state["cooldown_until"] = time.time() + max(0.0, channel.cooldown_seconds)
             state["failures"] = 0
+            if self._shared is not None:
+                self._shared.note_local_cooldown(channel_id, state["cooldown_until"])
+        if self._shared is not None:
+            self._shared.record_failure(
+                channel_id,
+                allowed_fails=channel.allowed_fails,
+                cooldown_seconds=channel.cooldown_seconds,
+            )
 
     def reset_channel_state(self, channel_id: str) -> None:
         if channel_id:
             self._state.pop(channel_id, None)
+            if self._shared is not None:
+                self._shared.reset(channel_id)
+
+    def _apply_shared_cooldown(self, channel_id: str, until: float) -> None:
+        """Merge a cooldown decided by any worker (via Redis) into local state."""
+        if not channel_id or until <= time.time():
+            return
+        state = self._state.setdefault(channel_id, {"failures": 0, "cooldown_until": 0.0})
+        if until > _as_float(state.get("cooldown_until"), 0.0):
+            state["cooldown_until"] = until
+            state["failures"] = 0
+            state["cooldown_source"] = "shared"
+
+    def _clear_shared_cooldown(self, channel_id: str) -> None:
+        """Another worker saw the channel succeed (or an admin reset it)."""
+        state = self._state.get(channel_id)
+        if state and _as_float(state.get("cooldown_until"), 0.0) > time.time():
+            state["cooldown_until"] = 0.0
+            state["failures"] = 0
+            state.pop("cooldown_source", None)
 
     def channel_state(self, channel_id: str) -> Dict[str, Any]:
         return dict(self._state.get(channel_id) or {})
@@ -342,4 +388,4 @@ def should_record_failure(status_code: int) -> bool:
     return status_code in {408, 409, 429} or status_code >= 500
 
 
-channel_router = ChannelRouter()
+channel_router = ChannelRouter(shared_namespace="provider_channels")

@@ -12,6 +12,7 @@ from typing import Any, Dict, Iterable, List, Tuple
 from urllib.parse import urlsplit, urlunsplit
 
 from .config import settings
+from .distributed_state import SharedCooldownRegistry, register_cooldown_registry
 
 
 logger = logging.getLogger("coincoin.gemini_cpa")
@@ -19,6 +20,33 @@ logger = logging.getLogger("coincoin.gemini_cpa")
 DELIVERY_LANE = "cpa_gemini"
 _DATA_URL_IMAGE_RE = re.compile(r"data:image/[^;]+;base64,([A-Za-z0-9+/=\r\n]+)")
 _CHANNEL_STATE: Dict[str, Dict[str, float | int]] = {}
+
+
+def _apply_shared_cooldown(channel_id: str, until: float) -> None:
+    """Merge a cooldown set by any uvicorn worker (via Redis) into local state."""
+    if not channel_id or until <= time.time():
+        return
+    state = _CHANNEL_STATE.setdefault(channel_id, {"failures": 0, "cooldown_until": 0})
+    if until > _as_float(state.get("cooldown_until"), 0.0):
+        state["cooldown_until"] = until
+        state["failures"] = 0
+
+
+def _clear_shared_cooldown(channel_id: str) -> None:
+    state = _CHANNEL_STATE.get(channel_id)
+    if state and _as_float(state.get("cooldown_until"), 0.0) > time.time():
+        _CHANNEL_STATE.pop(channel_id, None)
+
+
+# Gemini CPA cooldowns are shared across workers the same way as provider
+# channel cooldowns (no-op when Redis is not configured).
+_SHARED_COOLDOWNS = register_cooldown_registry(
+    SharedCooldownRegistry(
+        "gemini_cpa",
+        apply_cooldown=_apply_shared_cooldown,
+        clear_cooldown=_clear_shared_cooldown,
+    )
+)
 
 
 @dataclass(frozen=True)
@@ -212,6 +240,7 @@ def select_channel(public_model: Any, backend: Any) -> GeminiCpaChannel:
 
 def record_success(channel: GeminiCpaChannel) -> None:
     _CHANNEL_STATE.pop(channel.channel_id, None)
+    _SHARED_COOLDOWNS.record_success(channel.channel_id)
 
 
 def record_failure(channel: GeminiCpaChannel) -> None:
@@ -228,6 +257,12 @@ def record_failure(channel: GeminiCpaChannel) -> None:
             channel.provider_model,
             channel.cooldown_seconds,
         )
+        _SHARED_COOLDOWNS.note_local_cooldown(channel.channel_id, float(state["cooldown_until"]))
+    _SHARED_COOLDOWNS.record_failure(
+        channel.channel_id,
+        allowed_fails=channel.allowed_fails,
+        cooldown_seconds=channel.cooldown_seconds,
+    )
 
 
 def should_record_failure(status_code: int) -> bool:

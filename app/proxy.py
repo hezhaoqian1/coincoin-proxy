@@ -1,11 +1,13 @@
 import asyncio
 import base64
+import hashlib
 import ipaddress
 import json
 import logging
 import re
 import secrets
 import time
+import zlib
 from urllib.parse import urlsplit, urlunsplit
 from collections import OrderedDict
 from copy import deepcopy
@@ -25,6 +27,14 @@ from sqlalchemy.orm import selectinload
 from .config import settings
 from .channel_router import channel_router, should_record_failure as should_record_channel_failure
 from .db import get_db
+from .distributed_state import (
+    key_cache_invalidation_shared,
+    invalidation_bus,
+    redis_enabled,
+    redis_guard,
+    redis_key,
+    response_cache_shared,
+)
 from .fallback_alerts import FallbackExhaustedAlert, notify_fallback_exhausted
 from . import gemini_cpa
 from .models import ApiKey, RequestLog, UsageDaily, User
@@ -1199,6 +1209,8 @@ def _stream_upstream_response(
 
 
 class KeyCache:
+    INVALIDATION_KIND = "api_key"
+
     def __init__(self, ttl_seconds: int, max_size: int) -> None:
         self._ttl = max(1, int(ttl_seconds))
         self._max = max(100, int(max_size))
@@ -1225,11 +1237,32 @@ class KeyCache:
             self._data[key_hash] = (expires_at, value)
 
     async def delete(self, key_hash: str) -> None:
+        """Invalidate a key on this worker and broadcast to sibling workers.
+
+        Revocations and key-control edits must not linger for ``key_cache_ttl``
+        on the other uvicorn workers (sub2api ``auth:cache:invalidate``).
+        """
+        await self.delete_local(key_hash)
+        if key_hash and key_cache_invalidation_shared():
+            await invalidation_bus.publish(self.INVALIDATION_KIND, key_hash)
+
+    async def delete_local(self, key_hash: str) -> None:
         async with self._lock:
             self._data.pop(key_hash, None)
 
+    async def clear_local(self) -> None:
+        async with self._lock:
+            self._data.clear()
+
 
 key_cache = KeyCache(settings.key_cache_ttl, settings.key_cache_max)
+# Messages published while this worker was disconnected are lost, so a
+# (re)subscribe drops the whole local cache; entries are rebuilt from the DB.
+invalidation_bus.register(
+    KeyCache.INVALIDATION_KIND,
+    key_cache.delete_local,
+    on_resubscribe=key_cache.clear_local,
+)
 
 
 def _utc_naive(value: datetime | None) -> datetime | None:
@@ -1270,7 +1303,24 @@ class ResponseConversationCache:
 
     Enables multi-turn conversation expansion for Responses API by replaying
     previous context when previous_response_id is referenced.
+
+    Two tiers, in the spirit of new-api's HybridCache:
+
+    * L1 - bounded in-process LRU (``get``/``set``) for same-worker follow-ups.
+    * L2 - Redis (``aget``/``aset``), shared by every uvicorn worker and replica.
+      With several workers a Codex follow-up usually lands on a different
+      process than the turn that produced ``previous_response_id``; without L2
+      the context was silently dropped (1/N hit rate).
+
+    Entries are bound to the owning user (like sub2api's response owner
+    binding), so a leaked response id cannot replay another user's
+    conversation. L2 values are zlib-compressed above
+    ``response_cache_compress_min_bytes``. Redis is optional: without it, or
+    while the Redis circuit breaker is open, the cache behaves as L1 only.
     """
+
+    _L2_FORMAT = "cc1"
+    _OFFLOAD_CODEC_BYTES = 256 * 1024
 
     def __init__(
         self,
@@ -1280,28 +1330,51 @@ class ResponseConversationCache:
         max_total_bytes: Optional[int] = None,
         max_entry_bytes: Optional[int] = None,
         max_turns: Optional[int] = None,
+        shared: Optional[bool] = None,
     ) -> None:
         self._ttl = max(1, int(ttl_seconds or settings.response_cache_ttl))
         self._max_entries = max(1, int(max_entries or settings.response_cache_max_entries))
         self._max_total_bytes = max(1024, int(max_total_bytes or settings.response_cache_max_total_bytes))
         self._max_entry_bytes = max(1024, int(max_entry_bytes or settings.response_cache_max_entry_bytes))
         self._max_turns = max(1, int(max_turns or settings.response_cache_max_turns))
-        self._data: "OrderedDict[str, Tuple[float, list, list, int]]" = OrderedDict()
+        self._shared_override = shared
+        # response_id -> (expires_at, expanded_input, response_output, size_bytes, owner)
+        self._data: "OrderedDict[str, Tuple[float, list, list, int, str]]" = OrderedDict()
         self._current_bytes = 0
+        self.stats: Dict[str, int] = {
+            "l1_hits": 0,
+            "l2_hits": 0,
+            "misses": 0,
+            "owner_mismatch": 0,
+            "l2_writes": 0,
+            "l2_errors": 0,
+            "l2_skipped_oversize": 0,
+        }
+
+    # -- sizing / trimming -------------------------------------------------
 
     @staticmethod
-    def _estimate_size_bytes(expanded_input: list, response_output: list) -> int:
+    def _serialize(expanded_input: list, response_output: list) -> bytes:
         payload = {"input": expanded_input, "output": response_output}
         try:
-            return len(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+            return json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         except (TypeError, ValueError):
-            return len(repr(payload).encode("utf-8", errors="ignore"))
+            return repr(payload).encode("utf-8", errors="ignore")
+
+    @classmethod
+    def _estimate_size_bytes(cls, expanded_input: list, response_output: list) -> int:
+        return len(cls._serialize(expanded_input, response_output))
 
     def _trim_turns(self, expanded_input: list) -> list:
         max_items = max(1, self._max_turns * 2)
         if len(expanded_input) <= max_items:
             return expanded_input
         return expanded_input[-max_items:]
+
+    def _prepare(self, expanded_input: list, response_output: list) -> Tuple[list, list]:
+        return self._trim_turns(expanded_input), _clone_responses_items(response_output)
+
+    # -- L1 (process-local LRU) -------------------------------------------
 
     def _drop(self, response_id: str) -> None:
         item = self._data.pop(response_id, None)
@@ -1310,7 +1383,7 @@ class ResponseConversationCache:
 
     def _prune_expired(self, now: Optional[float] = None) -> None:
         cutoff = time.time() if now is None else now
-        expired = [response_id for response_id, (expires_at, _, _, _) in self._data.items() if expires_at <= cutoff]
+        expired = [response_id for response_id, item in self._data.items() if item[0] <= cutoff]
         for response_id in expired:
             self._drop(response_id)
 
@@ -1321,37 +1394,196 @@ class ResponseConversationCache:
             oldest_response_id = next(iter(self._data))
             self._drop(oldest_response_id)
 
-    def get(self, response_id: str) -> Optional[Tuple[list, list]]:
+    def _lookup_local(self, response_id: str, owner: str = "") -> Tuple[str, Optional[Tuple[list, list]]]:
         item = self._data.get(response_id)
         if not item:
-            return None
-        expires_at, expanded_input, response_output, _size_bytes = item
+            return "miss", None
+        expires_at, expanded_input, response_output, _size_bytes, entry_owner = item
         if expires_at <= time.time():
             self._drop(response_id)
-            return None
+            return "miss", None
+        if owner and entry_owner and owner != entry_owner:
+            return "mismatch", None
         self._data.move_to_end(response_id)
-        return expanded_input, response_output
+        return "hit", (expanded_input, response_output)
 
-    def set(self, response_id: str, expanded_input: list, response_output: list) -> None:
+    def _store_local(
+        self,
+        response_id: str,
+        trimmed_input: list,
+        cached_output: list,
+        size_bytes: int,
+        owner: str,
+        expires_at: float,
+    ) -> bool:
         now = time.time()
         self._prune_expired(now)
-        trimmed_input = self._trim_turns(expanded_input)
-        cached_output = _clone_responses_items(response_output)
-        size_bytes = self._estimate_size_bytes(trimmed_input, cached_output)
+        self._drop(response_id)
         if size_bytes > self._max_entry_bytes:
             logger.info(
-                "polyfill: skip cache for %s (%d bytes > %d budget)",
+                "polyfill: skip local cache for %s (%d bytes > %d budget)",
                 response_id,
                 size_bytes,
                 self._max_entry_bytes,
             )
-            self._drop(response_id)
-            return
-        self._drop(response_id)
-        self._data[response_id] = (now + self._ttl, trimmed_input, cached_output, size_bytes)
+            return False
+        if expires_at <= now:
+            return False
+        self._data[response_id] = (expires_at, trimmed_input, cached_output, size_bytes, owner or "")
         self._current_bytes += size_bytes
         self._data.move_to_end(response_id)
         self._evict_to_budget()
+        return True
+
+    def get(self, response_id: str, owner: Optional[str] = None) -> Optional[Tuple[list, list]]:
+        status_, value = self._lookup_local(response_id, owner or "")
+        if status_ == "mismatch":
+            self.stats["owner_mismatch"] += 1
+            logger.warning("polyfill: %s belongs to another owner; ignoring cached context", response_id)
+        return value
+
+    def set(self, response_id: str, expanded_input: list, response_output: list, owner: str = "") -> None:
+        trimmed_input, cached_output = self._prepare(expanded_input, response_output)
+        size_bytes = self._estimate_size_bytes(trimmed_input, cached_output)
+        self._store_local(response_id, trimmed_input, cached_output, size_bytes, owner, time.time() + self._ttl)
+
+    # -- L2 (Redis, shared across workers) ----------------------------------
+
+    def _shared(self) -> bool:
+        if self._shared_override is not None:
+            return bool(self._shared_override) and redis_enabled()
+        return response_cache_shared()
+
+    @staticmethod
+    def _redis_key(response_id: str) -> str:
+        digest = hashlib.sha256(str(response_id).encode("utf-8")).hexdigest()[:40]
+        return redis_key("respconv", "v1", digest)
+
+    @classmethod
+    def _encode_l2(cls, owner: str, body: bytes) -> str:
+        owner_token = base64.urlsafe_b64encode((owner or "").encode("utf-8")).decode("ascii")
+        if len(body) >= max(0, int(settings.response_cache_compress_min_bytes or 0)):
+            data = base64.b64encode(zlib.compress(body, 6)).decode("ascii")
+            codec = "z"
+        else:
+            data = body.decode("utf-8")
+            codec = "j"
+        return f"{cls._L2_FORMAT}|{codec}|{owner_token}|{data}"
+
+    @classmethod
+    def _decode_l2(cls, raw: Any) -> Tuple[str, list, list, int]:
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8")
+        fmt, codec, owner_token, data = str(raw).split("|", 3)
+        if fmt != cls._L2_FORMAT:
+            raise ValueError(f"unsupported response cache format {fmt!r}")
+        owner = base64.urlsafe_b64decode(owner_token.encode("ascii")).decode("utf-8")
+        if codec == "z":
+            body = zlib.decompress(base64.b64decode(data))
+        elif codec == "j":
+            body = data.encode("utf-8")
+        else:
+            raise ValueError(f"unsupported response cache codec {codec!r}")
+        payload = json.loads(body)
+        expanded_input = payload.get("input")
+        response_output = payload.get("output")
+        if not isinstance(expanded_input, list) or not isinstance(response_output, list):
+            raise ValueError("malformed response cache payload")
+        return owner, expanded_input, response_output, len(body)
+
+    async def _run_codec(self, fn: Callable[..., Any], *args: Any, size_hint: int = 0) -> Any:
+        # Large conversations (tool outputs, long histories) are CPU-heavy to
+        # (de)compress; keep them off the event loop.
+        if size_hint >= self._OFFLOAD_CODEC_BYTES:
+            return await asyncio.to_thread(fn, *args)
+        return fn(*args)
+
+    async def aset(self, response_id: str, expanded_input: list, response_output: list, *, owner: str = "") -> None:
+        if not response_id:
+            return
+        trimmed_input, cached_output = self._prepare(expanded_input, response_output)
+        body = self._serialize(trimmed_input, cached_output)
+        expires_at = time.time() + self._ttl
+        self._store_local(response_id, trimmed_input, cached_output, len(body), owner, expires_at)
+        if not self._shared():
+            return
+        l2_budget = max(self._max_entry_bytes, int(settings.response_cache_redis_max_entry_bytes or 0))
+        if len(body) > l2_budget:
+            self.stats["l2_skipped_oversize"] += 1
+            logger.info("polyfill: skip shared cache for %s (%d bytes > %d budget)", response_id, len(body), l2_budget)
+            return
+        try:
+            encoded = await self._run_codec(self._encode_l2, owner or "", body, size_hint=len(body))
+        except Exception:  # noqa: BLE001
+            self.stats["l2_errors"] += 1
+            logger.warning("polyfill: failed to encode %s for shared cache", response_id, exc_info=True)
+            return
+        ttl_ms = self._ttl * 1000
+        ok, _ = await redis_guard.call(
+            "response_cache.set",
+            lambda client: client.set(self._redis_key(response_id), encoded, px=ttl_ms),
+            timeout=settings.response_cache_redis_timeout_seconds,
+        )
+        self.stats["l2_writes" if ok else "l2_errors"] += 1
+
+    async def aget(self, response_id: str, *, owner: str = "") -> Optional[Tuple[list, list]]:
+        if not response_id:
+            return None
+        status_, value = self._lookup_local(response_id, owner or "")
+        if status_ == "hit":
+            self.stats["l1_hits"] += 1
+            return value
+        if status_ == "mismatch":
+            self.stats["owner_mismatch"] += 1
+            logger.warning("polyfill: %s belongs to another owner; ignoring cached context", response_id)
+            return None
+        if not self._shared():
+            self.stats["misses"] += 1
+            return None
+
+        async def _fetch(client: Any) -> Any:
+            pipe = client.pipeline(transaction=False)
+            pipe.get(self._redis_key(response_id))
+            pipe.pttl(self._redis_key(response_id))
+            return await pipe.execute()
+
+        ok, result = await redis_guard.call(
+            "response_cache.get",
+            _fetch,
+            timeout=settings.response_cache_redis_timeout_seconds,
+        )
+        if not ok:
+            self.stats["l2_errors"] += 1
+            return None
+        raw, pttl = (result or [None, -2])[:2]
+        if not raw:
+            self.stats["misses"] += 1
+            return None
+        try:
+            entry_owner, expanded_input, response_output, size_bytes = await self._run_codec(
+                self._decode_l2, raw, size_hint=len(raw)
+            )
+        except Exception:  # noqa: BLE001
+            self.stats["l2_errors"] += 1
+            logger.warning("polyfill: discarding undecodable shared cache entry for %s", response_id, exc_info=True)
+            return None
+        if owner and entry_owner and owner != entry_owner:
+            self.stats["owner_mismatch"] += 1
+            logger.warning("polyfill: %s belongs to another owner; ignoring shared context", response_id)
+            return None
+        remaining = (int(pttl) / 1000.0) if isinstance(pttl, int) and pttl > 0 else float(self._ttl)
+        self._store_local(response_id, expanded_input, response_output, size_bytes, entry_owner, time.time() + remaining)
+        self.stats["l2_hits"] += 1
+        logger.info("polyfill: restored %s from shared cache (%d bytes)", response_id, size_bytes)
+        return expanded_input, response_output
+
+    def snapshot(self) -> Dict[str, Any]:
+        return {
+            "shared": self._shared(),
+            "entries": len(self._data),
+            "bytes": self._current_bytes,
+            **self.stats,
+        }
 
 
 _conv_cache = ResponseConversationCache()
@@ -2743,7 +2975,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                     if upstream.status_code < 400:
                         _record_channel_success(used_cfg, duration_ms=int((time.monotonic() - stream_t0) * 1000))
                         if response_id and output_items:
-                            _conv_cache.set(response_id, _normalize_responses_input_items(payload.get("input")), output_items)
+                            await _conv_cache.aset(response_id, _normalize_responses_input_items(payload.get("input")), output_items, owner=str(user.id))
                         dur = int((time.monotonic() - stream_t0) * 1000)
                         schedule_usage_add(
                             user.id,
@@ -2835,7 +3067,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         response_id = response_payload.get("id")
         response_output = response_payload.get("output")
         if response_id and isinstance(response_output, list):
-            _conv_cache.set(response_id, _normalize_responses_input_items(payload.get("input")), response_output)
+            await _conv_cache.aset(response_id, _normalize_responses_input_items(payload.get("input")), response_output, owner=str(user.id))
         _record_channel_success(used_cfg, duration_ms=duration_ms)
         await usage_buffer.add(
             user.id,
@@ -2901,7 +3133,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
 
     _prev_resp_id = payload.get("previous_response_id")
     if _prev_resp_id:
-        _cached_conv = _conv_cache.get(_prev_resp_id)
+        _cached_conv = await _conv_cache.aget(_prev_resp_id, owner=str(user.id))
         if _cached_conv:
             _expanded_counts = _apply_previous_response_polyfill(payload, _cached_conv)
             logger.info("polyfill: expanded from %s (%d+%d+%d items) and cleared previous_response_id",
@@ -3362,7 +3594,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 if upstream.status_code < 400:
                     _record_channel_success(used_cfg, duration_ms=int((time.monotonic() - stream_t0) * 1000))
                     if _resp_id_cap:
-                        _conv_cache.set(_resp_id_cap, _expanded_input, _resp_out_cap or [])
+                        await _conv_cache.aset(_resp_id_cap, _expanded_input, _resp_out_cap or [], owner=str(user.id))
                         logger.info("polyfill: cached stream resp %s (%d in, %d out)",
                                     _resp_id_cap, len(_expanded_input), len(_resp_out_cap or []))
                     dur = int((time.monotonic() - stream_t0) * 1000)
@@ -3723,7 +3955,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             _resp_id = data.get("id")
             _resp_output = data.get("output")
             if _resp_id and isinstance(_resp_output, list):
-                _conv_cache.set(_resp_id, _expanded_input, _resp_output)
+                await _conv_cache.aset(_resp_id, _expanded_input, _resp_output, owner=str(user.id))
                 logger.info("polyfill: cached json resp %s (%d in, %d out)",
                             _resp_id, len(_expanded_input), len(_resp_output))
 

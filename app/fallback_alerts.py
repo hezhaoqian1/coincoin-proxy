@@ -13,6 +13,7 @@ import httpx
 from .alert_history import complete_alert_event, create_alert_event
 from .channel_router import channel_router
 from .config import settings
+from .distributed_state import claim_once
 from .redis_client import get_redis_client
 
 logger = logging.getLogger("coincoin.fallback_alerts")
@@ -568,13 +569,29 @@ async def send_dingtalk_configuration_test() -> Dict[str, Any]:
         return {"sent": False, "event_id": event_id}
 
 
+async def _send_dingtalk_alert_cluster_once(alert: FallbackExhaustedAlert) -> bool:
+    """Send unless another uvicorn worker already sent the same alert.
+
+    ``_should_send`` dedups per process; with several workers the same outage
+    would otherwise page DingTalk once per worker. The Redis claim makes the
+    dedup window cluster-wide (fails open when Redis is unavailable).
+    """
+    dedup_seconds = max(0, int(settings.fallback_alert_dedup_seconds or 0))
+    if dedup_seconds:
+        digest = hashlib.sha256(_dedup_key(alert).encode("utf-8")).hexdigest()[:32]
+        if not await claim_once("fallback-exhausted", digest, dedup_seconds):
+            logger.info("fallback alert suppressed; already sent by another worker")
+            return False
+    return await _send_dingtalk_alert(alert)
+
+
 def notify_fallback_exhausted(alert: FallbackExhaustedAlert) -> bool:
     if not _alert_task_capacity_available():
         return False
     if not _should_send(alert):
         return False
     try:
-        task = asyncio.create_task(_send_dingtalk_alert(alert))
+        task = asyncio.create_task(_send_dingtalk_alert_cluster_once(alert))
         _track_alert_task(task)
         return True
     except RuntimeError:

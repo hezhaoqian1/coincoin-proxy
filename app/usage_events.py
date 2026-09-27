@@ -93,8 +93,12 @@ def build_usage_event(log: Dict[str, Any]) -> UsageEvent:
 class UsageEventPublisher:
     async def publish(self, event: UsageEvent) -> None:
         client = await get_redis_client()
+        # Acknowledged stream entries are never deleted by Redis; cap the stream
+        # (approximate trimming is O(1) amortized) so it cannot grow unbounded.
+        maxlen = int(settings.usage_event_stream_maxlen or 0)
+        trim = {"maxlen": maxlen, "approximate": True} if maxlen > 0 else {}
         await asyncio.wait_for(
-            client.xadd(settings.usage_event_stream, event.to_stream_fields()),
+            client.xadd(settings.usage_event_stream, event.to_stream_fields(), **trim),
             timeout=max(0.01, float(settings.usage_event_publish_timeout_seconds or 0.25)),
         )
 

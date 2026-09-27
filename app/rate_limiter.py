@@ -4,6 +4,7 @@ import time
 from typing import Dict, Tuple
 
 from .config import settings
+from .distributed_state import redis_guard, redis_rate_limiter_active
 from .redis_client import get_redis_client
 
 
@@ -29,13 +30,24 @@ class RateLimiter:
     async def allow(self, user_id: str, limit_per_minute: int) -> bool:
         if limit_per_minute <= 0:
             return False
-        if settings.redis_rate_limiter_enabled:
-            try:
-                return await self._allow_redis(user_id, limit_per_minute)
-            except Exception:
-                logger.exception("redis rate limiter failed")
-                if not settings.redis_rate_limiter_fallback_to_local:
-                    return False
+        if redis_rate_limiter_active():
+            if redis_guard.available():
+                try:
+                    allowed = await asyncio.wait_for(
+                        self._allow_redis(user_id, limit_per_minute),
+                        timeout=redis_guard.default_timeout,
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    redis_guard.record_failure("rate_limiter", exc)
+                    if not settings.redis_rate_limiter_fallback_to_local:
+                        return False
+                else:
+                    redis_guard.record_success()
+                    return allowed
+            elif not settings.redis_rate_limiter_fallback_to_local:
+                return False
         now_min = int(time.time() // 60)
         async with self._lock:
             bucket = self._buckets.get(user_id)

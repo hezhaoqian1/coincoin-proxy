@@ -39,7 +39,16 @@ from .openai_compat import (
 from .webhook import router as webhook_router
 from .payment import router as payment_router
 from .config import settings
-from .db import Base, engine
+from .db import Base, engine, mysql_named_lock
+from .distributed_state import (
+    WORKER_ID,
+    channel_state_shared,
+    cooldown_sync_loop,
+    drain_background_tasks,
+    invalidation_bus,
+    key_cache_invalidation_shared,
+    redis_enabled,
+)
 from .fallback_alerts import shutdown_fallback_alerts
 from .enterprise_reporting import admin_router as enterprise_admin_router, public_router as enterprise_router
 from .model_alias_overrides import get_model_alias_override_db_state, refresh_model_alias_registry_from_db
@@ -1048,8 +1057,15 @@ async def provider_channel_refresh_loop(interval_seconds: int):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        await _run_migrations(conn)
+        # Every uvicorn worker runs this on boot; serialize the DDL so workers
+        # don't race on ALTER TABLE / seed inserts.
+        async with mysql_named_lock(
+            conn,
+            "coincoin:startup-migrations",
+            settings.startup_migration_lock_timeout_seconds,
+        ):
+            await conn.run_sync(Base.metadata.create_all)
+            await _run_migrations(conn)
     # Initialize router registry after settings/env are loaded and DB is ready.
     model_registry.init_from_settings()
     try:
@@ -1084,7 +1100,17 @@ async def lifespan(app: FastAPI):
     image_job_task = None
     if settings.image_jobs_enabled:
         image_job_task = asyncio.create_task(image_job_loop(settings.image_job_poll_interval))
-    logging.info("CoinCoin Proxy started")
+    # Cross-worker shared state (only when Redis is configured).
+    shared_state_tasks = []
+    if channel_state_shared():
+        shared_state_tasks.append(asyncio.create_task(cooldown_sync_loop()))
+    if key_cache_invalidation_shared():
+        shared_state_tasks.append(asyncio.create_task(invalidation_bus.listen_forever()))
+    logging.info(
+        "CoinCoin Proxy started worker=%s redis_shared_state=%s",
+        WORKER_ID,
+        "on" if redis_enabled() else "off",
+    )
 
     try:
         yield
@@ -1098,7 +1124,10 @@ async def lifespan(app: FastAPI):
         pricing_override_task.cancel()
         if image_job_task is not None:
             image_job_task.cancel()
+        for task in shared_state_tasks:
+            task.cancel()
         await flush_once()
+        await drain_background_tasks()
         await shutdown_fallback_alerts()
         await close_http_client()
         await close_redis_client()
