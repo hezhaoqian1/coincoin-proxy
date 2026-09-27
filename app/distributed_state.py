@@ -87,10 +87,17 @@ def redis_key(*parts: Any) -> str:
 class RedisGuard:
     """Runs Redis operations with a timeout and a consecutive-failure breaker.
 
+    Connection establishment is deliberately kept off the request path (the
+    go-redis model): ``warm_up`` dials and pre-fills the pool in the background
+    with a generous connect budget, and ``available()`` reports False until the
+    pool is warm. Request-path operations are then bounded by the short
+    ``redis_op_timeout_seconds``; if that timeout also had to cover DNS + TCP +
+    AUTH (slow on Railway private networking right after boot), every attempt
+    would be cancelled mid-dial and a connection would never be established.
+
     After ``failure_threshold`` consecutive failures the breaker opens for
-    ``open_seconds``; while open, ``call`` returns immediately without touching
-    Redis so request latency is unaffected by a Redis outage. The first call
-    after the window acts as a half-open probe.
+    ``open_seconds``; while open nothing touches Redis. Any failure marks the
+    pool cold so the next use re-warms it in the background.
     """
 
     def __init__(
@@ -106,6 +113,9 @@ class RedisGuard:
         self._consecutive_failures = 0
         self._open_until = 0.0
         self._last_error_log = 0.0
+        self._warm = False
+        self._warm_task: Optional[asyncio.Task] = None
+        self.last_warm_ms: Optional[float] = None
 
     @property
     def failure_threshold(self) -> int:
@@ -120,17 +130,61 @@ class RedisGuard:
     @property
     def default_timeout(self) -> float:
         value = self._default_timeout if self._default_timeout is not None else settings.redis_op_timeout_seconds
-        return max(0.01, float(value or 0.25))
+        return max(0.01, float(value or 0.5))
 
     def is_open(self, now: Optional[float] = None) -> bool:
         return self._open_until > (time.monotonic() if now is None else now)
 
+    def is_warm(self) -> bool:
+        return self._warm
+
     def available(self) -> bool:
-        return redis_enabled() and not self.is_open()
+        """True when Redis can be used right now without dialing on the caller's time."""
+        if not redis_enabled() or self.is_open():
+            return False
+        if not self._warm:
+            self._schedule_warm_up()
+            return False
+        return True
 
     def reset(self) -> None:
         self._consecutive_failures = 0
         self._open_until = 0.0
+        self._warm = False
+
+    def _schedule_warm_up(self) -> None:
+        if self._warm_task is not None and not self._warm_task.done():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self._warm_task = loop.create_task(self.warm_up())
+
+    async def warm_up(self) -> bool:
+        """Dial Redis and pre-fill the connection pool outside request timeouts."""
+        if not redis_enabled():
+            return False
+        started = time.monotonic()
+        budget = max(1.0, float(settings.redis_connect_timeout_seconds or 5.0)) + 1.0
+        try:
+            client = await get_redis_client()
+            await asyncio.wait_for(client.ping(), timeout=budget)
+            extra = max(0, int(settings.redis_prewarm_connections or 0) - 1)
+            if extra:
+                # Concurrent PINGs force the pool to open that many sockets now,
+                # so request bursts reuse them instead of dialing under load.
+                await asyncio.wait_for(asyncio.gather(*(client.ping() for _ in range(extra))), timeout=budget)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            self.record_failure("warm_up", exc, elapsed=time.monotonic() - started)
+            return False
+        self.last_warm_ms = (time.monotonic() - started) * 1000
+        self._warm = True
+        self.record_success()
+        logger.info("redis connected; pool warmed in %.0fms", self.last_warm_ms)
+        return True
 
     def record_success(self) -> None:
         if self._consecutive_failures or self._open_until:
@@ -139,22 +193,26 @@ class RedisGuard:
             self._consecutive_failures = 0
             self._open_until = 0.0
 
-    def record_failure(self, op_name: str, exc: BaseException) -> None:
+    def record_failure(self, op_name: str, exc: BaseException, *, elapsed: Optional[float] = None) -> None:
+        self._warm = False
         self._consecutive_failures += 1
         now = time.monotonic()
+        detail = f"{type(exc).__name__}: {exc!r}"
+        if elapsed is not None:
+            detail += f" after {elapsed * 1000:.0f}ms"
         if self._consecutive_failures >= self.failure_threshold and not self.is_open(now):
             self._open_until = now + self.open_seconds
             logger.warning(
-                "redis circuit opened for %.1fs after %d failures (last op=%s error=%s); using process-local state",
+                "redis circuit opened for %.1fs after %d failures (last op=%s %s); using process-local state",
                 self.open_seconds,
                 self._consecutive_failures,
                 op_name,
-                type(exc).__name__,
+                detail,
             )
             return
-        if now - self._last_error_log >= 30:
+        if now - self._last_error_log >= 30 or op_name == "warm_up":
             self._last_error_log = now
-            logger.warning("redis op failed op=%s error=%s: %s", op_name, type(exc).__name__, exc)
+            logger.warning("redis op failed op=%s %s", op_name, detail)
 
     async def call(
         self,
@@ -166,13 +224,14 @@ class RedisGuard:
         """Run ``fn(client)``; returns ``(ok, result)``. Never raises except on cancellation."""
         if not self.available():
             return False, None
+        started = time.monotonic()
         try:
             client = await get_redis_client()
             result = await asyncio.wait_for(fn(client), timeout=timeout or self.default_timeout)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - any Redis/transport error degrades to local state
-            self.record_failure(op_name, exc)
+            self.record_failure(op_name, exc, elapsed=time.monotonic() - started)
             return False, None
         self.record_success()
         return True, result
@@ -665,6 +724,8 @@ def runtime_snapshot() -> Dict[str, Any]:
         "worker_id": WORKER_ID,
         "redis_configured": redis_enabled(),
         "redis_circuit_open": redis_guard.is_open(),
+        "redis_pool_warm": redis_guard.is_warm(),
+        "redis_last_warm_ms": redis_guard.last_warm_ms,
         "invalidation_bus_connected": invalidation_bus.connected,
         "cooldown_registries": [registry.snapshot() for registry in cooldown_registries()],
         "pending_background_tasks": len(_BACKGROUND_TASKS),

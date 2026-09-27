@@ -162,11 +162,13 @@ class Settings(BaseSettings):
     # Multi-worker shared runtime state (Redis). Every Redis call on a request
     # path is bounded by redis_op_timeout_seconds and a circuit breaker so a
     # slow/unavailable Redis degrades to process-local state.
-    redis_connect_timeout_seconds: float = 1.0
+    # Dial budget for background pool warm-up (never spent on a request).
+    redis_connect_timeout_seconds: float = 5.0
     redis_socket_timeout_seconds: float = 2.0
     redis_max_connections: int = 200
     redis_health_check_interval_seconds: int = 30
-    redis_op_timeout_seconds: float = 0.25
+    redis_op_timeout_seconds: float = 0.5
+    redis_prewarm_connections: int = 4
     redis_circuit_failure_threshold: int = 3
     redis_circuit_open_seconds: float = 10.0
     # Channel cooldowns shared across workers (None = auto when redis_url set).

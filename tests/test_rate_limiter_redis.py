@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 from app.config import settings
+from app.distributed_state import redis_guard
 from app.rate_limiter import RateLimiter
 
 
@@ -10,6 +11,9 @@ class _FakeRedis:
     def __init__(self):
         self.counts = {}
         self.expiries = {}
+
+    async def ping(self):
+        return True
 
     async def eval(self, _script, _num_keys, key, limit, ttl_seconds):
         now = time.time()
@@ -29,8 +33,15 @@ class RedisRateLimiterTests(unittest.IsolatedAsyncioTestCase):
         settings.redis_rate_limiter_enabled = True
         settings.redis_url = "redis://example.invalid/0"
         settings.redis_rate_limiter_fallback_to_local = True
+        # The shared Redis guard only routes calls to Redis once its pool is warm.
+        redis_guard.reset()
+        self._guard_patch = patch("app.distributed_state.get_redis_client", AsyncMock(return_value=_FakeRedis()))
+        self._guard_patch.start()
+        await redis_guard.warm_up()
 
     async def asyncTearDown(self):
+        self._guard_patch.stop()
+        redis_guard.reset()
         settings.redis_rate_limiter_enabled = self._enabled
         settings.redis_url = self._url
         settings.redis_rate_limiter_fallback_to_local = self._fallback

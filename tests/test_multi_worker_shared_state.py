@@ -72,6 +72,10 @@ class FakeRedis:
             self.expires_ms.pop(key, None)
         return key in self.values
 
+    async def ping(self):
+        self._check()
+        return True
+
     async def get(self, key):
         self._check()
         return self.values.get(key) if self._alive(key) else None
@@ -212,6 +216,8 @@ class _SharedRedisTestCase(unittest.IsolatedAsyncioTestCase):
         redis_guard.reset()
         self._patch = patch("app.distributed_state.get_redis_client", AsyncMock(return_value=self.redis))
         self._patch.start()
+        if self.redis_configured:
+            self.assertTrue(await redis_guard.warm_up())
 
     async def asyncTearDown(self):
         await drain_background_tasks()
@@ -317,6 +323,9 @@ class SharedResponseCacheTests(_SharedRedisTestCase):
         self.assertIsNotNone(await worker_a.aget("resp_down", owner="u_1"))  # L1 still works
         for _ in range(3):
             self.assertIsNone(await worker_b.aget("resp_down", owner="u_1"))
+            await drain_background_tasks()
+            if redis_guard._warm_task is not None:
+                await asyncio.gather(redis_guard._warm_task, return_exceptions=True)
         self.assertTrue(redis_guard.is_open())
 
         calls_before = self.redis.calls
@@ -328,6 +337,56 @@ class SharedResponseCacheTests(_SharedRedisTestCase):
         cache = self._cache()
         self.assertIsNone(await cache.aget("resp_bad", owner="u_1"))
         self.assertEqual(cache.stats["l2_errors"], 1)
+
+
+class RedisGuardWarmUpTests(_SharedRedisTestCase):
+    async def test_cold_pool_is_not_used_on_request_path(self):
+        redis_guard.reset()  # cold again
+        calls_before = self.redis.calls
+        ok, _ = await redis_guard.call("probe", lambda client: client.get("k"))
+        self.assertFalse(ok, "cold guard must not dial on the caller's time")
+        self.assertEqual(self.redis.calls, calls_before)
+        # The background warm-up it scheduled makes the next call succeed.
+        await asyncio.gather(redis_guard._warm_task, return_exceptions=True)
+        self.assertTrue(redis_guard.is_warm())
+        ok, _ = await redis_guard.call("probe", lambda client: client.get("k"))
+        self.assertTrue(ok)
+
+    async def test_slow_dial_does_not_starve_operations(self):
+        """A dial slower than the op timeout still completes during warm-up."""
+
+        class _SlowDial(FakeRedis):
+            def __init__(self):
+                super().__init__()
+                self.dialed = False
+
+            async def ping(self):
+                if not self.dialed:
+                    await asyncio.sleep(0.3)  # > op timeout, < connect budget
+                    self.dialed = True
+                return True
+
+        slow = _SlowDial()
+        saved = settings.redis_op_timeout_seconds
+        settings.redis_op_timeout_seconds = 0.05
+        try:
+            redis_guard.reset()
+            with patch("app.distributed_state.get_redis_client", AsyncMock(return_value=slow)):
+                self.assertTrue(await redis_guard.warm_up())
+                ok, _ = await redis_guard.call("probe", lambda client: client.get("k"))
+        finally:
+            settings.redis_op_timeout_seconds = saved
+        self.assertTrue(ok)
+
+    async def test_failure_marks_pool_cold_and_rewarms(self):
+        self.redis.fail = True
+        ok, _ = await redis_guard.call("probe", lambda client: client.get("k"))
+        self.assertFalse(ok)
+        self.assertFalse(redis_guard.is_warm())
+        self.redis.fail = False
+        self.assertFalse(redis_guard.available())  # schedules warm-up
+        await asyncio.gather(redis_guard._warm_task, return_exceptions=True)
+        self.assertTrue(redis_guard.available())
 
 
 class LocalOnlyResponseCacheTests(_SharedRedisTestCase):
@@ -472,6 +531,7 @@ class SharedChannelCooldownTests(_SharedRedisTestCase):
 
         self.redis.fail = False
         redis_guard.reset()
+        self.assertTrue(await redis_guard.warm_up())
         await worker_a._shared.sync_once()
         await worker_b._shared.sync_once()
 
@@ -480,9 +540,10 @@ class SharedChannelCooldownTests(_SharedRedisTestCase):
     async def test_router_without_namespace_stays_local(self):
         router = ChannelRouter()
         router.set_snapshot([], [])
+        calls_before = self.redis.calls
         router.record_success("ch_x")
         await drain_background_tasks()
-        self.assertEqual(self.redis.calls, 0)
+        self.assertEqual(self.redis.calls, calls_before)
 
 
 class GeminiCpaSharedCooldownTests(_SharedRedisTestCase):
