@@ -341,6 +341,7 @@ def _copy_anthropic_messages_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         "tools",
         "tool_choice",
         "thinking",
+        "output_config",
         "service_tier",
         "container",
         "context_management",

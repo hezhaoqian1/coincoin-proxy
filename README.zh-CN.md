@@ -318,7 +318,18 @@ uvicorn app.main:app --reload --port 8000
 
 Claude Code-only 上游和普通 OpenAI-compatible 上游不完全一样：真实 Claude Code 客户端请求需要走 Anthropic Messages 形状、Claude Code headers 和 `?beta=true`，普通脚本探测或后台服务端监控可能被上游边缘策略拒绝。不要只根据普通 `/v1/chat/completions` 或监控 `503` 判定这类渠道不可用。
 
-当前 Claude Code 接入使用 `anthropic_compatible` provider channel 加 model route 的方式承载，`claude-opus-5`、`claude-sonnet-5` 等公开 Claude 模型保持 route-only，避免重新落回旧的 GPT-backed Claude alias。Claude Code 模型的基础价格按 Anthropic 官方价格维护，倍率通过 `/admin/model-pricing/{model_id}` 管理；当前生产策略是 `claude-*` 公共模型统一 `model_multiplier=6.0`、`output_multiplier=1.0`、`cache_read_multiplier=0.1`。
+当前 Claude Code 接入使用 `anthropic_compatible` provider channel 加 model route 的方式承载，`claude-opus-5`、`claude-sonnet-5` 等公开 Claude 模型保持 route-only，避免重新落回旧的 GPT-backed Claude alias。Claude Code 模型的基础价格按 Anthropic 官方价格维护，倍率通过 `/admin/model-pricing/{model_id}` 按模型管理，不应对所有 `claude-*` 套用统一倍率或缓存折扣。
+
+2026-09-30 新增 `claude-sonnet-5-5` 和 `gpt-6.1-sol`，不替换旧模型或默认模型：
+
+| 模型 | 官方输入 / 输出（USD / 百万 token） | CoinCoin 倍率 | 实际输入 / 输出 | 缓存读取 / 写入（5m） |
+| --- | --- | --- | --- | --- |
+| `claude-sonnet-5-5` | $2 / $10 | 4 | $8 / $40 | $0.80 / $10 |
+| `gpt-6.1-sol` | $2 / $10 | 1 | $2 / $10 | $0.10 / $2.50 |
+
+价格及规格来源：[Claude Sonnet 5.5 官方文档](https://platform.claude.com/docs/en/models/sonnet-5-5/overview)、[GPT-6.1 Sol 官方文档](https://developers.openai.com/api/docs/models/gpt-6.1-sol)。Sonnet 的 5m 标注只适用于 Anthropic 缓存；GPT 写入列表示其官方缓存写入价格。上述为标准 token 档，沿用现有计费逻辑，不新增长上下文、Fast/Batch/Flex、区域处理或 Anthropic 1h 缓存的分档计费。
+
+`claude-sonnet-5-5` 需要原生 Anthropic 渠道和 `chat/completions` model route，客户端使用 `/v1/messages`；无渠道时失败，不回退成 GPT。默认 adaptive thinking、high effort；保留原生请求字段，非默认采样参数及强制工具调用的限制由上游校验。`gpt-6.1-sol` 保留 Chat Completions 和 Responses 入口，Chat 工具调用由现有兼容层转换至上游 Responses；其 reasoning effort 为 `low`、`medium`（默认）、`high`、`xhigh`、`max`，不支持 `none` / `minimal`。
 
 详细验收项、价格计算公式和运维命令见 [`docs/architecture/claude-code-upstream-runbook.md`](./docs/architecture/claude-code-upstream-runbook.md)。
 

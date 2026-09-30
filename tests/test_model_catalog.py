@@ -614,6 +614,89 @@ class ModelCatalogTests(unittest.TestCase):
                     ["none", "low", "medium", "high", "xhigh", "max"],
                 )
 
+    def test_checked_in_gpt_6_1_sol_uses_exact_model_and_official_cache_prices(self) -> None:
+        settings.model_catalog_json = ""
+        registry._initialized = False
+        registry.init_from_settings()
+
+        for endpoint in ("chat/completions", "responses"):
+            with self.subTest(endpoint=endpoint):
+                resolved = registry.resolve_public_model(
+                    "gpt-6.1-sol", endpoint,
+                    messages=[{"role": "user", "content": "hello"}],
+                    tools=[{"type": "function", "function": {"name": "read_file"}}],
+                )
+                model = resolved.public_model
+                self.assertEqual(model.provider_model, "gpt-6.1-sol")
+                self.assertEqual(resolved.backend.model_id, "gpt-6.1-sol")
+                self.assertEqual(model.routing_mode, "legacy_auto")
+                self.assertEqual(model.delivery_lane, "legacy")
+                self.assertEqual(model.billable_sku, "legacy-gpt-6.1-sol-text")
+                self.assertEqual(model.price_input_per_million, 200)
+                self.assertEqual(model.price_output_per_million, 1000)
+                self.assertEqual(model.model_multiplier, 1.0)
+                self.assertEqual(model.cache_read_multiplier, 0.05)
+                self.assertEqual(model.cache_creation_multiplier, 1.25)
+                self.assertEqual(model.effective_cached_input_per_million, 10.0)
+                self.assertEqual(model.effective_cache_creation_input_per_million, 250.0)
+                self.assertEqual(model.metadata["context_length"], 1_050_000)
+                self.assertEqual(model.metadata["max_completion_tokens"], 128_000)
+                self.assertEqual(model.metadata["thinking"]["default"], "medium")
+                self.assertEqual(model.metadata["thinking"]["levels"], ["low", "medium", "high", "xhigh", "max"])
+
+    def test_checked_in_claude_sonnet_5_5_uses_native_route_and_fourfold_pricing(self) -> None:
+        settings.model_catalog_json = ""
+        registry._initialized = False
+        registry.init_from_settings()
+
+        sonnet = registry.get_public_model("claude-sonnet-5-5")
+
+        self.assertIsNotNone(sonnet)
+        self.assertEqual(sonnet.owned_by, "anthropic")
+        self.assertEqual(sonnet.provider_model, "claude-sonnet-5-5")
+        self.assertEqual(sonnet.upstream_model, "claude-sonnet-5-5")
+        self.assertEqual(sonnet.routing_mode, "route_only")
+        self.assertEqual(sonnet.delivery_lane, "route_only")
+        self.assertEqual(sonnet.capabilities, ("chat/completions",))
+        self.assertEqual(sonnet.auth_style, "x-api-key")
+        self.assertEqual(sonnet.billable_sku, "claude-sonnet-5-5-text")
+        self.assertEqual(sonnet.base_price_input_per_million, 200)
+        self.assertEqual(sonnet.base_price_output_per_million, 1000)
+        self.assertEqual(sonnet.model_multiplier, 4.0)
+        self.assertEqual(sonnet.output_multiplier, 1.0)
+        self.assertEqual(sonnet.price_input_per_million, 800)
+        self.assertEqual(sonnet.price_output_per_million, 4000)
+        self.assertEqual(sonnet.cache_read_multiplier, 0.1)
+        self.assertEqual(sonnet.cache_creation_multiplier, 1.25)
+        self.assertEqual(sonnet.effective_cached_input_per_million, 80.0)
+        self.assertEqual(sonnet.effective_cache_creation_input_per_million, 1000.0)
+        self.assertEqual(sonnet.metadata["provider_protocol"], "anthropic_messages")
+        self.assertEqual(sonnet.metadata["context_length"], 1_000_000)
+        self.assertEqual(sonnet.metadata["max_completion_tokens"], 128_000)
+        self.assertEqual(sonnet.metadata["thinking"], {"type": "adaptive", "default_effort": "high"})
+
+        for endpoint in ("chat/completions", "responses"):
+            with self.subTest(endpoint=endpoint), self.assertRaises(ModelCapabilityError):
+                registry.resolve_public_model("claude-sonnet-5-5", endpoint)
+
+    def test_checked_in_claude_sonnet_5_5_runtime_pricing_keeps_cache_write_rate(self) -> None:
+        settings.model_catalog_json = ""
+        registry.set_runtime_pricing_overrides({
+            "claude-sonnet-5-5": {
+                "model_multiplier": 4.0,
+                "output_multiplier": 1.0,
+                "cache_read_multiplier": 0.1,
+            },
+        }, version=1)
+        registry._initialized = False
+        registry.init_from_settings()
+
+        sonnet = registry.get_public_model("claude-sonnet-5-5")
+        self.assertEqual(sonnet.price_input_per_million, 800)
+        self.assertEqual(sonnet.price_output_per_million, 4000)
+        self.assertEqual(sonnet.effective_cached_input_per_million, 80.0)
+        self.assertEqual(sonnet.effective_cache_creation_input_per_million, 1000.0)
+
     def test_checked_in_claude_opus_5_5_uses_anthropic_route_and_pricing(self) -> None:
         settings.model_catalog_json = ""
         registry._initialized = False

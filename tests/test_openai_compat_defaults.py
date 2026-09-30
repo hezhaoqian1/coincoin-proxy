@@ -4176,6 +4176,47 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tool_calls[0]["function"]["arguments"], "{\"path\":\"foo.txt\"}")
         add_usage.assert_awaited_once()
 
+    async def test_gpt_6_1_sol_chat_tools_use_upstream_responses(self) -> None:
+        settings.model_catalog_json = ""
+        registry._initialized = False
+        registry.init_from_settings()
+        upstream_client = _RecordingClient([
+            _FakeUpstreamResponse({
+                "id": "resp_sol_61",
+                "status": "completed",
+                "output": [{"type": "function_call", "id": "call_61", "name": "read_file", "arguments": "{}"}],
+                "usage": {"input_tokens": 3, "output_tokens": 1, "total_tokens": 4},
+            }),
+        ])
+
+        with (
+            patch.object(openai_module, "authorize_request", AsyncMock(return_value=self.fake_user)),
+            patch.object(openai_module, "get_http_client", AsyncMock(return_value=upstream_client)),
+            patch.object(openai_module.usage_buffer, "add", AsyncMock()) as add_usage,
+        ):
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+                response = await client.post(
+                    "/v1/chat/completions",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={
+                        "model": "gpt-6.1-sol",
+                        "messages": [{"role": "user", "content": "Read the file"}],
+                        "tools": [{"type": "function", "function": {"name": "read_file", "parameters": {"type": "object"}}}],
+                        "reasoning_effort": "high",
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["model"], "gpt-6.1-sol")
+        self.assertEqual(response.json()["choices"][0]["message"]["tool_calls"][0]["function"]["name"], "read_file")
+        self.assertTrue(upstream_client.calls[0]["url"].endswith("/v1/responses"))
+        self.assertEqual(upstream_client.calls[0]["json"]["model"], "gpt-6.1-sol")
+        self.assertEqual(upstream_client.calls[0]["json"]["reasoning"]["effort"], "high")
+        self.assertEqual(upstream_client.calls[0]["json"]["tools"][0]["name"], "read_file")
+        add_usage.assert_awaited_once()
+        self.assertEqual(add_usage.await_args.kwargs["price_input_per_million"], 200)
+        self.assertEqual(add_usage.await_args.kwargs["price_output_per_million"], 1000)
+
     async def test_chat_stream_gpt_5_4_with_tools_preserves_tool_call_sse(self) -> None:
         settings.router_enabled = False
         registry._initialized = False

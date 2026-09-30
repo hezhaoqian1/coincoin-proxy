@@ -3,7 +3,7 @@ type: runbook
 status: active
 owner: platform
 audience: [operator, developer, reviewer, agent]
-updated: 2026-09-02
+updated: 2026-09-30
 canonical_for: claude-code-upstream-operations
 ---
 
@@ -48,6 +48,52 @@ exact provider-channel route, the router checks those aliases in order. For
 example, `claude-opus-4-6` reuses `claude-opus-4.6` routes unless an operator
 creates explicit `claude-opus-4-6` routes. Explicit routes always win, so an
 operator can still tune or disable the hyphen alias independently.
+
+## Claude Sonnet 5.5
+
+`claude-sonnet-5-5` was released on September 28, 2026. Its catalog entry uses
+native Anthropic Messages routing, not the older GPT-backed compatibility alias.
+Register an active `anthropic_compatible` provider channel route with endpoint
+`chat/completions` and exact upstream model `claude-sonnet-5-5`. Clients use
+`/v1/messages`. Discover the model on each upstream before creating its route.
+
+The base price is 200 cents per million input tokens and 1,000 cents per million
+output tokens. The catalog defaults to `model_multiplier=4.0`,
+`output_multiplier=1.0`, `cache_read_multiplier=0.1`, and
+`cache_creation_multiplier=1.25`: effective prices are $8 input, $40 output,
+$0.80 cache reads, and $10 cache writes per million tokens. Do not apply an
+Opus pricing override to Sonnet. Runtime pricing overrides still take precedence.
+
+After deploying the catalog, use `PATCH /admin/model-pricing/claude-sonnet-5-5`
+with `{"model_multiplier":4,"output_multiplier":1,"cache_read_multiplier":0.1}`
+to persist the requested production policy. The cache-write multiplier remains
+in the catalog. Model-route and pricing admin APIs require an existing public
+catalog id; they cannot register an unknown model before catalog deployment.
+
+Sonnet defaults to adaptive thinking with high effort. Native requests retain
+their `thinking`, `output_config`, and tool fields, and the upstream validates
+Sonnet-specific restrictions. This addition does not add separate 1h cache
+write accounting; the existing write rate corresponds to the 5m tier.
+
+Source: https://platform.claude.com/docs/en/models/sonnet-5-5/overview
+
+### Production verification, September 30, 2026
+
+Deployment `1ee226fc-a771-4a9a-a2d0-6620c63f669e` contains only the two new
+catalog entries and native `output_config` forwarding, built on the previously
+active production commit `4b0deff06184953d36e08d2e4caf7d0b0257502c`. Unrelated
+local work was not deployed. Both models appear in `/v1/models`; `/health`
+returns 200, and existing models retain their pricing.
+
+One-shot generation probes returned 200 for Sonnet through `Sixoner ccmax 1x`
+and for GPT-6.1 Sol through both `2号sixoner稳定` and `sixoner 推荐pro`.
+`Flow-Node 满血CCMAX` advertised Sonnet 5.5 but returned 502 on the native
+generation probe, so only its new Sonnet 5.5 route was disabled. Existing
+routes were left alone. Temporary disabled probe monitors were removed after
+the checks; no recurring test monitors or credentials were added to the repo.
+
+Future Git-based deployments must include these catalog entries and effort
+forwarding to preserve support for the new models.
 
 ## Runtime concurrency
 
