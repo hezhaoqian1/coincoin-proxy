@@ -331,6 +331,14 @@ Claude Code-only 上游和普通 OpenAI-compatible 上游不完全一样：真�
 
 `claude-sonnet-5-5` 需要原生 Anthropic 渠道和 `chat/completions` model route，客户端使用 `/v1/messages`；无渠道时失败，不回退成 GPT。默认 adaptive thinking、high effort；保留原生请求字段，非默认采样参数及强制工具调用的限制由上游校验。`gpt-6.1-sol` 保留 Chat Completions 和 Responses 入口，Chat 工具调用由现有兼容层转换至上游 Responses；其 reasoning effort 为 `low`、`medium`（默认）、`high`、`xhigh`、`max`，不支持 `none` / `minimal`。
 
+2026-10-08 新增 `claude-haiku-5-5`，不替换 `claude-haiku-4-5` 或默认模型：
+
+| 模型 | 官方输入 / 输出（USD / 百万 token） | CoinCoin 倍率 | 实际输入 / 输出 | 缓存读取 / 写入（5m） | 输入 > 100,000 tokens |
+| --- | --- | --- | --- | --- | --- |
+| `claude-haiku-5-5` | $0.10 / $0.50 | 4 | $0.40 / $2 | $0.04 / $0.50 | 整次请求输入、缓存、输出再 ×5（实际 $2 / $10） |
+
+价格来源：[Anthropic 官方定价](https://platform.claude.com/docs/en/about-claude/pricing)。阈值按含缓存的输入总量判断，复用 `context_pricing_tiers`（见 [长上下文与缓存计费](./docs/reference/context-cache-billing.md)）。与 `claude-sonnet-5-5` 一样走原生 Anthropic 渠道和 `chat/completions` model route，客户端使用 `/v1/messages`；默认 adaptive thinking、medium effort，`budget_tokens`、非默认采样参数和 assistant prefill 的限制由上游校验。
+
 详细验收项、价格计算公式和运维命令见 [`docs/architecture/claude-code-upstream-runbook.md`](./docs/architecture/claude-code-upstream-runbook.md)。
 
 ---
