@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from app.config import settings
@@ -373,8 +374,9 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertEqual(resolved.public_model.provider_model, "gemini-2.5-flash")
 
     def test_runtime_alias_override_changes_upstream_without_editing_catalog(self) -> None:
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8") as override_file:
-            json.dump(
+        with tempfile.TemporaryDirectory() as override_dir:
+            override_path = Path(override_dir) / "aliases.json"
+            override_path.write_text(json.dumps(
                 {
                     "aliases": {
                         "gemini-fast": {
@@ -383,10 +385,8 @@ class ModelCatalogTests(unittest.TestCase):
                         }
                     }
                 },
-                override_file,
-            )
-            override_file.flush()
-            settings.model_alias_overrides_path = override_file.name
+            ), encoding="utf-8")
+            settings.model_alias_overrides_path = str(override_path)
             registry._initialized = False
             registry.init_from_settings()
 
