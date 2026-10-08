@@ -666,6 +666,16 @@
     color: var(--text-primary);
 }
 
+.model-context-price {
+    display: block;
+    max-width: 360px;
+    margin-top: 6px;
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    line-height: 1.5;
+    white-space: normal;
+}
+
 @media (max-width: 768px) {
     .docs-layout {
         grid-template-columns: 1fr;
@@ -722,7 +732,7 @@
     }
 
     .pricing-table {
-        min-width: 860px;
+        min-width: 1000px;
     }
 
     .price-cell {

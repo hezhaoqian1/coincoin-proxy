@@ -179,6 +179,8 @@ def station_usage_kwargs(station_model: StationResolvedModel | None) -> dict:
         "wholesale_price_input_per_million": station_model.wholesale_input_per_million,
         "wholesale_price_output_per_million": station_model.wholesale_output_per_million,
         "wholesale_price_per_image_cents": station_model.wholesale_price_per_image_cents,
+        "wholesale_cached_input_per_million": getattr(station_model.resolved_model.public_model, "effective_cached_input_per_million", None),
+        "wholesale_cache_creation_input_per_million": getattr(station_model.resolved_model.public_model, "effective_cache_creation_input_per_million", None),
         "price_version": station_model.price_version,
     }
 
@@ -197,8 +199,9 @@ def public_model_pricing_kwargs(public_model: Any) -> dict:
         "base_price_output_per_million": getattr(public_model, "base_price_output_per_million", 0) or 0,
         "base_price_per_image_cents": getattr(public_model, "base_price_per_image_cents", 0.0) or 0.0,
         "base_price_per_video_cents": getattr(public_model, "base_price_per_video_cents", 0.0) or 0.0,
-        "effective_cached_input_per_million": getattr(public_model, "effective_cached_input_per_million", 0.0) or 0.0,
-        "effective_cache_creation_input_per_million": getattr(public_model, "effective_cache_creation_input_per_million", 0.0) or 0.0,
+        "effective_cached_input_per_million": getattr(public_model, "effective_cached_input_per_million", None),
+        "effective_cache_creation_input_per_million": getattr(public_model, "effective_cache_creation_input_per_million", None),
+        "context_pricing_tiers": getattr(public_model, "context_pricing_tiers", ()),
         "price_version": getattr(public_model, "price_version", 0) or 0,
     }
 
@@ -215,6 +218,16 @@ def usage_pricing_kwargs(
     pricing version when both are present.
     """
     payload = public_model_pricing_kwargs(public_model)
+    if station_model is not None:
+        # Apply cache ratios to the station's own retail input rate. Wholesale
+        # cache prices remain the public model's rates, without user discounts.
+        for key, multiplier_key in (
+            ("effective_cached_input_per_million", "cache_read_multiplier"),
+            ("effective_cache_creation_input_per_million", "cache_creation_multiplier"),
+        ):
+            multiplier = getattr(public_model, multiplier_key, None)
+            if multiplier is not None:
+                payload[key] = round(station_model.retail_input_per_million * multiplier, 4)
     if user_cache_read_multiplier_override is not None:
         payload["cache_read_multiplier"] = float(user_cache_read_multiplier_override)
         if station_model is not None:
@@ -238,6 +251,7 @@ def calculate_station_wholesale_cost(
     usage_unit_type: str = "tokens",
     usage_unit_count: int = 0,
     image_count: int = 0,
+    cache_creation_tokens: int = 0,
 ) -> float:
     if station_model is None:
         return 0.0
@@ -246,10 +260,15 @@ def calculate_station_wholesale_cost(
             image_count=image_count or usage_unit_count,
             price_per_image_cents=station_model.wholesale_price_per_image_cents,
         )
+    public_model = station_model.resolved_model.public_model
     return calculate_cost_cents(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         cached_tokens=cached_tokens,
+        cache_creation_tokens=cache_creation_tokens,
         price_input_per_million=station_model.wholesale_input_per_million,
         price_output_per_million=station_model.wholesale_output_per_million,
+        cached_price_input_per_million=getattr(public_model, "effective_cached_input_per_million", None),
+        cache_creation_price_input_per_million=getattr(public_model, "effective_cache_creation_input_per_million", None),
+        context_pricing_tiers=getattr(public_model, "context_pricing_tiers", ()),
     )

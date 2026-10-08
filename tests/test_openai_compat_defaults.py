@@ -11,6 +11,7 @@ from app.config import settings
 from app.fallback_alerts import FallbackExhaustedAlert
 from app.main import app
 from app.router import registry
+from app.usage_buffer import UsageBuffer
 import app.fallback_alerts as fallback_alerts
 import app.proxy as proxy_module
 import app.openai_compat as openai_module
@@ -4216,6 +4217,57 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         add_usage.assert_awaited_once()
         self.assertEqual(add_usage.await_args.kwargs["price_input_per_million"], 200)
         self.assertEqual(add_usage.await_args.kwargs["price_output_per_million"], 1000)
+
+    async def test_gpt_context_and_cache_billing_across_chat_responses_stream_and_json(self) -> None:
+        settings.model_catalog_json = ""
+        registry._initialized = False
+        registry.init_from_settings()
+        upstream_payload = {
+            "id": "resp_context_cache", "model": "gpt-6.1-sol", "status": "completed",
+            "output": [{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "OK"}]}],
+            "usage": {"input_tokens": 300_000, "output_tokens": 10_000, "total_tokens": 310_000,
+                      "input_tokens_details": {"cached_tokens": 100_000, "cache_write_tokens": 50_000}},
+        }
+        for endpoint, module in (("responses", proxy_module), ("chat/completions", openai_module)):
+            for stream in (False, True):
+                with self.subTest(endpoint=endpoint, stream=stream):
+                    buffer = UsageBuffer()
+                    upstream_client = _RecordingClient([_FakeUpstreamResponse(upstream_payload)])
+                    stream_client = _RecordingStreamClient([_FakeEventStreamResponse([
+                        'data: {"type":"response.created","response":{"id":"resp_context_cache","status":"in_progress","output":[]}}',
+                        "",
+                        'data: {"type":"response.output_text.delta","delta":"OK"}',
+                        "",
+                        "data: " + json.dumps({"type": "response.completed", "response": upstream_payload}),
+                        "",
+                        "data: [DONE]",
+                        "",
+                    ])])
+                    body = {"model": "gpt-6.1-sol", "stream": stream}
+                    if endpoint == "responses":
+                        body["input"] = "Say OK"
+                    else:
+                        body["messages"] = [{"role": "user", "content": "Say OK"}]
+                        if stream:
+                            body["stream_options"] = {"include_usage": True}
+                    with (
+                        patch.object(module, "authorize_request", AsyncMock(return_value=self.fake_user)),
+                        patch.object(module, "get_http_client", AsyncMock(return_value=upstream_client)),
+                        patch.object(module, "get_stream_client", AsyncMock(return_value=stream_client)),
+                        patch.object(module, "usage_buffer", buffer),
+                        patch("app.usage_buffer.usage_buffer", buffer),
+                    ):
+                        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+                            response = await client.post("/v1/" + endpoint, headers={"Authorization": "Bearer sk_cc_test"}, json=body)
+                            await asyncio.sleep(0)  # Let the scheduled streaming usage write finish.
+                    self.assertEqual(response.status_code, 200, response.text)
+                    self.assertIn('"cache_write_tokens"', response.text)
+                    _, users, logs = await buffer.snapshot_and_reset()
+                    self.assertEqual(len(logs), 1)
+                    self.assertEqual(logs[0]["cache_creation_tokens"], 50_000)
+                    self.assertEqual(logs[0]["input_tokens"], 300_000)
+                    self.assertEqual(logs[0]["pricing_details"]["tier"], "long_context")
+                    self.assertEqual(users[self.fake_user.id]["cost_cents_f"], 102)
 
     async def test_chat_stream_gpt_5_4_with_tools_preserves_tool_call_sse(self) -> None:
         settings.router_enabled = False

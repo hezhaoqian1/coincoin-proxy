@@ -94,6 +94,7 @@ from .channel_monitor_leases import (
 )
 from .reliability import invalidate_reliability_cache
 from .model_pricing_overrides import refresh_model_pricing_registry_from_db
+from .token_pricing import serialize_context_pricing_tiers
 from .system_settings import (
     CLAUDE_COMPAT_PROVIDER_KEY,
     persist_runtime_system_settings,
@@ -433,6 +434,10 @@ def _pricing_payload(model_id: str):
         "price_per_image_cents": getattr(model, "price_per_image_cents", 0.0),
         "price_per_video_cents": getattr(model, "price_per_video_cents", 0.0),
         "effective_cached_input_per_million": getattr(model, "effective_cached_input_per_million", 0.0),
+        "effective_cache_creation_input_per_million": getattr(model, "effective_cache_creation_input_per_million", 0.0),
+        "cache_creation_multiplier": getattr(model, "cache_creation_multiplier", 1.0),
+        "context_pricing_basis": "whole_request",
+        "context_pricing_tiers": serialize_context_pricing_tiers(getattr(model, "context_pricing_tiers", ())),
         "pricing_mode": getattr(model, "pricing_mode", "explicit_price"),
         "model_multiplier": getattr(model, "model_multiplier", 1.0),
         "output_multiplier": getattr(model, "output_multiplier", 1.0),
@@ -5752,6 +5757,7 @@ async def list_user_request_logs(
                 "upstream_request_id": getattr(log, "upstream_request_id", ""),
                 "price_version": getattr(log, "price_version", 0),
                 "pricing_mode": getattr(log, "pricing_mode", ""),
+                "pricing_details": getattr(log, "pricing_details", None),
                 "model_multiplier": getattr(log, "model_multiplier", 1.0),
                 "output_multiplier": getattr(log, "output_multiplier", 1.0),
                 "cache_read_multiplier": getattr(log, "cache_read_multiplier", 0.0),
