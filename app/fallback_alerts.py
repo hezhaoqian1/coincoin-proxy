@@ -29,6 +29,10 @@ _DINGTALK_LOG_URL_PATTERN = re.compile(
     r"https://oapi\.dingtalk\.com/robot/send\?[^\s]+",
     re.IGNORECASE,
 )
+_WECOM_LOG_URL_PATTERN = re.compile(
+    r"https://qyapi\.weixin\.qq\.com/cgi-bin/webhook/send\?[^\s]+",
+    re.IGNORECASE,
+)
 
 _REDIS_FAILURE_BURST_SCRIPT = """
 local bucket_key = KEYS[1]
@@ -180,7 +184,7 @@ def current_alert_webhook_url() -> str:
     return str(settings.fallback_alert_webhook_url or "").strip()
 
 
-def is_valid_dingtalk_webhook_url(value: str) -> bool:
+def _is_valid_robot_webhook_url(value: str, *, netloc: str, path: str, token_param: str) -> bool:
     if not value or any(
         ord(character) < 0x20 or ord(character) == 0x7F
         for character in value
@@ -188,30 +192,62 @@ def is_valid_dingtalk_webhook_url(value: str) -> bool:
         return False
     try:
         parsed = urlsplit(value)
-        access_tokens = parse_qs(parsed.query, keep_blank_values=True).get(
-            "access_token", []
-        )
+        tokens = parse_qs(parsed.query, keep_blank_values=True).get(token_param, [])
     except ValueError:
         return False
     return not (
         value != value.strip()
         or parsed.scheme != "https"
-        or parsed.netloc != "oapi.dingtalk.com"
-        or parsed.path != "/robot/send"
-        or len(access_tokens) != 1
-        or not access_tokens[0]
+        or parsed.netloc != netloc
+        or parsed.path != path
+        or len(tokens) != 1
+        or not tokens[0]
         or any(
             ord(character) < 0x20
             or ord(character) == 0x7F
             or character.isspace()
-            for character in access_tokens[0]
+            for character in tokens[0]
         )
     )
 
 
+def is_valid_dingtalk_webhook_url(value: str) -> bool:
+    return _is_valid_robot_webhook_url(
+        value, netloc="oapi.dingtalk.com", path="/robot/send", token_param="access_token"
+    )
+
+
+def is_valid_wecom_webhook_url(value: str) -> bool:
+    """WeCom group robot: https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=..."""
+    return _is_valid_robot_webhook_url(
+        value, netloc="qyapi.weixin.qq.com", path="/cgi-bin/webhook/send", token_param="key"
+    )
+
+
+def alert_webhook_destination(value: str) -> str:
+    """Return ``dingtalk`` / ``wecom`` for a sendable webhook URL, else ``""``."""
+    if is_valid_dingtalk_webhook_url(value):
+        return "dingtalk"
+    if is_valid_wecom_webhook_url(value):
+        return "wecom"
+    return ""
+
+
+def is_valid_alert_webhook_url(value: str) -> bool:
+    return bool(alert_webhook_destination(value))
+
+
+def _destination_label(destination: str) -> str:
+    return "WeCom" if destination == "wecom" else "DingTalk"
+
+
+def _destination_display_name(destination: str) -> str:
+    return "企业微信" if destination == "wecom" else "钉钉"
+
+
 def current_sendable_alert_webhook_url() -> str:
     webhook_url = current_alert_webhook_url()
-    return webhook_url if is_valid_dingtalk_webhook_url(webhook_url) else ""
+    return webhook_url if is_valid_alert_webhook_url(webhook_url) else ""
 
 
 def current_alert_policy() -> AlertPolicy:
@@ -356,7 +392,7 @@ def build_upstream_failure_burst_payload(notification: UpstreamFailureBurstNotif
     return {"msgtype": "text", "text": {"content": "\n".join(lines)}}
 
 
-def build_configuration_test_payload() -> Dict[str, Any]:
+def build_configuration_test_payload(destination: str = "dingtalk") -> Dict[str, Any]:
     title = "CoinCoin 告警配置测试"
     keyword = (settings.fallback_alert_keyword or "").strip()
     if keyword and keyword not in title:
@@ -368,30 +404,38 @@ def build_configuration_test_payload() -> Dict[str, Any]:
                 [
                     title,
                     "配置测试",
-                    "说明: 这是管理员主动发起的钉钉告警配置测试，不代表线上请求发生故障。",
+                    f"说明: 这是管理员主动发起的{_destination_display_name(destination)}告警配置测试，不代表线上请求发生故障。",
                 ]
             )
         },
     }
 
 
-def _dingtalk_delivery_result(response: Any) -> Tuple[bool, str]:
+def _dingtalk_delivery_result(response: Any, destination: str = "dingtalk") -> Tuple[bool, str]:
+    # DingTalk and WeCom robots both reply {"errcode": 0, "errmsg": "ok"} on success.
+    label = _destination_label(destination)
     status_code = int(getattr(response, "status_code", 0) or 0)
     if status_code >= 400:
-        return False, f"DingTalk HTTP {status_code}"
+        return False, f"{label} HTTP {status_code}"
     try:
         payload = response.json()
     except Exception:
-        return False, "DingTalk invalid response"
+        return False, f"{label} invalid response"
     if not isinstance(payload, dict) or "errcode" not in payload:
-        return False, "DingTalk invalid response"
+        return False, f"{label} invalid response"
     errcode = payload.get("errcode")
     if errcode not in (0, "0"):
-        return False, f"DingTalk errcode {str(errcode)[:32]}"
+        return False, f"{label} errcode {str(errcode)[:32]}"
     return True, ""
 
 
 def _redact_dingtalk_access_token(value: str) -> str:
+    """Redact DingTalk ``access_token`` and WeCom ``key`` webhook secrets."""
+    value = _redact_webhook_secret(value, _DINGTALK_LOG_URL_PATTERN, "access_token")
+    return _redact_webhook_secret(value, _WECOM_LOG_URL_PATTERN, "key")
+
+
+def _redact_webhook_secret(value: str, pattern: "re.Pattern[str]", secret_param: str) -> str:
     def redact_url(match: re.Match[str]) -> str:
         url = match.group(0)
         query_start = url.index("?") + 1
@@ -400,7 +444,7 @@ def _redact_dingtalk_access_token(value: str) -> str:
         query_parts = url[query_start:query_end].split("&")
         for index, query_part in enumerate(query_parts):
             name, separator, _ = query_part.partition("=")
-            if separator and unquote_plus(name) == "access_token":
+            if separator and unquote_plus(name) == secret_param:
                 query_parts[index] = f"{name}=[REDACTED]"
         return "".join(
             (
@@ -410,7 +454,7 @@ def _redact_dingtalk_access_token(value: str) -> str:
             )
         )
 
-    return _DINGTALK_LOG_URL_PATTERN.sub(redact_url, value)
+    return pattern.sub(redact_url, value)
 
 
 class _DingTalkAccessTokenLogFilter(logging.Filter):
@@ -455,8 +499,10 @@ async def _send_dingtalk_alert(alert: FallbackExhaustedAlert) -> bool:
     webhook_url = current_sendable_alert_webhook_url()
     if not webhook_url:
         return False
+    destination = alert_webhook_destination(webhook_url)
     payload = build_dingtalk_text_payload(alert)
     event_id = await _create_alert_event_bounded(
+        destination_type=destination,
         category="fallback_exhausted",
         severity="critical",
         alert_type="fallback_exhausted",
@@ -470,7 +516,7 @@ async def _send_dingtalk_alert(alert: FallbackExhaustedAlert) -> bool:
     try:
         async with _dingtalk_http_client() as client:
             response = await client.post(webhook_url, json=payload)
-        delivered, error_summary = _dingtalk_delivery_result(response)
+        delivered, error_summary = _dingtalk_delivery_result(response, destination)
         await _complete_alert_event_bounded(
             event_id,
             delivery_status="sent" if delivered else "failed",
@@ -485,7 +531,7 @@ async def _send_dingtalk_alert(alert: FallbackExhaustedAlert) -> bool:
             event_id,
             delivery_status="failed",
             response_status=0,
-            error_summary=f"DingTalk delivery {type(exc).__name__}",
+            error_summary=f"{_destination_label(destination)} delivery {type(exc).__name__}",
         )
         logger.warning("dingtalk fallback alert send failed error=%s", type(exc).__name__)
         return False
@@ -497,7 +543,9 @@ async def _send_upstream_failure_burst_alert(notification: UpstreamFailureBurstN
         return False
     payload = build_upstream_failure_burst_payload(notification)
     alert = notification.alert
+    destination = alert_webhook_destination(webhook_url)
     event_id = await _create_alert_event_bounded(
+        destination_type=destination,
         category=notification.category,
         severity="warning" if notification.category == "rate_limit" else "critical",
         alert_type="upstream_failure_burst",
@@ -513,7 +561,7 @@ async def _send_upstream_failure_burst_alert(notification: UpstreamFailureBurstN
     try:
         async with _dingtalk_http_client() as client:
             response = await client.post(webhook_url, json=payload)
-        delivered, error_summary = _dingtalk_delivery_result(response)
+        delivered, error_summary = _dingtalk_delivery_result(response, destination)
         await _complete_alert_event_bounded(
             event_id,
             delivery_status="sent" if delivered else "failed",
@@ -528,7 +576,7 @@ async def _send_upstream_failure_burst_alert(notification: UpstreamFailureBurstN
             event_id,
             delivery_status="failed",
             response_status=0,
-            error_summary=f"DingTalk delivery {type(exc).__name__}",
+            error_summary=f"{_destination_label(destination)} delivery {type(exc).__name__}",
         )
         logger.warning("dingtalk upstream failure alert send failed error=%s", type(exc).__name__)
         return False
@@ -538,17 +586,18 @@ async def send_dingtalk_configuration_test() -> Dict[str, Any]:
     webhook_url = current_sendable_alert_webhook_url()
     if not webhook_url:
         return {"sent": False, "event_id": None}
+    destination = alert_webhook_destination(webhook_url)
     event_id = await _create_alert_event_bounded(
         category="configuration_test",
         severity="info",
         alert_type="configuration_test",
-        destination_type="dingtalk",
+        destination_type=destination,
         delivery_status="pending",
     )
     try:
         async with _dingtalk_http_client() as client:
-            response = await client.post(webhook_url, json=build_configuration_test_payload())
-        delivered, error_summary = _dingtalk_delivery_result(response)
+            response = await client.post(webhook_url, json=build_configuration_test_payload(destination))
+        delivered, error_summary = _dingtalk_delivery_result(response, destination)
         await _complete_alert_event_bounded(
             event_id,
             delivery_status="sent" if delivered else "failed",
@@ -563,7 +612,7 @@ async def send_dingtalk_configuration_test() -> Dict[str, Any]:
             event_id,
             delivery_status="failed",
             response_status=0,
-            error_summary=f"DingTalk delivery {type(exc).__name__}",
+            error_summary=f"{_destination_label(destination)} delivery {type(exc).__name__}",
         )
         logger.warning("dingtalk configuration test send failed error=%s", type(exc).__name__)
         return {"sent": False, "event_id": event_id}

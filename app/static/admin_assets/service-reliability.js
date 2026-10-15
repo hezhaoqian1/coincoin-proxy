@@ -178,6 +178,14 @@
   }
 
   function validDingTalkWebhookUrl(value) {
+    return validRobotWebhookUrl(value, 'oapi.dingtalk.com', '/robot/send', 'access_token');
+  }
+
+  function validWeComWebhookUrl(value) {
+    return validRobotWebhookUrl(value, 'qyapi.weixin.qq.com', '/cgi-bin/webhook/send', 'key');
+  }
+
+  function validRobotWebhookUrl(value, host, path, tokenParam) {
     if (/[\u0000-\u001f\u007f]/.test(value)) return false;
     const rawUrlMatch = value.match(
       /^([A-Za-z][A-Za-z0-9+.-]*):\/\/([^/?#]+)([^?#]*)(?:\?[^#]*)?(?:#[\s\S]*)?$/,
@@ -185,12 +193,12 @@
     if (
       !rawUrlMatch
       || rawUrlMatch[1].toLowerCase() !== 'https'
-      || rawUrlMatch[2] !== 'oapi.dingtalk.com'
-      || rawUrlMatch[3] !== '/robot/send'
+      || rawUrlMatch[2] !== host
+      || rawUrlMatch[3] !== path
     ) return false;
     try {
       const webhookUrl = new URL(value);
-      const accessTokens = webhookUrl.searchParams.getAll('access_token');
+      const accessTokens = webhookUrl.searchParams.getAll(tokenParam);
       return accessTokens.length === 1
         && accessTokens[0] !== ''
         && !Array.from(accessTokens[0]).some(character => {
@@ -233,8 +241,8 @@
       if (typeof window.toast === 'function') window.toast('去重时间不能短于统计窗口', 'error');
       return;
     }
-    if (payload.webhook_url && !validDingTalkWebhookUrl(payload.webhook_url)) {
-      if (typeof window.toast === 'function') window.toast('Webhook 地址必须是有效的钉钉机器人地址', 'error');
+    if (payload.webhook_url && !validDingTalkWebhookUrl(payload.webhook_url) && !validWeComWebhookUrl(payload.webhook_url)) {
+      if (typeof window.toast === 'function') window.toast('Webhook 地址必须是有效的钉钉或企业微信机器人地址', 'error');
       return;
     }
     alertConfigLoadGeneration += 1;
@@ -276,7 +284,7 @@
       const result = await response.json();
       if (!response.ok) throw new Error(result.detail || '配置测试发送失败');
       if (typeof window.toast === 'function') {
-        window.toast(result.sent ? '钉钉配置测试已送达' : '钉钉配置测试未送达，请查看推送历史', result.sent ? 'success' : 'warning');
+        window.toast(result.sent ? '告警配置测试已送达' : '告警配置测试未送达，请查看推送历史', result.sent ? 'success' : 'warning');
       }
     } catch (error) {
       console.error(error);

@@ -18,7 +18,7 @@ from .fallback_alerts import (
     current_alert_policy,
     current_alert_webhook_url,
     current_sendable_alert_webhook_url,
-    is_valid_dingtalk_webhook_url,
+    is_valid_alert_webhook_url,
     send_dingtalk_configuration_test,
 )
 from .models import AlertEvent
@@ -101,10 +101,10 @@ def _validated_webhook_url(value: str) -> str:
             ord(character) < 0x20 or ord(character) == 0x7F
             for character in value
         ):
-            _raise_config_validation_error("Invalid DingTalk alert webhook URL")
+            _raise_config_validation_error("Invalid DingTalk or WeCom alert webhook URL")
         return ""
-    if not is_valid_dingtalk_webhook_url(value):
-        _raise_config_validation_error("Invalid DingTalk alert webhook URL")
+    if not is_valid_alert_webhook_url(value):
+        _raise_config_validation_error("Invalid DingTalk or WeCom alert webhook URL")
     return value
 
 
