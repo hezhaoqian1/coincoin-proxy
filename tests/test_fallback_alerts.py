@@ -771,6 +771,87 @@ class UpstreamFailureBurstAlertTests(unittest.IsolatedAsyncioTestCase):
             error_summary="",
         )
 
+    async def test_wecom_webhook_receives_text_payload_and_records_destination(self) -> None:
+        settings.fallback_alert_webhook_url = (
+            "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=synthetic-wecom-key"
+        )
+        response = SimpleNamespace(status_code=200, json=lambda: {"errcode": 0, "errmsg": "ok"})
+        client = AsyncMock()
+        client.post.return_value = response
+        client.__aenter__.return_value = client
+        client.__aexit__.return_value = False
+
+        with (
+            patch.object(fallback_alerts.httpx, "AsyncClient", return_value=client),
+            patch.object(fallback_alerts, "create_alert_event", AsyncMock(return_value="alt_wecom")) as create_event,
+            patch.object(fallback_alerts, "complete_alert_event", AsyncMock()) as complete_event,
+        ):
+            test_result = await fallback_alerts.send_dingtalk_configuration_test()
+            burst_result = await fallback_alerts._send_upstream_failure_burst_alert(
+                fallback_alerts.UpstreamFailureBurstNotification(
+                    alert=self._alert("ccreq_wecom"),
+                    category="availability",
+                    count=5,
+                    window_seconds=60,
+                )
+            )
+
+        self.assertEqual(test_result, {"sent": True, "event_id": "alt_wecom"})
+        self.assertTrue(burst_result)
+        self.assertEqual(client.post.await_count, 2)
+        for call in client.post.await_args_list:
+            self.assertEqual(call.args[0], settings.fallback_alert_webhook_url)
+            payload = call.kwargs["json"]
+            self.assertEqual(payload["msgtype"], "text")
+            self.assertIn("CoinCoin", payload["text"]["content"])
+        self.assertIn("企业微信", client.post.await_args_list[0].kwargs["json"]["text"]["content"])
+        self.assertEqual(
+            [call.kwargs["destination_type"] for call in create_event.await_args_list],
+            ["wecom", "wecom"],
+        )
+        self.assertEqual(complete_event.await_count, 2)
+
+    async def test_wecom_errcode_failure_is_labelled(self) -> None:
+        settings.fallback_alert_webhook_url = (
+            "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=synthetic-wecom-key"
+        )
+        response = SimpleNamespace(
+            status_code=200,
+            json=lambda: {"errcode": 93000, "errmsg": "invalid webhook url"},
+        )
+        client = AsyncMock()
+        client.post.return_value = response
+        client.__aenter__.return_value = client
+        client.__aexit__.return_value = False
+
+        with (
+            patch.object(fallback_alerts.httpx, "AsyncClient", return_value=client),
+            patch.object(fallback_alerts, "create_alert_event", AsyncMock(return_value="alt_wecom")),
+            patch.object(fallback_alerts, "complete_alert_event", AsyncMock()) as complete_event,
+        ):
+            result = await fallback_alerts.send_dingtalk_configuration_test()
+
+        self.assertEqual(result, {"sent": False, "event_id": "alt_wecom"})
+        complete_event.assert_awaited_once_with(
+            "alt_wecom",
+            delivery_status="failed",
+            response_status=200,
+            error_summary="WeCom errcode 93000",
+        )
+
+    def test_wecom_webhook_key_is_redacted_from_logs(self) -> None:
+        secret = "synthetic-wecom-secret"
+        rendered = fallback_alerts._redact_dingtalk_access_token(
+            "HTTP Request: POST "
+            f"https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key={secret}&debug=1 "
+            '"HTTP/1.1 200 OK" and '
+            "https://oapi.dingtalk.com/robot/send?access_token=dt-secret"
+        )
+        self.assertNotIn(secret, rendered)
+        self.assertNotIn("dt-secret", rendered)
+        self.assertIn("key=[REDACTED]&debug=1", rendered)
+        self.assertIn("access_token=[REDACTED]", rendered)
+
     async def test_shutdown_waits_for_inflight_dingtalk_delivery(self) -> None:
         started = asyncio.Event()
         release = asyncio.Event()

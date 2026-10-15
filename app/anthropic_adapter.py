@@ -6,7 +6,7 @@ import time
 from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qsl, urlsplit
 
-from .usage_buffer import extract_cache_read_tokens, extract_total_input_tokens
+from .usage_buffer import extract_cache_creation_tokens, extract_cache_read_tokens, extract_total_input_tokens
 
 ANTHROPIC_COMPATIBLE_CHANNEL_TYPE = "anthropic_compatible"
 ANTHROPIC_MESSAGES_TRANSFORM_PROFILE = "anthropic_messages"
@@ -401,8 +401,9 @@ def _anthropic_usage_to_openai_usage(usage: Dict[str, Any]) -> Dict[str, Any]:
         "total_tokens": input_tokens + output_tokens,
     }
     cache_read = extract_cache_read_tokens(usage)
-    if cache_read:
-        body["prompt_tokens_details"] = {"cached_tokens": cache_read}
+    cache_write = extract_cache_creation_tokens(usage)
+    if cache_read or cache_write:
+        body["prompt_tokens_details"] = {"cached_tokens": cache_read, "cache_write_tokens": cache_write}
     return body
 
 

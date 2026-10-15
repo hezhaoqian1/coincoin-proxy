@@ -675,18 +675,20 @@ assert.equal(renderCount, 6);
         self.assertIn("alertConfigLoadGeneration", reliability_js)
         self.assertIn("document.getElementById('serviceReliabilityAlertWebhookUrl').value = payload.webhook_url ?? '';", reliability_js)
         self.assertIn("webhook_url: document.getElementById('serviceReliabilityAlertWebhookUrl').value.trim()", reliability_js)
-        self.assertIn("if (payload.webhook_url && !validDingTalkWebhookUrl(payload.webhook_url))", reliability_js)
+        self.assertIn("if (payload.webhook_url && !validDingTalkWebhookUrl(payload.webhook_url) && !validWeComWebhookUrl(payload.webhook_url))", reliability_js)
         self.assertIn("rawUrlMatch[1].toLowerCase() !== 'https'", reliability_js)
-        self.assertIn("rawUrlMatch[2] !== 'oapi.dingtalk.com'", reliability_js)
-        self.assertIn("rawUrlMatch[3] !== '/robot/send'", reliability_js)
+        self.assertIn("rawUrlMatch[2] !== host", reliability_js)
+        self.assertIn("validRobotWebhookUrl(value, 'oapi.dingtalk.com', '/robot/send', 'access_token')", reliability_js)
+        self.assertIn("validRobotWebhookUrl(value, 'qyapi.weixin.qq.com', '/cgi-bin/webhook/send', 'key')", reliability_js)
+        self.assertIn("rawUrlMatch[3] !== path", reliability_js)
         self.assertNotIn("webhookUrl.pathname", reliability_js)
-        self.assertIn("webhookUrl.searchParams.getAll('access_token')", reliability_js)
+        self.assertIn("webhookUrl.searchParams.getAll(tokenParam)", reliability_js)
         self.assertIn("accessTokens.length === 1", reliability_js)
         self.assertIn("accessTokens[0] !== ''", reliability_js)
         self.assertIn("pythonIsSpaceCodePoint", reliability_js)
         self.assertIn("Array.from(accessTokens[0]).some", reliability_js)
         self.assertNotIn("/[\\s\\u0000-\\u001f\\u007f]/", reliability_js)
-        self.assertIn("Webhook 地址必须是有效的钉钉机器人地址", reliability_js)
+        self.assertIn("Webhook 地址必须是有效的钉钉或企业微信机器人地址", reliability_js)
         self.assertIn("payload.webhook_configured === true", reliability_js)
         self.assertIn("alertActionRunning || !configured", reliability_js)
         self.assertNotIn("console.log", reliability_js)
@@ -796,7 +798,7 @@ function createApp(fetchImpl) {
   `, context);
   const instrumented = source.replace(
     /\}\)\(\);\s*$/,
-    'window.__hooks = { validDingTalkWebhookUrl, loadServiceReliabilityAlerts };\n})();',
+    'window.__hooks = { validDingTalkWebhookUrl, validWeComWebhookUrl, loadServiceReliabilityAlerts };\n})();',
   );
   vm.runInContext(instrumented, context);
   policyIds.slice(2).forEach(id => { element(id).value = '1'; });
@@ -960,6 +962,47 @@ function createApp(fetchImpl) {
             cases,
         )
 
+    def test_service_reliability_wecom_webhook_validation_matches_backend_contract(self) -> None:
+        cases = [
+            ("https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=synthetic-key", True),
+            ("HTTPS://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=synthetic-key", True),
+            ("https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=synthetic-key#x", True),
+            ("http://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=synthetic-key", False),
+            ("https://QYAPI.WEIXIN.QQ.COM/cgi-bin/webhook/send?key=synthetic-key", False),
+            ("https://qyapi.weixin.qq.com:443/cgi-bin/webhook/send?key=synthetic-key", False),
+            ("https://qyapi.weixin.qq.com/cgi-bin/webhook/upload_media?key=synthetic-key", False),
+            ("https://qyapi.weixin.qq.com/cgi-bin/webhook/send?access_token=synthetic-key", False),
+            ("https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=", False),
+            ("https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=a&key=b", False),
+            ("https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=abc%20def", False),
+            ("https://oapi.dingtalk.com/cgi-bin/webhook/send?key=synthetic-key", False),
+            ("https://qyapi.weixin.qq.com/robot/send?access_token=synthetic-token", False),
+        ]
+        backend_results = []
+        for value, _expected in cases:
+            try:
+                alert_admin_module._validated_webhook_url(value)
+            except HTTPException:
+                backend_results.append(False)
+            else:
+                backend_results.append(True)
+        self.assertEqual(backend_results, [expected for _value, expected in cases])
+
+        self._run_service_reliability_node_probe(
+            r"""
+(async () => {
+  const app = createApp(async url => { throw new Error(`unexpected request: ${url}`); });
+  const { validDingTalkWebhookUrl, validWeComWebhookUrl } = app.window.__hooks;
+  const cases = JSON.parse(process.argv[2]);
+  const mismatches = cases.flatMap(([value, expected], index) => (
+    (validDingTalkWebhookUrl(value) || validWeComWebhookUrl(value)) === expected ? [] : [index]
+  ));
+  assert.deepEqual(mismatches, []);
+})().catch(error => { console.error(error); process.exitCode = 1; });
+""",
+            cases,
+        )
+
     def test_service_reliability_alert_save_blocks_invalid_policy_values(self) -> None:
         self._run_service_reliability_node_probe(
             r"""
@@ -981,7 +1024,7 @@ function createApp(fetchImpl) {
     {
       label: 'invalid webhook',
       mutate: app => { app.element('serviceReliabilityAlertWebhookUrl').value = 'https://example.com/hook'; },
-      message: 'Webhook 地址必须是有效的钉钉机器人地址',
+      message: 'Webhook 地址必须是有效的钉钉或企业微信机器人地址',
     },
   ];
 
@@ -1043,12 +1086,12 @@ function createApp(fetchImpl) {
     {
       label: 'sent',
       post: async () => response({ sent: true }),
-      toast: ['钉钉配置测试已送达', 'success'],
+      toast: ['告警配置测试已送达', 'success'],
     },
     {
       label: 'not sent',
       post: async () => response({ sent: false }),
-      toast: ['钉钉配置测试未送达，请查看推送历史', 'warning'],
+      toast: ['告警配置测试未送达，请查看推送历史', 'warning'],
     },
     {
       label: 'HTTP error',

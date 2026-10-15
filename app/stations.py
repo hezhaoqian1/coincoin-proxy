@@ -14,6 +14,7 @@ from .proxy import authenticate_user
 from .router import IMAGE_ENDPOINTS, TEXT_ENDPOINTS, VIDEO_ENDPOINTS, registry as model_registry
 from .schemas import AdminStationCreateRequest, StationAliasCreateRequest, StationAliasUpdateRequest, StationApplicationCreateRequest, StationApplicationReviewRequest, StationBrandingUpdateRequest, StationCustomerCreateRequest, StationPayoutBatchCreateRequest, StationPayoutBatchMarkPaidRequest, StationPricebookUpdateRequest, StationSettlementUpdateRequest
 from .security import encrypt_api_key, generate_api_key, generate_id, generate_referral_code, hash_key, require_admin
+from .token_pricing import serialize_context_pricing_tiers
 
 
 router = APIRouter(prefix="/v1/stations", tags=["stations"])
@@ -267,10 +268,17 @@ def _serialize_station_model_alias(alias: StationAlias, price: StationPricebookE
     target = model_registry.get_public_model(alias.target_public_model_id)
     capabilities = list(getattr(target, "capabilities", ()) or [alias.capability])
     cached_input_price = 0
+    cache_creation_input_price = 0
     if price:
         try:
             cached_input_price = round(
-                float(price.retail_input_per_million_cents or 0) * float(settings.cache_discount_rate or 0),
+                float(price.retail_input_per_million_cents or 0)
+                * float(getattr(target, "cache_read_multiplier", settings.cache_discount_rate) or 0),
+                4,
+            )
+            cache_creation_input_price = round(
+                float(price.retail_input_per_million_cents or 0)
+                * float(getattr(target, "cache_creation_multiplier", 1.0) or 0),
                 4,
             )
         except Exception:
@@ -296,6 +304,9 @@ def _serialize_station_model_alias(alias: StationAlias, price: StationPricebookE
         ],
         "coincoin_price_input_per_million": price.retail_input_per_million_cents if price else 0,
         "coincoin_price_cached_input_per_million": cached_input_price,
+        "coincoin_price_cache_creation_input_per_million": cache_creation_input_price,
+        "coincoin_context_pricing_basis": "whole_request",
+        "coincoin_context_pricing_tiers": serialize_context_pricing_tiers(getattr(target, "context_pricing_tiers", ())),
         "coincoin_price_output_per_million": price.retail_output_per_million_cents if price else 0,
         "coincoin_price_per_image_cents": price.retail_price_per_image_cents if price else 0,
     }

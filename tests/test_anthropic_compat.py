@@ -613,6 +613,54 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(usage_kwargs["provider_model"], "claude-fable-5")
         self.assertEqual(usage_kwargs["channel_type"], "anthropic_compatible")
 
+    async def test_sonnet_5_5_preserves_native_thinking_and_effort_with_fourfold_prices(self):
+        self._configure_anthropic_compatible_channel(
+            public_model_id="claude-sonnet-5-5",
+            upstream_model="claude-sonnet-5-5",
+        )
+        fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_sonnet_55")
+        client = _RecordingClient([
+            _FakeUpstreamResponse({
+                "id": "msg_sonnet_55",
+                "type": "message",
+                "role": "assistant",
+                "model": "claude-sonnet-5-5",
+                "content": [{"type": "text", "text": "OK"}],
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 8, "output_tokens": 2},
+            }),
+        ])
+        payload = {
+            "model": "claude-sonnet-5-5",
+            "max_tokens": 64,
+            "messages": [{"role": "user", "content": "Reply OK"}],
+            "thinking": {"type": "adaptive"},
+            "output_config": {"effort": "high"},
+            "tools": [{"name": "Read", "input_schema": {"type": "object"}}],
+        }
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_http_client", AsyncMock(return_value=client)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()) as add_usage,
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={"authorization": "Bearer sk_test", "anthropic-version": "2023-06-01"},
+                    json=payload,
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["model"], "claude-sonnet-5-5")
+        self.assertEqual(client.calls[0]["url"], "https://claude-relay.example/v1/messages")
+        self.assertEqual(client.calls[0]["json"], {**payload, "stream": False})
+        self.assertEqual(client.calls[0]["headers"]["x-api-key"], "relay-key")
+        add_usage.assert_awaited_once()
+        self.assertEqual(add_usage.await_args.kwargs["provider_model"], "claude-sonnet-5-5")
+        self.assertEqual(add_usage.await_args.kwargs["price_input_per_million"], 800)
+        self.assertEqual(add_usage.await_args.kwargs["price_output_per_million"], 4000)
+
     async def test_messages_adds_claude_code_defaults_for_claude_code_only_channel(self):
         self._configure_anthropic_compatible_channel(
             cost_tier="claude-code",

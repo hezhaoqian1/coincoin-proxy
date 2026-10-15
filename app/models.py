@@ -187,6 +187,7 @@ class RequestLog(Base):
     retail_charge_cents: Mapped[int] = mapped_column(BigInteger, default=0)
     price_version: Mapped[int] = mapped_column(BigInteger, default=0)
     pricing_mode: Mapped[str] = mapped_column(String(32), default="")
+    pricing_details: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     model_multiplier: Mapped[float] = mapped_column(Float, default=1.0)
     output_multiplier: Mapped[float] = mapped_column(Float, default=1.0)
     cache_read_multiplier: Mapped[float] = mapped_column(Float, default=0.0)

@@ -689,7 +689,7 @@ def _safe_int(value: Any, default: int = 0) -> int:
 
 
 def _responses_usage_from_chat_usage(usage: Dict[str, Any]) -> Dict[str, Any]:
-    prompt_tokens = _safe_int(usage.get("prompt_tokens") or usage.get("input_tokens"))
+    prompt_tokens = extract_total_input_tokens(usage)
     completion_tokens = _safe_int(usage.get("completion_tokens") or usage.get("output_tokens"))
     total_tokens = _safe_int(usage.get("total_tokens")) or (prompt_tokens + completion_tokens)
     response_usage: Dict[str, Any] = {
@@ -697,10 +697,10 @@ def _responses_usage_from_chat_usage(usage: Dict[str, Any]) -> Dict[str, Any]:
         "output_tokens": completion_tokens,
         "total_tokens": total_tokens,
     }
-    prompt_details = usage.get("prompt_tokens_details") if isinstance(usage.get("prompt_tokens_details"), dict) else {}
-    cached_tokens = _safe_int(prompt_details.get("cached_tokens"))
-    if cached_tokens:
-        response_usage["input_tokens_details"] = {"cached_tokens": cached_tokens}
+    cached_tokens = extract_cache_read_tokens(usage)
+    cache_write_tokens = extract_cache_creation_tokens(usage)
+    if cached_tokens or cache_write_tokens:
+        response_usage["input_tokens_details"] = {"cached_tokens": cached_tokens, "cache_write_tokens": cache_write_tokens}
     return response_usage
 
 
@@ -2953,8 +2953,11 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                         "output_tokens": stream_usage["output"],
                         "total_tokens": stream_usage["input"] + stream_usage["output"],
                     }
-                    if stream_usage["cache_read"]:
-                        usage_payload["input_tokens_details"] = {"cached_tokens": stream_usage["cache_read"]}
+                    if stream_usage["cache_read"] or stream_usage["cache_creation"]:
+                        usage_payload["input_tokens_details"] = {
+                            "cached_tokens": stream_usage["cache_read"],
+                            "cache_write_tokens": stream_usage["cache_creation"],
+                        }
                     completed = {
                         "id": response_id,
                         "object": "response",

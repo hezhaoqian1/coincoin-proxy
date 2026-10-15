@@ -581,6 +581,9 @@ function ModelsAndPricing({ textModels, imageModels, videoModels, defaultTextMod
                 primaryPrice: formatUsdPerMillion(model.coincoin_price_input_per_million),
                 outputPrice: formatUsdPerMillion(model.coincoin_price_output_per_million),
                 cachedPrice: formatUsdPerMillion(getCachedInputPricePerMillion(model), 3),
+                cacheWritePrice: model.coincoin_price_cache_creation_input_per_million == null
+                    ? '未提供'
+                    : formatUsdPerMillion(model.coincoin_price_cache_creation_input_per_million, 3),
             })),
             ...imageModels.map((model) => ({
                 model,
@@ -646,6 +649,7 @@ function ModelsAndPricing({ textModels, imageModels, videoModels, defaultTextMod
                 </div>
             </div>
             <div className="pricing-table-wrap">
+                <p className="muted">文本价格按每百万 tokens 显示。普通输入、缓存读取、缓存写入分别计费；有长上下文档位的模型，超过阈值后整次请求使用对应档位，输入总量包含缓存 tokens。</p>
                 <table className="data-table pricing-table model-catalog-table">
                     <thead>
                         <tr>
@@ -654,12 +658,13 @@ function ModelsAndPricing({ textModels, imageModels, videoModels, defaultTextMod
                             <th>输入/媒体价格</th>
                             <th>输出价格</th>
                             <th>缓存读取</th>
+                            <th>缓存写入</th>
                             <th>倍率</th>
                             <th>状态</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {visibleRows.map(({ model, category, defaultFor, primaryPrice, outputPrice, cachedPrice }) => {
+                        {visibleRows.map(({ model, category, defaultFor, primaryPrice, outputPrice, cachedPrice, cacheWritePrice = '不适用' }) => {
                             return (
                                 <tr key={model.id}>
                                     <td>
@@ -667,6 +672,11 @@ function ModelsAndPricing({ textModels, imageModels, videoModels, defaultTextMod
                                             <code className="model-tag-sm">{model.id}</code>
                                             {defaultFor && <span className="inline-badge">{defaultFor}</span>}
                                         </div>
+                                        {(model.coincoin_context_pricing_tiers || []).map((tier) => (
+                                            <small className="model-context-price" key={tier.above_input_tokens}>
+                                                输入 &gt; {tier.above_input_tokens.toLocaleString('zh-CN')} tokens：输入/缓存 ×{tier.input_multiplier}，输出 ×{tier.output_multiplier}
+                                            </small>
+                                        ))}
                                     </td>
                                     <td>
                                         <span className="model-category-pill">
@@ -677,6 +687,7 @@ function ModelsAndPricing({ textModels, imageModels, videoModels, defaultTextMod
                                     <td className="price-cell">{primaryPrice}</td>
                                     <td className={`price-cell ${outputPrice === '不适用' ? 'muted' : ''}`}>{outputPrice}</td>
                                     <td className={`price-cell ${cachedPrice === '不适用' ? 'muted' : ''}`}>{cachedPrice}</td>
+                                    <td className={`price-cell ${cacheWritePrice === '不适用' ? 'muted' : ''}`}>{cacheWritePrice}</td>
                                     <td className="price-cell">
                                         <span>{formatMultiplier(model)}</span>
                                         {hasModelPricingMultiplier(model) && <small>基础 {formatUsdPerMillion(model.coincoin_base_price_input_per_million)}</small>}
@@ -708,7 +719,7 @@ function ModelsAndPricing({ textModels, imageModels, videoModels, defaultTextMod
   }'`}</pre>
             <h3>计费说明</h3>
             <ul className="doc-list">
-                <li>文本模型按 Input / Cached Read / Output Token 计费；图片模型按图片张数计费；视频模型按任务次数计费。</li>
+                    <li>文本模型按普通输入 / 缓存读取 / 缓存写入 / 输出 Token 计费；图片模型按图片张数计费；视频模型按任务次数计费。</li>
                 <li>同一个账户余额同时覆盖文本模型、图片模型和视频模型，不需要分开充值。</li>
             </ul>
         </div>

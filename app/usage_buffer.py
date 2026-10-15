@@ -20,6 +20,7 @@ from .quota_lifecycle import (
 from .referral import process_first_usage_referral_reward
 from .security import generate_id
 from .usage_events import schedule_usage_event_shadow
+from .token_pricing import ContextPricingTier, effective_token_prices
 
 
 logger = logging.getLogger("coincoin.usage")
@@ -104,12 +105,18 @@ def extract_cache_read_tokens(usage: dict) -> int:
 
 
 def extract_cache_creation_tokens(usage: dict) -> int:
-    """Extract Anthropic cache-write tokens when the upstream reports them."""
+    """Extract cache writes once, respecting explicit zero and usage semantics."""
     if not isinstance(usage, dict):
         return 0
-    total = _safe_int(usage.get("cache_creation_input_tokens"))
-    if total:
-        return max(0, total)
+    # OpenAI details are subsets of total input; Anthropic's top-level fields
+    # are separate counters. Converters may expose both, so never sum aliases.
+    for key in ("input_tokens_details", "prompt_tokens_details"):
+        details = usage.get(key)
+        if isinstance(details, dict) and details.get("cache_write_tokens") is not None:
+            return max(0, _safe_int(details["cache_write_tokens"]))
+    if usage.get("cache_creation_input_tokens") is not None:
+        return max(0, _safe_int(usage["cache_creation_input_tokens"]))
+    total = 0
     cache_creation = usage.get("cache_creation") or {}
     if isinstance(cache_creation, dict):
         total += _safe_int(cache_creation.get("ephemeral_5m_input_tokens"))
@@ -124,7 +131,9 @@ def extract_total_input_tokens(usage: dict) -> int:
     if usage.get("prompt_tokens") is not None:
         return max(0, _safe_int(usage.get("prompt_tokens")))
     input_tokens = max(0, _safe_int(usage.get("input_tokens")))
-    if usage.get("cache_read_input_tokens") is not None or usage.get("cache_creation_input_tokens") is not None:
+    if isinstance(usage.get("input_tokens_details"), dict):
+        return input_tokens
+    if usage.get("cache_read_input_tokens") is not None or usage.get("cache_creation_input_tokens") is not None or isinstance(usage.get("cache_creation"), dict):
         return input_tokens + extract_cache_read_tokens(usage) + extract_cache_creation_tokens(usage)
     return input_tokens
 
@@ -134,26 +143,27 @@ def extract_cached_tokens(usage: dict) -> int:
     return extract_cache_read_tokens(usage)
 
 
-def calculate_cost_cents(
+def calculate_token_cost(
     input_tokens: int,
     output_tokens: int,
     cached_tokens: int = 0,
     cache_creation_tokens: int = 0,
-    price_input_per_million: int = 0,
-    price_output_per_million: int = 0,
+    price_input_per_million: Optional[float] = None,
+    price_output_per_million: Optional[float] = None,
     cached_price_input_per_million: Optional[float] = None,
     cache_creation_price_input_per_million: Optional[float] = None,
-) -> float:
+    context_pricing_tiers: Tuple[ContextPricingTier, ...] = (),
+) -> Tuple[float, dict]:
     """计算消费金额（单位：分，保留小数精度）
     
     价格配置单位是 分/百万tokens
     计算公式: (tokens / 1_000_000) * price_per_million
     
-    注：返回浮点数，保留精度以避免小请求被舍入到 0
-    最终在 flush 时累积后再取整
+    返回 (浮点费用, 实际档位及单价快照)，保留精度以避免小请求被舍入到 0。
+    费用最终在 flush 时累积后再取整。
     """
-    price_in = int(price_input_per_million or settings.price_input_per_million)
-    price_out = int(price_output_per_million or settings.price_output_per_million)
+    price_in = float(settings.price_input_per_million if price_input_per_million is None else price_input_per_million)
+    price_out = float(settings.price_output_per_million if price_output_per_million is None else price_output_per_million)
 
     try:
         # charge_ratio: 0.5 = cached tokens 按 50% 价格收费（即打五折），0.0 = 全免
@@ -185,9 +195,33 @@ def calculate_cost_cents(
         cache_creation_price_in = price_in
     else:
         cache_creation_price_in = max(0.0, float(cache_creation_price_input_per_million or 0.0))
-    input_cost = (non_cached * price_in + ct * cached_price_in + cct * cache_creation_price_in) / 1_000_000
-    output_cost = (int(output_tokens or 0) * price_out) / 1_000_000
-    return input_cost + output_cost
+    prices = effective_token_prices(it, price_in, price_out, cached_price_in, cache_creation_price_in, context_pricing_tiers)
+    input_cost = (
+        non_cached * prices["input_per_million_cents"]
+        + ct * prices["cache_read_per_million_cents"]
+        + cct * prices["cache_write_per_million_cents"]
+    ) / 1_000_000
+    output_cost = (max(0, int(output_tokens or 0)) * prices["output_per_million_cents"]) / 1_000_000
+    return input_cost + output_cost, prices
+
+
+def calculate_cost_cents(
+    input_tokens: int,
+    output_tokens: int,
+    cached_tokens: int = 0,
+    cache_creation_tokens: int = 0,
+    price_input_per_million: Optional[float] = None,
+    price_output_per_million: Optional[float] = None,
+    cached_price_input_per_million: Optional[float] = None,
+    cache_creation_price_input_per_million: Optional[float] = None,
+    context_pricing_tiers: Tuple[ContextPricingTier, ...] = (),
+) -> float:
+    return calculate_token_cost(
+        input_tokens, output_tokens, cached_tokens, cache_creation_tokens,
+        price_input_per_million, price_output_per_million,
+        cached_price_input_per_million, cache_creation_price_input_per_million,
+        context_pricing_tiers,
+    )[0]
 
 
 def calculate_image_cost_cents(image_count: int, price_per_image_cents: float = 0.0) -> float:
@@ -267,8 +301,8 @@ class UsageBuffer:
         route_reason: str = "",
         duration_ms: int = 0,
         status_code: int = 200,
-        price_input_per_million: int = 0,
-        price_output_per_million: int = 0,
+        price_input_per_million: Optional[float] = None,
+        price_output_per_million: Optional[float] = None,
         usage_unit_type: str = "tokens",
         usage_unit_count: int = 0,
         billable_sku: str = "",
@@ -304,26 +338,29 @@ class UsageBuffer:
         base_price_output_per_million: int = 0,
         base_price_per_image_cents: float = 0.0,
         base_price_per_video_cents: float = 0.0,
-        effective_cached_input_per_million: float = 0.0,
-        effective_cache_creation_input_per_million: float = 0.0,
+        effective_cached_input_per_million: Optional[float] = None,
+        effective_cache_creation_input_per_million: Optional[float] = None,
         reservation_id: str = "",
         server_side_tool_usage_details: Optional[dict] = None,
         request_log_only: bool = False,
+        context_pricing_tiers: Tuple[ContextPricingTier, ...] = (),
+        wholesale_cached_input_per_million: Optional[float] = None,
+        wholesale_cache_creation_input_per_million: Optional[float] = None,
     ) -> None:
         """添加使用量（高性能，不阻塞请求）
         
         性能：< 1ms，锁内操作 < 100μs
         """
-        input_tokens = int(input_tokens or 0)
-        output_tokens = int(output_tokens or 0)
+        input_tokens = max(0, int(input_tokens or 0))
+        output_tokens = max(0, int(output_tokens or 0))
         cache_read_tokens = int(cache_read_tokens or 0)
         cached_tokens = int(cached_tokens or 0)
         cache_creation_tokens = int(cache_creation_tokens or 0)
         normalized_server_side_tool_usage_details = extract_server_side_tool_usage_details(
             server_side_tool_usage_details or {}
         )
-        if input_tokens < cache_read_tokens + cache_creation_tokens:
-            input_tokens += cache_read_tokens + cache_creation_tokens
+        # Callers supply canonical total input (including cache). Provider-specific
+        # addition happens in extract_total_input_tokens, never by guessing here.
 
         if (
             input_tokens == 0
@@ -341,6 +378,7 @@ class UsageBuffer:
             return
         
         # 计算在锁外进行，减少锁持有时间
+        pricing_details = None
         if cost_cents_override is None:
             if (usage_unit_type or "tokens") == "images":
                 cost_cents = calculate_image_cost_cents(
@@ -353,15 +391,16 @@ class UsageBuffer:
                     price_per_video_cents=price_per_video_cents,
                 )
             else:
-                cost_cents = calculate_cost_cents(
+                cost_cents, pricing_details = calculate_token_cost(
                     input_tokens,
                     output_tokens,
                     cached_tokens=cache_read_tokens or cached_tokens,
                     cache_creation_tokens=cache_creation_tokens,
                     price_input_per_million=price_input_per_million,
                     price_output_per_million=price_output_per_million,
-                    cached_price_input_per_million=effective_cached_input_per_million or None,
-                    cache_creation_price_input_per_million=effective_cache_creation_input_per_million or None,
+                    cached_price_input_per_million=effective_cached_input_per_million,
+                    cache_creation_price_input_per_million=effective_cache_creation_input_per_million,
+                    context_pricing_tiers=context_pricing_tiers,
                 )
         else:
             cost_cents = float(cost_cents_override)
@@ -387,6 +426,9 @@ class UsageBuffer:
                     cache_creation_tokens=cache_creation_tokens,
                     price_input_per_million=wholesale_price_input_per_million,
                     price_output_per_million=wholesale_price_output_per_million,
+                    cached_price_input_per_million=wholesale_cached_input_per_million,
+                    cache_creation_price_input_per_million=wholesale_cache_creation_input_per_million,
+                    context_pricing_tiers=context_pricing_tiers,
                 )
         else:
             wholesale_cost_cents = 0.0
@@ -465,6 +507,7 @@ class UsageBuffer:
                 "retail_charge_cents": round(retail_charge_cents),
                 "price_version": int(price_version or 0),
                 "pricing_mode": (pricing_mode or "")[:32],
+                "pricing_details": pricing_details,
                 "model_multiplier": float(model_multiplier or 0.0),
                 "output_multiplier": float(output_multiplier or 0.0),
                 "cache_read_multiplier": float(cache_read_multiplier or 0.0),
@@ -475,7 +518,7 @@ class UsageBuffer:
                 "base_price_per_image_cents": float(base_price_per_image_cents or 0.0),
                 "base_price_per_video_cents": float(base_price_per_video_cents or 0.0),
                 "price_per_video_cents": float(price_per_video_cents or 0.0),
-                "effective_cached_input_per_million": float(effective_cached_input_per_million or 0.0),
+                "effective_cached_input_per_million": pricing_details["cache_read_per_million_cents"] if pricing_details else float(effective_cached_input_per_million or 0.0),
                 "cost_cents": round(cost_cents),
                 "duration_ms": int(duration_ms),
                 "status_code": int(status_code),
@@ -631,6 +674,7 @@ def _request_log_insert_values(log: dict) -> dict:
         "retail_charge_cents": log.get("retail_charge_cents", log["cost_cents"]),
         "price_version": log.get("price_version", 0),
         "pricing_mode": log.get("pricing_mode", ""),
+        "pricing_details": log.get("pricing_details"),
         "model_multiplier": log.get("model_multiplier", 1.0),
         "output_multiplier": log.get("output_multiplier", 1.0),
         "cache_read_multiplier": log.get("cache_read_multiplier", 0.0),

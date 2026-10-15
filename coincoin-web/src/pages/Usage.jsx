@@ -473,7 +473,12 @@ export default function Usage() {
                                     <tr key={i}>
                                         <td>{formatLocalTime(log.created_at)}</td>
                                         <td><code className="endpoint-tag">{log.endpoint}</code></td>
-                                        <td><span className="model-tag-sm">{log.model}</span></td>
+                                        <td>
+                                            <span className="model-tag-sm">{log.model}</span>
+                                            {log.pricing_details?.tier === 'long_context' && (
+                                                <span className="badge badge-warning" title={`输入超过 ${log.pricing_details.above_input_tokens?.toLocaleString('zh-CN')} tokens，整次请求按长上下文档位计费`}>长上下文</span>
+                                            )}
+                                        </td>
                                         <td>
                                             <span className={`usage-pill ${usagePillKind(log)}`}>
                                                 {formatUsageUnits(log)}

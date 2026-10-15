@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .channel_router import channel_router
 from .config import settings
+from .token_pricing import ContextPricingTier, default_gpt_pricing, parse_context_pricing_tiers
 
 
 logger = logging.getLogger("coincoin.router")
@@ -68,6 +69,7 @@ class PublicModelConfig:
     output_multiplier: float = 1.0
     cache_read_multiplier: float = 0.0
     cache_creation_multiplier: float = 1.0
+    context_pricing_tiers: Tuple[ContextPricingTier, ...] = ()
     image_multiplier: float = 1.0
     video_multiplier: float = 1.0
     price_version: int = 0
@@ -581,7 +583,7 @@ class ModelRegistry:
     def _pricing_for_raw_model(self, public_id: str, raw: Dict[str, Any]) -> Dict[str, Any]:
         pricing = raw.get("pricing") if isinstance(raw.get("pricing"), dict) else {}
         override = self.pricing_overrides.get(public_id) or {}
-        return {**pricing, **override}
+        return {**default_gpt_pricing(public_id), **pricing, **override}
 
     def _compile_prices(self, public_id: str, raw: Dict[str, Any], routing_mode: str) -> Dict[str, Any]:
         default_price_input = settings.price_input_per_million if routing_mode == "legacy_auto" else 0
@@ -628,6 +630,7 @@ class ModelRegistry:
             "output_multiplier": output_multiplier,
             "cache_read_multiplier": cache_read_multiplier,
             "cache_creation_multiplier": cache_creation_multiplier,
+            "context_pricing_tiers": parse_context_pricing_tiers(pricing.get("context_pricing_tiers")),
             "image_multiplier": image_multiplier,
             "video_multiplier": video_multiplier,
             "price_version": _as_int(pricing.get("price_version"), 0),
@@ -711,6 +714,7 @@ class ModelRegistry:
             output_multiplier=prices["output_multiplier"],
             cache_read_multiplier=prices["cache_read_multiplier"],
             cache_creation_multiplier=prices["cache_creation_multiplier"],
+            context_pricing_tiers=prices["context_pricing_tiers"],
             image_multiplier=prices["image_multiplier"],
             video_multiplier=prices["video_multiplier"],
             price_version=prices["price_version"],

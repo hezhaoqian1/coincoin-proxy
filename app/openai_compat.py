@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
 from .config import settings
+from .token_pricing import serialize_context_pricing_tiers
 from .db import get_db
 from . import gemini_cpa
 from .anthropic_adapter import (
@@ -106,7 +107,7 @@ def _chat_stream_include_usage(payload: Dict[str, Any]) -> bool:
     return isinstance(stream_options, dict) and stream_options.get("include_usage") is True
 
 
-def _chat_usage_payload_from_counts(input_tokens: int, output_tokens: int, cache_read_tokens: int = 0) -> Dict[str, Any]:
+def _chat_usage_payload_from_counts(input_tokens: int, output_tokens: int, cache_read_tokens: int = 0, cache_write_tokens: int = 0) -> Dict[str, Any]:
     prompt_tokens = max(0, int(input_tokens or 0))
     completion_tokens = max(0, int(output_tokens or 0))
     usage: Dict[str, Any] = {
@@ -115,8 +116,9 @@ def _chat_usage_payload_from_counts(input_tokens: int, output_tokens: int, cache
         "total_tokens": prompt_tokens + completion_tokens,
     }
     cache_read = max(0, int(cache_read_tokens or 0))
-    if cache_read:
-        usage["prompt_tokens_details"] = {"cached_tokens": cache_read}
+    cache_write = max(0, int(cache_write_tokens or 0))
+    if cache_read or cache_write:
+        usage["prompt_tokens_details"] = {"cached_tokens": cache_read, "cache_write_tokens": cache_write}
     return usage
 
 
@@ -447,6 +449,7 @@ async def _proxy_anthropic_compatible_chat_completions_stream(
                                 extract_total_input_tokens(usage),
                                 int(usage.get("output_tokens") or usage.get("completion_tokens") or 0),
                                 extract_cache_read_tokens(usage),
+                                extract_cache_creation_tokens(usage),
                             ),
                         )
                     continue
@@ -575,6 +578,8 @@ def _serialize_public_model(public_model) -> Dict[str, Any]:
         "coincoin_output_multiplier": getattr(public_model, "output_multiplier", 1.0),
         "coincoin_cache_read_multiplier": getattr(public_model, "cache_read_multiplier", 0.0),
         "coincoin_cache_creation_multiplier": getattr(public_model, "cache_creation_multiplier", 1.0),
+        "coincoin_context_pricing_basis": "whole_request",
+        "coincoin_context_pricing_tiers": serialize_context_pricing_tiers(getattr(public_model, "context_pricing_tiers", ())),
         "coincoin_image_multiplier": getattr(public_model, "image_multiplier", 1.0),
         "coincoin_video_multiplier": getattr(public_model, "video_multiplier", 1.0),
         "coincoin_price_version": getattr(public_model, "price_version", 0),
@@ -809,6 +814,7 @@ async def get_usage(
                 "cached_tokens": getattr(log, "cached_tokens", 0),
                 "cache_read_tokens": getattr(log, "cache_read_tokens", 0) or getattr(log, "cached_tokens", 0),
                 "cache_creation_tokens": getattr(log, "cache_creation_tokens", 0),
+                "pricing_details": getattr(log, "pricing_details", None),
                 "image_count": getattr(log, "image_count", 0),
                 "video_count": getattr(log, "video_count", 0),
                 "usage_unit_type": getattr(log, "usage_unit_type", "tokens"),
@@ -1794,8 +1800,9 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
             "total_tokens": int(total_tokens or 0),
         }
         cache_read_tokens = extract_cache_read_tokens(usage)
-        if cache_read_tokens or isinstance(usage.get("input_tokens_details"), dict) or isinstance(usage.get("prompt_tokens_details"), dict):
-            usage_body["prompt_tokens_details"] = {"cached_tokens": cache_read_tokens}
+        cache_write_tokens = extract_cache_creation_tokens(usage)
+        if cache_read_tokens or cache_write_tokens or isinstance(usage.get("input_tokens_details"), dict) or isinstance(usage.get("prompt_tokens_details"), dict):
+            usage_body["prompt_tokens_details"] = {"cached_tokens": cache_read_tokens, "cache_write_tokens": cache_write_tokens}
 
         return {
             "id": resp.get("id") or f"chatcmpl-{secrets.token_hex(12)}",
@@ -2133,6 +2140,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                                     _compat_stream_usage["input"],
                                     _compat_stream_usage["output"],
                                     _compat_stream_usage["cache_read"],
+                                    _compat_stream_usage["cache_creation"],
                                 ),
                             )
                         break

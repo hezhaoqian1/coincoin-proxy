@@ -219,6 +219,7 @@ async def _run_migrations(conn):
         ("coincoin_request_logs", "retail_charge_cents", "BIGINT DEFAULT 0"),
         ("coincoin_request_logs", "price_version", "BIGINT DEFAULT 0"),
         ("coincoin_request_logs", "pricing_mode", "VARCHAR(32) DEFAULT ''"),
+        ("coincoin_request_logs", "pricing_details", "JSON NULL"),
         ("coincoin_request_logs", "model_multiplier", "DOUBLE DEFAULT 1"),
         ("coincoin_request_logs", "output_multiplier", "DOUBLE DEFAULT 1"),
         ("coincoin_request_logs", "cache_read_multiplier", "DOUBLE DEFAULT 0"),
