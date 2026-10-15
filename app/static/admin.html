@@ -5592,13 +5592,13 @@
     }
 
     async function deleteProviderChannel(channelId) {
-      if (!confirm(`删除或禁用渠道 ${channelId}？`)) return;
+      if (!confirm(`永久删除渠道 ${channelId} 及其 routes、监控配置和历史记录？此操作不可恢复。`)) return;
       try {
         const r = await fetch(`/admin/provider-channels/${encodeURIComponent(channelId)}`, { method: 'DELETE', headers: adminHeaders() });
         const d = await r.json();
         if (!r.ok) return toast(d.detail || '操作失败', 'error');
-        toast(d.disabled ? '渠道仍有 route，已禁用' : '渠道已删除', 'success');
-        loadProviderChannels();
+        toast('渠道已删除', 'success');
+        await loadProviderChannels();
       } catch (e) {
         console.error(e);
         toast('操作失败', 'error');

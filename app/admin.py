@@ -2774,43 +2774,31 @@ async def delete_provider_channel(channel_id: str, db: AsyncSession = Depends(ge
     channel = await db.get(ProviderChannel, channel_id)
     if channel is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="provider channel not found")
-    route_count = await db.scalar(select(func.count(ModelChannelRoute.id)).where(ModelChannelRoute.channel_id == channel_id)) or 0
-    monitor_history_count = await db.scalar(
-        select(func.count(ProviderChannelMonitorHistory.id)).where(
-            ProviderChannelMonitorHistory.channel_id == channel_id
+    try:
+        await db.execute(
+            delete(ProviderChannelMonitorHistory).where(
+                ProviderChannelMonitorHistory.channel_id == channel_id
+            )
         )
-    ) or 0
-    monitor_rollup_count = await db.scalar(
-        select(func.count(ProviderChannelMonitorDailyRollup.id)).where(
-            ProviderChannelMonitorDailyRollup.channel_id == channel_id
+        await db.execute(
+            delete(ProviderChannelMonitorDailyRollup).where(
+                ProviderChannelMonitorDailyRollup.channel_id == channel_id
+            )
         )
-    ) or 0
-    has_monitor_history = int(monitor_history_count or 0) > 0 or int(monitor_rollup_count or 0) > 0
-    if int(route_count or 0) > 0 or has_monitor_history:
-        channel.status = "disabled"
-        channel.updated_by = "admin"
+        await db.execute(
+            delete(ModelChannelRoute).where(ModelChannelRoute.channel_id == channel_id)
+        )
+        await db.execute(
+            delete(ProviderChannelMonitor).where(ProviderChannelMonitor.channel_id == channel_id)
+        )
+        runtime_state = await db.get(ProviderChannelRuntimeState, channel_id)
+        if runtime_state is not None:
+            await db.delete(runtime_state)
+        await db.delete(channel)
         await db.commit()
-        await _refresh_reliability_after_control_plane_change(db, reconcile_monitors=True)
-        await refresh_provider_channel_router_from_db(db)
-        return {
-            "deleted": False,
-            "disabled": True,
-            "reason": (
-                "channel still has model routes"
-                if int(route_count or 0) > 0
-                else "channel has monitoring history"
-            ),
-            "channel": _provider_channel_payload(channel, route_count=int(route_count or 0)),
-        }
-
-    await db.execute(
-        delete(ProviderChannelMonitor).where(ProviderChannelMonitor.channel_id == channel_id)
-    )
-    runtime_state = await db.get(ProviderChannelRuntimeState, channel_id)
-    if runtime_state is not None:
-        await db.delete(runtime_state)
-    await db.delete(channel)
-    await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
     channel_router.reset_channel_state(channel_id)
     await _refresh_reliability_after_control_plane_change(db, reconcile_monitors=True)
     await refresh_provider_channel_router_from_db(db)

@@ -1205,7 +1205,7 @@ function createApp(fetchImpl) {
         self.assertEqual(db.rollbacks, 1)
         invalidate.assert_called_once_with()
 
-    async def test_delete_provider_channel_with_monitor_history_disables_instead(self) -> None:
+    async def test_delete_provider_channel_cascades_routes_and_monitor_history(self) -> None:
         now = datetime(2026, 7, 14, 10, 0, 0)
         channel = SimpleNamespace(
             id="channel-monitored",
@@ -1229,9 +1229,9 @@ function createApp(fetchImpl) {
             updated_at=now,
         )
         db = SimpleNamespace(
-            get=AsyncMock(return_value=channel),
-            scalar=AsyncMock(side_effect=[0, 1, 0]),
+            get=AsyncMock(side_effect=[channel, None]),
             commit=AsyncMock(),
+            rollback=AsyncMock(),
             delete=AsyncMock(),
             execute=AsyncMock(),
         )
@@ -1250,17 +1250,16 @@ function createApp(fetchImpl) {
         ):
             result = await admin_module.delete_provider_channel(channel.id, db)
 
-        self.assertEqual(result["deleted"], False)
-        self.assertEqual(result["disabled"], True)
-        self.assertEqual(result["reason"], "channel has monitoring history")
-        self.assertEqual(channel.status, "disabled")
-        db.delete.assert_not_awaited()
+        self.assertEqual(result, {"deleted": True, "channel_id": channel.id})
+        db.delete.assert_awaited_once_with(channel)
+        self.assertEqual(db.execute.await_count, 4)
+        db.commit.assert_awaited_once()
+        db.rollback.assert_not_awaited()
 
     async def test_delete_unreferenced_provider_channel_still_hard_deletes(self) -> None:
         channel = SimpleNamespace(id="channel-empty")
         db = SimpleNamespace(
             get=AsyncMock(side_effect=[channel, None]),
-            scalar=AsyncMock(side_effect=[0, 0, 0]),
             commit=AsyncMock(),
             delete=AsyncMock(),
             execute=AsyncMock(),
@@ -1283,7 +1282,7 @@ function createApp(fetchImpl) {
 
         self.assertEqual(result, {"deleted": True, "channel_id": channel.id})
         db.delete.assert_awaited_once_with(channel)
-        db.execute.assert_awaited_once()
+        self.assertEqual(db.execute.await_count, 4)
         reset_state.assert_called_once_with(channel.id)
 
     async def test_provider_channels_includes_system_default_channels(self) -> None:
