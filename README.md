@@ -120,6 +120,8 @@ flowchart LR
 
 The public contract is intentionally stable: users see CoinCoin API keys and CoinCoin model aliases. Operators can change upstream providers, model routes, fallback priority, or pricing without rewriting every client integration.
 
+GPT-5.6 Luna and GPT-6 Luna default retail prices are **5× OpenAI Standard token rates**: input/output are **$1/$6** and **$0.50/$2.50 per million tokens**, respectively. Cache reads and writes use the same fivefold markup. See [Luna pricing](./docs/reference/luna-pricing.md) for the full price table, long-context rates, and deployment checks.
+
 ## Quick Start
 
 ### 1. Install
