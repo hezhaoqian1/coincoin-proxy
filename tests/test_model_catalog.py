@@ -589,14 +589,14 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertEqual(resolved.public_model.cache_creation_multiplier, 1.25)
         self.assertEqual(resolved.public_model.effective_cache_creation_input_per_million, 250.0)
 
-    def test_checked_in_gpt_6_sol_and_luna_use_official_models_and_pricing(self) -> None:
+    def test_checked_in_gpt_6_sol_and_luna_use_exact_models_and_retail_pricing(self) -> None:
         settings.model_catalog_json = ""
         registry._initialized = False
         registry.init_from_settings()
 
         for model_id, expected_prices in {
             "gpt-6-sol": (200, 1000),
-            "gpt-6-luna": (10, 50),
+            "gpt-6-luna": (50, 250),
         }.items():
             with self.subTest(model=model_id):
                 resolved = registry.resolve_public_model(model_id, "responses")
@@ -619,6 +619,57 @@ class ModelCatalogTests(unittest.TestCase):
                     model.metadata["thinking"]["levels"],
                     ["none", "low", "medium", "high", "xhigh", "max"],
                 )
+
+    def test_checked_in_luna_prices_and_billing_are_five_times_official(self) -> None:
+        from app.admin import _pricing_payload
+        from app.openai_compat import _serialize_public_model
+        from app.usage_buffer import calculate_token_cost
+
+        settings.model_catalog_json = ""
+        registry._initialized = False
+        registry.init_from_settings()
+
+        for model_id, base_input, base_output in (
+            ("gpt-5.6-luna", 20, 120),
+            ("gpt-6-luna", 10, 50),
+        ):
+            with self.subTest(model=model_id):
+                model = registry.get_public_model(model_id)
+                self.assertEqual(model.base_price_input_per_million, base_input)
+                self.assertEqual(model.base_price_output_per_million, base_output)
+                self.assertEqual(model.model_multiplier, 5)
+                self.assertEqual(model.output_multiplier, 1)
+                public = _serialize_public_model(model)
+                admin = _pricing_payload(model_id)
+                for public_key, admin_key, expected in (
+                    ("price_input_per_million", "price_input_per_million", base_input * 5),
+                    ("price_output_per_million", "price_output_per_million", base_output * 5),
+                    ("price_cached_input_per_million", "effective_cached_input_per_million", base_input * 0.5),
+                    ("price_cache_creation_input_per_million", "effective_cache_creation_input_per_million", base_input * 6.25),
+                ):
+                    self.assertEqual(public[f"coincoin_{public_key}"], expected)
+                    self.assertEqual(admin[admin_key], expected)
+
+                for input_tokens in (272_000, 272_001):
+                    with self.subTest(input_tokens=input_tokens):
+                        cost, prices = calculate_token_cost(
+                            input_tokens, 10_000, cached_tokens=100_000, cache_creation_tokens=50_000,
+                            price_input_per_million=model.price_input_per_million,
+                            price_output_per_million=model.price_output_per_million,
+                            cached_price_input_per_million=model.effective_cached_input_per_million,
+                            cache_creation_price_input_per_million=model.effective_cache_creation_input_per_million,
+                            context_pricing_tiers=model.context_pricing_tiers,
+                        )
+                        is_long = input_tokens > 272_000
+                        input_factor, output_factor = (2, 1.5) if is_long else (1, 1)
+                        official_cost = (
+                            ((input_tokens - 150_000) * base_input
+                             + 100_000 * base_input * 0.1
+                             + 50_000 * base_input * 1.25) * input_factor
+                            + 10_000 * base_output * output_factor
+                        ) / 1_000_000
+                        self.assertAlmostEqual(cost, official_cost * 5)
+                        self.assertEqual(prices["tier"], "long_context" if is_long else "standard")
 
     def test_checked_in_gpt_6_1_sol_uses_exact_model_and_official_cache_prices(self) -> None:
         settings.model_catalog_json = ""

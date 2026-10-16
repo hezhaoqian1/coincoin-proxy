@@ -208,7 +208,8 @@ uvicorn app.main:app --reload --port 8000
 
 - 终端客户只看 CoinCoin 的公开模型目录，不直接感知 Gemini CPA、LiteLLM 或 Vertex 的内部模型名
 - 老用户如果不传 `model`，仍然走默认 GPT 公共模型
-- 当前公开 GPT alias 包括 `gpt-6`、`gpt-6-astra`、`gpt-5.5`、`gpt-5.6`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`，以及由 `COINCOIN_FIXED_MODEL` 指定的默认 GPT alias
+- 当前公开 GPT alias 包括 `gpt-6`、`gpt-6-astra`、`gpt-6-sol`、`gpt-6.1-sol`、`gpt-6-luna`、`gpt-5.5`、`gpt-5.6`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`，以及由 `COINCOIN_FIXED_MODEL` 指定的默认 GPT alias
+- 两款 Luna 默认零售价均为 **OpenAI Standard 官方价的 5 倍**：`gpt-5.6-luna` 输入／输出为 **$1／$6 每百万 tokens**，`gpt-6-luna` 为 **$0.50／$2.50**；缓存读写同步按 5 倍收费。完整价格表、长上下文价格和发布核对步骤见 [Luna 模型定价](./docs/reference/luna-pricing.md)。
 - `gpt-6` / `gpt-6-astra` 映射到 OpenAI `gpt-6-astra`，标准档价格为输入 `$10/M`、缓存读取 `$1/M`、缓存写入 `$12.50/M`、输出 `$50/M`；上下文窗口 `1,050,000`，最大输出 `128,000`。价格依据 [OpenAI GPT-6 Astra 官方文档](https://developers.openai.com/api/docs/models/gpt-6-astra)。
 - embedding 请求不再复用旧 GPT / CPA lane；`/v1/embeddings` 默认和显式 `text-embedding-3-small` 都直连 Azure
 - Gemini 文本能力是增量暴露；显式传入 Gemini 文本 alias 时，会路由到 native Gemini CPA lane
