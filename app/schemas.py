@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Literal, Optional
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -44,8 +44,9 @@ class DeveloperKeyListItem(BaseModel):
     expires_at: Optional[datetime] = None
     monthly_quota_cents: Optional[int] = None
     total_quota_cents: Optional[int] = None
-    monthly_used_cents: int = 0
-    total_used_cents: int = 0
+    # None means usage was not loaded (skipped or timed out), not zero spend.
+    monthly_used_cents: Optional[int] = None
+    total_used_cents: Optional[int] = None
     ip_allowlist: List[str] = []
     created_at: datetime
     last_used_at: Optional[datetime] = None
@@ -56,6 +57,15 @@ class DeveloperKeyListResponse(BaseModel):
     active: int
     disabled: int
     data: List[DeveloperKeyListItem]
+
+
+class DeveloperKeyUsageItem(BaseModel):
+    monthly_used_cents: int = 0
+    total_used_cents: int = 0
+
+
+class DeveloperKeyUsageResponse(BaseModel):
+    data: Dict[str, DeveloperKeyUsageItem]
 
 
 class DeveloperKeyCreateResponse(BaseModel):

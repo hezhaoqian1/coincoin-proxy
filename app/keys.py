@@ -5,7 +5,7 @@ import json
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import settings
@@ -22,6 +22,8 @@ from .schemas import (
     DeveloperKeyStateResponse,
     DeveloperKeySummary,
     DeveloperKeyUpdateRequest,
+    DeveloperKeyUsageItem,
+    DeveloperKeyUsageResponse,
     KeyActivateRequest,
     KeyActivateResponse,
 )
@@ -32,6 +34,7 @@ router = APIRouter(prefix="/v1/keys", tags=["keys"])
 logger = logging.getLogger("coincoin.keys")
 
 ACTIVATE_RATE_LIMIT = 5  # per IP per minute
+USAGE_QUERY_TIMEOUT_MS = 60000  # server-side cap below the ~100s edge timeout so a usage scan cannot pin a pooled connection
 
 
 async def authenticate_console_session(request: Request, db: AsyncSession) -> User:
@@ -117,46 +120,48 @@ def _current_month_start() -> datetime:
     return datetime(now.year, now.month, 1)
 
 
-async def _load_key_usage(
-    db: AsyncSession,
-    key_ids: list[str],
-    user_id: str | None = None,
-) -> dict[str, dict[str, int]]:
+async def _load_key_usage(db: AsyncSession, key_ids: list[str]) -> dict[str, dict[str, int]]:
     if not key_ids:
         return {}
     month_start = _current_month_start()
-    # user_id keeps the scan on ix_request_logs_user_key_created; without it the
-    # planner cannot use the (user_id, api_key_id, created_at) prefix and the
-    # aggregate degrades to a full request_logs scan for high-volume accounts.
-    scope = [RequestLog.api_key_id.in_(key_ids)]
-    if user_id:
-        scope.append(RequestLog.user_id == user_id)
-    total_rows = (
+    # One pass over ix_request_logs_api_key_created_cover (api_key_id, created_at,
+    # cost_cents) answers both sums from the index alone. Do not add predicates on
+    # columns outside that index (e.g. user_id): the planner then switches to a
+    # row-lookup plan that takes minutes for accounts with millions of requests.
+    rows = (
         await db.execute(
-            select(RequestLog.api_key_id, func.coalesce(func.sum(RequestLog.cost_cents), 0))
-            .where(*scope)
+            select(
+                RequestLog.api_key_id,
+                func.coalesce(func.sum(RequestLog.cost_cents), 0),
+                func.coalesce(
+                    func.sum(case((RequestLog.created_at >= month_start, RequestLog.cost_cents), else_=0)),
+                    0,
+                ),
+            )
+            .where(RequestLog.api_key_id.in_(key_ids))
             .group_by(RequestLog.api_key_id)
-        )
-    ).all()
-    monthly_rows = (
-        await db.execute(
-            select(RequestLog.api_key_id, func.coalesce(func.sum(RequestLog.cost_cents), 0))
-            .where(*scope, RequestLog.created_at >= month_start)
-            .group_by(RequestLog.api_key_id)
+            .prefix_with(f"/*+ MAX_EXECUTION_TIME({USAGE_QUERY_TIMEOUT_MS}) */", dialect="mysql")
         )
     ).all()
     usage = {key_id: {"total": 0, "monthly": 0} for key_id in key_ids}
-    for key_id, cost in total_rows:
+    for key_id, total_cost, monthly_cost in rows:
         if key_id in usage:
-            usage[key_id]["total"] = int(cost or 0)
-    for key_id, cost in monthly_rows:
-        if key_id in usage:
-            usage[key_id]["monthly"] = int(cost or 0)
+            usage[key_id]["total"] = int(total_cost or 0)
+            usage[key_id]["monthly"] = int(monthly_cost or 0)
     return usage
 
 
+async def _try_load_key_usage(db: AsyncSession, key_ids: list[str]) -> dict[str, dict[str, int]] | None:
+    try:
+        return await _load_key_usage(db, key_ids)
+    except Exception:
+        logger.warning("developer key usage aggregate failed; returning keys without usage", exc_info=True)
+        await db.rollback()
+        return None
+
+
 def _build_key_item(row: ApiKey, masked: str, raw_key: str | None, usage: dict[str, int] | None = None) -> DeveloperKeyListItem:
-    usage = usage or {}
+    # usage=None leaves the used fields unset so clients can tell "not loaded" from "$0".
     return DeveloperKeyListItem(
         key_id=row.id,
         masked_key=masked,
@@ -167,8 +172,8 @@ def _build_key_item(row: ApiKey, masked: str, raw_key: str | None, usage: dict[s
         expires_at=getattr(row, "expires_at", None),
         monthly_quota_cents=getattr(row, "monthly_quota_cents", None),
         total_quota_cents=getattr(row, "total_quota_cents", None),
-        monthly_used_cents=int(usage.get("monthly", 0)),
-        total_used_cents=int(usage.get("total", 0)),
+        monthly_used_cents=int(usage.get("monthly", 0)) if usage is not None else None,
+        total_used_cents=int(usage.get("total", 0)) if usage is not None else None,
         ip_allowlist=_parse_ip_allowlist(getattr(row, "ip_allowlist", None)),
         created_at=row.created_at,
         last_used_at=row.last_used_at,
@@ -238,6 +243,7 @@ async def get_my_developer_key_state(
 async def list_my_developer_keys(
     request: Request,
     db: AsyncSession = Depends(get_db),
+    include_usage: bool = True,
 ):
     user = await authenticate_console_session(request, db)
     rows = (
@@ -249,7 +255,7 @@ async def list_my_developer_keys(
         )
     ).scalars().all()
 
-    usage_by_key = await _load_key_usage(db, [row.id for row in rows], user.id)
+    usage_by_key = await _try_load_key_usage(db, [row.id for row in rows]) if include_usage else None
     items = []
     active = 0
     disabled = 0
@@ -268,13 +274,39 @@ async def list_my_developer_keys(
             active += 1
         elif row.status == "disabled":
             disabled += 1
-        items.append(_build_key_item(row, masked, raw_key, usage_by_key.get(row.id)))
+        items.append(_build_key_item(row, masked, raw_key, usage_by_key.get(row.id) if usage_by_key is not None else None))
 
     return DeveloperKeyListResponse(
         total=len(items),
         active=active,
         disabled=disabled,
         data=items,
+    )
+
+
+@router.get("/usage", response_model=DeveloperKeyUsageResponse)
+async def get_my_developer_key_usage(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Per-key spend, split from the list so a slow aggregate never hides the keys."""
+    user = await authenticate_console_session(request, db)
+    key_ids = (
+        await db.execute(
+            select(ApiKey.id)
+            .where(ApiKey.user_id == user.id, ApiKey.kind == "api")
+            .order_by(ApiKey.created_at.desc())
+            .limit(100)
+        )
+    ).scalars().all()
+    usage_by_key = await _try_load_key_usage(db, list(key_ids))
+    if usage_by_key is None:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="key usage temporarily unavailable")
+    return DeveloperKeyUsageResponse(
+        data={
+            key_id: DeveloperKeyUsageItem(monthly_used_cents=usage["monthly"], total_used_cents=usage["total"])
+            for key_id, usage in usage_by_key.items()
+        }
     )
 
 
@@ -377,8 +409,9 @@ async def update_my_developer_key(
         except Exception:
             logger.warning("failed to decrypt developer key for update response", exc_info=True)
 
-    usage_by_key = await _load_key_usage(db, [key.id], user.id)
-    return _build_key_item(key, masked, raw_key, usage_by_key.get(key.id))
+    # Usage is omitted here: the console reloads the list (and /usage) after every
+    # update, and aggregating a busy key's history would stall a simple toggle.
+    return _build_key_item(key, masked, raw_key)
 
 
 @router.post("/activate", response_model=KeyActivateResponse)
