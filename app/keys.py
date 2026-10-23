@@ -117,21 +117,31 @@ def _current_month_start() -> datetime:
     return datetime(now.year, now.month, 1)
 
 
-async def _load_key_usage(db: AsyncSession, key_ids: list[str]) -> dict[str, dict[str, int]]:
+async def _load_key_usage(
+    db: AsyncSession,
+    key_ids: list[str],
+    user_id: str | None = None,
+) -> dict[str, dict[str, int]]:
     if not key_ids:
         return {}
     month_start = _current_month_start()
+    # user_id keeps the scan on ix_request_logs_user_key_created; without it the
+    # planner cannot use the (user_id, api_key_id, created_at) prefix and the
+    # aggregate degrades to a full request_logs scan for high-volume accounts.
+    scope = [RequestLog.api_key_id.in_(key_ids)]
+    if user_id:
+        scope.append(RequestLog.user_id == user_id)
     total_rows = (
         await db.execute(
             select(RequestLog.api_key_id, func.coalesce(func.sum(RequestLog.cost_cents), 0))
-            .where(RequestLog.api_key_id.in_(key_ids))
+            .where(*scope)
             .group_by(RequestLog.api_key_id)
         )
     ).all()
     monthly_rows = (
         await db.execute(
             select(RequestLog.api_key_id, func.coalesce(func.sum(RequestLog.cost_cents), 0))
-            .where(RequestLog.api_key_id.in_(key_ids), RequestLog.created_at >= month_start)
+            .where(*scope, RequestLog.created_at >= month_start)
             .group_by(RequestLog.api_key_id)
         )
     ).all()
@@ -239,7 +249,7 @@ async def list_my_developer_keys(
         )
     ).scalars().all()
 
-    usage_by_key = await _load_key_usage(db, [row.id for row in rows])
+    usage_by_key = await _load_key_usage(db, [row.id for row in rows], user.id)
     items = []
     active = 0
     disabled = 0
@@ -367,7 +377,7 @@ async def update_my_developer_key(
         except Exception:
             logger.warning("failed to decrypt developer key for update response", exc_info=True)
 
-    usage_by_key = await _load_key_usage(db, [key.id])
+    usage_by_key = await _load_key_usage(db, [key.id], user.id)
     return _build_key_item(key, masked, raw_key, usage_by_key.get(key.id))
 
 
