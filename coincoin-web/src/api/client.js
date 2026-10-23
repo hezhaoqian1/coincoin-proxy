@@ -148,11 +148,19 @@ export async function getDeveloperKeyState() {
     return parseJsonResponse(res, 'Failed to fetch developer key state')
 }
 
-export async function listDeveloperKeys() {
-    const res = await fetch(`${PROXY_BASE}/v1/keys`, {
+export async function listDeveloperKeys({ includeUsage = true } = {}) {
+    const query = includeUsage ? '' : '?include_usage=false'
+    const res = await fetch(`${PROXY_BASE}/v1/keys${query}`, {
         headers: authHeaders()
     })
     return parseJsonResponse(res, 'Failed to list developer keys')
+}
+
+export async function getDeveloperKeyUsage() {
+    const res = await fetch(`${PROXY_BASE}/v1/keys/usage`, {
+        headers: authHeaders()
+    })
+    return parseJsonResponse(res, 'Failed to load developer key usage')
 }
 
 export async function createDeveloperKey(payload = {}) {

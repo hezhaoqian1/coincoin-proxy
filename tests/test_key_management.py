@@ -30,11 +30,18 @@ class _FakeDB:
         self.execute_results = list(execute_results or [])
         self.added = []
         self.commits = 0
+        self.rollbacks = 0
 
     async def execute(self, _query):
         if not self.execute_results:
             raise AssertionError("unexpected execute call")
-        return self.execute_results.pop(0)
+        result = self.execute_results.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    async def rollback(self):
+        self.rollbacks += 1
 
     def add(self, obj):
         self.added.append(obj)
@@ -135,7 +142,7 @@ class DeveloperKeyManagementTests(unittest.IsolatedAsyncioTestCase):
                 last_used_at=None,
             ),
         ]
-        db = _FakeDB(execute_results=[_ScalarResult(keys), _ScalarResult([]), _ScalarResult([])])
+        db = _FakeDB(execute_results=[_ScalarResult(keys), _ScalarResult([("k_new", 4200, 700)])])
         request = SimpleNamespace()
 
         with patch.object(keys_module, "authenticate_console_session", AsyncMock(return_value=user)), patch(
@@ -147,6 +154,11 @@ class DeveloperKeyManagementTests(unittest.IsolatedAsyncioTestCase):
         ):
             result = await keys_module.list_my_developer_keys(request, db)
 
+        self.assertEqual(db.execute_results, [])
+        self.assertEqual(result.data[0].total_used_cents, 4200)
+        self.assertEqual(result.data[0].monthly_used_cents, 700)
+        self.assertEqual(result.data[1].total_used_cents, 0)
+        self.assertEqual(result.data[1].monthly_used_cents, 0)
         self.assertEqual(result.total, 2)
         self.assertEqual(result.active, 1)
         self.assertEqual(result.disabled, 1)
@@ -209,7 +221,7 @@ class DeveloperKeyManagementTests(unittest.IsolatedAsyncioTestCase):
             created_at=datetime(2026, 4, 28, 10, 0, 0),
             last_used_at=None,
         )
-        db = _FakeDB(execute_results=[_ScalarResult(key_row), _ScalarResult([]), _ScalarResult([])])
+        db = _FakeDB(execute_results=[_ScalarResult(key_row)])
         request = SimpleNamespace()
         payload = keys_module.DeveloperKeyUpdateRequest(
             status="disabled",
@@ -230,5 +242,66 @@ class DeveloperKeyManagementTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(key_row.status, "disabled")
         self.assertEqual(key_row.monthly_quota_cents, 3000)
         self.assertEqual(key_row.ip_allowlist, '["198.51.100.0/24"]')
+        self.assertIsNone(result.total_used_cents)
         self.assertEqual(db.commits, 1)
         cache_delete.assert_awaited_once_with("hash-disable")
+
+    def _list_key_row(self, key_id):
+        return SimpleNamespace(
+            id=key_id,
+            encrypted_key=None,
+            name="",
+            purpose="",
+            status="active",
+            expires_at=None,
+            monthly_quota_cents=None,
+            total_quota_cents=None,
+            ip_allowlist=None,
+            created_at=datetime(2026, 10, 1, 12, 0, 0),
+            last_used_at=None,
+        )
+
+    async def test_lists_keys_without_usage_when_requested(self):
+        user = SimpleNamespace(id="u_fast")
+        db = _FakeDB(execute_results=[_ScalarResult([self._list_key_row("k_fast")])])
+
+        with patch.object(keys_module, "authenticate_console_session", AsyncMock(return_value=user)):
+            result = await keys_module.list_my_developer_keys(SimpleNamespace(), db, include_usage=False)
+
+        self.assertEqual(result.total, 1)
+        self.assertIsNone(result.data[0].monthly_used_cents)
+        self.assertIsNone(result.data[0].total_used_cents)
+
+    async def test_list_still_returns_keys_when_usage_aggregate_fails(self):
+        user = SimpleNamespace(id="u_slow")
+        timeout = RuntimeError("Query execution was interrupted, maximum statement execution time exceeded")
+        db = _FakeDB(execute_results=[_ScalarResult([self._list_key_row("k_slow")]), timeout])
+
+        with patch.object(keys_module, "authenticate_console_session", AsyncMock(return_value=user)):
+            result = await keys_module.list_my_developer_keys(SimpleNamespace(), db)
+
+        self.assertEqual(result.total, 1)
+        self.assertEqual(result.data[0].key_id, "k_slow")
+        self.assertIsNone(result.data[0].total_used_cents)
+        self.assertEqual(db.rollbacks, 1)
+
+    async def test_usage_endpoint_returns_per_key_spend(self):
+        user = SimpleNamespace(id="u_usage")
+        db = _FakeDB(execute_results=[_ScalarResult(["k_a", "k_b"]), _ScalarResult([("k_a", 900, 150)])])
+
+        with patch.object(keys_module, "authenticate_console_session", AsyncMock(return_value=user)):
+            result = await keys_module.get_my_developer_key_usage(SimpleNamespace(), db)
+
+        self.assertEqual(result.data["k_a"].total_used_cents, 900)
+        self.assertEqual(result.data["k_a"].monthly_used_cents, 150)
+        self.assertEqual(result.data["k_b"].total_used_cents, 0)
+
+    async def test_usage_endpoint_reports_unavailable_on_timeout(self):
+        user = SimpleNamespace(id="u_usage_slow")
+        db = _FakeDB(execute_results=[_ScalarResult(["k_a"]), RuntimeError("max execution time exceeded")])
+
+        with patch.object(keys_module, "authenticate_console_session", AsyncMock(return_value=user)):
+            with self.assertRaises(HTTPException) as raised:
+                await keys_module.get_my_developer_key_usage(SimpleNamespace(), db)
+
+        self.assertEqual(raised.exception.status_code, 503)

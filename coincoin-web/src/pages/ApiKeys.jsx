@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import AppShell from '../components/AppShell'
 import CcSwitchImport from '../components/CcSwitchImport'
@@ -8,6 +8,7 @@ import {
     clearGeneratedKey,
     createDeveloperKey,
     dollarsToCents,
+    getDeveloperKeyUsage,
     listDeveloperKeys,
     setGeneratedKey,
     updateDeveloperKey,
@@ -96,16 +97,17 @@ function KeyStatusPill({ availability }) {
     )
 }
 
-function QuotaLine({ label, used, quota }) {
+function QuotaLine({ label, used, quota, usageStatus }) {
+    const known = used !== null && used !== undefined
     const pct = progressPercent(used, quota)
     const tone = quota && pct >= 100 ? 'danger' : quota && pct >= 80 ? 'warn' : 'ok'
     return (
         <div className="api-key-quota-line">
             <div className="api-key-quota-head">
                 <span>{label}</span>
-                <strong>{formatLimit(used, quota)}</strong>
+                <strong>{known ? formatLimit(used, quota) : usageStatus === 'error' ? '用量暂不可用' : '用量统计中…'}</strong>
             </div>
-            {quota ? (
+            {known && quota ? (
                 <div className="api-key-progress" aria-hidden="true">
                     <span className={`api-key-progress-bar ${tone}`} style={{ width: `${pct}%` }} />
                 </div>
@@ -161,19 +163,42 @@ export default function ApiKeys() {
     const [createForm, setCreateForm] = useState(blankForm)
     const [editingId, setEditingId] = useState('')
     const [editForm, setEditForm] = useState(blankForm)
+    const [usageStatus, setUsageStatus] = useState('loading')
+    const loadSeq = useRef(0)
     const canManageKeys = authMode !== 'api'
 
+    // Usage aggregates can take many seconds for busy accounts, so the key list
+    // renders first and spend is merged in when it arrives.
+    const loadUsage = async (seq) => {
+        setUsageStatus('loading')
+        try {
+            const usage = await getDeveloperKeyUsage()
+            if (seq !== loadSeq.current) return
+            setKeysState((prev) => ({
+                ...prev,
+                data: (prev.data || []).map((item) => ({ ...item, ...(usage.data?.[item.key_id] || {}) })),
+            }))
+            setUsageStatus('ready')
+        } catch {
+            if (seq === loadSeq.current) setUsageStatus('error')
+        }
+    }
+
     const loadKeys = async () => {
+        const seq = ++loadSeq.current
         setLoading(true)
         setError('')
         try {
-            const data = await listDeveloperKeys()
+            const data = await listDeveloperKeys({ includeUsage: false })
+            if (seq !== loadSeq.current) return
             setKeysState(data)
         } catch (err) {
-            setError(err.message || '加载 API 密钥失败')
+            if (seq === loadSeq.current) setError(err.message || '加载 API 密钥失败')
+            return
         } finally {
-            setLoading(false)
+            if (seq === loadSeq.current) setLoading(false)
         }
+        loadUsage(seq)
     }
 
     useEffect(() => {
@@ -519,8 +544,8 @@ export default function ApiKeys() {
                                         ) : null}
                                         </details>
                                         <div className="api-key-quota-grid">
-                                            <QuotaLine label="本月" used={item.monthly_used_cents} quota={item.monthly_quota_cents} />
-                                            <QuotaLine label="累计" used={item.total_used_cents} quota={item.total_quota_cents} />
+                                            <QuotaLine label="本月" used={item.monthly_used_cents} quota={item.monthly_quota_cents} usageStatus={usageStatus} />
+                                            <QuotaLine label="累计" used={item.total_used_cents} quota={item.total_quota_cents} usageStatus={usageStatus} />
                                         </div>
                                     </>
                                 )}
