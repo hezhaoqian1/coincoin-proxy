@@ -811,6 +811,7 @@ class ModelRegistry:
         fallback_from_channel_id: str = "",
         route_attempt: int = 0,
         channel_affinity_key: str = "",
+        ignore_cooldown: bool = False,
     ) -> Optional[ModelConfig]:
         choice = channel_router.select_for_model(
             public_model,
@@ -818,6 +819,7 @@ class ModelRegistry:
             endpoint,
             exclude_channel_ids=exclude_channel_ids,
             affinity_key=channel_affinity_key,
+            ignore_cooldown=ignore_cooldown,
         )
         if choice is None:
             return None
@@ -1269,6 +1271,16 @@ class ModelRegistry:
                 endpoint,
                 channel_affinity_key=channel_affinity_key,
             )
+            if routed_backend is None:
+                # Every channel is cooling down and there is no catalog
+                # upstream behind them: trying one beats failing outright.
+                routed_backend = self._apply_channel_route(
+                    public_model,
+                    backend,
+                    endpoint,
+                    channel_affinity_key=channel_affinity_key,
+                    ignore_cooldown=True,
+                )
             if routed_backend is None:
                 raise ModelCapabilityError(
                     f"Model '{public_model.public_id}' requires an active provider channel route for endpoint '{endpoint}'"
