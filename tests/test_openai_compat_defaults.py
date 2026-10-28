@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -120,6 +121,92 @@ class _FakeEventStreamResponse:
 
     async def aclose(self) -> None:
         self._closed = True
+
+
+class _FakeSseResponse:
+    """Upstream SSE stream that sends one event per chunk."""
+
+    def __init__(self, events, *, error: Exception | None = None, delays: dict | None = None) -> None:
+        self._events = list(events)
+        self._error = error
+        self._delays = delays or {}
+        self.status_code = 200
+        self.headers = {"content-type": "text/event-stream"}
+        self.closed = False
+
+    async def aiter_bytes(self):
+        for index, event in enumerate(self._events):
+            if index in self._delays:
+                await asyncio.sleep(self._delays[index])
+            data = event if isinstance(event, str) else json.dumps(event)
+            yield f"data: {data}\n\n".encode("utf-8")
+        if self._error is not None:
+            raise self._error
+
+    async def aread(self) -> bytes:
+        return b""
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+class _DelayedStreamClient:
+    """Stream client whose n-th send waits delays[n] seconds for headers."""
+
+    def __init__(self, responses, *, delays) -> None:
+        self.responses = list(responses)
+        self.delays = list(delays)
+        self.calls = []
+        self.cancelled = 0
+
+    def build_request(self, method, url, **kwargs):
+        request = {"method": method, "url": url, **kwargs}
+        self.calls.append(request)
+        return request
+
+    async def send(self, request, stream=False):
+        delay = self.delays.pop(0) if self.delays else 0
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            self.cancelled += 1
+            raise
+        return self.responses.pop(0)
+
+
+def _response_created_event(response_id: str) -> dict:
+    return {
+        "type": "response.created",
+        "response": {"id": response_id, "status": "in_progress", "model": "gpt-5.5", "output": []},
+    }
+
+
+def _ok_stream_events(response_id: str, text: str = "OK") -> list:
+    return [
+        _response_created_event(response_id),
+        {"type": "response.output_text.delta", "delta": text},
+        {
+            "type": "response.completed",
+            "response": {
+                "id": response_id,
+                "status": "completed",
+                "model": "gpt-5.5",
+                "output": [{"type": "message", "content": [{"type": "output_text", "text": text}]}],
+                "usage": {"input_tokens": 3, "output_tokens": 1, "total_tokens": 4},
+            },
+        },
+        "[DONE]",
+    ]
+
+
+def _failed_stream_events(response_id: str, error: dict) -> list:
+    return [
+        _response_created_event(response_id),
+        {
+            "type": "response.failed",
+            "response": {"id": response_id, "status": "failed", "model": "gpt-5.5", "output": [], "error": error},
+        },
+    ]
 
 
 class _RecordingClient:
@@ -2433,6 +2520,398 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(usage_kwargs["provider_platform"], "legacy_cpa")
         self.assertEqual(usage_kwargs["fallback_from_channel_id"], "ch_stream_primary")
         self.assertEqual(usage_kwargs["route_attempt"], 1)
+
+    def _configure_responses_stream_channels(self, *names: str, endpoint: str = "responses") -> None:
+        channel_router.set_snapshot(
+            [
+                ProviderChannelSnapshot(
+                    channel_id=f"ch_stream_{name}",
+                    provider_platform="sub2api",
+                    base_url=f"https://{name}-channel.example/v1",
+                    api_key=f"{name}-key",
+                    auth_style="bearer",
+                    priority=index * 10,
+                    allowed_fails=1,
+                    cooldown_seconds=30,
+                )
+                for index, name in enumerate(names)
+            ],
+            [
+                ModelChannelRouteSnapshot(
+                    route_id=f"mcr_stream_{name}",
+                    public_model_id="gpt-5.5",
+                    endpoint=endpoint,
+                    channel_id=f"ch_stream_{name}",
+                )
+                for name in names
+            ],
+        )
+
+    def _set_first_output_timeouts(self, timeouts: dict) -> None:
+        original = settings.upstream_first_output_timeouts
+        settings.upstream_first_output_timeouts = json.dumps(timeouts)
+        self.addCleanup(setattr, settings, "upstream_first_output_timeouts", original)
+
+    async def _post_chat_stream(self, upstream_client):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(openai_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                openai_module,
+                "get_stream_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(openai_module.usage_buffer, "add", AsyncMock()) as add_usage:
+                response = await client.post(
+                    "/v1/chat/completions",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"model": "gpt-5.5", "stream": True, "messages": [{"role": "user", "content": "Say OK"}]},
+                )
+        return response, add_usage
+
+    async def _post_responses_stream(self, upstream_client):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_stream_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(proxy_module.usage_buffer, "add", AsyncMock()) as add_usage:
+                response = await client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"model": "gpt-5.5", "input": "Reply with only: OK", "stream": True},
+                )
+        return response, add_usage
+
+    def _channel_cooling_down(self, channel_id: str) -> bool:
+        return float(channel_router.channel_state(channel_id).get("cooldown_until") or 0) > time.time()
+
+    async def test_responses_stream_moves_past_upstream_auth_error_and_rate_limit(self) -> None:
+        self._configure_responses_stream_channels("primary", "backup", "tertiary")
+        upstream_client = _RecordingStreamClient(
+            [
+                _FakeUpstreamResponse({"error": {"message": "invalid api key"}}, status_code=401),
+                _FakeUpstreamResponse({"error": {"message": "rate limited", "type": "rate_limit_error"}}, status_code=429),
+                _FakeSseResponse(_ok_stream_events("resp_third_channel")),
+            ]
+        )
+
+        response, add_usage = await self._post_responses_stream(upstream_client)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn('"delta":"OK"', response.text)
+        self.assertEqual(
+            [call["url"] for call in upstream_client.calls if "url" in call],
+            [
+                "https://primary-channel.example/v1/responses",
+                "https://backup-channel.example/v1/responses",
+                "https://tertiary-channel.example/v1/responses",
+            ],
+        )
+        self.assertTrue(self._channel_cooling_down("ch_stream_primary"))
+        self.assertTrue(self._channel_cooling_down("ch_stream_backup"))
+        usage_kwargs = add_usage.await_args.kwargs
+        self.assertEqual(usage_kwargs["channel_id"], "ch_stream_tertiary")
+        self.assertEqual(usage_kwargs["route_reason"], "channel_fallback:429")
+        self.assertEqual(usage_kwargs["route_attempt"], 2)
+        self.assertEqual(usage_kwargs["input_tokens"], 3)
+
+    async def test_responses_stream_falls_back_when_upstream_fails_before_output(self) -> None:
+        self._configure_responses_stream_channels("primary", "backup")
+        upstream_client = _RecordingStreamClient(
+            [
+                _FakeSseResponse(
+                    _failed_stream_events(
+                        "resp_primary_failed",
+                        {"code": "rate_limit_exceeded", "message": "Rate limit reached, please try again"},
+                    )
+                ),
+                _FakeSseResponse(_ok_stream_events("resp_backup_ok")),
+            ]
+        )
+
+        response, add_usage = await self._post_responses_stream(upstream_client)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn("resp_backup_ok", response.text)
+        self.assertIn('"delta":"OK"', response.text)
+        self.assertNotIn("resp_primary_failed", response.text)
+        self.assertNotIn("rate_limit_exceeded", response.text)
+        self.assertTrue(self._channel_cooling_down("ch_stream_primary"))
+        usage_kwargs = add_usage.await_args.kwargs
+        self.assertEqual(usage_kwargs["channel_id"], "ch_stream_backup")
+        self.assertEqual(usage_kwargs["route_reason"], "channel_fallback:upstream_stream_failed")
+
+    async def test_responses_stream_falls_back_when_upstream_closes_before_output(self) -> None:
+        self._configure_responses_stream_channels("primary", "backup")
+        upstream_client = _RecordingStreamClient(
+            [
+                _FakeSseResponse([_response_created_event("resp_primary_cut")]),
+                _FakeSseResponse(_ok_stream_events("resp_backup_ok")),
+            ]
+        )
+
+        response, add_usage = await self._post_responses_stream(upstream_client)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn("resp_backup_ok", response.text)
+        self.assertNotIn("resp_primary_cut", response.text)
+        self.assertTrue(self._channel_cooling_down("ch_stream_primary"))
+        self.assertEqual(add_usage.await_args.kwargs["route_reason"], "channel_fallback:upstream_stream_incomplete")
+
+    async def test_responses_stream_returns_request_errors_without_trying_other_channels(self) -> None:
+        self._configure_responses_stream_channels("primary", "backup")
+        upstream_client = _RecordingStreamClient(
+            [
+                _FakeSseResponse(
+                    _failed_stream_events(
+                        "resp_too_long",
+                        {"code": "context_length_exceeded", "message": "Your input exceeds the context window"},
+                    )
+                ),
+            ]
+        )
+
+        response, _add_usage = await self._post_responses_stream(upstream_client)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn("context_length_exceeded", response.text)
+        self.assertEqual(len([call for call in upstream_client.calls if "url" in call]), 1)
+        self.assertFalse(self._channel_cooling_down("ch_stream_primary"))
+
+    async def test_responses_stream_records_channel_failure_when_upstream_drops_mid_output(self) -> None:
+        self._configure_responses_stream_channels("primary", "backup")
+        upstream_client = _RecordingStreamClient(
+            [
+                _FakeSseResponse(
+                    [
+                        _response_created_event("resp_dropped"),
+                        {"type": "response.output_text.delta", "delta": "partial"},
+                    ],
+                    error=httpx.ReadError("connection reset"),
+                ),
+            ]
+        )
+
+        with self.assertRaises(Exception) as raised:
+            await self._post_responses_stream(upstream_client)
+
+        # Starlette re-raises it from its task group.
+        errors = getattr(raised.exception, "exceptions", [raised.exception])
+        self.assertTrue(any(isinstance(error, httpx.ReadError) for error in errors), errors)
+        self.assertEqual(len([call for call in upstream_client.calls if "url" in call]), 1)
+        self.assertTrue(self._channel_cooling_down("ch_stream_primary"))
+
+    async def test_responses_stream_hands_slow_stream_over_after_failover_window(self) -> None:
+        original_window = settings.responses_stream_failover_window_seconds
+        settings.responses_stream_failover_window_seconds = 0.05
+        self.addCleanup(setattr, settings, "responses_stream_failover_window_seconds", original_window)
+        self._configure_responses_stream_channels("primary")
+        upstream_client = _RecordingStreamClient(
+            [_FakeSseResponse(_ok_stream_events("resp_slow"), delays={1: 0.2})]
+        )
+
+        response, add_usage = await self._post_responses_stream(upstream_client)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertLess(response.text.index("response.created"), response.text.index('"delta":"OK"'))
+        self.assertIn("response.completed", response.text)
+        self.assertFalse(self._channel_cooling_down("ch_stream_primary"))
+        self.assertEqual(add_usage.await_args.kwargs["output_tokens"], 1)
+
+    async def test_responses_stream_leaves_channel_that_sends_no_headers_in_time(self) -> None:
+        self._set_first_output_timeouts({"gpt-5.5": 0.05})
+        self._configure_responses_stream_channels("primary", "backup")
+        upstream_client = _DelayedStreamClient(
+            [_FakeSseResponse(_ok_stream_events("resp_backup_fast"))],
+            delays=[5.0, 0],
+        )
+
+        started = time.monotonic()
+        response, add_usage = await self._post_responses_stream(upstream_client)
+
+        self.assertLess(time.monotonic() - started, 2.0)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn("resp_backup_fast", response.text)
+        self.assertEqual(upstream_client.cancelled, 1)
+        self.assertTrue(self._channel_cooling_down("ch_stream_primary"))
+        usage_kwargs = add_usage.await_args.kwargs
+        self.assertEqual(usage_kwargs["channel_id"], "ch_stream_backup")
+        self.assertEqual(usage_kwargs["route_reason"], "channel_fallback:upstream_first_output_timeout")
+
+    async def test_responses_stream_leaves_channel_whose_output_stalls_after_headers(self) -> None:
+        self._set_first_output_timeouts({"gpt-5.5": 0.1})
+        self._configure_responses_stream_channels("primary", "backup")
+        stalled = _FakeSseResponse(_ok_stream_events("resp_primary_stalled"), delays={1: 5.0})
+        upstream_client = _RecordingStreamClient([stalled, _FakeSseResponse(_ok_stream_events("resp_backup_ok"))])
+
+        started = time.monotonic()
+        response, _add_usage = await self._post_responses_stream(upstream_client)
+
+        self.assertLess(time.monotonic() - started, 2.0)
+        self.assertIn("resp_backup_ok", response.text)
+        self.assertNotIn("resp_primary_stalled", response.text)
+        self.assertTrue(stalled.closed)
+
+    async def test_responses_stream_keeps_waiting_when_no_other_channel_exists(self) -> None:
+        self._set_first_output_timeouts({"gpt-5.5": 0.05})
+        # The legacy fallback model is the channel itself: nowhere else to go.
+        settings.fallback_upstream_url = "https://primary-channel.example/v1"
+        registry._initialized = False
+        registry.init_from_settings()
+        self._configure_responses_stream_channels("primary")
+        upstream_client = _DelayedStreamClient(
+            [_FakeSseResponse(_ok_stream_events("resp_only_channel"), delays={1: 0.2})],
+            delays=[0.2],
+        )
+
+        with patch.object(proxy_module, "_next_provider_or_system_fallback_config", return_value=(None, "")):
+            response, add_usage = await self._post_responses_stream(upstream_client)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn("resp_only_channel", response.text)
+        self.assertEqual(upstream_client.cancelled, 0)
+        self.assertEqual(add_usage.await_args.kwargs["channel_id"], "ch_stream_primary")
+
+    async def test_responses_stream_cools_channel_down_for_retry_after(self) -> None:
+        self._configure_responses_stream_channels("primary", "backup")
+        upstream_client = _RecordingStreamClient(
+            [
+                _FakeUpstreamResponse(
+                    {"error": {"message": "slow down", "type": "rate_limit_error"}},
+                    status_code=429,
+                    headers={"retry-after": "300"},
+                ),
+                _FakeSseResponse(_ok_stream_events("resp_backup_ok")),
+            ]
+        )
+
+        response, _add_usage = await self._post_responses_stream(upstream_client)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        cooldown_until = float(channel_router.channel_state("ch_stream_primary")["cooldown_until"])
+        self.assertGreater(cooldown_until, time.time() + 250)
+
+    async def test_responses_stream_retries_without_encrypted_reasoning_from_another_channel(self) -> None:
+        self._configure_responses_stream_channels("primary", "backup")
+        upstream_client = _RecordingStreamClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "error": {
+                            "message": "The encrypted content for item rs_1 could not be verified.",
+                            "type": "invalid_request_error",
+                            "code": "invalid_encrypted_content",
+                        }
+                    },
+                    status_code=400,
+                ),
+                _FakeSseResponse(_ok_stream_events("resp_after_strip")),
+            ]
+        )
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_stream_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(proxy_module.usage_buffer, "add", AsyncMock()):
+                response = await client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={
+                        "model": "gpt-5.5",
+                        "stream": True,
+                        "input": [
+                            {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+                            {"type": "reasoning", "summary": [], "encrypted_content": "gAAAAforeign"},
+                            {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "hello"}]},
+                            {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "again"}]},
+                        ],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn("resp_after_strip", response.text)
+        sent = [call for call in upstream_client.calls if "url" in call]
+        self.assertEqual([call["url"] for call in sent], ["https://primary-channel.example/v1/responses"] * 2)
+        self.assertIn("reasoning", [item["type"] for item in sent[0]["json"]["input"]])
+        self.assertNotIn("reasoning", [item["type"] for item in sent[1]["json"]["input"]])
+        self.assertEqual(len(sent[1]["json"]["input"]), 3)
+        self.assertFalse(self._channel_cooling_down("ch_stream_primary"))
+
+    async def test_chat_stream_falls_back_to_next_channel_on_rate_limit(self) -> None:
+        self._configure_responses_stream_channels("primary", "backup", endpoint="chat/completions")
+        upstream_client = _RecordingStreamClient(
+            [
+                _FakeUpstreamResponse({"error": {"message": "rate limited"}}, status_code=429),
+                _FakeSseResponse(_ok_stream_events("resp_chat_backup")),
+            ]
+        )
+
+        response, add_usage = await self._post_chat_stream(upstream_client)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn('"content": "OK"', response.text)
+        self.assertEqual(
+            [call["url"] for call in upstream_client.calls if "url" in call],
+            ["https://primary-channel.example/v1/responses", "https://backup-channel.example/v1/responses"],
+        )
+        self.assertTrue(self._channel_cooling_down("ch_stream_primary"))
+        usage_kwargs = add_usage.await_args.kwargs
+        self.assertEqual(usage_kwargs["channel_id"], "ch_stream_backup")
+        self.assertEqual(usage_kwargs["route_reason"], "channel_fallback:429")
+
+    async def test_chat_stream_falls_back_when_upstream_fails_before_output(self) -> None:
+        self._configure_responses_stream_channels("primary", "backup", endpoint="chat/completions")
+        upstream_client = _RecordingStreamClient(
+            [
+                _FakeSseResponse(
+                    _failed_stream_events("resp_chat_failed", {"code": "server_error", "message": "upstream overloaded"})
+                ),
+                _FakeSseResponse(_ok_stream_events("resp_chat_backup")),
+            ]
+        )
+
+        response, add_usage = await self._post_chat_stream(upstream_client)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn('"content": "OK"', response.text)
+        self.assertNotIn("upstream overloaded", response.text)
+        self.assertEqual(add_usage.await_args.kwargs["route_reason"], "channel_fallback:upstream_stream_failed")
+
+    async def test_chat_stream_leaves_channel_that_sends_no_headers_in_time(self) -> None:
+        self._set_first_output_timeouts({"gpt-5.5": 0.05})
+        self._configure_responses_stream_channels("primary", "backup", endpoint="chat/completions")
+        upstream_client = _DelayedStreamClient(
+            [_FakeSseResponse(_ok_stream_events("resp_chat_backup"))],
+            delays=[5.0, 0],
+        )
+
+        started = time.monotonic()
+        response, add_usage = await self._post_chat_stream(upstream_client)
+
+        self.assertLess(time.monotonic() - started, 2.0)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn('"content": "OK"', response.text)
+        self.assertEqual(upstream_client.cancelled, 1)
+        self.assertEqual(add_usage.await_args.kwargs["route_reason"], "channel_fallback:upstream_first_output_timeout")
+
+    async def test_chat_stream_records_channel_failure_when_upstream_drops_mid_output(self) -> None:
+        self._configure_responses_stream_channels("primary", "backup", endpoint="chat/completions")
+        upstream_client = _RecordingStreamClient(
+            [
+                _FakeSseResponse(
+                    [_response_created_event("resp_chat_dropped"), {"type": "response.output_text.delta", "delta": "par"}],
+                    error=httpx.ReadError("connection reset"),
+                ),
+            ]
+        )
+
+        response, _add_usage = await self._post_chat_stream(upstream_client)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn('"content": "par"', response.text)
+        self.assertTrue(self._channel_cooling_down("ch_stream_primary"))
 
     async def test_responses_claude_code_alias_adds_prompt_cache_key(self) -> None:
         self._add_claude_code_model(with_route=True)

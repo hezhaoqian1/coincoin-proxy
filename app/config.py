@@ -144,6 +144,18 @@ class Settings(BaseSettings):
     http_image_pool_keepalive: int = 20
     http_pool_timeout_seconds: float = 60.0
     responses_stream_read_timeout: int = 90
+    # Hold a /responses stream until its first output event, for at most this
+    # many seconds, so a failure before any output can move to another
+    # channel. 0 streams straight through.
+    responses_stream_failover_window_seconds: float = 20.0
+    # Streaming upstreams that produce no output (headers included) within
+    # this many seconds are abandoned for another channel, once per request
+    # and only when another channel is available. 0 waits. Per-model values
+    # go in upstream_first_output_timeouts as JSON, e.g. {"gpt-6-sol": 45};
+    # high/xhigh reasoning effort gets at least the high-effort value.
+    upstream_first_output_timeout_seconds: float = 0.0
+    upstream_first_output_timeouts: str = ""
+    upstream_high_effort_first_output_timeout_seconds: float = 0.0
     key_cache_ttl: int = 30
     key_cache_max: int = 10000
     response_cache_ttl: int = 300

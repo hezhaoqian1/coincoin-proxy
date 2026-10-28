@@ -8,6 +8,7 @@ import re
 import secrets
 import time
 import zlib
+from email.utils import parsedate_to_datetime
 from urllib.parse import urlsplit, urlunsplit
 from collections import OrderedDict
 from copy import deepcopy
@@ -88,7 +89,57 @@ CHANNEL_FALLBACK_RETRY_ERRORS = frozenset({
     "upstream_invalid_json",
     "upstream_unexpected_content_type",
     "upstream_empty_response",
+    "upstream_stream_failed",
+    "upstream_stream_incomplete",
+    "upstream_first_output_timeout",
 })
+_RESPONSES_STREAM_PRELUDE_EVENTS = frozenset({"response.created", "response.in_progress", "response.queued"})
+_RESPONSES_STREAM_TERMINAL_EVENTS = frozenset({
+    "response.completed",
+    "response.failed",
+    "response.incomplete",
+    "response.cancelled",
+})
+# A failed stream is only moved to another channel when the error looks like
+# the channel's problem; request errors would fail the same way everywhere.
+_RESPONSES_STREAM_REQUEST_ERROR_MARKERS = (
+    "context_length",
+    "context window",
+    "maximum context",
+    "invalid_prompt",
+    "invalid_request",
+    "invalid_value",
+    "invalid_type",
+    "invalid_encrypted_content",
+    "previous_response",
+    "unsupported",
+    "content_policy",
+    "content_filter",
+    "cyber_policy",
+    "safety",
+)
+_RESPONSES_STREAM_CHANNEL_ERROR_MARKERS = (
+    "rate_limit",
+    "rate limit",
+    "too many requests",
+    "usage_limit",
+    "quota",
+    "server_error",
+    "server error",
+    "internal_error",
+    "internal error",
+    "overloaded",
+    "capacity",
+    "slow_down",
+    "timeout",
+    "timed out",
+    "unavailable",
+    "bad gateway",
+    "no available",
+    "try again",
+    "retry",
+    "upstream",
+)
 UPSTREAM_INSUFFICIENT_BALANCE_STATUS_CODE = 503
 UPSTREAM_INSUFFICIENT_BALANCE_MESSAGE = "当前服务额度不足，请联系管理员处理。"
 UPSTREAM_INSUFFICIENT_BALANCE_CODE = "service_quota_unavailable"
@@ -1208,6 +1259,309 @@ def _stream_upstream_response(
     )
 
 
+class _UpstreamChunkReader:
+    """Reads an upstream body chunk by chunk; a read can outlive a timed wait."""
+
+    def __init__(self, upstream: httpx.Response) -> None:
+        self._chunks = upstream.aiter_bytes()
+        self._pending: Optional[asyncio.Future] = None
+
+    async def next_chunk(self, timeout: Optional[float] = None) -> Optional[bytes]:
+        """Return the next chunk, or None if `timeout` passes first.
+
+        A timed-out read keeps running and is picked up by the next call.
+        Raises StopAsyncIteration at end of body.
+        """
+        if self._pending is None:
+            if timeout is None:
+                return await self._chunks.__anext__()
+            self._pending = asyncio.ensure_future(self._chunks.__anext__())
+        if timeout is not None:
+            done, _ = await asyncio.wait({self._pending}, timeout=max(0.0, timeout))
+            if not done:
+                return None
+        pending, self._pending = self._pending, None
+        return await pending
+
+    def cancel(self) -> None:
+        if self._pending is not None:
+            self._pending.cancel()
+            self._pending = None
+
+
+class _ResponsesStreamPrefetch:
+    def __init__(self) -> None:
+        self.events: List[bytes] = []
+        self.buffer = b""
+        # Empty when the stream reached output (or the window ran out) and can
+        # be handed to the client; otherwise why it failed before any output.
+        self.failure_code = ""
+        self.error: Any = None
+        self.retryable = False
+        self.transport_error: Optional[BaseException] = None
+        # The window ran out before any output; the stream is still open.
+        self.timed_out = False
+
+
+def _classify_responses_stream_event(event_raw: bytes) -> Tuple[str, Any]:
+    """Return ("hold" | "output" | "failed", error) for one raw SSE event."""
+    for line in event_raw.split(b"\n"):
+        if not line.startswith(b"data:"):
+            continue
+        data = line[5:].strip()
+        if not data:
+            continue
+        if data == b"[DONE]":
+            return "output", None
+        try:
+            event = json.loads(data)
+        except ValueError:
+            return "output", None
+        if not isinstance(event, dict):
+            return "output", None
+        event_type = str(event.get("type") or "")
+        if event_type in _RESPONSES_STREAM_PRELUDE_EVENTS:
+            continue
+        error = event.get("error")
+        if event_type == "response.failed":
+            response = event.get("response") if isinstance(event.get("response"), dict) else {}
+            return "failed", response.get("error") or error or {}
+        if event_type == "error" or (not event_type and isinstance(error, dict)):
+            return "failed", error if isinstance(error, dict) else event
+        return "output", None
+    return "hold", None
+
+
+def _responses_stream_outcome(state: Dict[str, Any], usage: Dict[str, Any]) -> str:
+    """How a relayed Responses stream ended, judged from the events seen."""
+    terminal = str(state.get("terminal") or "")
+    if terminal == "response.failed" or (not terminal and state.get("error") is not None):
+        return "failed"
+    if terminal:
+        return terminal.split(".", 1)[1]
+    if state.get("done") or usage.get("input") or usage.get("output"):
+        return "done"
+    return "eof"
+
+
+def _is_retryable_responses_stream_error(error: Any) -> bool:
+    text = _upstream_error_search_text(error).lower()
+    if any(marker in text for marker in _RESPONSES_STREAM_REQUEST_ERROR_MARKERS):
+        return False
+    if _is_upstream_admin_actionable_error(error):
+        return True
+    return any(marker in text for marker in _RESPONSES_STREAM_CHANNEL_ERROR_MARKERS)
+
+
+async def _prefetch_responses_stream(
+    reader: _UpstreamChunkReader,
+    *,
+    window_seconds: float,
+    prefetch: Optional[_ResponsesStreamPrefetch] = None,
+) -> _ResponsesStreamPrefetch:
+    """Hold back a Responses SSE stream until its first output event.
+
+    Nothing has reached the client yet, so a `response.failed`/`error` event,
+    an early end of stream or a read error can still move to another channel.
+    After `window_seconds` the stream is handed over as is. Pass a timed-out
+    `prefetch` to keep holding the same stream.
+    """
+    prefetch = prefetch or _ResponsesStreamPrefetch()
+    prefetch.timed_out = False
+    deadline = time.monotonic() + window_seconds
+    while True:
+        try:
+            chunk = await reader.next_chunk(timeout=deadline - time.monotonic())
+        except StopAsyncIteration:
+            kind, error = _classify_responses_stream_event(prefetch.buffer)
+            if kind == "failed":
+                prefetch.failure_code = "upstream_stream_failed"
+                prefetch.error = error
+                prefetch.retryable = _is_retryable_responses_stream_error(error)
+            elif kind == "hold":
+                prefetch.failure_code = "upstream_stream_incomplete"
+                prefetch.retryable = True
+            return prefetch
+        except (httpx.TimeoutException, httpx.RequestError) as exc:
+            prefetch.failure_code = _upstream_transport_error_code(exc)
+            prefetch.retryable = True
+            prefetch.transport_error = exc
+            return prefetch
+        if chunk is None:
+            prefetch.timed_out = True
+            return prefetch
+        prefetch.buffer += chunk
+        while b"\n\n" in prefetch.buffer:
+            event_raw, prefetch.buffer = prefetch.buffer.split(b"\n\n", 1)
+            prefetch.events.append(event_raw)
+            kind, error = _classify_responses_stream_event(event_raw)
+            if kind == "hold":
+                continue
+            if kind == "failed":
+                prefetch.failure_code = "upstream_stream_failed"
+                prefetch.error = error
+                prefetch.retryable = _is_retryable_responses_stream_error(error)
+            return prefetch
+
+
+async def _hold_stream_for_first_output(
+    reader: _UpstreamChunkReader,
+    *,
+    window_seconds: float,
+    first_output_deadline: Optional[float],
+    leave_slow_channel: Callable[[], bool],
+) -> Optional[_ResponsesStreamPrefetch]:
+    """Prefetch a stream, giving up on its channel at `first_output_deadline`.
+
+    Returns None when `leave_slow_channel` moved the request elsewhere;
+    otherwise keeps holding for the rest of `window_seconds`.
+    """
+    if first_output_deadline is None:
+        return await _prefetch_responses_stream(reader, window_seconds=window_seconds)
+    started = time.monotonic()
+    prefetch = await _prefetch_responses_stream(reader, window_seconds=first_output_deadline - started)
+    if not prefetch.timed_out:
+        return prefetch
+    if leave_slow_channel():
+        return None
+    rest = window_seconds - (time.monotonic() - started)
+    if rest > 0:
+        prefetch = await _prefetch_responses_stream(reader, window_seconds=rest, prefetch=prefetch)
+    return prefetch
+
+
+async def _iter_prefetched_sse_lines(prefetch: _ResponsesStreamPrefetch, reader: _UpstreamChunkReader):
+    """Yield the SSE text lines of a prefetched stream, then of the rest of it."""
+    for event_raw in prefetch.events:
+        for line in event_raw.decode("utf-8", errors="replace").split("\n"):
+            yield line.rstrip("\r")
+        yield ""
+    buf = prefetch.buffer
+    while True:
+        while b"\n" in buf:
+            line, buf = buf.split(b"\n", 1)
+            yield line.decode("utf-8", errors="replace").rstrip("\r")
+        try:
+            chunk = await reader.next_chunk()
+        except StopAsyncIteration:
+            break
+        buf += chunk
+    if buf:
+        yield buf.decode("utf-8", errors="replace").rstrip("\r")
+
+
+async def _wait_for_stream_send(task: asyncio.Future, timeout: float) -> Optional[httpx.Response]:
+    """Upstream response once its headers arrive; None if `timeout` passes first.
+
+    The request keeps running after a timeout. Raises what the send raised.
+    """
+    done, _ = await asyncio.wait({task}, timeout=max(0.0, timeout))
+    return task.result() if done else None
+
+
+async def _discard_stream_send(task: asyncio.Future) -> None:
+    task.cancel()
+    await asyncio.wait({task})
+    if not task.cancelled() and task.exception() is None:
+        await task.result().aclose()
+
+
+_first_output_timeout_overrides_cache: Tuple[str, Dict[str, float]] = ("", {})
+
+
+def _first_output_timeout_overrides() -> Dict[str, float]:
+    global _first_output_timeout_overrides_cache
+    raw = str(settings.upstream_first_output_timeouts or "").strip()
+    if raw == _first_output_timeout_overrides_cache[0]:
+        return _first_output_timeout_overrides_cache[1]
+    overrides: Dict[str, float] = {}
+    try:
+        parsed = json.loads(raw) if raw else {}
+        if isinstance(parsed, dict):
+            overrides = {str(model).strip(): max(0.0, float(seconds)) for model, seconds in parsed.items()}
+    except (TypeError, ValueError):
+        logger.warning("ignoring invalid upstream_first_output_timeouts: %s", raw[:200])
+    _first_output_timeout_overrides_cache = (raw, overrides)
+    return overrides
+
+
+def _first_output_timeout_seconds(public_model, reasoning_effort: Any = "") -> float:
+    """How long an upstream may take to its first output before another
+    channel is tried; 0 waits for as long as the stream read timeout allows."""
+    public_id = str(getattr(public_model, "public_id", "") or "").strip()
+    overrides = _first_output_timeout_overrides()
+    seconds = overrides.get(public_id, float(settings.upstream_first_output_timeout_seconds or 0))
+    high_effort_seconds = float(settings.upstream_high_effort_first_output_timeout_seconds or 0)
+    if seconds > 0 and high_effort_seconds > 0 and str(reasoning_effort or "").strip().lower() in {"high", "xhigh"}:
+        seconds = max(seconds, high_effort_seconds)
+    return max(0.0, seconds)
+
+
+def _upstream_error_object(body: bytes) -> Any:
+    """The `error` object of an upstream JSON error body, if there is one."""
+    try:
+        data = json.loads(body.decode("utf-8")) if body else None
+    except (UnicodeDecodeError, ValueError):
+        return None
+    if isinstance(data, dict) and isinstance(data.get("error"), dict):
+        return data["error"]
+    return data
+
+
+def _rate_limit_cooldown_seconds(headers: Any = None, error: Any = None) -> Optional[float]:
+    """Cooldown a rate-limited channel asked for (Retry-After or a reset in the
+    error body), capped at 10 minutes; None when it did not say."""
+    seconds: Optional[float] = None
+    retry_after = str((headers or {}).get("retry-after") or "").strip()
+    if retry_after:
+        try:
+            seconds = float(retry_after)
+        except ValueError:
+            try:
+                seconds = parsedate_to_datetime(retry_after).timestamp() - time.time()
+            except (TypeError, ValueError):
+                seconds = None
+    if seconds is None and isinstance(error, dict):
+        if error.get("resets_in_seconds") is not None:
+            seconds = _safe_int(error.get("resets_in_seconds"), 0) or None
+        elif error.get("resets_at") is not None:
+            seconds = _safe_int(error.get("resets_at"), 0) - time.time()
+    if seconds is None or seconds <= 0:
+        return None
+    return min(float(seconds), 600.0)
+
+
+def _is_invalid_encrypted_content_error(value: Any) -> bool:
+    text = _upstream_error_search_text(value)
+    return "invalid_encrypted_content" in text or (
+        "encrypted content" in text and "could not be verified" in text
+    )
+
+
+def _drop_encrypted_reasoning_items(payload: Dict[str, Any]) -> bool:
+    """Remove input items carrying another account's encrypted state.
+
+    Reasoning and compaction items are encrypted by whichever upstream account
+    produced them; after a channel switch the new one rejects them with
+    invalid_encrypted_content. Returns whether anything was removed.
+    """
+    items = payload.get("input")
+    if not isinstance(items, list):
+        return False
+    kept = [
+        item for item in items
+        if not (
+            isinstance(item, dict)
+            and item.get("type") in {"reasoning", "compaction", "compaction_summary"}
+            and item.get("encrypted_content")
+        )
+    ]
+    if len(kept) == len(items):
+        return False
+    payload["input"] = kept
+    return True
+
+
 class KeyCache:
     INVALIDATION_KIND = "api_key"
 
@@ -1680,12 +2034,47 @@ def _record_channel_success(cfg, *, duration_ms: int = 0) -> None:
     channel_router.record_success(getattr(cfg, "channel_id", ""), latency_ms=duration_ms)
 
 
-def _record_channel_failure(cfg, *, status_code: int | None = None, error_code: str = "") -> None:
+def _record_channel_failure(
+    cfg,
+    *,
+    status_code: int | None = None,
+    error_code: str = "",
+    cooldown_seconds: float | None = None,
+) -> None:
     channel_id = getattr(cfg, "channel_id", "")
     if not channel_id:
         return
     if status_code is None or should_record_channel_failure(int(status_code or 0)):
-        channel_router.record_failure(channel_id, error_code=error_code or str(status_code or "request_error"))
+        channel_router.record_failure(
+            channel_id,
+            error_code=error_code or str(status_code or "request_error"),
+            cooldown_seconds=cooldown_seconds,
+        )
+
+
+def _record_responses_stream_outcome(cfg, outcome: str, error: Any, duration_ms: int) -> None:
+    """Count how a relayed stream ended against its channel.
+
+    `outcome` is from _responses_stream_outcome, a transport error code, or
+    "client_closed". Only failures that are the channel's fault count.
+    """
+    channel_id = getattr(cfg, "channel_id", "")
+    if outcome in {"completed", "incomplete", "cancelled", "done"}:
+        _record_channel_success(cfg, duration_ms=duration_ms)
+        return
+    if outcome == "client_closed" or (outcome == "failed" and not _is_retryable_responses_stream_error(error)):
+        logger.info("stream from %s ended: %s after %d ms", channel_id, outcome, duration_ms)
+        return
+    error_code = {
+        "failed": "upstream_stream_failed",
+        "eof": "upstream_stream_incomplete",
+    }.get(outcome, outcome)
+    _record_channel_failure(
+        cfg,
+        error_code=error_code,
+        cooldown_seconds=_rate_limit_cooldown_seconds(error=error) if outcome == "failed" else None,
+    )
+    logger.warning("stream from %s ended without completing: %s after %d ms", channel_id, error_code, duration_ms)
 
 
 def _sanitize_upstream_error_text(value: str, *, max_length: int = 500) -> str:
@@ -3203,17 +3592,75 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
     _STRIP_PARAMS = ("temperature", "top_p", "presence_penalty", "frequency_penalty",
                      "max_output_tokens", "n", "logprobs", "top_logprobs", "seed")
 
-    if base_payload.get("stream"):
-        model_registry.ensure_initialized()
-        fallback_cfg = model_registry.models.get("fallback") or model_registry.get("premium")
-        cheap_cfg = model_registry.models.get("cheap")
-        allow_fallback = public_model.routing_mode == "legacy_auto"
-        is_cheap = bool(allow_fallback and cheap_cfg and used_cfg.model_id == cheap_cfg.model_id)
-        can_fallback = allow_fallback and (
-            (used_cfg.upstream_url != fallback_cfg.upstream_url) or (used_cfg.model_id != fallback_cfg.model_id)
-        )
-        if resolved_model.lock_model_selection and fallback_cfg.model_id != used_cfg.model_id:
+    model_registry.ensure_initialized()
+    fallback_cfg = model_registry.models.get("fallback") or model_registry.get("premium")
+    cheap_cfg = model_registry.models.get("cheap")
+    allow_fallback = public_model.routing_mode == "legacy_auto"
+    is_cheap = bool(allow_fallback and cheap_cfg and used_cfg.model_id == cheap_cfg.model_id)
+    can_fallback = allow_fallback and (
+        (used_cfg.upstream_url != fallback_cfg.upstream_url) or (used_cfg.model_id != fallback_cfg.model_id)
+    )
+    if resolved_model.lock_model_selection and fallback_cfg.model_id != used_cfg.model_id:
+        can_fallback = False
+
+    def _mark_system_fallback_terminal() -> None:
+        nonlocal can_fallback, is_cheap
+        if str(getattr(used_cfg, "channel_id", "") or "").startswith("system:"):
             can_fallback = False
+            is_cheap = False
+
+    def _record_current_failure(
+        *,
+        status_code: int | None = None,
+        error_code: str = "",
+        cooldown_seconds: float | None = None,
+    ) -> None:
+        if status_code in {401, 403}:
+            _record_channel_failure(used_cfg, error_code=str(status_code))
+        elif status_code is not None:
+            _record_channel_failure(used_cfg, status_code=status_code, cooldown_seconds=cooldown_seconds)
+        else:
+            _record_channel_failure(used_cfg, error_code=error_code)
+
+    def _select_provider_or_system_fallback(
+        reason: str,
+        *,
+        status_code: int | None = None,
+        error_code: str = "",
+    ):
+        channel_id = str(getattr(used_cfg, "channel_id", "") or "")
+        upstream_auth_failure = bool(channel_id and not channel_id.startswith("system:") and status_code in {401, 403})
+        if not upstream_auth_failure and not _should_try_channel_fallback(used_cfg, status_code=status_code, error_code=error_code):
+            return None, ""
+        return _next_provider_or_system_fallback_config(
+            public_model,
+            used_cfg,
+            "responses",
+            messages_for_route,
+            tools_for_route,
+            lock_model_selection=resolved_model.lock_model_selection,
+            reason=reason,
+            channel_affinity_key=channel_affinity_key,
+        )
+
+    def _notify_responses_fallback_exhausted(
+        *,
+        status_code: int,
+        reason: str,
+        upstream_request_id: str = "",
+    ) -> None:
+        if getattr(used_cfg, "channel_id", "") or getattr(used_cfg, "fallback_from_channel_id", ""):
+            _notify_fallback_exhausted(
+                endpoint="responses",
+                model=display_model,
+                status_code=status_code,
+                reason=reason,
+                cfg=used_cfg,
+                route_reason=used_route_reason,
+                upstream_request_id=upstream_request_id,
+            )
+
+    if base_payload.get("stream"):
         stream_client = await get_stream_client()
 
         async def _send_stream(cfg, *, is_fallback=False):
@@ -3271,227 +3718,147 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 pass
             return body
 
-        async def _retry_stream_with_cfg(next_cfg, route_reason: str, failure_reason: str):
-            nonlocal can_fallback, is_cheap, used_cfg, used_route_reason
-            used_cfg = next_cfg
-            used_route_reason = route_reason
-            if str(getattr(used_cfg, "channel_id", "") or "").startswith("system:"):
-                can_fallback = False
-                is_cheap = False
+        def _advance_stream_fallback(
+            reason: str,
+            *,
+            status_code: int | None = None,
+            error_code: str = "",
+            legacy_suffix: str = "",
+        ) -> bool:
+            """Switch used_cfg to the next channel; False when none is left."""
+            nonlocal used_cfg, used_route_reason, can_fallback, is_cheap
+            route_fallback_cfg, route_fallback_reason = _select_provider_or_system_fallback(
+                reason,
+                status_code=status_code,
+                error_code=error_code,
+            )
+            if route_fallback_cfg is not None:
+                used_cfg = route_fallback_cfg
+                used_route_reason = route_fallback_reason
+                _mark_system_fallback_terminal()
+                return True
+            if not (can_fallback and legacy_suffix):
+                return False
+            _fb = "cheap" if is_cheap else "premium"
+            used_cfg = _channel_fallback_config(used_cfg, fallback_cfg)
+            used_route_reason = f"{_fb}_fallback_{legacy_suffix}"
+            can_fallback = False
+            is_cheap = False
+            return True
+
+        failover_window = max(0.0, float(settings.responses_stream_failover_window_seconds or 0))
+        _reasoning = base_payload.get("reasoning") if isinstance(base_payload.get("reasoning"), dict) else {}
+        first_output_timeout = _first_output_timeout_seconds(public_model, _reasoning.get("effort"))
+        first_output_switched = False
+        encrypted_retry_used = False
+        non_sse_fallback_used = False
+
+        def _leave_slow_channel(failed_cfg) -> bool:
+            """Give up on a channel with no output yet; at most once per request."""
+            nonlocal first_output_switched
+            if not _advance_stream_fallback(
+                "upstream_first_output_timeout",
+                error_code="upstream_first_output_timeout",
+                legacy_suffix="first_output_timeout",
+            ):
+                return False
+            first_output_switched = True
+            _record_channel_failure(failed_cfg, error_code="upstream_first_output_timeout")
+            logger.warning("provider channel stream %s produced no output in %.0fs; falling back",
+                           getattr(failed_cfg, "channel_id", ""), first_output_timeout)
+            return True
+
+        def _retry_without_foreign_reasoning(error: Any) -> bool:
+            """Retry once without encrypted items another channel produced."""
+            nonlocal encrypted_retry_used
+            if encrypted_retry_used or not _is_invalid_encrypted_content_error(error):
+                return False
+            if not _drop_encrypted_reasoning_items(base_payload):
+                return False
+            encrypted_retry_used = True
+            logger.warning("provider channel stream %s rejected encrypted reasoning; retrying without it",
+                           getattr(used_cfg, "channel_id", ""))
+            return True
+
+        attempt = 0
+        while True:
+            attempt += 1
+            first_output_deadline = None
+            if first_output_timeout > 0 and not first_output_switched:
+                first_output_deadline = time.monotonic() + first_output_timeout
+            send_task = asyncio.ensure_future(_send_stream(used_cfg, is_fallback=attempt > 1))
             try:
-                return await _send_stream(used_cfg, is_fallback=True)
+                upstream = None
+                if first_output_deadline is not None:
+                    upstream = await _wait_for_stream_send(send_task, first_output_deadline - time.monotonic())
+                    if upstream is None and _leave_slow_channel(used_cfg):
+                        await _discard_stream_send(send_task)
+                        continue
+                if upstream is None:
+                    upstream = await send_task
             except (httpx.TimeoutException, httpx.RequestError) as exc:
                 error_code = _record_upstream_transport_failure(used_cfg, exc)
                 if _is_local_pool_timeout(exc):
-                    raise
-                system_fallback_cfg = _system_fallback_config(
-                    public_model,
-                    used_cfg,
-                    "responses",
-                    messages_for_route,
-                    tools_for_route,
-                    lock_model_selection=resolved_model.lock_model_selection,
-                    reason=error_code,
-                )
-                if system_fallback_cfg is None:
-                    raise
-                used_cfg = system_fallback_cfg
-                used_route_reason = _system_fallback_route_reason(error_code)
-                can_fallback = False
-                is_cheap = False
-                return await _send_stream(used_cfg, is_fallback=True)
-
-        async def _provider_or_system_stream_fallback(failure_reason: str):
-            route_fallback_cfg, route_fallback_reason = _next_provider_or_system_fallback_config(
-                public_model,
-                used_cfg,
-                "responses",
-                messages_for_route,
-                tools_for_route,
-                lock_model_selection=resolved_model.lock_model_selection,
-                reason=failure_reason,
-                channel_affinity_key=channel_affinity_key,
-            )
-            if route_fallback_cfg is None:
-                return None
-            return await _retry_stream_with_cfg(route_fallback_cfg, route_fallback_reason, failure_reason)
-
-        try:
-            upstream = await _send_stream(used_cfg)
-        except (httpx.TimeoutException, httpx.RequestError) as exc:
-            error_code = _record_upstream_transport_failure(used_cfg, exc)
-            if _is_local_pool_timeout(exc):
-                return JSONResponse(
-                    content={"error": {"message": "Upstream request capacity exhausted", "type": "server_error", "code": error_code}},
-                    status_code=503,
-                )
-            if cpa_channel is not None:
-                gemini_cpa.record_failure(cpa_channel)
-            if _should_try_channel_fallback(used_cfg, error_code=error_code):
-                try:
-                    fallback_upstream = await _provider_or_system_stream_fallback(error_code)
-                except (httpx.TimeoutException, httpx.RequestError) as fallback_exc:
-                    if _is_local_pool_timeout(fallback_exc):
-                        return _upstream_transport_error_response(fallback_exc)
-                    fallback_upstream = None
-                if fallback_upstream is not None:
-                    upstream = fallback_upstream
-                else:
-                    logger.error("upstream stream connect error: %s", exc)
                     return JSONResponse(
-                        content={"error": {"message": "Upstream request failed", "type": "server_error", "code": error_code}},
-                        status_code=502,
+                        content={"error": {"message": "Upstream request capacity exhausted", "type": "server_error", "code": error_code}},
+                        status_code=503,
                     )
-            elif can_fallback:
-                _fb = "cheap" if is_cheap else "premium"
-                logger.warning("primary %s failed (%s: %s), falling back", _fb, type(exc).__name__, exc)
-                used_cfg = _channel_fallback_config(used_cfg, fallback_cfg)
-                used_route_reason = f"{_fb}_fallback_timeout"
-                can_fallback = False
-                is_cheap = False
-                try:
-                    upstream = await _send_stream(used_cfg, is_fallback=True)
-                except (httpx.TimeoutException, httpx.RequestError) as fallback_exc:
-                    _record_upstream_transport_failure(used_cfg, fallback_exc)
-                    return _upstream_transport_error_response(fallback_exc)
-            else:
+                if cpa_channel is not None:
+                    gemini_cpa.record_failure(cpa_channel)
+                failed_channel_id = getattr(used_cfg, "channel_id", "")
+                if _advance_stream_fallback(error_code, error_code=error_code, legacy_suffix="timeout"):
+                    logger.warning("upstream stream %s connect error (%s: %s), falling back",
+                                   failed_channel_id, type(exc).__name__, exc)
+                    continue
                 logger.error("upstream stream connect error: %s", exc)
                 return JSONResponse(
                     content={"error": {"message": "Upstream request failed", "type": "server_error", "code": error_code}},
                     status_code=502,
                 )
 
-        if (
-            upstream.status_code >= 400
-            and _should_try_channel_fallback(used_cfg, status_code=upstream.status_code)
-        ):
-            _code = upstream.status_code
-            route_fallback_cfg, route_fallback_reason = _next_provider_or_system_fallback_config(
-                public_model,
-                used_cfg,
-                "responses",
-                messages_for_route,
-                tools_for_route,
-                lock_model_selection=resolved_model.lock_model_selection,
-                reason=str(_code),
-                channel_affinity_key=channel_affinity_key,
-            )
-            if route_fallback_cfg is not None:
-                _err_body = await _close_stream_for_retry(upstream)
-                logger.warning("provider channel stream %s returned %s: %s; falling back",
-                               used_cfg.channel_id, _code, _err_body[:500])
-                _record_channel_failure(used_cfg, status_code=_code)
-                try:
-                    upstream = await _retry_stream_with_cfg(route_fallback_cfg, route_fallback_reason, str(_code))
-                except (httpx.TimeoutException, httpx.RequestError) as fallback_exc:
-                    return _upstream_transport_error_response(fallback_exc)
+            stream_t0 = time.monotonic()
+            if cpa_channel is not None:
+                if upstream.status_code < 400:
+                    gemini_cpa.record_success(cpa_channel)
+                elif gemini_cpa.should_record_failure(upstream.status_code):
+                    gemini_cpa.record_failure(cpa_channel)
 
-        if (
-            upstream.status_code >= 400
-            and _should_try_channel_fallback(used_cfg, status_code=upstream.status_code)
-        ):
-            _code = upstream.status_code
-            system_fallback_cfg = _system_fallback_config(
-                public_model,
-                used_cfg,
-                "responses",
-                messages_for_route,
-                tools_for_route,
-                lock_model_selection=resolved_model.lock_model_selection,
-                reason=str(_code),
-            )
-            if system_fallback_cfg is not None:
-                _err_body = await _close_stream_for_retry(upstream)
-                logger.warning("provider channel stream %s returned %s: %s; falling back to system",
-                               used_cfg.channel_id, _code, _err_body[:500])
-                _record_channel_failure(used_cfg, status_code=_code)
-                try:
-                    upstream = await _retry_stream_with_cfg(
-                        system_fallback_cfg,
-                        _system_fallback_route_reason(str(_code)),
-                        str(_code),
-                    )
-                except (httpx.TimeoutException, httpx.RequestError) as fallback_exc:
-                    return _upstream_transport_error_response(fallback_exc)
+            status_code = upstream.status_code
+            content_type = upstream.headers.get("content-type", "")
+            if status_code >= 400:
+                error_body = b"" if "text/event-stream" in content_type else await upstream.aread()
+                if status_code == 400 and _retry_without_foreign_reasoning(error_body.decode("utf-8", errors="replace")):
+                    await upstream.aclose()
+                    continue
+                cooldown = None
+                if status_code == 429:
+                    cooldown = _rate_limit_cooldown_seconds(upstream.headers, _upstream_error_object(error_body))
+                _record_current_failure(status_code=status_code, cooldown_seconds=cooldown)
+                failed_channel_id = getattr(used_cfg, "channel_id", "")
+                legacy_suffix = str(status_code) if (
+                    not failed_channel_id or should_record_channel_failure(status_code)
+                ) else ""
+                if _advance_stream_fallback(str(status_code), status_code=status_code, legacy_suffix=legacy_suffix):
+                    _err_body = await _close_stream_for_retry(upstream)
+                    logger.warning("provider channel stream %s returned %s: %s; falling back",
+                                   failed_channel_id, status_code, _err_body[:500])
+                    continue
 
-        if (
-            can_fallback
-            and upstream.status_code >= 400
-            and (
-                not getattr(used_cfg, "channel_id", "")
-                or should_record_channel_failure(upstream.status_code)
-            )
-        ):
-            _fb = "cheap" if is_cheap else "premium"
-            _code = upstream.status_code
-            try:
-                _err_body = await _close_stream_for_retry(upstream)
-            except Exception:
-                _err_body = b""
-            logger.warning("primary %s returned %s: %s — falling back", _fb, _code, _err_body[:500])
-            _record_channel_failure(used_cfg, status_code=_code)
-            used_cfg = _channel_fallback_config(used_cfg, fallback_cfg)
-            used_route_reason = f"{_fb}_fallback_{_code}"
-            can_fallback = False
-            is_cheap = False
-            try:
-                upstream = await _send_stream(used_cfg, is_fallback=True)
-            except (httpx.TimeoutException, httpx.RequestError) as fallback_exc:
-                _record_upstream_transport_failure(used_cfg, fallback_exc)
-                return _upstream_transport_error_response(fallback_exc)
+            if "text/event-stream" not in content_type and not non_sse_fallback_used:
+                # One more channel for a non-stream answer; other 4xx are often
+                # a channel missing the model rather than a bad request.
+                non_sse_fallback_used = True
+                if status_code < 400:
+                    _record_current_failure(error_code="upstream_unexpected_content_type")
+                if _advance_stream_fallback(
+                    "upstream_unexpected_content_type",
+                    error_code="upstream_unexpected_content_type",
+                    legacy_suffix="unexpected",
+                ):
+                    await _close_stream_for_retry(upstream)
+                    continue
 
-        if cpa_channel is not None:
-            if upstream.status_code < 400:
-                gemini_cpa.record_success(cpa_channel)
-            elif gemini_cpa.should_record_failure(upstream.status_code):
-                gemini_cpa.record_failure(cpa_channel)
-        if upstream.status_code >= 400:
-            _record_channel_failure(used_cfg, status_code=upstream.status_code)
-
-        content_type = upstream.headers.get("content-type", "")
-        upstream_request_id = extract_upstream_request_id(upstream.headers)
-        if "text/event-stream" not in content_type:
-            route_fallback_cfg = None
-            route_fallback_reason = ""
-            if _should_try_channel_fallback(used_cfg, error_code="upstream_unexpected_content_type"):
-                route_fallback_cfg, route_fallback_reason = _next_provider_or_system_fallback_config(
-                    public_model,
-                    used_cfg,
-                    "responses",
-                    messages_for_route,
-                    tools_for_route,
-                    lock_model_selection=resolved_model.lock_model_selection,
-                    reason="upstream_unexpected_content_type",
-                    channel_affinity_key=channel_affinity_key,
-                )
-            if route_fallback_cfg is not None:
-                await _close_stream_for_retry(upstream)
-                _record_channel_failure(used_cfg, error_code="upstream_unexpected_content_type")
-                try:
-                    upstream = await _retry_stream_with_cfg(
-                        route_fallback_cfg,
-                        route_fallback_reason,
-                        "upstream_unexpected_content_type",
-                    )
-                except (httpx.TimeoutException, httpx.RequestError) as fallback_exc:
-                    return _upstream_transport_error_response(fallback_exc)
-                content_type = upstream.headers.get("content-type", "")
-                upstream_request_id = extract_upstream_request_id(upstream.headers)
-            elif can_fallback:
-                await _close_stream_for_retry(upstream)
-                _fb = "cheap" if is_cheap else "premium"
-                _record_channel_failure(used_cfg, error_code="upstream_unexpected_content_type")
-                used_cfg = _channel_fallback_config(used_cfg, fallback_cfg)
-                used_route_reason = f"{_fb}_fallback_unexpected"
-                can_fallback = False
-                is_cheap = False
-                try:
-                    upstream = await _send_stream(used_cfg, is_fallback=True)
-                except (httpx.TimeoutException, httpx.RequestError) as fallback_exc:
-                    _record_upstream_transport_failure(used_cfg, fallback_exc)
-                    return _upstream_transport_error_response(fallback_exc)
-                content_type = upstream.headers.get("content-type", "")
-                upstream_request_id = extract_upstream_request_id(upstream.headers)
+            upstream_request_id = extract_upstream_request_id(upstream.headers)
             if "text/event-stream" not in content_type:
                 try:
                     body = await upstream.aread()
@@ -3501,7 +3868,6 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 response_headers.pop("content-length", None)
                 if upstream.status_code >= 400:
                     logger.error("upstream error %s: %s", upstream.status_code, body[:500])
-                    _record_channel_failure(used_cfg, status_code=upstream.status_code)
                 if "application/json" in content_type:
                     try:
                         data = json.loads(body.decode("utf-8"))
@@ -3524,7 +3890,58 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                     body = _sanitize_upstream_error_text(body.decode("utf-8", errors="replace")).encode("utf-8")
                 return Response(content=body, status_code=upstream.status_code, headers=response_headers, media_type=content_type)
 
-        stream_t0 = time.monotonic()
+            reader = _UpstreamChunkReader(upstream)
+            if status_code >= 400 or (failover_window <= 0 and first_output_deadline is None):
+                prefetch = _ResponsesStreamPrefetch()
+                break
+            prefetch = await _hold_stream_for_first_output(
+                reader,
+                window_seconds=failover_window,
+                first_output_deadline=first_output_deadline,
+                leave_slow_channel=lambda: _leave_slow_channel(used_cfg),
+            )
+            if prefetch is None:
+                reader.cancel()
+                await upstream.aclose()
+                continue
+            if prefetch.timed_out or not prefetch.failure_code:
+                break
+            if _retry_without_foreign_reasoning(prefetch.error):
+                reader.cancel()
+                await upstream.aclose()
+                continue
+            failed_cfg = used_cfg
+            if prefetch.retryable and _advance_stream_fallback(
+                prefetch.failure_code,
+                error_code=prefetch.failure_code,
+                legacy_suffix="stream",
+            ):
+                reader.cancel()
+                await upstream.aclose()
+                _record_channel_failure(
+                    failed_cfg,
+                    error_code=prefetch.failure_code,
+                    cooldown_seconds=_rate_limit_cooldown_seconds(error=prefetch.error),
+                )
+                if cpa_channel is not None:
+                    gemini_cpa.record_failure(cpa_channel)
+                logger.warning("provider channel stream %s failed before output (%s): %s; falling back",
+                               getattr(failed_cfg, "channel_id", ""), prefetch.failure_code,
+                               _sanitize_upstream_error_text(_upstream_error_search_text(
+                                   prefetch.error if prefetch.error is not None else str(prefetch.transport_error or ""))))
+                continue
+            if prefetch.transport_error is not None:
+                reader.cancel()
+                await upstream.aclose()
+                _record_channel_failure(used_cfg, error_code=prefetch.failure_code)
+                logger.error("upstream stream read error before output: %s", prefetch.transport_error)
+                return JSONResponse(
+                    content={"error": {"message": "Upstream request failed", "type": "server_error", "code": prefetch.failure_code}},
+                    status_code=502,
+                )
+            # Nowhere left to go: hand the failed stream to the client as is.
+            break
+
         _stream_usage = {
             "input": 0,
             "output": 0,
@@ -3532,75 +3949,108 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             "cache_creation": 0,
             "server_side_tools": {},
         }
+        _stream_state: Dict[str, Any] = {
+            "response_id": None,
+            "output": None,
+            "terminal": "",
+            "error": None,
+            "done": False,
+        }
 
         _model_mask = None
         if used_cfg.model_id != display_model:
             _model_mask = (used_cfg.model_id.encode(), display_model.encode())
 
+        def _rewrite_stream_event(event_raw: bytes) -> bytes:
+            outbound_lines = []
+            for line in event_raw.split(b"\n"):
+                if line.startswith(b"data: "):
+                    payload_str = line[6:].strip()
+                    if payload_str == b"[DONE]":
+                        _stream_state["done"] = True
+                        outbound_lines.append(line)
+                        continue
+                    try:
+                        evt = json.loads(payload_str)
+                        if isinstance(evt, dict):
+                            if "model" in evt:
+                                evt["model"] = display_model
+                            response_evt = evt.get("response")
+                            if isinstance(response_evt, dict) and "model" in response_evt:
+                                response_evt["model"] = display_model
+                        usage = evt.get("usage") or (evt.get("response") or {}).get("usage")
+                        if usage:
+                            _stream_usage["input"] = extract_total_input_tokens(usage)
+                            _stream_usage["output"] = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
+                            _stream_usage["cache_read"] = extract_cache_read_tokens(usage)
+                            _stream_usage["cache_creation"] = extract_cache_creation_tokens(usage)
+                            _stream_usage["server_side_tools"] = extract_server_side_tool_usage_details(usage)
+                        _etype = evt.get("type", "")
+                        if _etype in _RESPONSES_STREAM_TERMINAL_EVENTS:
+                            _stream_state["terminal"] = _etype
+                        if _etype == "response.failed":
+                            _r = evt.get("response") if isinstance(evt.get("response"), dict) else {}
+                            _stream_state["error"] = _r.get("error") or evt.get("error") or {}
+                        elif _etype == "error" or (not _etype and isinstance(evt.get("error"), dict)):
+                            _stream_state["error"] = evt["error"] if isinstance(evt.get("error"), dict) else evt
+                        if _etype == "response.completed":
+                            _r = evt.get("response") or evt
+                            _stream_state["response_id"] = _r.get("id")
+                            _stream_state["output"] = _r.get("output", [])
+                        elif not _stream_state["response_id"] and _etype == "response.created":
+                            _r = evt.get("response") or evt
+                            _rid = _r.get("id", "")
+                            if isinstance(_rid, str) and _rid:
+                                _stream_state["response_id"] = _rid
+                        line = b"data: " + json.dumps(
+                            evt,
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        ).encode("utf-8")
+                    except (json.JSONDecodeError, ValueError):
+                        if _model_mask:
+                            line = line.replace(_model_mask[0], _model_mask[1])
+                elif _model_mask:
+                    line = line.replace(_model_mask[0], _model_mask[1])
+                outbound_lines.append(line)
+            return b"\n".join(outbound_lines) + b"\n\n"
+
         async def iter_bytes():
-            buf = b""
-            _resp_id_cap = None
-            _resp_out_cap = None
+            buf = prefetch.buffer
+            outcome = "client_closed"
             try:
-                async for chunk in upstream.aiter_bytes():
+                for event_raw in prefetch.events:
+                    yield _rewrite_stream_event(event_raw)
+                while True:
+                    try:
+                        chunk = await reader.next_chunk()
+                    except StopAsyncIteration:
+                        break
                     buf += chunk
                     while b"\n\n" in buf:
                         event_raw, buf = buf.split(b"\n\n", 1)
-                        outbound_lines = []
-                        for line in event_raw.split(b"\n"):
-                            if line.startswith(b"data: "):
-                                payload_str = line[6:].strip()
-                                if payload_str == b"[DONE]":
-                                    outbound_lines.append(line)
-                                    continue
-                                try:
-                                    evt = json.loads(payload_str)
-                                    if isinstance(evt, dict):
-                                        if "model" in evt:
-                                            evt["model"] = display_model
-                                        response_evt = evt.get("response")
-                                        if isinstance(response_evt, dict) and "model" in response_evt:
-                                            response_evt["model"] = display_model
-                                    usage = evt.get("usage") or (evt.get("response") or {}).get("usage")
-                                    if usage:
-                                        _stream_usage["input"] = extract_total_input_tokens(usage)
-                                        _stream_usage["output"] = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
-                                        _stream_usage["cache_read"] = extract_cache_read_tokens(usage)
-                                        _stream_usage["cache_creation"] = extract_cache_creation_tokens(usage)
-                                        _stream_usage["server_side_tools"] = extract_server_side_tool_usage_details(usage)
-                                    _etype = evt.get("type", "")
-                                    if _etype == "response.completed":
-                                        _r = evt.get("response") or evt
-                                        _resp_id_cap = _r.get("id")
-                                        _resp_out_cap = _r.get("output", [])
-                                    elif not _resp_id_cap and _etype == "response.created":
-                                        _r = evt.get("response") or evt
-                                        _rid = _r.get("id", "")
-                                        if isinstance(_rid, str) and _rid:
-                                            _resp_id_cap = _rid
-                                    line = b"data: " + json.dumps(
-                                        evt,
-                                        ensure_ascii=False,
-                                        separators=(",", ":"),
-                                    ).encode("utf-8")
-                                except (json.JSONDecodeError, ValueError):
-                                    if _model_mask:
-                                        line = line.replace(_model_mask[0], _model_mask[1])
-                            elif _model_mask:
-                                line = line.replace(_model_mask[0], _model_mask[1])
-                            outbound_lines.append(line)
-                        yield b"\n".join(outbound_lines) + b"\n\n"
-                if buf:
-                    yield buf.replace(_model_mask[0], _model_mask[1]) if _model_mask else buf
+                        yield _rewrite_stream_event(event_raw)
+                if buf.strip():
+                    yield _rewrite_stream_event(buf.strip(b"\r\n"))
+                outcome = _responses_stream_outcome(_stream_state, _stream_usage)
+            except (httpx.TimeoutException, httpx.RequestError) as exc:
+                outcome = _upstream_transport_error_code(exc)
+                raise
             finally:
+                reader.cancel()
+                dur = int((time.monotonic() - stream_t0) * 1000)
+                # Before any await: after a client disconnect every await in
+                # here is cancelled.
+                if upstream.status_code < 400:
+                    _record_responses_stream_outcome(used_cfg, outcome, _stream_state["error"], dur)
                 await upstream.aclose()
                 if upstream.status_code < 400:
-                    _record_channel_success(used_cfg, duration_ms=int((time.monotonic() - stream_t0) * 1000))
+                    _resp_id_cap = _stream_state["response_id"]
+                    _resp_out_cap = _stream_state["output"]
                     if _resp_id_cap:
                         await _conv_cache.aset(_resp_id_cap, _expanded_input, _resp_out_cap or [], owner=str(user.id))
                         logger.info("polyfill: cached stream resp %s (%d in, %d out)",
                                     _resp_id_cap, len(_expanded_input), len(_resp_out_cap or []))
-                    dur = int((time.monotonic() - stream_t0) * 1000)
                     schedule_usage_add(
                         user.id,
                         api_key_id=api_key_id,
@@ -3633,8 +4083,6 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                             user_cache_read_multiplier_override=user_cache_read_multiplier_override,
                         ),
                     )
-                else:
-                    _record_channel_failure(used_cfg, status_code=upstream.status_code)
 
         stream_headers = filter_headers(dict(upstream.headers))
         stream_headers.pop("content-length", None)
@@ -3647,16 +4095,6 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             media_type=upstream.headers.get("content-type"),
         )
 
-    model_registry.ensure_initialized()
-    fallback_cfg = model_registry.models.get("fallback") or model_registry.get("premium")
-    cheap_cfg = model_registry.models.get("cheap")
-    allow_fallback = public_model.routing_mode == "legacy_auto"
-    is_cheap = bool(allow_fallback and cheap_cfg and used_cfg.model_id == cheap_cfg.model_id)
-    can_fallback = allow_fallback and (
-        (used_cfg.upstream_url != fallback_cfg.upstream_url) or (used_cfg.model_id != fallback_cfg.model_id)
-    )
-    if resolved_model.lock_model_selection and fallback_cfg.model_id != used_cfg.model_id:
-        can_fallback = False
     client = await get_http_client()
 
     async def _post_json(cfg, *, is_fallback=False):
@@ -3707,58 +4145,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         dur = int((time.monotonic() - t0) * 1000)
         return r, dur
 
-    def _mark_system_fallback_terminal() -> None:
-        nonlocal can_fallback, is_cheap
-        if str(getattr(used_cfg, "channel_id", "") or "").startswith("system:"):
-            can_fallback = False
-            is_cheap = False
-
-    def _record_current_failure(*, status_code: int | None = None, error_code: str = "") -> None:
-        if status_code in {401, 403}:
-            _record_channel_failure(used_cfg, error_code=str(status_code))
-        elif status_code is not None:
-            _record_channel_failure(used_cfg, status_code=status_code)
-        else:
-            _record_channel_failure(used_cfg, error_code=error_code)
-
-    def _select_provider_or_system_fallback(
-        reason: str,
-        *,
-        status_code: int | None = None,
-        error_code: str = "",
-    ):
-        channel_id = str(getattr(used_cfg, "channel_id", "") or "")
-        upstream_auth_failure = bool(channel_id and not channel_id.startswith("system:") and status_code in {401, 403})
-        if not upstream_auth_failure and not _should_try_channel_fallback(used_cfg, status_code=status_code, error_code=error_code):
-            return None, ""
-        return _next_provider_or_system_fallback_config(
-            public_model,
-            used_cfg,
-            "responses",
-            messages_for_route,
-            tools_for_route,
-            lock_model_selection=resolved_model.lock_model_selection,
-            reason=reason,
-            channel_affinity_key=channel_affinity_key,
-        )
-
-    def _notify_responses_fallback_exhausted(
-        *,
-        status_code: int,
-        reason: str,
-        upstream_request_id: str = "",
-    ) -> None:
-        if getattr(used_cfg, "channel_id", "") or getattr(used_cfg, "fallback_from_channel_id", ""):
-            _notify_fallback_exhausted(
-                endpoint="responses",
-                model=display_model,
-                status_code=status_code,
-                reason=reason,
-                cfg=used_cfg,
-                route_reason=used_route_reason,
-                upstream_request_id=upstream_request_id,
-            )
-
+    encrypted_retry_used = False
     while True:
         try:
             upstream, duration_ms = await _post_json(used_cfg)
@@ -3805,12 +4192,28 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         upstream_request_id = extract_upstream_request_id(upstream.headers)
 
         if upstream.status_code >= 400:
+            if (
+                upstream.status_code == 400
+                and not encrypted_retry_used
+                and _is_invalid_encrypted_content_error(upstream.text)
+                and _drop_encrypted_reasoning_items(base_payload)
+            ):
+                encrypted_retry_used = True
+                logger.warning("provider channel %s rejected encrypted reasoning; retrying without it",
+                               getattr(used_cfg, "channel_id", ""))
+                continue
+            cooldown = None
+            if upstream.status_code == 429:
+                cooldown = _rate_limit_cooldown_seconds(
+                    upstream.headers,
+                    _upstream_error_object(upstream.text.encode("utf-8")),
+                )
             route_fallback_cfg, route_fallback_reason = _select_provider_or_system_fallback(
                 str(upstream.status_code),
                 status_code=upstream.status_code,
             )
             if route_fallback_cfg is not None:
-                _record_current_failure(status_code=upstream.status_code)
+                _record_current_failure(status_code=upstream.status_code, cooldown_seconds=cooldown)
                 used_cfg = route_fallback_cfg
                 used_route_reason = route_fallback_reason
                 _mark_system_fallback_terminal()
@@ -3820,7 +4223,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 or should_record_channel_failure(upstream.status_code)
             ):
                 _fb = "cheap" if is_cheap else "premium"
-                _record_current_failure(status_code=upstream.status_code)
+                _record_current_failure(status_code=upstream.status_code, cooldown_seconds=cooldown)
                 used_cfg = _channel_fallback_config(used_cfg, fallback_cfg)
                 used_route_reason = f"{_fb}_fallback_{upstream.status_code}"
                 can_fallback = False

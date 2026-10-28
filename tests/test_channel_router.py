@@ -1,4 +1,5 @@
 import json
+import time
 import unittest
 from types import SimpleNamespace
 
@@ -224,6 +225,36 @@ class ChannelRouterTests(unittest.TestCase):
         choice = router.select_for_model(self._public(), self._backend(), "responses")
 
         self.assertEqual(choice.channel_id, "ch_backup")
+
+    def test_requested_cooldown_lengthens_cooldown_but_keeps_allowed_fails(self) -> None:
+        router = ChannelRouter()
+        router.set_snapshot(
+            [
+                ProviderChannelSnapshot(
+                    channel_id="ch_primary",
+                    base_url="https://primary.example",
+                    api_key="primary",
+                    allowed_fails=3,
+                    cooldown_seconds=30,
+                ),
+            ],
+            [ModelChannelRouteSnapshot(route_id="r_primary", public_model_id="demo-model", channel_id="ch_primary")],
+        )
+
+        router.record_failure("ch_primary", error_code="429", cooldown_seconds=300)
+        router.record_failure("ch_primary", error_code="429", cooldown_seconds=300)
+        self.assertIsNotNone(router.select_for_model(self._public(), self._backend(), "responses"))
+
+        router.record_failure("ch_primary", error_code="429", cooldown_seconds=300)
+        cooldown_until = router.channel_state("ch_primary")["cooldown_until"]
+        self.assertGreater(cooldown_until, time.time() + 290)
+        self.assertIsNone(router.select_for_model(self._public(), self._backend(), "responses"))
+
+        # A short Retry-After never shortens the channel's own cooldown.
+        router.reset_channel_state("ch_primary")
+        for _ in range(3):
+            router.record_failure("ch_primary", error_code="429", cooldown_seconds=5)
+        self.assertGreater(router.channel_state("ch_primary")["cooldown_until"], time.time() + 25)
 
     def test_excluded_channel_is_not_reselected_for_same_request_fallback(self) -> None:
         router = ChannelRouter()
@@ -542,6 +573,44 @@ class RegistryChannelRouteTests(unittest.TestCase):
         self.assertEqual(resolved_sonnet_5.backend.channel_id, "ch_sixoner")
         self.assertEqual(resolved_sonnet_5.backend.model_id, "claude-sonnet-5")
         self.assertEqual(resolved_sonnet_5.route_reason, "catalog:claude-sonnet-5:route_only:channel:ch_sixoner")
+
+    def test_route_only_model_still_tries_its_channels_when_all_are_cooling_down(self) -> None:
+        channel_router.set_snapshot(
+            [
+                ProviderChannelSnapshot(
+                    channel_id="ch_only",
+                    base_url="https://only.example",
+                    api_key="only-key",
+                    allowed_fails=1,
+                    cooldown_seconds=30,
+                ),
+                ProviderChannelSnapshot(
+                    channel_id="ch_disabled",
+                    base_url="https://disabled.example",
+                    api_key="disabled-key",
+                    status="disabled",
+                ),
+            ],
+            [
+                ModelChannelRouteSnapshot(
+                    route_id="mcr_only",
+                    public_model_id="claude-sonnet-4-6",
+                    endpoint="chat/completions",
+                    channel_id="ch_only",
+                ),
+                ModelChannelRouteSnapshot(
+                    route_id="mcr_disabled",
+                    public_model_id="claude-sonnet-4-6",
+                    endpoint="chat/completions",
+                    channel_id="ch_disabled",
+                ),
+            ],
+        )
+        channel_router.record_failure("ch_only", error_code="502")
+
+        resolved = registry.resolve_public_model("claude-sonnet-4-6", "chat/completions")
+
+        self.assertEqual(resolved.backend.channel_id, "ch_only")
 
     def test_route_only_model_resolves_through_anthropic_channel_route(self) -> None:
         channel_router.set_snapshot(

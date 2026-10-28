@@ -211,10 +211,10 @@ class ChannelRouter:
     def _cooldown_until(self, channel_id: str) -> float:
         return _as_float((self._state.get(channel_id) or {}).get("cooldown_until"), 0.0)
 
-    def _is_available(self, channel: ProviderChannelSnapshot, now: float) -> bool:
+    def _is_available(self, channel: ProviderChannelSnapshot, now: float, *, ignore_cooldown: bool = False) -> bool:
         if (channel.status or "").strip().lower() != ACTIVE_STATUS:
             return False
-        return self._cooldown_until(channel.channel_id) <= now
+        return ignore_cooldown or self._cooldown_until(channel.channel_id) <= now
 
     def select_for_model(
         self,
@@ -224,6 +224,7 @@ class ChannelRouter:
         *,
         exclude_channel_ids: Iterable[str] = (),
         affinity_key: str = "",
+        ignore_cooldown: bool = False,
     ) -> Optional[ChannelChoice]:
         public_id = str(getattr(public_model, "public_id", "") or "").strip()
         if not public_id:
@@ -251,7 +252,7 @@ class ChannelRouter:
                 channel = self._channels.get(route.channel_id)
                 if channel is not None and channel.channel_id in excluded:
                     continue
-                if channel is None or not self._is_available(channel, now):
+                if channel is None or not self._is_available(channel, now, ignore_cooldown=ignore_cooldown):
                     continue
                 if channel.capabilities and endpoint not in channel.capabilities:
                     continue
@@ -333,27 +334,34 @@ class ChannelRouter:
         if self._shared is not None:
             self._shared.record_success(channel_id)
 
-    def record_failure(self, channel_id: str, *, error_code: str = "") -> None:
+    def record_failure(self, channel_id: str, *, error_code: str = "", cooldown_seconds: float | None = None) -> None:
+        """Count a failure. `cooldown_seconds` (e.g. from Retry-After) lengthens
+        the cooldown once allowed_fails is reached; a channel is a pool of
+        upstream accounts, so one rate-limited request does not trip it."""
         if not channel_id:
             return
         channel = self._channels.get(channel_id)
         if channel is None:
             return
+        allowed_fails = channel.allowed_fails
+        cooldown = channel.cooldown_seconds
+        if cooldown_seconds is not None:
+            cooldown = max(cooldown, float(cooldown_seconds))
         state = self._state.setdefault(channel_id, {"failures": 0, "cooldown_until": 0.0})
         failures = int(state.get("failures") or 0) + 1
         state["failures"] = failures
         state["last_failure_at"] = time.time()
         state["last_error_code"] = (error_code or "")[:64]
-        if failures >= max(1, channel.allowed_fails):
-            state["cooldown_until"] = time.time() + max(0.0, channel.cooldown_seconds)
+        if failures >= max(1, allowed_fails):
+            state["cooldown_until"] = max(_as_float(state.get("cooldown_until"), 0.0), time.time() + max(0.0, cooldown))
             state["failures"] = 0
             if self._shared is not None:
                 self._shared.note_local_cooldown(channel_id, state["cooldown_until"])
         if self._shared is not None:
             self._shared.record_failure(
                 channel_id,
-                allowed_fails=channel.allowed_fails,
-                cooldown_seconds=channel.cooldown_seconds,
+                allowed_fails=allowed_fails,
+                cooldown_seconds=cooldown,
             )
 
     def reset_channel_state(self, channel_id: str) -> None:

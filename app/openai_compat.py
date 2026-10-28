@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import secrets
 import time
 from datetime import UTC, date, datetime, time as dt_time, timedelta
@@ -45,7 +46,13 @@ from .proxy import (
     _next_provider_or_system_fallback_config, _notify_fallback_exhausted, _should_try_channel_fallback,
     _is_local_pool_timeout, _record_upstream_transport_failure,
     _upstream_transport_status_code,
+    _RESPONSES_STREAM_TERMINAL_EVENTS, _ResponsesStreamPrefetch, _UpstreamChunkReader,
+    _discard_stream_send, _first_output_timeout_seconds, _iter_prefetched_sse_lines,
+    _hold_stream_for_first_output, _rate_limit_cooldown_seconds, _record_responses_stream_outcome,
+    _responses_stream_outcome, _upstream_error_object, _upstream_transport_error_code,
+    _wait_for_stream_send,
 )
+from .channel_router import should_record_failure as should_record_channel_failure
 from .router import (
     CLAUDE_COMPAT_PROVIDER_KIRO_GO,
     ModelCapabilityError,
@@ -74,6 +81,7 @@ from .referral import (
 
 
 router = APIRouter(prefix="/v1", tags=["openai-compat"])
+_compat_logger = logging.getLogger("coincoin.compat")
 
 
 # ============== 标准 OpenAI 错误格式 ==============
@@ -1822,17 +1830,75 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
     _STRIP_PARAMS = ("temperature", "top_p", "presence_penalty", "frequency_penalty",
                      "max_output_tokens", "n", "logprobs", "top_logprobs", "seed")
 
-    if resp_payload.get("stream"):
-        model_registry.ensure_initialized()
-        fallback_cfg = model_registry.models.get("fallback") or model_registry.get("premium")
-        cheap_cfg = model_registry.models.get("cheap")
-        allow_fallback = public_model.routing_mode == "legacy_auto"
-        is_cheap = bool(allow_fallback and cheap_cfg and used_cfg.model_id == cheap_cfg.model_id)
-        can_fallback = allow_fallback and (
-            (used_cfg.upstream_url != fallback_cfg.upstream_url) or (used_cfg.model_id != fallback_cfg.model_id)
-        )
-        if resolved_model.lock_model_selection and fallback_cfg.model_id != used_cfg.model_id:
+    model_registry.ensure_initialized()
+    fallback_cfg = model_registry.models.get("fallback") or model_registry.get("premium")
+    cheap_cfg = model_registry.models.get("cheap")
+    allow_fallback = public_model.routing_mode == "legacy_auto"
+    is_cheap = bool(allow_fallback and cheap_cfg and used_cfg.model_id == cheap_cfg.model_id)
+    can_fallback = allow_fallback and (
+        (used_cfg.upstream_url != fallback_cfg.upstream_url) or (used_cfg.model_id != fallback_cfg.model_id)
+    )
+    if resolved_model.lock_model_selection and fallback_cfg.model_id != used_cfg.model_id:
+        can_fallback = False
+
+    def _mark_system_fallback_terminal() -> None:
+        nonlocal can_fallback, is_cheap
+        if str(getattr(used_cfg, "channel_id", "") or "").startswith("system:"):
             can_fallback = False
+            is_cheap = False
+
+    def _record_current_failure(
+        *,
+        status_code: int | None = None,
+        error_code: str = "",
+        cooldown_seconds: float | None = None,
+    ) -> None:
+        if status_code in {401, 403}:
+            _record_channel_failure(used_cfg, error_code=str(status_code))
+        elif status_code is not None:
+            _record_channel_failure(used_cfg, status_code=status_code, cooldown_seconds=cooldown_seconds)
+        else:
+            _record_channel_failure(used_cfg, error_code=error_code)
+
+    def _select_provider_or_system_fallback(
+        reason: str,
+        *,
+        status_code: int | None = None,
+        error_code: str = "",
+    ):
+        channel_id = str(getattr(used_cfg, "channel_id", "") or "")
+        upstream_auth_failure = bool(channel_id and not channel_id.startswith("system:") and status_code in {401, 403})
+        if not upstream_auth_failure and not _should_try_channel_fallback(used_cfg, status_code=status_code, error_code=error_code):
+            return None, ""
+        return _next_provider_or_system_fallback_config(
+            public_model,
+            used_cfg,
+            "chat/completions",
+            messages,
+            tools,
+            lock_model_selection=resolved_model.lock_model_selection,
+            reason=reason,
+            channel_affinity_key=channel_affinity_key,
+        )
+
+    def _notify_chat_fallback_exhausted(
+        *,
+        status_code: int,
+        reason: str,
+        upstream_request_id: str = "",
+    ) -> None:
+        if getattr(used_cfg, "channel_id", "") or getattr(used_cfg, "fallback_from_channel_id", ""):
+            _notify_fallback_exhausted(
+                endpoint="chat/completions",
+                model=display_model,
+                status_code=status_code,
+                reason=reason,
+                cfg=used_cfg,
+                route_reason=used_route_reason,
+                upstream_request_id=upstream_request_id,
+            )
+
+    if resp_payload.get("stream"):
         stream_client = await get_stream_client()
 
         async def _send_stream(cfg):
@@ -1870,85 +1936,122 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
             req = stream_client.build_request("POST", stream_upstream_url, json=send_payload, headers=stream_headers)
             return await stream_client.send(req, stream=True)
 
-        try:
-            upstream = await _send_stream(used_cfg)
-        except (httpx.TimeoutException, httpx.RequestError) as exc:
-            error_code = _record_upstream_transport_failure(used_cfg, exc)
-            if _is_local_pool_timeout(exc):
-                return openai_error(
-                    "Upstream request capacity exhausted",
-                    "server_error",
-                    code=error_code,
-                    status_code=503,
-                )
-            if can_fallback:
-                _fb = "cheap" if is_cheap else "premium"
-                used_cfg = _channel_fallback_config(used_cfg, fallback_cfg)
-                used_route_reason = f"{_fb}_fallback_timeout"
-                can_fallback = False
-                is_cheap = False
-                try:
-                    upstream = await _send_stream(used_cfg)
-                except (httpx.TimeoutException, httpx.RequestError) as fallback_exc:
-                    fallback_error_code = _record_upstream_transport_failure(used_cfg, fallback_exc)
-                    return openai_error(
-                        "Upstream request capacity exhausted" if _is_local_pool_timeout(fallback_exc) else "Upstream request failed",
-                        "server_error",
-                        code=fallback_error_code,
-                        status_code=_upstream_transport_status_code(fallback_exc),
-                    )
-            else:
-                import logging as _logging
-                _logging.getLogger("coincoin.compat").error("upstream stream connect error: %s", exc)
-                return openai_error("Upstream request failed", "server_error", code=error_code, status_code=502)
-
-        if can_fallback and upstream.status_code >= 400:
+        def _advance_stream_fallback(
+            reason: str,
+            *,
+            status_code: int | None = None,
+            error_code: str = "",
+            legacy_suffix: str = "",
+        ) -> bool:
+            """Switch used_cfg to the next channel; False when none is left."""
+            nonlocal used_cfg, used_route_reason, can_fallback, is_cheap
+            route_fallback_cfg, route_fallback_reason = _select_provider_or_system_fallback(
+                reason,
+                status_code=status_code,
+                error_code=error_code,
+            )
+            if route_fallback_cfg is not None:
+                used_cfg = route_fallback_cfg
+                used_route_reason = route_fallback_reason
+                _mark_system_fallback_terminal()
+                return True
+            if not (can_fallback and legacy_suffix):
+                return False
             _fb = "cheap" if is_cheap else "premium"
-            _code = upstream.status_code
-            try:
-                await upstream.aclose()
-            except Exception:
-                pass
-            _record_channel_failure(used_cfg, status_code=_code)
             used_cfg = _channel_fallback_config(used_cfg, fallback_cfg)
-            used_route_reason = f"{_fb}_fallback_{_code}"
+            used_route_reason = f"{_fb}_fallback_{legacy_suffix}"
             can_fallback = False
             is_cheap = False
-            try:
-                upstream = await _send_stream(used_cfg)
-            except (httpx.TimeoutException, httpx.RequestError) as fallback_exc:
-                fallback_error_code = _record_upstream_transport_failure(used_cfg, fallback_exc)
-                return openai_error(
-                    "Upstream request capacity exhausted" if _is_local_pool_timeout(fallback_exc) else "Upstream request failed",
-                    "server_error",
-                    code=fallback_error_code,
-                    status_code=_upstream_transport_status_code(fallback_exc),
-                )
+            return True
 
-        content_type = upstream.headers.get("content-type", "")
-        if "text/event-stream" not in content_type:
-            if can_fallback:
-                try:
-                    await upstream.aclose()
-                except Exception:
-                    pass
-                _fb = "cheap" if is_cheap else "premium"
-                _record_channel_failure(used_cfg, error_code="upstream_unexpected_content_type")
-                used_cfg = _channel_fallback_config(used_cfg, fallback_cfg)
-                used_route_reason = f"{_fb}_fallback_unexpected"
-                can_fallback = False
-                is_cheap = False
-                try:
-                    upstream = await _send_stream(used_cfg)
-                except (httpx.TimeoutException, httpx.RequestError) as fallback_exc:
-                    fallback_error_code = _record_upstream_transport_failure(used_cfg, fallback_exc)
+        failover_window = max(0.0, float(settings.responses_stream_failover_window_seconds or 0))
+        first_output_timeout = _first_output_timeout_seconds(public_model, payload.get("reasoning_effort"))
+        first_output_switched = False
+        non_sse_fallback_used = False
+
+        def _leave_slow_channel(failed_cfg) -> bool:
+            """Give up on a channel with no output yet; at most once per request."""
+            nonlocal first_output_switched
+            if not _advance_stream_fallback(
+                "upstream_first_output_timeout",
+                error_code="upstream_first_output_timeout",
+                legacy_suffix="first_output_timeout",
+            ):
+                return False
+            first_output_switched = True
+            _record_channel_failure(failed_cfg, error_code="upstream_first_output_timeout")
+            _compat_logger.warning("provider channel stream %s produced no output in %.0fs; falling back",
+                                   getattr(failed_cfg, "channel_id", ""), first_output_timeout)
+            return True
+
+        while True:
+            first_output_deadline = None
+            if first_output_timeout > 0 and not first_output_switched:
+                first_output_deadline = time.monotonic() + first_output_timeout
+            send_task = asyncio.ensure_future(_send_stream(used_cfg))
+            try:
+                upstream = None
+                if first_output_deadline is not None:
+                    upstream = await _wait_for_stream_send(send_task, first_output_deadline - time.monotonic())
+                    if upstream is None and _leave_slow_channel(used_cfg):
+                        await _discard_stream_send(send_task)
+                        continue
+                if upstream is None:
+                    upstream = await send_task
+            except (httpx.TimeoutException, httpx.RequestError) as exc:
+                error_code = _record_upstream_transport_failure(used_cfg, exc)
+                if _is_local_pool_timeout(exc):
                     return openai_error(
-                        "Upstream request capacity exhausted" if _is_local_pool_timeout(fallback_exc) else "Upstream request failed",
+                        "Upstream request capacity exhausted",
                         "server_error",
-                        code=fallback_error_code,
-                        status_code=_upstream_transport_status_code(fallback_exc),
+                        code=error_code,
+                        status_code=503,
                     )
-                content_type = upstream.headers.get("content-type", "")
+                failed_channel_id = getattr(used_cfg, "channel_id", "")
+                if _advance_stream_fallback(error_code, error_code=error_code, legacy_suffix="timeout"):
+                    _compat_logger.warning("upstream stream %s connect error (%s: %s), falling back",
+                                           failed_channel_id, type(exc).__name__, exc)
+                    continue
+                _compat_logger.error("upstream stream connect error: %s", exc)
+                return openai_error("Upstream request failed", "server_error", code=error_code, status_code=502)
+
+            compat_stream_t0 = time.monotonic()
+            status_code = upstream.status_code
+            content_type = upstream.headers.get("content-type", "")
+            if status_code >= 400:
+                error_body = b"" if "text/event-stream" in content_type else await upstream.aread()
+                cooldown = None
+                if status_code == 429:
+                    cooldown = _rate_limit_cooldown_seconds(upstream.headers, _upstream_error_object(error_body))
+                _record_current_failure(status_code=status_code, cooldown_seconds=cooldown)
+                failed_channel_id = getattr(used_cfg, "channel_id", "")
+                legacy_suffix = str(status_code) if (
+                    not failed_channel_id or should_record_channel_failure(status_code)
+                ) else ""
+                if _advance_stream_fallback(str(status_code), status_code=status_code, legacy_suffix=legacy_suffix):
+                    try:
+                        await upstream.aclose()
+                    except Exception:
+                        pass
+                    _compat_logger.warning("provider channel stream %s returned %s: %s; falling back",
+                                           failed_channel_id, status_code, error_body[:500])
+                    continue
+
+            if "text/event-stream" not in content_type and not non_sse_fallback_used:
+                non_sse_fallback_used = True
+                if status_code < 400:
+                    _record_current_failure(error_code="upstream_unexpected_content_type")
+                if _advance_stream_fallback(
+                    "upstream_unexpected_content_type",
+                    error_code="upstream_unexpected_content_type",
+                    legacy_suffix="unexpected",
+                ):
+                    try:
+                        await upstream.aclose()
+                    except Exception:
+                        pass
+                    continue
+
             if "text/event-stream" not in content_type:
                 try:
                     body = await upstream.aread()
@@ -1957,10 +2060,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                 response_headers = filter_headers(dict(upstream.headers))
                 response_headers.pop("content-length", None)
                 if upstream.status_code >= 400:
-                    import logging
-                    _logger = logging.getLogger("coincoin.compat")
-                    _logger.error("upstream stream-fallback %s: %s", upstream.status_code, body[:1000])
-                    _record_channel_failure(used_cfg, status_code=upstream.status_code)
+                    _compat_logger.error("upstream stream-fallback %s: %s", upstream.status_code, body[:1000])
                     if "application/json" in content_type:
                         try:
                             data = json.loads(body.decode("utf-8"))
@@ -1985,11 +2085,51 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                     return JSONResponse(content=build_chat_response(data, display_model), status_code=upstream.status_code, headers=response_headers)
                 return Response(content=body, status_code=upstream.status_code, headers=response_headers, media_type=content_type)
 
+            reader = _UpstreamChunkReader(upstream)
+            if status_code >= 400 or (failover_window <= 0 and first_output_deadline is None):
+                prefetch = _ResponsesStreamPrefetch()
+                break
+            prefetch = await _hold_stream_for_first_output(
+                reader,
+                window_seconds=failover_window,
+                first_output_deadline=first_output_deadline,
+                leave_slow_channel=lambda: _leave_slow_channel(used_cfg),
+            )
+            if prefetch is None:
+                reader.cancel()
+                await upstream.aclose()
+                continue
+            if prefetch.timed_out or not prefetch.failure_code:
+                break
+            failed_cfg = used_cfg
+            if prefetch.retryable and _advance_stream_fallback(
+                prefetch.failure_code,
+                error_code=prefetch.failure_code,
+                legacy_suffix="stream",
+            ):
+                reader.cancel()
+                await upstream.aclose()
+                _record_channel_failure(
+                    failed_cfg,
+                    error_code=prefetch.failure_code,
+                    cooldown_seconds=_rate_limit_cooldown_seconds(error=prefetch.error),
+                )
+                _compat_logger.warning("provider channel stream %s failed before output (%s); falling back",
+                                       getattr(failed_cfg, "channel_id", ""), prefetch.failure_code)
+                continue
+            if prefetch.transport_error is not None:
+                reader.cancel()
+                await upstream.aclose()
+                _record_channel_failure(used_cfg, error_code=prefetch.failure_code)
+                _compat_logger.error("upstream stream read error before output: %s", prefetch.transport_error)
+                return openai_error("Upstream request failed", "server_error", code=prefetch.failure_code, status_code=502)
+            # Nowhere left to go: hand the failed stream to the client as is.
+            break
+
         stream_id = f"chatcmpl-{secrets.token_hex(12)}"
         tool_call_index = 0
         has_tool_calls = False
         first_content_sent = False
-        compat_stream_t0 = time.monotonic()
         _compat_stream_usage = {
             "input": 0,
             "output": 0,
@@ -1998,22 +2138,27 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
             "server_side_tools": {},
         }
         _compat_stream_usage_seen = False
+        _compat_stream_state: Dict[str, Any] = {"terminal": "", "error": None, "done": False}
 
         async def iter_events():
             nonlocal tool_call_index, has_tool_calls, first_content_sent, _compat_stream_usage_seen
             finish_sent = False
+            outcome = "client_closed"
             try:
-                async for line in upstream.aiter_lines():
+                async for line in _iter_prefetched_sse_lines(prefetch, reader):
                     if not line or not line.startswith("data:"):
                         continue
                     data = line[5:].strip()
                     if data == "[DONE]":
+                        _compat_stream_state["done"] = True
                         break
                     try:
                         event = json.loads(data)
                     except Exception:
                         continue
                     event_type = event.get("type")
+                    if event_type in _RESPONSES_STREAM_TERMINAL_EVENTS:
+                        _compat_stream_state["terminal"] = event_type
 
                     usage = event.get("usage") or (event.get("response") or {}).get("usage")
                     if usage:
@@ -2102,11 +2247,14 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                     # 处理上游错误事件
                     elif event_type in ("response.failed", "response.error", "error"):
                         error_info = event.get("error", {})
+                        if event_type == "response.failed" and not error_info:
+                            error_info = (event.get("response") or {}).get("error") or {}
+                        _compat_stream_state["error"] = error_info if isinstance(error_info, dict) and error_info else event
                         error_msg = error_info.get("message") if isinstance(error_info, dict) else str(error_info)
                         error_code = error_info.get("code") if isinstance(error_info, dict) else None
                         if not error_msg:
                             error_msg = event.get("message", "Unknown upstream error")
-                        
+
                         error_data = {
                             "error": {
                                 "message": error_msg,
@@ -2116,6 +2264,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                         }
                         yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
                         yield "data: [DONE]\n\n"
+                        outcome = "failed"
                         return
                     
                     # 处理响应完成
@@ -2144,14 +2293,21 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                                 ),
                             )
                         break
+                outcome = _responses_stream_outcome(_compat_stream_state, _compat_stream_usage)
                 yield "data: [DONE]\n\n"
+            except (httpx.TimeoutException, httpx.RequestError) as exc:
+                outcome = _upstream_transport_error_code(exc)
             except Exception:
                 pass
             finally:
+                reader.cancel()
+                dur = int((time.monotonic() - compat_stream_t0) * 1000)
+                # Before any await: after a client disconnect every await in
+                # here is cancelled.
+                if upstream.status_code < 400:
+                    _record_responses_stream_outcome(used_cfg, outcome, _compat_stream_state["error"], dur)
                 await upstream.aclose()
                 if upstream.status_code < 400:
-                    dur = int((time.monotonic() - compat_stream_t0) * 1000)
-                    _record_channel_success(used_cfg, duration_ms=dur)
                     schedule_usage_add(
                         user.id,
                         api_key_id=api_key_id,
@@ -2180,77 +2336,13 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                             user_cache_read_multiplier_override=user_cache_read_multiplier_override,
                         ),
                     )
-                else:
-                    _record_channel_failure(used_cfg, status_code=upstream.status_code)
         stream_headers = filter_headers(dict(upstream.headers))
         stream_headers.pop("content-length", None)
         stream_headers.setdefault("cache-control", "no-cache")
         stream_headers.setdefault("x-accel-buffering", "no")
         return StreamingResponse(iter_events(), status_code=upstream.status_code, headers=stream_headers, media_type=content_type)
 
-    model_registry.ensure_initialized()
-    fallback_cfg = model_registry.models.get("fallback") or model_registry.get("premium")
-    cheap_cfg = model_registry.models.get("cheap")
-    allow_fallback = public_model.routing_mode == "legacy_auto"
-    is_cheap = bool(allow_fallback and cheap_cfg and used_cfg.model_id == cheap_cfg.model_id)
-    can_fallback = allow_fallback and (
-        (used_cfg.upstream_url != fallback_cfg.upstream_url) or (used_cfg.model_id != fallback_cfg.model_id)
-    )
-    if resolved_model.lock_model_selection and fallback_cfg.model_id != used_cfg.model_id:
-        can_fallback = False
     client = await get_http_client()
-
-    def _mark_system_fallback_terminal() -> None:
-        nonlocal can_fallback, is_cheap
-        if str(getattr(used_cfg, "channel_id", "") or "").startswith("system:"):
-            can_fallback = False
-            is_cheap = False
-
-    def _record_current_failure(*, status_code: int | None = None, error_code: str = "") -> None:
-        if status_code in {401, 403}:
-            _record_channel_failure(used_cfg, error_code=str(status_code))
-        elif status_code is not None:
-            _record_channel_failure(used_cfg, status_code=status_code)
-        else:
-            _record_channel_failure(used_cfg, error_code=error_code)
-
-    def _select_provider_or_system_fallback(
-        reason: str,
-        *,
-        status_code: int | None = None,
-        error_code: str = "",
-    ):
-        channel_id = str(getattr(used_cfg, "channel_id", "") or "")
-        upstream_auth_failure = bool(channel_id and not channel_id.startswith("system:") and status_code in {401, 403})
-        if not upstream_auth_failure and not _should_try_channel_fallback(used_cfg, status_code=status_code, error_code=error_code):
-            return None, ""
-        return _next_provider_or_system_fallback_config(
-            public_model,
-            used_cfg,
-            "chat/completions",
-            messages,
-            tools,
-            lock_model_selection=resolved_model.lock_model_selection,
-            reason=reason,
-            channel_affinity_key=channel_affinity_key,
-        )
-
-    def _notify_chat_fallback_exhausted(
-        *,
-        status_code: int,
-        reason: str,
-        upstream_request_id: str = "",
-    ) -> None:
-        if getattr(used_cfg, "channel_id", "") or getattr(used_cfg, "fallback_from_channel_id", ""):
-            _notify_fallback_exhausted(
-                endpoint="chat/completions",
-                model=display_model,
-                status_code=status_code,
-                reason=reason,
-                cfg=used_cfg,
-                route_reason=used_route_reason,
-                upstream_request_id=upstream_request_id,
-            )
 
     async def _post_json(cfg):
         send_payload = dict(resp_payload)
