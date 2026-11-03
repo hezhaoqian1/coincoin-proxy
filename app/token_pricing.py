@@ -17,7 +17,7 @@ class ContextPricingTier:
 # Source: https://developers.openai.com/api/docs/pricing (2026-10-08).
 GPT_LONG_CONTEXT_MODELS = frozenset({
     "gpt-5.5", "gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
-    "gpt-6", "gpt-6-astra", "gpt-6-sol", "gpt-6.1-sol", "gpt-6-luna",
+    "gpt-6", "gpt-6-astra", "gpt-6-sol", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-luna",
 })
 
 
@@ -29,7 +29,7 @@ def default_gpt_pricing(model_id: str) -> dict[str, Any]:
     }
     if model_id != "gpt-5.5":
         pricing["cache_creation_multiplier"] = 1.25
-    if model_id == "gpt-6.1-sol":
+    if model_id in {"gpt-6.1-sol", "gpt-6.1-terra"}:
         pricing["cache_read_multiplier"] = 0.05
     return pricing
 
