@@ -62,6 +62,7 @@ from .router import (
 from .schemas import BalanceResponse, ReferralCodeUpdateRequest
 from .station_runtime import resolve_station_model_for_user, usage_pricing_kwargs, user_station_context
 from .user_model_overrides import apply_user_overrides_to_resolution
+from .request_telemetry import note_request_payload
 from .usage_buffer import (
     china_today,
     extract_cache_creation_tokens,
@@ -1222,6 +1223,7 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
 
     if not isinstance(payload, dict):
         return openai_error("Request body must be a JSON object", "invalid_request_error")
+    note_request_payload(payload)
 
     messages = payload.get("messages") or []
     if not isinstance(messages, list):

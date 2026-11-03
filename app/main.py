@@ -62,6 +62,7 @@ from .system_settings import (
 from .usage_buffer import flush_loop, flush_once
 from .redis_client import close_redis_client
 from .quota_lifecycle import QuotaReservationASGIMiddleware
+from .request_telemetry import RequestTelemetryASGIMiddleware
 from .reconcile import reconcile_loop
 from .router import registry as model_registry
 from .stations import admin_router as admin_stations_router, router as stations_router
@@ -232,6 +233,11 @@ async def _run_migrations(conn):
         ("coincoin_request_logs", "base_price_per_video_cents", "DOUBLE DEFAULT 0"),
         ("coincoin_request_logs", "price_per_video_cents", "DOUBLE DEFAULT 0"),
         ("coincoin_request_logs", "effective_cached_input_per_million", "DOUBLE DEFAULT 0"),
+        ("coincoin_request_logs", "first_token_ms", "BIGINT NULL"),
+        ("coincoin_request_logs", "is_stream", "BOOLEAN DEFAULT 0"),
+        ("coincoin_request_logs", "reasoning_effort", "VARCHAR(16) DEFAULT ''"),
+        ("coincoin_request_logs", "user_agent", "VARCHAR(255) DEFAULT ''"),
+        ("coincoin_request_logs", "client_ip", "VARCHAR(64) DEFAULT ''"),
         ("coincoin_station_payout_batches", "payment_reference", "VARCHAR(128) DEFAULT ''"),
         ("coincoin_station_payout_batches", "payment_screenshot_url", "VARCHAR(512) DEFAULT ''"),
         ("coincoin_station_payout_batches", "payment_note", "TEXT NULL"),
@@ -1146,6 +1152,8 @@ app = FastAPI(
     openapi_url=None,
 )
 
+# Innermost: measures first-token latency on the bytes the app sends to the client.
+app.add_middleware(RequestTelemetryASGIMiddleware)
 app.add_middleware(QuotaReservationASGIMiddleware)
 app.add_middleware(ImageJSONKeepaliveASGIMiddleware)
 app.add_middleware(AdminTimingASGIMiddleware)

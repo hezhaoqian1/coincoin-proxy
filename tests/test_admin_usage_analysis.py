@@ -213,6 +213,33 @@ class AdminUsageAnalysisTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(a['created_at'].endswith('+00:00'))
         self.assertNotIn('encrypted_key', a)
 
+    async def test_first_token_stream_filter_and_record_latency_fields(self):
+        a, b = self.session.get(RequestLog, 'a'), self.session.get(RequestLog, 'b')
+        a.is_stream, a.first_token_ms, a.reasoning_effort = True, 400, 'high'
+        a.user_agent, a.client_ip, a.pricing_details = 'claude-cli/2.1 (external, cli)', '203.0.113.9', {'tier': 'long_context'}
+        b.is_stream = True  # failed before output: stream without a first token
+        self.session.commit()
+
+        s = (await self.get('overview'))['summary']
+        self.assertEqual((s['stream_requests'], s['avg_first_token_ms']), (2, 400))
+        for request_type, ids in (('stream', {'a', 'b'}), ('sync', {'c', 'd'})):
+            with self.subTest(request_type=request_type):
+                records = await self.get('records', request_type=request_type)
+                self.assertEqual({r['id'] for r in records['data']}, ids)
+                summary = (await self.get('overview', request_type=request_type))['summary']
+                self.assertEqual(summary['records'], records['total'])
+
+        record = next(r for r in (await self.get('records'))['data'] if r['id'] == 'a')
+        self.assertEqual((record['first_token_ms'], record['is_stream'], record['reasoning_effort']), (400, True, 'high'))
+        self.assertEqual((record['output_tokens_per_second'], record['pricing_tier']), (200.0, 'long_context'))
+        self.assertEqual((record['user_agent'], record['client_ip']), ('claude-cli/2.1 (external, cli)', '203.0.113.9'))
+        sync = next(r for r in (await self.get('records'))['data'] if r['id'] == 'c')
+        self.assertEqual((sync['first_token_ms'], sync['is_stream'], sync['output_tokens_per_second']), (None, False, None))
+
+        response = await self.client.get('/admin/usage/export.csv', params=WINDOW)
+        row = next(r for r in csv.DictReader(io.StringIO(response.text.lstrip('﻿'))) if r['日志 ID'] == 'a')
+        self.assertEqual((row['首字 ms'], row['推理强度'], row['客户端 IP']), ('400', 'high', '203.0.113.9'))
+
     async def test_optional_pricing_snapshots_do_not_require_a_schema_change(self):
         log = self.session.get(RequestLog, 'a')
         historical = SimpleNamespace(**{column.name: getattr(log, column.name)

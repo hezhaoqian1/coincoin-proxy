@@ -50,6 +50,7 @@ from .router import (
 )
 from .station_runtime import resolve_station_model_for_user, usage_pricing_kwargs
 from .security import generate_id
+from .request_telemetry import note_request_payload
 from .user_model_overrides import apply_user_overrides_to_resolution
 from .usage_buffer import (
     extract_cache_creation_tokens,
@@ -1179,6 +1180,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
 
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="payload must be a json object")
+    note_request_payload(payload)
 
     requested_model = str(payload.get("model") or "").strip()
     messages = _anthropic_messages_to_openai_messages(payload)

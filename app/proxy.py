@@ -48,6 +48,7 @@ from .prompt_cache import (
 from .quota_lifecycle import reserve_quota_for_request
 from .rate_limiter import rate_limiter
 from .security import extract_api_key, hash_key
+from .request_telemetry import note_request_payload
 from .station_runtime import (
     resolve_station_model_for_user,
     station_context_for_user,
@@ -3101,6 +3102,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
 
     if not isinstance(payload, dict):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="payload must be a json object")
+    note_request_payload(payload)
 
     requested_model = str(payload.get("model") or "").strip()
     api_key_id = getattr(user, _KEY_ID_ATTR, "")

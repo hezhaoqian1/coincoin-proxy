@@ -228,3 +228,35 @@ test('user model tab loads the pair endpoint without a dimension parameter', asy
   await loading;
   assert.match(h.element('usageTableHint').textContent, /每一行就是一组用户 × 模型/);
 });
+
+test('request records show first token, cache read/write and the stream filter', async () => {
+  const h = createHarness();
+  h.element('usageRequestType').value = 'stream';
+  const loading = h.context.loadFullUsage();
+  assert.equal(h.requests[0].url.searchParams.get('request_type'), 'stream');
+  const data = overview('today');
+  Object.assign(data.summary, { requests: 4, stream_requests: 3, avg_first_token_ms: 1234, avg_latency_ms: 70000,
+    input_tokens: 1000, cache_read_tokens: 800, cache_creation_tokens: 100 });
+  h.requests[0].respond(data);
+  await flush();
+  h.requests[1].respond({ data: [], total: 0 });
+  await loading;
+  assert.equal(h.element('usageStatFirstToken').textContent, '1.23s');
+  assert.equal(h.element('usageFirstTokenHint').textContent, '流式 3 / 4 笔 · 平均耗时 1m 10s');
+
+  h.context.renderUsageTable([{
+    created_at: '2026-11-03T03:00:00+00:00', user: 'alice', user_id: 'u1', model: 'gpt-6.1-terra', provider_model: 'gpt-6.1-terra-2026',
+    endpoint: 'responses', is_stream: true, reasoning_effort: 'high', input_tokens: 1000, output_tokens: 200,
+    cache_read_tokens: 800, cache_creation_tokens: 1500, cost_cents: 5, pricing_tier: 'long_context',
+    first_token_ms: 35000, duration_ms: 70000, output_tokens_per_second: 2.9, status_code: 200, user_agent: 'codex_cli_rs/0.80', client_ip: '203.0.113.9',
+  }, { created_at: '2026-11-03T03:00:00+00:00', user: 'bob', model: 'm', provider_model: 'm', endpoint: 'chat/completions',
+    is_stream: false, input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0, duration_ms: 500,
+    first_token_ms: null, output_tokens_per_second: null, status_code: 200 }], 'records');
+  const [stream, sync] = h.element('usageTableBody').innerHTML.split('</tr>');
+  for (const expected of ['流式', '推理 high', '↳ gpt-6.1-terra-2026', '读 800', '写 1.5K', '长上下文', '2.9 tok/s', '203.0.113.9',
+    'usage-latency-2">35.00s', 'usage-latency-1">1m 10s']) {
+    assert.ok(stream.includes(expected), `stream row should include ${expected}`);
+  }
+  assert.ok(sync.includes('同步') && !sync.includes('usage-cache') && !sync.includes('↳'));
+  assert.ok(sync.includes('<span class="k">首字</span><span class="k">—</span>'));
+});
