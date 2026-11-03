@@ -208,7 +208,7 @@ uvicorn app.main:app --reload --port 8000
 
 - 终端客户只看 CoinCoin 的公开模型目录，不直接感知 Gemini CPA、LiteLLM 或 Vertex 的内部模型名
 - 老用户如果不传 `model`，仍然走默认 GPT 公共模型
-- 当前公开 GPT alias 包括 `gpt-6`、`gpt-6-astra`、`gpt-6-sol`、`gpt-6.1-sol`、`gpt-6-luna`、`gpt-5.5`、`gpt-5.6`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`，以及由 `COINCOIN_FIXED_MODEL` 指定的默认 GPT alias
+- 当前公开 GPT alias 包括 `gpt-6`、`gpt-6-astra`、`gpt-6-sol`、`gpt-6.1-sol`、`gpt-6.1-terra`、`gpt-6-luna`、`gpt-5.5`、`gpt-5.6`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`，以及由 `COINCOIN_FIXED_MODEL` 指定的默认 GPT alias
 - 两款 Luna 默认零售价均为 **OpenAI Standard 官方价的 5 倍**：`gpt-5.6-luna` 输入／输出为 **$1／$6 每百万 tokens**，`gpt-6-luna` 为 **$0.50／$2.50**；缓存读写同步按 5 倍收费。完整价格表、长上下文价格和发布核对步骤见 [Luna 模型定价](./docs/reference/luna-pricing.md)。
 - `gpt-6` / `gpt-6-astra` 映射到 OpenAI `gpt-6-astra`，标准档价格为输入 `$10/M`、缓存读取 `$1/M`、缓存写入 `$12.50/M`、输出 `$50/M`；上下文窗口 `1,050,000`，最大输出 `128,000`。价格依据 [OpenAI GPT-6 Astra 官方文档](https://developers.openai.com/api/docs/models/gpt-6-astra)。
 - embedding 请求不再复用旧 GPT / CPA lane；`/v1/embeddings` 默认和显式 `text-embedding-3-small` 都直连 Azure
@@ -339,6 +339,14 @@ Claude Code-only 上游和普通 OpenAI-compatible 上游不完全一样：真�
 | `claude-haiku-5-5` | $0.10 / $0.50 | 4 | $0.40 / $2 | $0.04 / $0.50 | 整次请求输入、缓存、输出再 ×5（实际 $2 / $10） |
 
 价格来源：[Anthropic 官方定价](https://platform.claude.com/docs/en/about-claude/pricing)。阈值按含缓存的输入总量判断，复用 `context_pricing_tiers`（见 [长上下文与缓存计费](./docs/reference/context-cache-billing.md)）。与 `claude-sonnet-5-5` 一样走原生 Anthropic 渠道和 `chat/completions` model route，客户端使用 `/v1/messages`；默认 adaptive thinking、medium effort，`budget_tokens`、非默认采样参数和 assistant prefill 的限制由上游校验。
+
+2026-11-03 新增 `gpt-6.1-terra`（OpenAI 2026-10-26 发布），不替换 `gpt-5.6-terra` 或默认模型：
+
+| 模型 | 官方输入 / 输出（USD / 百万 token） | CoinCoin 倍率 | 实际输入 / 输出 | 缓存读取 / 写入 | 输入 > 272,000 tokens |
+| --- | --- | --- | --- | --- | --- |
+| `gpt-6.1-terra` | $1 / $5 | 1 | $1 / $5 | $0.05 / $1.25 | 整次请求输入与缓存 ×2、输出 ×1.5 |
+
+价格及规格来源：[GPT-6.1 Terra 官方文档](https://developers.openai.com/api/docs/models/gpt-6.1-terra)。缓存写入按官方 30 分钟保留价计费；12 小时保留、Fast/Batch/Flex 与区域处理不单独分档。与 `gpt-6.1-sol` 一样走 legacy GPT lane，保留 Chat Completions 和 Responses 入口；上下文窗口 `1,050,000`，最大输出 `128,000`，reasoning effort 为 `none`、`low`、`medium`（默认）、`high`、`xhigh`、`max`。
 
 详细验收项、价格计算公式和运维命令见 [`docs/architecture/claude-code-upstream-runbook.md`](./docs/architecture/claude-code-upstream-runbook.md)。
 

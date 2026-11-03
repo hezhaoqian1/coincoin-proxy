@@ -701,6 +701,62 @@ class ModelCatalogTests(unittest.TestCase):
                 self.assertEqual(model.metadata["thinking"]["default"], "medium")
                 self.assertEqual(model.metadata["thinking"]["levels"], ["low", "medium", "high", "xhigh", "max"])
 
+    def test_checked_in_gpt_6_1_terra_uses_exact_model_and_official_prices(self) -> None:
+        from app.usage_buffer import calculate_token_cost
+
+        settings.model_catalog_json = ""
+        registry._initialized = False
+        registry.init_from_settings()
+
+        for endpoint in ("chat/completions", "responses"):
+            with self.subTest(endpoint=endpoint):
+                resolved = registry.resolve_public_model(
+                    "gpt-6.1-terra", endpoint,
+                    messages=[{"role": "user", "content": "hello"}],
+                    tools=[{"type": "function", "function": {"name": "read_file"}}],
+                )
+                model = resolved.public_model
+                self.assertEqual(model.provider_model, "gpt-6.1-terra")
+                self.assertEqual(resolved.backend.model_id, "gpt-6.1-terra")
+                self.assertEqual(model.routing_mode, "legacy_auto")
+                self.assertEqual(model.delivery_lane, "legacy")
+                self.assertEqual(model.billable_sku, "legacy-gpt-6.1-terra-text")
+                self.assertEqual(model.price_input_per_million, 100)
+                self.assertEqual(model.price_output_per_million, 500)
+                self.assertEqual(model.model_multiplier, 1.0)
+                self.assertEqual(model.cache_read_multiplier, 0.05)
+                self.assertEqual(model.cache_creation_multiplier, 1.25)
+                self.assertEqual(model.effective_cached_input_per_million, 5.0)
+                self.assertEqual(model.effective_cache_creation_input_per_million, 125.0)
+                self.assertEqual(model.metadata["context_length"], 1_050_000)
+                self.assertEqual(model.metadata["max_completion_tokens"], 128_000)
+                self.assertEqual(model.metadata["thinking"]["default"], "medium")
+                self.assertEqual(
+                    model.metadata["thinking"]["levels"],
+                    ["none", "low", "medium", "high", "xhigh", "max"],
+                )
+
+        model = registry.get_public_model("gpt-6.1-terra")
+        for input_tokens in (272_000, 272_001):
+            with self.subTest(input_tokens=input_tokens):
+                cost, prices = calculate_token_cost(
+                    input_tokens, 10_000, cached_tokens=100_000, cache_creation_tokens=50_000,
+                    price_input_per_million=model.price_input_per_million,
+                    price_output_per_million=model.price_output_per_million,
+                    cached_price_input_per_million=model.effective_cached_input_per_million,
+                    cache_creation_price_input_per_million=model.effective_cache_creation_input_per_million,
+                    context_pricing_tiers=model.context_pricing_tiers,
+                )
+                is_long = input_tokens > 272_000
+                input_factor, output_factor = (2, 1.5) if is_long else (1, 1)
+                # Official Standard: $1 input, $0.05 cached, $1.25 cache write, $5 output.
+                official_cost = (
+                    ((input_tokens - 150_000) * 100 + 100_000 * 5 + 50_000 * 125) * input_factor
+                    + 10_000 * 500 * output_factor
+                ) / 1_000_000
+                self.assertAlmostEqual(cost, official_cost)
+                self.assertEqual(prices["tier"], "long_context" if is_long else "standard")
+
     def test_checked_in_claude_sonnet_5_5_uses_native_route_and_fourfold_pricing(self) -> None:
         settings.model_catalog_json = ""
         registry._initialized = False

@@ -82,6 +82,30 @@
       }
     },
     {
+      "id": "gpt-6.1-terra",
+      "owned_by": "openai",
+      "provider_name": "OpenAI",
+      "provider_model": "gpt-6.1-terra",
+      "capabilities": ["chat/completions", "responses"],
+      "routing_mode": "legacy_auto",
+      "delivery_lane": "legacy",
+      "price_input_per_million": "${COINCOIN_GPT_61_TERRA_INPUT_PRICE:-100}",
+      "price_output_per_million": "${COINCOIN_GPT_61_TERRA_OUTPUT_PRICE:-500}",
+      "billable_sku": "legacy-gpt-6.1-terra-text",
+      "pricing": {"cache_read_multiplier": 0.05, "cache_creation_multiplier": 1.25},
+      "metadata": {
+        "display_name": "GPT-6.1 Terra",
+        "version": "gpt-6.1",
+        "description": "Fast, efficient OpenAI model for visual reasoning, precise computer use, and clear writing.",
+        "context_length": 1050000,
+        "max_completion_tokens": 128000,
+        "supported_parameters": ["tools", "vision", "reasoning_effort"],
+        "thinking": {"default": "medium", "levels": ["none", "low", "medium", "high", "xhigh", "max"]},
+        "official_model_source": "https://developers.openai.com/api/docs/models/gpt-6.1-terra",
+        "official_price_source": "https://developers.openai.com/api/docs/models/gpt-6.1-terra"
+      }
+    },
+    {
       "id": "gpt-6-luna",
       "owned_by": "openai",
       "provider_name": "OpenAI",

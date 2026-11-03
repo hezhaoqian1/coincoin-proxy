@@ -13,7 +13,7 @@ GPT 文本请求按输入总量选择价格档位，普通输入、缓存读取�
 
 ## 档位与公式
 
-默认支持的公开 ID：`gpt-5.5`、`gpt-5.6`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-6`、`gpt-6-astra`、`gpt-6-sol`、`gpt-6-luna`、`gpt-6.1-sol`。
+默认支持的公开 ID：`gpt-5.5`、`gpt-5.6`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-6`、`gpt-6-astra`、`gpt-6-sol`、`gpt-6-luna`、`gpt-6.1-sol`、`gpt-6.1-terra`。
 
 | 输入总量 | 普通输入、缓存读取、缓存写入 | 输出 |
 | --- | --- | --- |
@@ -31,7 +31,7 @@ GPT 文本请求按输入总量选择价格档位，普通输入、缓存读取�
 
 代码单价单位为美分/百万 tokens。费用先保留小数，沿用现有余额批量扣费时的美分取整规则；请求日志金额也沿用现有取整规则。
 
-GPT-5.6 及后续这些模型的默认缓存写入倍率为 1.25；GPT-6.1 Sol 默认缓存读取倍率为 0.05，其他这些 GPT 模型沿用目录配置的 0.1。GPT-5.5 官方未列独立写入价，站内通用写入单价回退到普通输入价，不将其解释为官方独立写入费。
+GPT-5.6 及后续这些模型的默认缓存写入倍率为 1.25；GPT-6.1 Sol 和 GPT-6.1 Terra 默认缓存读取倍率为 0.05，其他这些 GPT 模型沿用目录配置的 0.1。GPT-5.5 官方未列独立写入价，站内通用写入单价回退到普通输入价，不将其解释为官方独立写入费。
 
 ## 上游 usage 语义
 
@@ -124,6 +124,7 @@ npm --prefix coincoin-web run build
 
 - [OpenAI API Pricing](https://developers.openai.com/api/docs/pricing)
 - [GPT-6.1 Sol：长上下文阈值与整次请求倍率](https://developers.openai.com/api/docs/models/gpt-6.1-sol)
+- [GPT-6.1 Terra：标准价、缓存价与长上下文倍率（2026-11-03 核对）](https://developers.openai.com/api/docs/models/gpt-6.1-terra)
 - [Prompt Caching：读取、写入字段及价格](https://developers.openai.com/api/docs/guides/prompt-caching)
 - [GPT-5.6 Sol：当前促销基础价格](https://developers.openai.com/api/docs/models/gpt-5.6-sol)
 
