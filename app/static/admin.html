@@ -217,7 +217,7 @@
     }
 
     /* Usage analysis: scoped to the admin usage view. */
-    #page-usage .usage-summary-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin: 16px 0 20px; }
+    #page-usage .usage-summary-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin: 16px 0 20px; }
     #page-usage .stat-card { min-height: 130px; }
     #page-usage .stat-value { font-size: 28px; margin: 10px 0; font-variant-numeric: tabular-nums; }
     #page-usage .stat-label { font-size: 13px; }
@@ -229,7 +229,7 @@
     .usage-filters > .usage-actions, .usage-advanced { margin-top: 16px; }
     #usageCustomDates[hidden] { display: none; }
     .usage-advanced summary { cursor: pointer; font-size: 12px; color: var(--text-secondary); }
-    .usage-advanced .usage-filter-grid { margin-top: 14px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .usage-advanced .usage-filter-grid { margin-top: 14px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
     #usageScope:not(:empty) { margin: 18px 0 10px; }
     .usage-status { margin: 14px 0; font-size: 12px; color: var(--text-secondary); }
     .usage-status.error { color: #fb7185; }
@@ -251,6 +251,26 @@
     #usageTable td { font-variant-numeric: tabular-nums; }
     #usageTable .usage-link { max-width: 250px; white-space: normal; overflow-wrap: anywhere; text-align: left; padding: 0; }
     .usage-secondary { color: var(--text-tertiary); font-size: 11px; margin-top: 5px; overflow-wrap: anywhere; max-width: 260px; }
+    /* Request records, after sub2api's usage table: tokens with cache, first-token/duration health bar. */
+    #usageTable.usage-records { min-width: 1320px; }
+    #usageTable.usage-records .badge, #usageTable.usage-records .usage-model { white-space: nowrap; }
+    .usage-io { display: flex; gap: 10px; white-space: nowrap; font-weight: 600; cursor: help; }
+    .usage-io .in::before, .usage-io .out::before { margin-right: 3px; font-weight: 700; }
+    .usage-io .in::before { content: '↓'; color: #34d399; }
+    .usage-io .out::before { content: '↑'; color: #a78bfa; }
+    .usage-cache { display: flex; gap: 10px; margin-top: 5px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+    .usage-cache .read { color: #38bdf8; }
+    .usage-cache .write { color: #fbbf24; }
+    .usage-latency { display: flex; gap: 8px; align-items: stretch; }
+    .usage-latency-bar { width: 4px; flex-shrink: 0; border-radius: 999px; }
+    .usage-latency-grid { display: grid; grid-template-columns: max-content max-content; gap: 2px 8px; font-size: 12px; white-space: nowrap; }
+    .usage-latency-grid .k { color: var(--text-tertiary); }
+    .usage-latency-grid .v { font-weight: 600; font-variant-numeric: tabular-nums; }
+    .usage-latency-0 { color: #34d399; } .usage-latency-1 { color: #fbbf24; } .usage-latency-2 { color: #fb923c; } .usage-latency-3 { color: #f87171; }
+    .usage-chip { display: inline-flex; white-space: nowrap; margin-left: 6px; padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; vertical-align: middle; background: rgba(245, 158, 11, .15); color: #fbbf24; }
+    .badge-neutral { background: var(--bg-glass-strong); color: var(--text-secondary); }
+    .badge-neutral::before { background: var(--text-tertiary); }
+    .usage-ua { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--text-secondary); }
     .usage-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 18px 20px; }
     .usage-empty { text-align: center; padding: 40px; color: var(--text-tertiary); }
     .usage-footnote { line-height: 1.8; margin-top: 16px; }
@@ -2173,6 +2193,7 @@
             <label>接口<input id="usageEndpoint" class="form-input" placeholder="例如 messages:stream" maxlength="64" /></label>
             <label>API Key ID<input id="usageKey" class="form-input" placeholder="Key 的记录 ID（非密钥）" maxlength="32" /></label>
             <label>渠道 ID<input id="usageChannel" class="form-input" placeholder="渠道记录 ID" maxlength="32" /></label>
+            <label>请求类型<select id="usageRequestType" class="form-select" onchange="scheduleUsageLoad()"><option value="all">全部</option><option value="stream">流式</option><option value="sync">同步</option></select></label>
           </div></details>
           <div class="usage-actions"><button type="submit" class="btn btn-primary">查询 / 刷新</button><button type="button" class="btn btn-secondary" onclick="resetUsageFilters()">重置筛选</button><button type="button" id="usageExport" class="btn btn-ghost" onclick="exportUsageCsv()" disabled>导出筛选结果 CSV</button><span class="text-sm text-muted">CSV 最多 10,000 条</span></div>
         </form>
@@ -2183,7 +2204,9 @@
           <div class="stat-card"><div class="stat-label">总 Tokens</div><div class="stat-value" id="usageStatTokens">—</div><div class="text-sm text-muted" id="usageTokenHint">输入 + 输出</div></div>
           <div class="stat-card"><div class="stat-label">请求数</div><div class="stat-value" id="usageStatRequests">—</div><div class="text-sm text-muted" id="usageRequestHint">退款记录不计入请求数</div></div>
           <div class="stat-card"><div class="stat-label">活跃用户 / 使用模型</div><div class="stat-value" id="usageStatAudience">—</div><div class="text-sm text-muted" id="usageAudienceHint">当前筛选内去重</div></div>
+          <div class="stat-card"><div class="stat-label">平均首字 · 流式</div><div class="stat-value" id="usageStatFirstToken">—</div><div class="text-sm text-muted" id="usageFirstTokenHint">首个输出事件到达客户端的耗时</div></div>
           <div class="stat-card"><div class="stat-label">缓存读取 Tokens</div><div class="stat-value" id="usageStatCache">—</div><div class="text-sm text-muted" id="usageCacheHint">已包含在输入 Tokens 内</div></div>
+          <div class="stat-card"><div class="stat-label">缓存写入 Tokens</div><div class="stat-value" id="usageStatCacheWrite">—</div><div class="text-sm text-muted" id="usageCacheWriteHint">已包含在输入 Tokens 内</div></div>
           <div class="stat-card"><div class="stat-label">图片 / 视频净数量</div><div class="stat-value" id="usageStatMedia">—</div><div class="text-sm text-muted" id="usageMediaHint">含退款冲减</div></div>
         </div>
         <div class="card usage-trend-card"><div class="card-header"><div><span class="card-title">用量趋势</span><div class="text-sm text-muted" id="usageWindow">—</div></div><label class="usage-inline-label">查看<select id="usageTrendMetric" class="form-select" onchange="renderUsageTrend()"><option value="cost_cents">净消耗</option><option value="tokens">Tokens</option><option value="requests">请求数</option></select></label></div><div class="card-body"><div id="usageTrend" class="usage-trend">暂无数据</div><div id="usageTrendHint" class="text-sm text-muted"></div></div></div>
@@ -2196,7 +2219,7 @@
           <div class="table-wrapper"><table id="usageTable"><thead id="usageTableHead"></thead><tbody id="usageTableBody"></tbody></table></div>
           <div class="usage-pagination"><span id="usagePageInfo" class="text-sm text-muted">—</span><div class="usage-actions"><button id="usagePrev" class="btn btn-sm btn-secondary" type="button" onclick="loadUsageTable(usageState.offset - 20)" disabled>上一页</button><button id="usageNext" class="btn btn-sm btn-secondary" type="button" onclick="loadUsageTable(usageState.offset + 20)" disabled>下一页</button></div></div>
         </div>
-        <p class="usage-footnote text-sm text-muted">金额为请求日志记录的用户侧消耗；输入 Tokens 已包含缓存，勿重复相加。日志异步写入，最新请求可能短暂延迟。失败 / 退款等筛选会同步作用于总览、排行、明细和导出。</p>
+        <p class="usage-footnote text-sm text-muted">首字：流式请求从到达网关到首个输出事件发给客户端的耗时，口径同 sub2api，跳过 response.created / message_start 等前导事件，含输出前的渠道切换；非流式请求不记录。输出速度 = 输出 Tokens ÷ 总耗时，可能含推理 Tokens。首字、类型、推理强度和 UA 从本功能上线后开始记录。金额为请求日志记录的用户侧消耗；输入 Tokens 已包含缓存，勿重复相加。日志异步写入，最新请求可能短暂延迟。失败 / 退款等筛选会同步作用于总览、排行、明细和导出。</p>
       </div>
       <div id="usageRecordModal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="usageRecordTitle">
         <div class="modal" style="max-width:880px"><div class="modal-header"><span id="usageRecordTitle" class="modal-title">请求详情</span><button class="modal-close" aria-label="关闭请求详情" onclick="closeUsageRecord()">&times;</button></div><div class="modal-body" id="usageRecordDetail"></div><div class="modal-footer"><button class="btn btn-secondary" onclick="closeUsageRecord()">关闭</button></div></div>
@@ -6124,7 +6147,51 @@
     const usageEl = id => document.getElementById(id);
     const usageCount = value => Number(value || 0).toLocaleString('zh-CN');
     const usageRate = value => value == null ? '—' : formatPct(value);
-    const usageLatency = value => value == null ? '—' : Number(value) >= 1000 ? `${(Number(value) / 1000).toFixed(2)} s` : `${value} ms`;
+    // Duration format and latency health bands follow sub2api's usage table (utils/latencyHealth.ts).
+    function usageLatency(value) {
+      if (value == null) return '—';
+      const ms = Math.round(Number(value));
+      if (ms < 1000) return `${ms}ms`;
+      if (ms < 60000) return `${(ms / 1000).toFixed(2)}s`;
+      const sec = Math.round(ms / 1000);
+      if (sec < 3600) return `${Math.floor(sec / 60)}m ${sec % 60}s`;
+      return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`;
+    }
+    const USAGE_FIRST_TOKEN_BANDS = [10000, 30000, 60000];  // good < 10s, warn < 30s, slow < 60s, critical
+    const USAGE_DURATION_BANDS = [60000, 180000, 300000];   // streams run long: 1m / 3m / 5m
+    const USAGE_LATENCY_BAR = ['#10b981', '#f59e0b', '#f97316', '#ef4444'];
+    const usageSeverity = (ms, bands) => bands.filter(limit => Number(ms) >= limit).length;
+    const usageCompact = value => {
+      const n = Number(value || 0);
+      return n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}K` : n.toLocaleString('zh-CN');
+    };
+    const usageShare = (part, whole) => Number(whole) > 0 ? formatPct(Number(part || 0) / Number(whole)) : '—';
+    const usageOutputRate = row => row.output_tokens_per_second == null ? '—' : `${Number(row.output_tokens_per_second).toFixed(1)} tok/s`;
+
+    function usageTokensCell(row) {
+      const cacheRead = Number(row.cache_read_tokens || 0), cacheWrite = Number(row.cache_creation_tokens || 0);
+      const detail = [`输入 ${usageCount(row.input_tokens)}（含缓存读 ${usageCount(cacheRead)}、缓存写 ${usageCount(cacheWrite)}）`,
+        `输出 ${usageCount(row.output_tokens)}`, `缓存命中 ${usageShare(cacheRead, row.input_tokens)}（缓存读 ÷ 输入）`].join('\n');
+      const cache = cacheRead || cacheWrite
+        ? `<div class="usage-cache">${cacheRead ? `<span class="read">读 ${usageCompact(cacheRead)}</span>` : ''}${cacheWrite ? `<span class="write">写 ${usageCompact(cacheWrite)}</span>` : ''}</div>` : '';
+      const media = Number(row.image_count || 0) || Number(row.video_count || 0)
+        ? `<div class="usage-secondary">图 ${usageCount(row.image_count)} · 视频 ${usageCount(row.video_count)}</div>` : '';
+      return `<div class="usage-io" title="${escapeHtml(detail)}"><span class="in">${usageCount(row.input_tokens)}</span><span class="out">${usageCount(row.output_tokens)}</span></div>${cache}${media}`;
+    }
+
+    function usageLatencyCell(row) {
+      const duration = Number(row.duration_ms || 0), durationLevel = usageSeverity(duration, USAGE_DURATION_BANDS);
+      const hasFirst = row.first_token_ms != null;
+      const firstLevel = hasFirst ? usageSeverity(row.first_token_ms, USAGE_FIRST_TOKEN_BANDS) : durationLevel;
+      // Top of the bar follows first token, bottom follows total duration (sub2api's health bar).
+      const bar = `linear-gradient(to bottom, ${USAGE_LATENCY_BAR[firstLevel]} 40%, ${USAGE_LATENCY_BAR[durationLevel]} 60%)`;
+      const first = hasFirst ? `<span class="v usage-latency-${firstLevel}">${usageLatency(row.first_token_ms)}</span>` : '<span class="k">—</span>';
+      return `<div class="usage-latency"><span class="usage-latency-bar" style="background:${bar}" aria-hidden="true"></span><div class="usage-latency-grid"><span class="k">首字</span>${first}<span class="k">耗时</span><span class="v usage-latency-${durationLevel}">${usageLatency(duration)}</span><span class="k" title="输出 Tokens ÷ 总耗时，可能含推理 Tokens">速度</span><span class="v">${usageOutputRate(row)}</span></div></div>`;
+    }
+
+    function usageAverageLatencyCell(row) {
+      return `${usageLatency(row.avg_latency_ms)}${row.avg_first_token_ms != null ? `<div class="usage-secondary">首字 ${usageLatency(row.avg_first_token_ms)}</div>` : ''}`;
+    }
     const usageDateFormatter = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false, dateStyle: 'short', timeStyle: 'medium' });
     const usageDate = value => value ? usageDateFormatter.format(new Date(value)) : '—';
 
@@ -6144,10 +6211,10 @@
       const period = usageEl('usagePeriod').value;
       const params = new URLSearchParams({ period });
       const fields = { model: 'usageModelFilter', search: 'usageSearch', result: 'usageResultFilter',
-        endpoint: 'usageEndpoint', api_key_id: 'usageKey', channel_id: 'usageChannel' };
+        endpoint: 'usageEndpoint', api_key_id: 'usageKey', channel_id: 'usageChannel', request_type: 'usageRequestType' };
       Object.entries(fields).forEach(([key, id]) => {
         const value = usageEl(id).value.trim();
-        if (value && !(key === 'result' && value === 'all')) params.set(key, value);
+        if (value && !((key === 'result' || key === 'request_type') && value === 'all')) params.set(key, value);
       });
       if (period === 'custom') {
         const start = usageEl('usageStartDate').value;
@@ -6184,6 +6251,7 @@
       ['usageSearch', 'usageModelFilter', 'usageEndpoint', 'usageKey', 'usageChannel', 'usageStartDate', 'usageEndDate'].forEach(id => usageEl(id).value = '');
       usageEl('usagePeriod').value = 'today';
       usageEl('usageResultFilter').value = 'all';
+      usageEl('usageRequestType').value = 'all';
       usageEl('usageCustomDates').hidden = true;
       usageState.user = null;
       usageState.model = '';
@@ -6248,8 +6316,8 @@
     }
 
     function clearUsageDisplay() {
-      ['usageStatCost', 'usageStatTokens', 'usageStatRequests', 'usageStatAudience', 'usageStatCache', 'usageStatMedia'].forEach(id => usageEl(id).textContent = '—');
-      ['usageCostHint', 'usageTokenHint', 'usageRequestHint', 'usageAudienceHint', 'usageCacheHint', 'usageMediaHint', 'usageWindow', 'usageTrendHint', 'usagePageInfo'].forEach(id => usageEl(id).textContent = '');
+      ['usageStatCost', 'usageStatTokens', 'usageStatRequests', 'usageStatAudience', 'usageStatFirstToken', 'usageStatCache', 'usageStatCacheWrite', 'usageStatMedia'].forEach(id => usageEl(id).textContent = '—');
+      ['usageCostHint', 'usageTokenHint', 'usageRequestHint', 'usageAudienceHint', 'usageFirstTokenHint', 'usageCacheHint', 'usageCacheWriteHint', 'usageMediaHint', 'usageWindow', 'usageTrendHint', 'usagePageInfo'].forEach(id => usageEl(id).textContent = '');
       usageEl('usageTrend').textContent = '加载中…';
       usageEl('usageTableBody').innerHTML = '<tr><td colspan="10" class="usage-empty">加载中…</td></tr>';
       usageEl('usageExport').disabled = true;
@@ -6268,9 +6336,14 @@
       usageEl('usageRequestHint').textContent = `成功 ${usageCount(s.succeeded)} · 失败 ${usageCount(s.failed)} (${usageRate(s.failure_rate)})`;
       usageEl('usageStatAudience').textContent = `${usageCount(s.users)} / ${usageCount(s.models)}`;
       usageEl('usageAudienceHint').textContent = `平均耗时 ${usageLatency(s.avg_latency_ms)} · Fallback ${usageCount(s.fallback_requests)} 次`;
+      usageEl('usageStatFirstToken').textContent = usageLatency(s.avg_first_token_ms);
+      usageEl('usageFirstTokenHint').textContent = `流式 ${usageCount(s.stream_requests)} / ${usageCount(s.requests)} 笔 · 平均耗时 ${usageLatency(s.avg_latency_ms)}`;
       usageEl('usageStatCache').textContent = formatNum(s.cache_read_tokens);
       usageEl('usageStatCache').title = usageCount(s.cache_read_tokens);
-      usageEl('usageCacheHint').textContent = `占输入 ${usageRate(s.cache_read_rate)} · 缓存写入 ${formatNum(s.cache_creation_tokens)}`;
+      usageEl('usageCacheHint').textContent = `缓存命中 ${usageRate(s.cache_read_rate)}（缓存读 ÷ 输入）`;
+      usageEl('usageStatCacheWrite').textContent = formatNum(s.cache_creation_tokens);
+      usageEl('usageStatCacheWrite').title = usageCount(s.cache_creation_tokens);
+      usageEl('usageCacheWriteHint').textContent = `占输入 ${usageShare(s.cache_creation_tokens, s.input_tokens)}`;
       usageEl('usageStatMedia').textContent = `${usageCount(s.images)} / ${usageCount(s.videos)}`;
       usageEl('usageMediaHint').textContent = '含退款冲减，媒体不转换为 Tokens';
       usageEl('usageWindow').textContent = `${data.period_label} · ${usageDate(data.window_start)} 至 ${usageDate(data.window_end)}（不含）`;
@@ -6302,10 +6375,11 @@
       const tab = usageState.tab;
       document.querySelectorAll('[data-usage-tab]').forEach(node => node.setAttribute('aria-pressed', String(node.dataset.usageTab === tab)));
       usageEl('usageSortLabel').style.display = tab === 'records' ? 'none' : '';
-      const columns = tab === 'users' ? ['#', '用户', '净消耗', 'Tokens（输入 / 输出）', '请求', '模型数', '图片 / 视频', '失败率', '平均耗时', '操作']
-        : tab === 'pairs' ? ['#', '用户', '模型', '净消耗', 'Tokens（输入 / 输出）', '请求', '图片 / 视频', '失败率', '平均耗时', '操作']
-        : tab === 'models' ? ['#', '模型', '净消耗', 'Tokens（输入 / 输出）', '缓存读 / 写', '请求 / 用户', '图片 / 视频', '失败率', '平均耗时', '操作']
-        : ['时间（上海）', '用户 / Key', '模型 / 接口', 'Tokens / 媒体', '净消耗', '结果', '耗时', '操作'];
+      const columns = tab === 'users' ? ['#', '用户', '净消耗', 'Tokens（输入 / 输出）', '请求', '模型数', '图片 / 视频', '失败率', '平均耗时 / 首字', '操作']
+        : tab === 'pairs' ? ['#', '用户', '模型', '净消耗', 'Tokens（输入 / 输出）', '请求', '图片 / 视频', '失败率', '平均耗时 / 首字', '操作']
+        : tab === 'models' ? ['#', '模型', '净消耗', 'Tokens（输入 / 输出）', '缓存读 / 写', '请求 / 用户', '图片 / 视频', '失败率', '平均耗时 / 首字', '操作']
+        : ['时间（上海）', '用户 / Key', '模型', '类型', 'Tokens ↓入 ↑出 · 缓存', '净消耗', '延迟', '结果', 'User-Agent / IP', '操作'];
+      usageEl('usageTable').classList.toggle('usage-records', tab === 'records');
       usageEl('usageTableHead').innerHTML = `<tr>${columns.map(c => `<th>${c}</th>`).join('')}</tr>`;
       usageEl('usageTableHint').textContent = tab === 'users'
         ? usageState.model ? `显示模型「${usageState.model}」的用户消耗；点击用户查看该用户使用此模型的请求明细。`
@@ -6315,7 +6389,7 @@
         : tab === 'models'
           ? usageState.user ? `显示用户「${usageState.user.name}」的模型消耗；点击模型查看该模型在此用户下的请求明细。`
             : '按当前筛选聚合模型；点击模型查看使用它的用户及各自消耗。缓存读写已包含在输入 Tokens 内。'
-        : '按时间倒序查看全部记录；打开详情可核对模型、渠道、缓存和计费信息。';
+        : '按时间倒序查看全部记录。Tokens 列第二行为缓存读 / 写，悬停看明细；延迟列色条上端按首字、下端按总耗时着色（绿 / 黄 / 橙 / 红）。打开详情可核对渠道和计费信息。';
     }
 
     function usageStatusBadge(row) {
@@ -6345,18 +6419,24 @@
       body.innerHTML = rows.map((row, index) => {
         const money = `<strong>${formatMoney(row.cost_cents)}</strong>`;
         const tokens = `${usageCount(row.tokens)}<div class="usage-secondary">入 ${usageCount(row.input_tokens)} · 出 ${usageCount(row.output_tokens)}</div>`;
-        if (tab === 'records') return `<tr><td class="text-sm">${escapeHtml(usageDate(row.created_at))}</td><td>${escapeHtml(row.user || row.user_id)}<div class="usage-secondary">${escapeHtml(row.api_key_id || '未记录 Key')}</div></td><td>${escapeHtml(row.model)}<div class="usage-secondary">${escapeHtml(row.endpoint)}</div></td><td>${tokens}<div class="usage-secondary">图 ${usageCount(row.image_count)} · 视频 ${usageCount(row.video_count)}</div></td><td>${money}</td><td>${usageStatusBadge(row)}${row.route_attempt > 0 ? '<div class="usage-secondary">Fallback</div>' : ''}</td><td>${usageLatency(row.duration_ms)}</td><td><button class="btn btn-sm btn-secondary" data-usage-row="${index}">详情</button></td></tr>`;
+        if (tab === 'records') {
+          const upstream = row.provider_model && row.provider_model !== row.model ? `<div class="usage-secondary">↳ ${escapeHtml(row.provider_model)}</div>` : '';
+          const kind = `<span class="badge ${row.is_stream ? 'badge-info' : 'badge-neutral'}">${row.is_stream ? '流式' : '同步'}</span>${row.reasoning_effort ? `<div class="usage-secondary">推理 ${escapeHtml(row.reasoning_effort)}</div>` : ''}`;
+          const longContext = row.pricing_tier === 'long_context' ? '<span class="usage-chip" title="输入超过长上下文阈值，整次请求按长上下文单价计费">长上下文</span>' : '';
+          const client = row.user_agent ? `<div class="usage-ua" title="${escapeHtml(row.user_agent)}">${escapeHtml(row.user_agent)}</div>` : '<span class="text-muted">—</span>';
+          return `<tr><td class="text-sm">${escapeHtml(usageDate(row.created_at))}</td><td>${escapeHtml(row.user || row.user_id)}<div class="usage-secondary">${escapeHtml(row.api_key_id || '未记录 Key')}</div></td><td class="usage-model"><strong>${escapeHtml(row.model)}</strong>${upstream}<div class="usage-secondary">${escapeHtml(row.endpoint)}</div></td><td>${kind}</td><td>${usageTokensCell(row)}</td><td>${money}${longContext}</td><td>${usageLatencyCell(row)}</td><td>${usageStatusBadge(row)}${row.route_attempt > 0 ? '<div class="usage-secondary">Fallback</div>' : ''}</td><td>${client}${row.client_ip ? `<div class="usage-secondary">${escapeHtml(row.client_ip)}</div>` : ''}</td><td><button class="btn btn-sm btn-secondary" data-usage-row="${index}">详情</button></td></tr>`;
+        }
         if (tab === 'pairs') {
           const user = `<div><strong>${escapeHtml(row.display_name || row.user_id || '未记录')}</strong><div class="usage-secondary">${escapeHtml(row.user_id || '')}</div></div>`;
           const model = `<strong>${escapeHtml(row.model || '未记录模型')}</strong>`;
-          return `<tr><td><span class="rank-badge rank-${Number(row.rank)}">${Number(row.rank)}</span></td><td>${user}</td><td>${model}</td><td>${money}</td><td>${tokens}</td><td>${usageCount(row.requests)}</td><td>${usageCount(row.images)} / ${usageCount(row.videos)}</td><td>${usageRate(row.failure_rate)}</td><td>${usageLatency(row.avg_latency_ms)}</td><td><button class="btn btn-sm btn-secondary" data-usage-row="${index}">请求明细</button></td></tr>`;
+          return `<tr><td><span class="rank-badge rank-${Number(row.rank)}">${Number(row.rank)}</span></td><td>${user}</td><td>${model}</td><td>${money}</td><td>${tokens}</td><td>${usageCount(row.requests)}</td><td>${usageCount(row.images)} / ${usageCount(row.videos)}</td><td>${usageRate(row.failure_rate)}</td><td>${usageAverageLatencyCell(row)}</td><td><button class="btn btn-sm btn-secondary" data-usage-row="${index}">请求明细</button></td></tr>`;
         }
         const name = tab === 'users' ? row.display_name : row.key;
         const identity = `<button class="btn btn-ghost usage-link" data-usage-row="${index}">${escapeHtml(name || '未记录')}</button>${tab === 'users' ? `<div class="usage-secondary">${escapeHtml(row.email || row.key)}</div>` : ''}`;
         const extras = tab === 'users' ? `<td>${usageCount(row.requests)}</td><td>${usageCount(row.models)}</td>`
           : `<td>${usageCount(row.cache_read_tokens)} / ${usageCount(row.cache_creation_tokens)}</td><td>${usageCount(row.requests)} / ${usageCount(row.users)}</td>`;
         const action = tab === 'users' ? '查看模型' : '查看用户';
-        return `<tr><td><span class="rank-badge rank-${Number(row.rank)}">${Number(row.rank)}</span></td><td>${identity}</td><td>${money}</td><td>${tokens}</td>${extras}<td>${usageCount(row.images)} / ${usageCount(row.videos)}</td><td>${usageRate(row.failure_rate)}</td><td>${usageLatency(row.avg_latency_ms)}</td><td><button class="btn btn-sm btn-secondary" data-usage-row="${index}">${action}</button></td></tr>`;
+        return `<tr><td><span class="rank-badge rank-${Number(row.rank)}">${Number(row.rank)}</span></td><td>${identity}</td><td>${money}</td><td>${tokens}</td>${extras}<td>${usageCount(row.images)} / ${usageCount(row.videos)}</td><td>${usageRate(row.failure_rate)}</td><td>${usageAverageLatencyCell(row)}</td><td><button class="btn btn-sm btn-secondary" data-usage-row="${index}">${action}</button></td></tr>`;
       }).join('');
       body.querySelectorAll('[data-usage-row]').forEach(button => {
         button.onclick = () => {
@@ -6473,7 +6553,8 @@
     function showUsageRecord(row, trigger) {
       usageState.focusReturn = trigger;
       const groups = [
-        ['请求与用量', [['日志 ID', row.id], ['时间（上海）', usageDate(row.created_at)], ['用户 / ID', `${row.user} / ${row.user_id}`], ['API Key ID', row.api_key_id], ['客户模型', row.model], ['上游模型', row.provider_model], ['接口', row.endpoint], ['结果 / 状态码', `${row.is_refund ? '退款记录' : '请求'} / ${row.status_code}`], ['输入 / 输出 Tokens', `${usageCount(row.input_tokens)} / ${usageCount(row.output_tokens)}`], ['缓存读 / 写 Tokens', `${usageCount(row.cache_read_tokens)} / ${usageCount(row.cache_creation_tokens)}`], ['图片 / 视频净数量', `${usageCount(row.image_count)} / ${usageCount(row.video_count)}`], ['用量单位 / 数量', `${row.usage_unit_type || '未记录'} / ${usageCount(row.usage_unit_count)}`], ['用户侧净消耗', formatMoney(row.cost_cents)], ['耗时', usageLatency(row.duration_ms)]]],
+        ['请求与用量', [['日志 ID', row.id], ['时间（上海）', usageDate(row.created_at)], ['用户 / ID', `${row.user} / ${row.user_id}`], ['API Key ID', row.api_key_id], ['客户模型', row.model], ['上游模型', row.provider_model], ['接口', row.endpoint], ['结果 / 状态码', `${row.is_refund ? '退款记录' : '请求'} / ${row.status_code}`], ['输入 / 输出 Tokens', `${usageCount(row.input_tokens)} / ${usageCount(row.output_tokens)}`], ['缓存读 / 写 Tokens', `${usageCount(row.cache_read_tokens)} / ${usageCount(row.cache_creation_tokens)}`], ['图片 / 视频净数量', `${usageCount(row.image_count)} / ${usageCount(row.video_count)}`], ['用量单位 / 数量', `${row.usage_unit_type || '未记录'} / ${usageCount(row.usage_unit_count)}`], ['用户侧净消耗', formatMoney(row.cost_cents)], ['价格档位', row.pricing_tier === 'long_context' ? '长上下文' : row.pricing_tier === 'standard' ? '标准' : row.pricing_tier], ['缓存命中（缓存读 ÷ 输入）', usageShare(row.cache_read_tokens, row.input_tokens)]]],
+        ['延迟与客户端', [['请求类型', row.is_stream ? '流式' : '同步'], ['推理强度', row.reasoning_effort], ['首字', row.first_token_ms == null ? (row.is_stream ? '未记录（无输出或上线前的日志）' : '非流式不记录') : usageLatency(row.first_token_ms)], ['总耗时', usageLatency(row.duration_ms)], ['输出速度', usageOutputRate(row)], ['客户端 IP', row.client_ip], ['User-Agent', row.user_agent]]],
         ['渠道与追踪', [['渠道 ID', row.channel_id], ['供应商 / 类型', `${row.provider_platform || '未记录'} / ${row.channel_type || '未记录'}`], ['路由尝试序号（0 为首次）', row.route_attempt], ['Fallback 来源渠道', row.fallback_from_channel_id], ['路由原因', row.route_reason], ['上游请求 ID', row.upstream_request_id], ['站点 ID', row.station_id]]],
         ['计费快照', [['计费 SKU', row.billable_sku], ['价格版本', row.price_version], ['计费模式', row.pricing_mode], ['用户倍率', row.user_billing_multiplier], ['模型 / 输出倍率', `${row.model_multiplier ?? '—'} / ${row.output_multiplier ?? '—'}`], ['缓存读取倍率', row.cache_read_multiplier], ['图片 / 视频倍率', `${row.image_multiplier ?? '—'} / ${row.video_multiplier ?? '—'}`], ['基础输入价（美分 / 百万 Tokens）', row.base_price_input_per_million], ['基础输出价（美分 / 百万 Tokens）', row.base_price_output_per_million], ['有效缓存读取价（美分 / 百万 Tokens）', row.effective_cached_input_per_million], ['有效缓存写入价（美分 / 百万 Tokens）', row.effective_cache_creation_input_per_million], ['基础图片价（美分 / 张）', row.base_price_per_image_cents], ['视频价（美分 / 个）', row.price_per_video_cents]]],
       ];

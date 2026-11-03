@@ -3,7 +3,7 @@ type: guide
 status: active
 owner: platform
 audience: [operator, admin]
-updated: 2026-09-18
+updated: 2026-11-03
 canonical_for: admin-usage-analysis
 ---
 
@@ -58,6 +58,32 @@ canonical_for: admin-usage-analysis
 页面固定 `as_of`，翻页和导出使用相同时间边界。请求日志异步落库，迟到日志仍可能
 改变同一范围的结果，这不是数据库历史快照。页面展示更新时间，刷新后重新查询。
 
+## 首字、缓存与客户端（2026-11 新增，参照 sub2api）
+
+“请求明细”按 sub2api 用量表的列设计展示每笔请求：
+
+| 列 | 内容 |
+| --- | --- |
+| 类型 | 流式 / 同步；有推理强度时显示（`reasoning_effort`、`reasoning.effort` 或 Anthropic `output_config.effort`） |
+| Tokens | `↓输入 ↑输出`；第二行蓝色为缓存读、橙色为缓存写，悬停看明细和缓存命中率 |
+| 净消耗 | 用户侧扣费；整次请求按长上下文计价时标“长上下文” |
+| 延迟 | 首字、总耗时、输出速度；左侧色条上端按首字、下端按总耗时着色 |
+| User-Agent / IP | 发起请求的客户端和 IP（`X-Forwarded-For` 第一个地址，其次 `X-Real-IP`） |
+
+- **首字**沿用 sub2api 默认的语义口径：流式请求从到达网关，到第一个输出事件发给
+  客户端的耗时。跳过 `response.created`、`response.queued`、`response.in_progress`、
+  `response.metadata`、`keepalive`，以及 Anthropic 的 `message_start`、`ping`；
+  `error` / `response.failed` 不计入。Chat Completions 的 chunk 需带内容、推理或工具调用，
+  只有 role 的首包不算。测量点在发给客户端的字节上，覆盖原生、协议转换和 fallback 路径，
+  包含输出前的渠道切换时间。非流式请求、无输出就失败的请求不记录首字。
+- **色档**同 sub2api：首字 < 10s 绿、< 30s 黄、< 60s 橙、其余红；总耗时按 1 / 3 / 5 分钟分档。
+- **输出速度** = 输出 Tokens ÷ 总耗时，可能含推理 Tokens。
+- **缓存命中** = 缓存读 ÷ 输入 Tokens。输入已含缓存读写，两者不能再加回总量。
+- 总览新增“平均首字 · 流式”（仅统计有首字的非退款请求）和“缓存写入 Tokens”；
+  排行表的平均耗时下方显示平均首字。更多筛选可按“请求类型”只看流式或同步。
+- 首字、类型、推理强度、User-Agent、IP 从本功能上线后写入，历史日志为空，类型默认为同步。
+  CSV 同步新增这些列和价格档位。
+
 ## 性能与验证
 
 - 总览和当前表格分开按需加载，每页只渲染 20 行，不下载全部用户或请求。
@@ -69,13 +95,16 @@ canonical_for: admin-usage-analysis
   修改查询或手动刷新会清空。短时间返回用量页面保留已加载内容。
 - 连续切换时间 / 结果筛选合并为 180ms 防抖；切换查询、离开页面会中止浏览器等待，
   且通过版本检查阻止旧响应覆盖新数据。浏览器取消不保证已经执行的 SQL 同步停止。
-- 查询直接约束 `created_at` 时间范围，复用现有时间及用户时间索引；不新增迁移。
+- 查询直接约束 `created_at` 时间范围，复用现有时间及用户时间索引。首字功能给
+  `coincoin_request_logs` 追加 5 个可空 / 带默认值的列（启动迁移 `ADD COLUMN`，
+  MySQL 8 默认 INSTANT），不新增索引。首字检测只解析流式响应开头直到首个输出事件，
+  之后直接透传；前导事件超过 1MB 时放弃测量，不缓存整段内容。
   模糊模型搜索、聚合排序及深分页仍需扫描范围内数据，生产性能应基于真实数据量测量。
 - CSV 限量加载，格式化在线程池完成，避免大量字符串处理阻塞 API 事件循环。
 - 管理后台重复点击当前导航不再重发查询；移除整个长页面切换缩放动画和统计卡片背景模糊，
   沿用主分支已有的普通卡片优化；手机表格在容器内部横向滚动。
 
-自动回归见 `tests/test_admin_usage_analysis.py`，覆盖时间边界、真实 SQL 聚合、退款、
+自动回归见 `tests/test_admin_usage_analysis.py` 与 `tests/test_request_telemetry.py`（首字口径、中间件到日志落库），覆盖时间边界、真实 SQL 聚合、退款、
 筛选一致性、分页、导出、权限及避免重复计数。测试采用隔离 SQLite，模拟 MySQL 的
 两个时间函数，不替代真实 MySQL 查询计划和生产容量测试。
 

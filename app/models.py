@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, CheckConstraint, Date, DateTime, FetchedValue, Float, ForeignKey, Index, JSON, String, Text, UniqueConstraint, text
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, Date, DateTime, FetchedValue, Float, ForeignKey, Index, JSON, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
@@ -201,6 +201,12 @@ class RequestLog(Base):
     effective_cached_input_per_million: Mapped[float] = mapped_column(Float, default=0.0)
     cost_cents: Mapped[int] = mapped_column(BigInteger, default=0)  # 费用（分）
     duration_ms: Mapped[int] = mapped_column(BigInteger, default=0)  # 响应耗时（毫秒）
+    # Client-perceived time to the first output event of a stream; NULL when not measured.
+    first_token_ms: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    is_stream: Mapped[bool] = mapped_column(Boolean, default=False)
+    reasoning_effort: Mapped[str] = mapped_column(String(16), default="")
+    user_agent: Mapped[str] = mapped_column(String(255), default="")
+    client_ip: Mapped[str] = mapped_column(String(64), default="")
     status_code: Mapped[int] = mapped_column(BigInteger, default=200)  # 上游响应状态码
     route_reason: Mapped[str] = mapped_column(String(128), default="")  # router decision / fallback reason
 

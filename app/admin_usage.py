@@ -90,7 +90,8 @@ class UsageFilter:
                  model: Annotated[str, Query(max_length=128)] = "", channel_id: Annotated[str, Query(max_length=32)] = "",
                  endpoint: Annotated[str, Query(max_length=64)] = "", api_key_id: Annotated[str, Query(max_length=32)] = "",
                  model_exact: Annotated[str, Query(max_length=128)] = "", as_of: Optional[datetime] = None,
-                 result: Literal["all", "success", "failed", "refund"] = "all"):
+                 result: Literal["all", "success", "failed", "refund"] = "all",
+                 request_type: Literal["all", "stream", "sync"] = "all"):
         self.period = period
         now = datetime.now(timezone.utc)
         if as_of is not None:
@@ -124,6 +125,9 @@ class UsageFilter:
             self.conditions.extend([~refund_expr(), Log.status_code >= 400])
         elif result == "success":
             self.conditions.extend([~refund_expr(), Log.status_code >= 200, Log.status_code < 400])
+        if request_type != "all":
+            # Logs written before is_stream existed default to sync.
+            self.conditions.append(Log.is_stream.is_(request_type == "stream"))
 
     def metadata(self):
         return {"period": self.period, "period_label": PERIODS[self.period], "timezone": "Asia/Shanghai", "as_of": self.as_of,
@@ -149,15 +153,19 @@ def aggregate_columns():
             sum_(case((request & (Log.status_code >= 400), 1), else_=0), "failed"),
             sum_(case((request & (Log.status_code >= 200) & (Log.status_code < 400), 1), else_=0), "succeeded"),
             sum_(case((request & (Log.route_attempt > 0), 1), else_=0), "fallback_requests"),
-            func.avg(case((request & (Log.duration_ms > 0), Log.duration_ms), else_=None)).label("avg_latency_ms")]
+            sum_(case((request & Log.is_stream.is_(True), 1), else_=0), "stream_requests"),
+            func.avg(case((request & (Log.duration_ms > 0), Log.duration_ms), else_=None)).label("avg_latency_ms"),
+            func.avg(case((request & Log.first_token_ms.is_not(None), Log.first_token_ms), else_=None)).label("avg_first_token_ms")]
 
 
 def metrics(row):
     result = dict(row)
     for key in ("records", "requests", "users", "models", "input_tokens", "output_tokens", "tokens", "cache_read_tokens",
-                "cache_creation_tokens", "images", "videos", "cost_cents", "refund_cents", "refund_records", "failed", "succeeded", "fallback_requests"):
+                "cache_creation_tokens", "images", "videos", "cost_cents", "refund_cents", "refund_records", "failed", "succeeded", "fallback_requests",
+                "stream_requests"):
         result[key] = int(result.get(key) or 0)
-    result["avg_latency_ms"] = round(float(result["avg_latency_ms"])) if result.get("avg_latency_ms") is not None else None
+    for key in ("avg_latency_ms", "avg_first_token_ms"):
+        result[key] = round(float(result[key])) if result.get(key) is not None else None
     result["success_rate"] = result["succeeded"] / result["requests"] if result["requests"] else None
     result["failure_rate"] = result["failed"] / result["requests"] if result["requests"] else None
     result["cache_read_rate"] = result["cache_read_tokens"] / result["input_tokens"] if result["input_tokens"] else None
@@ -281,9 +289,16 @@ def serialize_record(row):
               "channel_id", "channel_type", "provider_platform", "route_attempt", "route_reason", "fallback_from_channel_id", "upstream_request_id",
               "station_id", "price_version", "pricing_mode", "user_billing_multiplier", "model_multiplier", "cache_read_multiplier", "output_multiplier", "image_multiplier", "video_multiplier",
               "base_price_input_per_million", "base_price_output_per_million", "base_price_per_image_cents",
-              "price_per_video_cents", "effective_cached_input_per_million", "effective_cache_creation_input_per_million")
+              "price_per_video_cents", "effective_cached_input_per_million", "effective_cache_creation_input_per_million",
+              "first_token_ms", "is_stream", "reasoning_effort", "user_agent", "client_ip")
     # Historical schemas may not have every optional pricing snapshot field.
     item = {field: getattr(log, field, None) for field in fields}
+    item["is_stream"] = bool(item.get("is_stream"))
+    pricing_details = getattr(log, "pricing_details", None)
+    item["pricing_tier"] = pricing_details.get("tier") if isinstance(pricing_details, dict) else None
+    # sub2api convention: output tokens over the whole request duration (may include reasoning).
+    duration, output = int(item.get("duration_ms") or 0), int(item.get("output_tokens") or 0)
+    item["output_tokens_per_second"] = round(output * 1000 / duration, 1) if duration > 0 and output > 0 else None
     item.update(user=username or email or external_id or log.user_id,
                 model=log.customer_model_alias or log.model or "未记录模型",
                 cache_read_tokens=log.cache_read_tokens or log.cached_tokens or 0,
@@ -322,7 +337,9 @@ def render_csv(rows):
                ("endpoint", "接口"), ("status_code", "状态码"), ("is_refund", "退款记录"),
                ("input_tokens", "输入 Token"), ("output_tokens", "输出 Token"), ("cache_read_tokens", "缓存读 Token"),
                ("cache_creation_tokens", "缓存写 Token"), ("image_count", "图片净数"), ("video_count", "视频净数"),
-               ("cost_cents", "日志消耗 美分"), ("duration_ms", "耗时 ms"), ("channel_id", "渠道 ID"),
+               ("cost_cents", "日志消耗 美分"), ("duration_ms", "耗时 ms"), ("first_token_ms", "首字 ms"),
+               ("is_stream", "流式"), ("output_tokens_per_second", "输出速度 tok/s"), ("reasoning_effort", "推理强度"),
+               ("channel_id", "渠道 ID"),
                ("provider_platform", "供应商"), ("route_attempt", "重试次数"), ("upstream_request_id", "上游请求 ID"),
                ("billable_sku", "SKU"), ("price_version", "价格版本"), ("user_billing_multiplier", "用户倍率"),
                ("tokens", "总 Token"), ("usage_unit_type", "用量单位"), ("usage_unit_count", "用量单位数量"),
@@ -334,7 +351,8 @@ def render_csv(rows):
                ("base_price_output_per_million", "基础输出价 美分/百万Token"),
                ("effective_cached_input_per_million", "有效缓存读取价 美分/百万Token"),
                ("effective_cache_creation_input_per_million", "有效缓存写入价 美分/百万Token"),
-               ("base_price_per_image_cents", "基础图片价 美分/张"), ("price_per_video_cents", "视频价 美分/个")]
+               ("base_price_per_image_cents", "基础图片价 美分/张"), ("price_per_video_cents", "视频价 美分/个"),
+               ("pricing_tier", "价格档位"), ("user_agent", "User-Agent"), ("client_ip", "客户端 IP")]
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow([label for _, label in columns])

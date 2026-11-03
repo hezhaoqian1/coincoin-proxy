@@ -18,6 +18,7 @@ from .quota_lifecycle import (
     register_current_quota_usage_task,
 )
 from .referral import process_first_usage_referral_reward
+from .request_telemetry import request_log_fields
 from .security import generate_id
 from .usage_events import schedule_usage_event_shadow
 from .token_pricing import ContextPricingTier, effective_token_prices
@@ -448,6 +449,7 @@ class UsageBuffer:
             )
         )
         day = china_today()
+        telemetry = request_log_fields(int(duration_ms or 0))
         
         # 使用分片锁，减少竞争
         lock = self._get_shard_lock(user_id)
@@ -521,6 +523,11 @@ class UsageBuffer:
                 "effective_cached_input_per_million": pricing_details["cache_read_per_million_cents"] if pricing_details else float(effective_cached_input_per_million or 0.0),
                 "cost_cents": round(cost_cents),
                 "duration_ms": int(duration_ms),
+                "first_token_ms": telemetry.get("first_token_ms"),
+                "is_stream": bool(telemetry.get("is_stream", False)),
+                "reasoning_effort": telemetry.get("reasoning_effort", ""),
+                "user_agent": telemetry.get("user_agent", ""),
+                "client_ip": telemetry.get("client_ip", ""),
                 "status_code": int(status_code),
                 "route_reason": (route_reason or "")[:128],
                 "requests": int(requests or 0),
@@ -688,6 +695,11 @@ def _request_log_insert_values(log: dict) -> dict:
         "effective_cached_input_per_million": log.get("effective_cached_input_per_million", 0.0),
         "cost_cents": log["cost_cents"],
         "duration_ms": log["duration_ms"],
+        "first_token_ms": log.get("first_token_ms"),
+        "is_stream": bool(log.get("is_stream", False)),
+        "reasoning_effort": log.get("reasoning_effort", ""),
+        "user_agent": log.get("user_agent", ""),
+        "client_ip": log.get("client_ip", ""),
         "status_code": log["status_code"],
         "route_reason": log.get("route_reason", ""),
         "created_at": log["created_at"],
