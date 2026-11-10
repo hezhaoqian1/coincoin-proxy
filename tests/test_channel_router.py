@@ -612,6 +612,81 @@ class RegistryChannelRouteTests(unittest.TestCase):
 
         self.assertEqual(resolved.backend.channel_id, "ch_only")
 
+    def _use_legacy_auto_catalog(self) -> None:
+        settings.model_catalog_json = json.dumps(
+            {
+                "default_text_model": "gpt-legacy",
+                "models": [
+                    {
+                        "id": "gpt-legacy",
+                        "owned_by": "openai",
+                        "provider_name": "OpenAI",
+                        "provider_model": "gpt-legacy-up",
+                        "capabilities": ["chat/completions", "responses"],
+                        "routing_mode": "legacy_auto",
+                        "delivery_lane": "legacy",
+                        "price_input_per_million": 100,
+                        "price_output_per_million": 200,
+                    }
+                ],
+            }
+        )
+        registry._initialized = False
+        registry.init_from_settings()
+
+    def _set_single_cooling_legacy_route(self) -> None:
+        channel_router.set_snapshot(
+            [
+                ProviderChannelSnapshot(
+                    channel_id="ch_luna",
+                    base_url="https://luna.example/v1",
+                    api_key="luna-key",
+                    allowed_fails=1,
+                    cooldown_seconds=30,
+                )
+            ],
+            [
+                ModelChannelRouteSnapshot(
+                    route_id="mcr_luna",
+                    public_model_id="gpt-legacy",
+                    endpoint="responses",
+                    channel_id="ch_luna",
+                )
+            ],
+        )
+        channel_router.record_failure("ch_luna", error_code="403")
+
+    def test_legacy_auto_model_tries_cooling_channel_when_legacy_upstream_has_no_key(self) -> None:
+        settings.upstream_api_key = ""
+        self._use_legacy_auto_catalog()
+        self._set_single_cooling_legacy_route()
+
+        resolved = registry.resolve_public_model("gpt-legacy", "responses")
+
+        self.assertEqual(resolved.backend.channel_id, "ch_luna")
+        self.assertEqual(resolved.backend.upstream_url, "https://luna.example/v1")
+        self.assertEqual(resolved.route_reason, "catalog:gpt-legacy:legacy_explicit:channel:ch_luna")
+        # And the dead legacy backend is never offered as a system fallback.
+        self.assertIsNone(registry.resolve_system_fallback(resolved.public_model, resolved.backend, "responses"))
+
+    def test_legacy_auto_model_without_routes_or_legacy_key_is_rejected(self) -> None:
+        settings.upstream_api_key = ""
+        self._use_legacy_auto_catalog()
+
+        with self.assertRaises(ModelCapabilityError):
+            registry.resolve_public_model("gpt-legacy", "responses")
+
+    def test_legacy_auto_model_keeps_configured_legacy_upstream_while_channels_cool(self) -> None:
+        self._use_legacy_auto_catalog()
+        self._set_single_cooling_legacy_route()
+
+        resolved = registry.resolve_public_model("gpt-legacy", "responses")
+
+        self.assertEqual(resolved.backend.channel_id, "")
+        self.assertEqual(resolved.backend.upstream_url, "https://legacy.example/v1")
+        self.assertEqual(resolved.backend.api_key, "legacy-key")
+        self.assertEqual(resolved.route_reason, "catalog:gpt-legacy:legacy_explicit")
+
     def test_route_only_model_resolves_through_anthropic_channel_route(self) -> None:
         channel_router.set_snapshot(
             [
