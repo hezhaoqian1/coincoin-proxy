@@ -85,6 +85,8 @@ datayes 在其网关（`aladdin-llm-proxy`，出口 IP 47.116.112.194，直连 `
   - `status_code=504 AND request_log_only` 行：被放弃的那次尝试。
 - **客户端放弃**：`railway logs -s 通联专属 --http --json --since <窗口> -f "@srcIp:47.116.112.194"`，统计 `/v1/messages` 的 499，并按 `rxBytes` 分档：<500KB、0.5–1MB、1–2.5MB、≥2.5MB。
 - **上游原始报错**：`railway logs -s <service> --json --since <窗口> -f "\"on /v1/messages\""`。
+- **客户端报 `405 {"detail":"Method Not Allowed"}`**：多半是 Base URL 多写了 `/v1`。例如 Claude 桌面端 Gateway base URL 填成 `…/v1`，实际发出的是 `POST /v1/v1/messages`（UA `claude-cli/… (external, claude-desktop-3p)`）。分支 `fix/api-path-v1-compat` 起，`app/api_path_compat.py` 会在路由前自动纠正多写或少写的 `/v1`；还出现 405 时，按 HTTP 日志里的 `path` 查是哪种新写法。
+- **Railway 日志只覆盖当前这次部署**：`--since` 再长，也只能看到最近一次部署之后的日志。一天部署多次时，要尽快拉取；更早的记录去查 `coincoin_request_logs`。
 - **链路追踪**：失败尝试的 `upstream_request_id` 以 `ccreq_<id>|<上游 id>` 开头。按 `ccreq_` 前缀分组即可还原整条切换链（`route_attempt` 为顺序）；经过 birdapi 的那一跳，可用后半段 id 去 sub2api 的 `ops_error_logs` 查上游原文。
 
 预期效果（按 11-10 的数据推算）：datayes `/v1/messages` 客户端可见失败率从约 **12.6%** 降到 **3.5–4.7%**；不算会自愈的超限 400，是 2.2–3.5%。如果客户再把 `CLAUDE_CODE_MAX_CONTEXT_TOKENS` 调到 30–40 万，大部分请求会落在 1MB 以下的低失败率区间。
@@ -92,6 +94,12 @@ datayes 在其网关（`aladdin-llm-proxy`，出口 IP 47.116.112.194，直连 `
 ## 7. 未解决 / 待跟进
 
 - **统一Api GPT（tyapi）余额不足**：2026-11-10 返回 `403 INSUFFICIENT_BALANCE`，需要充值或停用。
+- **主站 Claude 渠道 2026-11-10 16:55–17:20（北京时间）整条链不稳**：
+  - 首选 Yimo Claude MAX（`api.ymocode.com`，优先级 0）几乎全部 1 秒内返回 `503 No available accounts`（号池空了），16:50 起先出现 429；
+  - 回落到 Sixoner ccmax 后，部分请求 30–60 秒不出字，超时后再切；
+  - zzshu 一直返回 `403 Insufficient user quota`（余额 −116），**需要充值或停用**；
+  - 可达鸭部分模型返回 400。
+  整条链都失败时，客户端收到 502（datayes 回测 17:10–17:11 共 5 次，另有个别用户在 17:01–17:06 收到 503/504）。17:20 起 Yimo 恢复。
 - **Flow-Node 遇到大请求体会返回 Cloudflare 502 HTML 页**（主站 `flow-node.com`），另有流中途断开（每天约 15 次）。
 - **心跳尚未实现**：可以参考 sub2api，在首字超时切换之后再开始发 `: ping`。前提是先确认 datayes 网关是按「任何字节」还是按「首个正文」计时。
 - `/v1/responses`、chat 两条路径遇到上下文超限，仍会切通道。

@@ -172,9 +172,10 @@ class ImageJSONKeepaliveMiddlewareTests(unittest.IsolatedAsyncioTestCase):
         from app.main import app
 
         self.assertEqual(
-            [item.cls.__name__ for item in app.user_middleware[:4]],
+            [item.cls.__name__ for item in app.user_middleware[:5]],
             [
                 "CORSMiddleware",
+                "ApiPathCompatASGIMiddleware",
                 "AdminTimingASGIMiddleware",
                 "ImageJSONKeepaliveASGIMiddleware",
                 "QuotaReservationASGIMiddleware",

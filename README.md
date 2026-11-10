@@ -258,6 +258,8 @@ curl http://127.0.0.1:8000/v1/image-jobs/<job_id> \
 
 ## Public Endpoints
 
+Base URL: OpenAI-style clients use `https://<coincoin-domain>/v1`; Anthropic-style clients (Claude Code `ANTHROPIC_BASE_URL`, Claude Desktop gateway base URL) use the site root, because they append `/v1/messages` themselves. Mistakes are tolerated: `app/api_path_compat.py` collapses `/v1/v1/...` to `/v1/...` and adds the missing `/v1` to inference endpoints such as `/chat/completions`, `/messages`, and `/models` before routing.
+
 | Endpoint | Method | Description |
 | --- | --- | --- |
 | `/health` | `GET` | Health check |

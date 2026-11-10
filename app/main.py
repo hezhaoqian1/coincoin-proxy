@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from .admin import router as admin_router
 from .alert_admin import router as alert_admin_router
 from .admin_timing import AdminTimingASGIMiddleware
+from .api_path_compat import ApiPathCompatASGIMiddleware
 from .anthropic_compat import router as anthropic_router
 from .auth import router as auth_router
 from .channel_monitoring import provider_channel_monitor_loop
@@ -1157,6 +1158,9 @@ app.add_middleware(RequestTelemetryASGIMiddleware)
 app.add_middleware(QuotaReservationASGIMiddleware)
 app.add_middleware(ImageJSONKeepaliveASGIMiddleware)
 app.add_middleware(AdminTimingASGIMiddleware)
+# Fixes `/v1/v1/...` and missing-`/v1` paths before any path-based middleware
+# or routing sees them.
+app.add_middleware(ApiPathCompatASGIMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
