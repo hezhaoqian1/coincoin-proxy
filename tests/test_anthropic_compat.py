@@ -102,6 +102,30 @@ class _FailingEventStreamResponse(_FakeEventStreamResponse):
         raise httpx.ReadError("stream disconnected")
 
 
+class _SlowEventStreamResponse(_FakeEventStreamResponse):
+    """Upstream that answers with headers at once but stays silent for `delay`."""
+
+    def __init__(self, lines, *, delay, **kwargs):
+        super().__init__(lines, **kwargs)
+        self.delay = delay
+
+    async def aiter_lines(self):
+        await asyncio.sleep(self.delay)
+        for line in self._lines:
+            yield line
+
+
+class _SlowAnthropicEventStreamResponse(_FakeAnthropicEventStreamResponse):
+    def __init__(self, lines, *, delay, **kwargs):
+        super().__init__(lines, **kwargs)
+        self.delay = delay
+
+    async def aiter_lines(self):
+        await asyncio.sleep(self.delay)
+        async for line in super().aiter_lines():
+            yield line
+
+
 class _RecordingStreamClient:
     def __init__(self, responses):
         self.responses = list(responses)
@@ -118,6 +142,25 @@ class _RecordingStreamClient:
         if isinstance(response, Exception):
             raise response
         return response
+
+
+class _SlowHeadersStreamClient(_RecordingStreamClient):
+    """Stream client whose n-th send waits `header_delays[n]` before returning."""
+
+    def __init__(self, responses, header_delays):
+        super().__init__(responses)
+        self.header_delays = list(header_delays)
+        self.cancelled_sends = 0
+
+    async def send(self, request, stream=False):
+        delay = self.header_delays.pop(0) if self.header_delays else 0
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            self.cancelled_sends += 1
+            self.responses.pop(0)
+            raise
+        return await super().send(request, stream=stream)
 
 
 class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
@@ -3394,6 +3437,165 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
             ["https://primary-gpt.example/v1/chat/completions", "https://backup-gpt.example/v1/chat/completions"],
         )
         self.assertEqual(add_usage.await_args_list[0].kwargs["status_code"], 502)
+
+    async def _post_streaming_messages(self, stream_client, *, model, add_usage, extra_patches=(), payload_extra=None):
+        payload = {
+            "model": model,
+            "stream": True,
+            "max_tokens": 64,
+            "messages": [{"role": "user", "content": "Reply with exactly OK"}],
+        }
+        payload.update(payload_extra or {})
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=SimpleNamespace(id="u_test", status="active", _api_key_id="k_first_output"))),
+            patch.object(anthropic_module, "get_stream_client", AsyncMock(return_value=stream_client)),
+            patch.object(anthropic_module.usage_buffer, "add", add_usage),
+        ):
+            for extra in extra_patches:
+                extra.start()
+            try:
+                async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                    return await http_client.post(
+                        "/v1/messages",
+                        headers={"authorization": "Bearer sk_test", "anthropic-version": "2023-06-01"},
+                        json=payload,
+                    )
+            finally:
+                for extra in extra_patches:
+                    extra.stop()
+
+    @staticmethod
+    def _gpt_ok_lines(text="OK"):
+        return [
+            'data: {"id":"chatcmpl_ok","choices":[{"delta":{"content":"%s"},"finish_reason":"stop"}],"usage":{"prompt_tokens":4,"completion_tokens":1}}' % text,
+            "data: [DONE]",
+        ]
+
+    async def test_streaming_messages_switches_channel_when_first_output_times_out(self):
+        self._configure_gpt_fallback_channels()
+        slow_primary = _SlowEventStreamResponse(self._gpt_ok_lines("SLOW"), delay=5)
+        stream_client = _RecordingStreamClient(
+            [slow_primary, _FakeEventStreamResponse(self._gpt_ok_lines("OK"))]
+        )
+        add_usage = AsyncMock()
+        record_failure = patch.object(anthropic_module, "_record_channel_failure")
+
+        with patch.object(settings, "upstream_first_output_timeout_seconds", 0.05):
+            mock_failure = record_failure.start()
+            try:
+                response = await self._post_streaming_messages(stream_client, model="gpt-5.5", add_usage=add_usage)
+            finally:
+                record_failure.stop()
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn('"text":"OK"', response.text)
+        self.assertNotIn("SLOW", response.text)
+        request_calls = [call for call in stream_client.calls if "url" in call]
+        self.assertEqual(
+            [call["url"] for call in request_calls],
+            ["https://primary-gpt.example/v1/chat/completions", "https://backup-gpt.example/v1/chat/completions"],
+        )
+        self.assertTrue(slow_primary._closed)
+        timeout_row = add_usage.await_args_list[0].kwargs
+        self.assertEqual(timeout_row["status_code"], 504)
+        self.assertEqual(timeout_row["channel_id"], "ch_gpt_primary")
+        self.assertTrue(timeout_row["request_log_only"])
+        success_row = add_usage.await_args_list[1].kwargs
+        self.assertEqual(success_row["channel_id"], "ch_gpt_backup")
+        self.assertEqual(success_row["route_reason"], "channel_fallback:upstream_first_output_timeout")
+        mock_failure.assert_called_once()
+        self.assertEqual(mock_failure.call_args.kwargs["error_code"], "upstream_first_output_timeout")
+
+    async def test_streaming_messages_switches_channel_when_response_headers_time_out(self):
+        self._configure_gpt_fallback_channels()
+        stream_client = _SlowHeadersStreamClient(
+            [_FakeEventStreamResponse(self._gpt_ok_lines("SLOW")), _FakeEventStreamResponse(self._gpt_ok_lines("OK"))],
+            header_delays=[5, 0],
+        )
+        add_usage = AsyncMock()
+
+        with patch.object(settings, "upstream_first_output_timeout_seconds", 0.05):
+            response = await self._post_streaming_messages(stream_client, model="gpt-5.5", add_usage=add_usage)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn('"text":"OK"', response.text)
+        self.assertEqual(stream_client.cancelled_sends, 1)
+        self.assertEqual(add_usage.await_args_list[0].kwargs["status_code"], 504)
+        self.assertEqual(add_usage.await_args_list[1].kwargs["channel_id"], "ch_gpt_backup")
+
+    async def test_streaming_messages_first_output_timeout_switches_at_most_once(self):
+        self._configure_anthropic_fallback_channels(include_tertiary=True)
+        native_ok = [
+            'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_slow_backup","type":"message","role":"assistant","model":"claude-backup","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":4,"output_tokens":0}}}',
+            'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
+            'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"OK"}}',
+            'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}',
+            'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":1}}',
+            'event: message_stop\ndata: {"type":"message_stop"}',
+        ]
+        stream_client = _RecordingStreamClient(
+            [
+                _SlowAnthropicEventStreamResponse(native_ok, delay=5),
+                # Slower than the deadline too, but the request already switched once.
+                _SlowAnthropicEventStreamResponse(native_ok, delay=0.3),
+                _FakeAnthropicEventStreamResponse(native_ok),
+            ]
+        )
+        add_usage = AsyncMock()
+
+        with patch.object(settings, "upstream_first_output_timeout_seconds", 0.05):
+            response = await self._post_streaming_messages(stream_client, model="claude-opus-4-7", add_usage=add_usage)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn('"text":"OK"', response.text)
+        request_calls = [call for call in stream_client.calls if "url" in call]
+        self.assertEqual(
+            [call["url"] for call in request_calls],
+            ["https://primary-claude.example/v1/messages", "https://backup-claude.example/v1/messages"],
+        )
+        self.assertEqual(add_usage.await_args_list[-1].kwargs["channel_id"], "ch_backup")
+
+    async def test_streaming_messages_keeps_waiting_when_no_channel_is_left(self):
+        self._configure_gpt_fallback_channels()
+        channel_router.set_snapshot(
+            [ProviderChannelSnapshot(channel_id="ch_gpt_only", base_url="https://only-gpt.example/v1", api_key="only-key", capabilities=("chat/completions",))],
+            [ModelChannelRouteSnapshot(route_id="mcr_gpt_only", public_model_id="gpt-5.5", endpoint="chat/completions", channel_id="ch_gpt_only")],
+        )
+        registry._initialized = False
+        registry.init_from_settings()
+        stream_client = _RecordingStreamClient([_SlowEventStreamResponse(self._gpt_ok_lines("OK"), delay=0.3)])
+        add_usage = AsyncMock()
+
+        with patch.object(settings, "upstream_first_output_timeout_seconds", 0.05):
+            response = await self._post_streaming_messages(stream_client, model="gpt-5.5", add_usage=add_usage)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn('"text":"OK"', response.text)
+        self.assertEqual(len([call for call in stream_client.calls if "url" in call]), 1)
+        self.assertEqual(add_usage.await_count, 1)
+        self.assertEqual(add_usage.await_args.kwargs["status_code"], 200)
+
+    async def test_streaming_messages_high_effort_gets_the_longer_first_output_deadline(self):
+        self._configure_gpt_fallback_channels()
+        stream_client = _RecordingStreamClient(
+            [_SlowEventStreamResponse(self._gpt_ok_lines("PRIMARY"), delay=0.3), _FakeEventStreamResponse(self._gpt_ok_lines("BACKUP"))]
+        )
+        add_usage = AsyncMock()
+
+        with (
+            patch.object(settings, "upstream_first_output_timeout_seconds", 0.05),
+            patch.object(settings, "upstream_high_effort_first_output_timeout_seconds", 5),
+        ):
+            response = await self._post_streaming_messages(
+                stream_client,
+                model="gpt-5.5",
+                add_usage=add_usage,
+                payload_extra={"output_config": {"effort": "high"}},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn('"text":"PRIMARY"', response.text)
+        self.assertEqual(len([call for call in stream_client.calls if "url" in call]), 1)
 
     async def test_messages_multi_hop_fallback_reaches_third_channel(self):
         self._configure_anthropic_fallback_channels(include_tertiary=True)

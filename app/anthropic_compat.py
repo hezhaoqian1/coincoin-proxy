@@ -33,7 +33,10 @@ from .proxy import (
     get_http_client,
     get_stream_client,
     _channel_usage_kwargs,
+    _discard_stream_send,
+    _first_output_timeout_seconds,
     _is_local_pool_timeout,
+    _wait_for_stream_send,
     _record_channel_failure,
     _record_channel_success,
     _upstream_transport_error_code,
@@ -618,6 +621,16 @@ def _anthropic_temporary_error(request_id: str, *, status_code: int = 502) -> JS
 
 
 CONTEXT_WINDOW_EXCEEDED_REASON = "context_window_exceeded"
+FIRST_OUTPUT_TIMEOUT_REASON = "upstream_first_output_timeout"
+
+
+def _anthropic_reasoning_effort(payload: Dict[str, Any]) -> str:
+    """Effort the client asked for (Claude Code sends `output_config.effort`)."""
+    effort = payload.get("reasoning_effort")
+    output_config = payload.get("output_config")
+    if not effort and isinstance(output_config, dict):
+        effort = output_config.get("effort")
+    return effort.strip() if isinstance(effort, str) else ""
 
 
 def _anthropic_prompt_too_long_error(request_id: str, display_model: str) -> JSONResponse:
@@ -1514,6 +1527,32 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
         stream_state = _AnthropicStreamState()
         stream_line_iter: Optional[AsyncIterator[str]] = None
         stream_saw_anthropic_event = False
+        # A channel that has produced nothing client-visible by this deadline
+        # (no response headers, or headers but no first event) is abandoned
+        # for the next one, at most once per request: a genuinely slow
+        # request (huge context, high effort) must not bounce through every
+        # channel. 0 disables the deadline. Mirrors the chat/completions and
+        # responses paths and sub2api's openai_first_output_timeout_seconds.
+        first_output_timeout = _first_output_timeout_seconds(public_model, _anthropic_reasoning_effort(payload))
+        first_output_switched = False
+
+        async def _record_first_output_timeout(failed_cfg: Any, failed_upstream_request_id: str = "") -> None:
+            _record_channel_failure(failed_cfg, error_code=FIRST_OUTPUT_TIMEOUT_REASON)
+            await _record_failed_attempt(
+                failed_cfg,
+                route_reason=used_route_reason,
+                status_code=504,
+                reason=FIRST_OUTPUT_TIMEOUT_REASON,
+                terminal=False,
+                upstream_request_id=failed_upstream_request_id,
+                affect_channel_health=False,
+                alert_upstream=False,
+            )
+            logger.warning(
+                "provider channel stream %s produced no output in %.0fs; falling back",
+                getattr(failed_cfg, "channel_id", ""),
+                first_output_timeout,
+            )
 
         while True:
             attempt = _build_attempt(used_cfg)
@@ -1524,8 +1563,30 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
             if attempt.is_native:
                 request_kwargs["timeout"] = _kiro_go_bridge_timeout()
             req = stream_client.build_request("POST", attempt.upstream_url, **request_kwargs)
+            first_output_deadline = (
+                time.monotonic() + first_output_timeout
+                if first_output_timeout > 0 and not first_output_switched
+                else None
+            )
+            send_task = asyncio.ensure_future(stream_client.send(req, stream=True))
             try:
-                upstream = await stream_client.send(req, stream=True)
+                upstream = None
+                if first_output_deadline is not None:
+                    upstream = await _wait_for_stream_send(send_task, first_output_deadline - time.monotonic())
+                    if upstream is None:
+                        fallback_cfg = _select_fallback(used_cfg, FIRST_OUTPUT_TIMEOUT_REASON)
+                        if fallback_cfg is not None:
+                            await _discard_stream_send(send_task)
+                            await _record_first_output_timeout(used_cfg)
+                            first_output_switched = True
+                            used_cfg = fallback_cfg
+                            used_route_reason = _fallback_reason(FIRST_OUTPUT_TIMEOUT_REASON)
+                            continue
+                if upstream is None:
+                    upstream = await send_task
+            except asyncio.CancelledError:
+                await _discard_stream_send(send_task)
+                raise
             except (httpx.TimeoutException, httpx.RequestError) as exc:
                 if _is_local_pool_timeout(exc):
                     await _record_failed_attempt(
@@ -1596,6 +1657,29 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                     status_code=status_code,
                     request_id=client_request_id,
                 )
+            preflight_task = asyncio.ensure_future(_preflight_messages_stream(upstream, attempt))
+            if first_output_deadline is not None:
+                try:
+                    done, _ = await asyncio.wait(
+                        {preflight_task},
+                        timeout=max(0.0, first_output_deadline - time.monotonic()),
+                    )
+                except asyncio.CancelledError:
+                    preflight_task.cancel()
+                    await upstream.aclose()
+                    raise
+                if not done:
+                    fallback_cfg = _select_fallback(used_cfg, FIRST_OUTPUT_TIMEOUT_REASON)
+                    if fallback_cfg is not None:
+                        preflight_task.cancel()
+                        await asyncio.wait({preflight_task})
+                        await upstream.aclose()
+                        await _record_first_output_timeout(used_cfg, upstream_request_id)
+                        first_output_switched = True
+                        used_cfg = fallback_cfg
+                        used_route_reason = _fallback_reason(FIRST_OUTPUT_TIMEOUT_REASON)
+                        continue
+                    # Nowhere to go: keep waiting on the only channel left.
             (
                 preflight_ok,
                 preflight_reason,
@@ -1603,7 +1687,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                 stream_state,
                 stream_line_iter,
                 stream_saw_anthropic_event,
-            ) = await _preflight_messages_stream(upstream, attempt)
+            ) = await preflight_task
             if preflight_ok:
                 break
             if preflight_reason == CONTEXT_WINDOW_EXCEEDED_REASON:
