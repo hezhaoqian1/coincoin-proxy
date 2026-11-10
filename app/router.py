@@ -973,6 +973,22 @@ class ModelRegistry:
             endpoint,
             channel_affinity_key=channel_affinity_key,
         )
+        if routed_backend is None and not (backend.upstream_url and backend.api_key):
+            # Every channel is cooling down and there is no usable upstream
+            # behind them (e.g. the legacy COINCOIN_UPSTREAM_* backend is not
+            # configured): trying a cooling channel beats sending the request
+            # to an upstream without credentials.
+            routed_backend = self._apply_channel_route(
+                public_model,
+                backend,
+                endpoint,
+                channel_affinity_key=channel_affinity_key,
+                ignore_cooldown=True,
+            )
+            if routed_backend is None:
+                raise ModelCapabilityError(
+                    f"Model '{public_model.public_id}' requires an active provider channel route for endpoint '{endpoint}'"
+                )
         if routed_backend is not None:
             backend = routed_backend
             route_reason = f"{route_reason}:channel:{backend.channel_id}"
