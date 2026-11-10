@@ -3084,6 +3084,317 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(failure["requests"], 1)
         self.assertFalse(failure["request_log_only"])
 
+    def _configure_gpt_fallback_channels(self, *, public_model_id="gpt-5.5"):
+        channel_router.set_snapshot(
+            [
+                ProviderChannelSnapshot(
+                    channel_id="ch_gpt_primary",
+                    name="Primary GPT relay",
+                    channel_type="openai_compatible",
+                    base_url="https://primary-gpt.example/v1",
+                    api_key="primary-key",
+                    priority=0,
+                    capabilities=("chat/completions",),
+                ),
+                ProviderChannelSnapshot(
+                    channel_id="ch_gpt_backup",
+                    name="Backup GPT relay",
+                    channel_type="openai_compatible",
+                    base_url="https://backup-gpt.example/v1",
+                    api_key="backup-key",
+                    priority=10,
+                    capabilities=("chat/completions",),
+                ),
+            ],
+            [
+                ModelChannelRouteSnapshot(
+                    route_id="mcr_gpt_primary",
+                    public_model_id=public_model_id,
+                    endpoint="chat/completions",
+                    channel_id="ch_gpt_primary",
+                    upstream_model="gpt-primary",
+                ),
+                ModelChannelRouteSnapshot(
+                    route_id="mcr_gpt_backup",
+                    public_model_id=public_model_id,
+                    endpoint="chat/completions",
+                    channel_id="ch_gpt_backup",
+                    upstream_model="gpt-backup",
+                ),
+            ],
+        )
+        registry._initialized = False
+        registry.init_from_settings()
+
+    def _assert_prompt_too_long_response(self, response):
+        self.assertEqual(response.status_code, 400, response.text)
+        body = response.json()
+        self.assertEqual(body["type"], "error")
+        self.assertEqual(body["error"]["type"], "invalid_request_error")
+        self.assertTrue(body["error"]["message"].startswith("prompt is too long"), body)
+        self.assertTrue(body["request_id"].startswith("ccreq_"))
+        self.assertEqual(response.headers["request-id"], body["request_id"])
+
+    def _assert_single_terminal_context_failure(self, add_usage, channel_id):
+        self.assertEqual(add_usage.await_count, 1)
+        failure = add_usage.await_args.kwargs
+        self.assertEqual(failure["status_code"], 400)
+        self.assertEqual(failure["channel_id"], channel_id)
+        self.assertEqual(failure["requests"], 1)
+        self.assertFalse(failure["request_log_only"])
+        self.assertEqual(failure["input_tokens"], 0)
+        self.assertEqual(failure["cost_cents_override"], 0.0)
+
+    async def test_streaming_messages_context_window_502_fails_fast_without_fallback(self):
+        self._configure_gpt_fallback_channels()
+        fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_ctx_502")
+        stream_client = _RecordingStreamClient(
+            [
+                _FakeEventStreamResponse(
+                    [],
+                    status_code=502,
+                    headers={"content-type": "application/json"},
+                    body={
+                        "error": {
+                            "message": "Your input exceeds the context window of this model. Please adjust your input and try again.",
+                            "type": "upstream_error",
+                        }
+                    },
+                ),
+                _FakeEventStreamResponse(
+                    ['data: {"id":"chatcmpl_backup","choices":[{"delta":{"content":"unexpected"},"finish_reason":"stop"}]}', "data: [DONE]"]
+                ),
+            ]
+        )
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_stream_client", AsyncMock(return_value=stream_client)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()) as add_usage,
+            patch.object(anthropic_module, "_record_channel_failure") as record_failure,
+            patch.object(anthropic_module, "schedule_user_upstream_failure") as alert_failure,
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={"authorization": "Bearer sk_test", "anthropic-version": "2023-06-01"},
+                    json={
+                        "model": "gpt-5.5",
+                        "stream": True,
+                        "max_tokens": 64,
+                        "messages": [{"role": "user", "content": "a very long conversation"}],
+                    },
+                )
+
+        self._assert_prompt_too_long_response(response)
+        self.assertNotIn("Your input exceeds", response.text)
+        request_calls = [call for call in stream_client.calls if "url" in call]
+        self.assertEqual([call["url"] for call in request_calls], ["https://primary-gpt.example/v1/chat/completions"])
+        self._assert_single_terminal_context_failure(add_usage, "ch_gpt_primary")
+        record_failure.assert_not_called()
+        alert_failure.assert_not_called()
+
+    async def test_streaming_messages_context_window_error_chunk_fails_fast_without_fallback(self):
+        self._configure_gpt_fallback_channels()
+        fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_ctx_chunk")
+        stream_client = _RecordingStreamClient(
+            [
+                _FakeEventStreamResponse(
+                    [
+                        'data: {"error":{"message":"This model\'s maximum context length is 400000 tokens.","code":"context_length_exceeded"}}',
+                        "data: [DONE]",
+                    ]
+                ),
+                _FakeEventStreamResponse(
+                    ['data: {"id":"chatcmpl_backup","choices":[{"delta":{"content":"unexpected"},"finish_reason":"stop"}]}', "data: [DONE]"]
+                ),
+            ]
+        )
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_stream_client", AsyncMock(return_value=stream_client)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()) as add_usage,
+            patch.object(anthropic_module, "_record_channel_failure") as record_failure,
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={"authorization": "Bearer sk_test"},
+                    json={
+                        "model": "gpt-5.5",
+                        "stream": True,
+                        "max_tokens": 64,
+                        "messages": [{"role": "user", "content": "a very long conversation"}],
+                    },
+                )
+
+        self._assert_prompt_too_long_response(response)
+        request_calls = [call for call in stream_client.calls if "url" in call]
+        self.assertEqual(len(request_calls), 1)
+        self._assert_single_terminal_context_failure(add_usage, "ch_gpt_primary")
+        record_failure.assert_not_called()
+
+    async def test_streaming_messages_native_prompt_too_long_event_fails_fast_without_fallback(self):
+        self._configure_anthropic_fallback_channels()
+        fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_ctx_native_event")
+        stream_client = _RecordingStreamClient(
+            [
+                _FakeAnthropicEventStreamResponse(
+                    [
+                        'event: error\ndata: {"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 215000 tokens > 200000 maximum"}}',
+                    ]
+                ),
+                _FakeAnthropicEventStreamResponse([]),
+            ]
+        )
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_stream_client", AsyncMock(return_value=stream_client)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()) as add_usage,
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={"authorization": "Bearer sk_test", "anthropic-version": "2023-06-01"},
+                    json={
+                        "model": "claude-opus-4-7",
+                        "stream": True,
+                        "max_tokens": 64,
+                        "messages": [{"role": "user", "content": "a very long conversation"}],
+                    },
+                )
+
+        self._assert_prompt_too_long_response(response)
+        request_calls = [call for call in stream_client.calls if "url" in call]
+        self.assertEqual(len(request_calls), 1)
+        self._assert_single_terminal_context_failure(add_usage, "ch_primary")
+
+    async def test_messages_native_prompt_too_long_400_is_returned_without_fallback(self):
+        self._configure_anthropic_fallback_channels()
+        fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_ctx_native_400")
+        client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "type": "error",
+                        "error": {
+                            "type": "invalid_request_error",
+                            "message": "prompt is too long: 215000 tokens > 200000 maximum",
+                        },
+                    },
+                    status_code=400,
+                ),
+                _FakeUpstreamResponse({"id": "msg_backup_should_not_run"}),
+            ]
+        )
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_http_client", AsyncMock(return_value=client)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()) as add_usage,
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={"authorization": "Bearer sk_test", "anthropic-version": "2023-06-01"},
+                    json={
+                        "model": "claude-opus-4-7",
+                        "max_tokens": 64,
+                        "messages": [{"role": "user", "content": "a very long conversation"}],
+                    },
+                )
+
+        self._assert_prompt_too_long_response(response)
+        self.assertEqual(len(client.calls), 1)
+        self._assert_single_terminal_context_failure(add_usage, "ch_primary")
+
+    async def test_messages_context_window_502_non_stream_fails_fast_without_fallback(self):
+        self._configure_gpt_fallback_channels()
+        fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_ctx_non_stream")
+        client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {"error": {"message": "Your input exceeds the context window of this model. Please adjust your input and try again."}},
+                    status_code=502,
+                ),
+                _FakeUpstreamResponse(
+                    {
+                        "id": "chatcmpl_backup_should_not_run",
+                        "choices": [{"message": {"role": "assistant", "content": "unexpected"}}],
+                        "usage": {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3},
+                    }
+                ),
+            ]
+        )
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_http_client", AsyncMock(return_value=client)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()) as add_usage,
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={"authorization": "Bearer sk_test"},
+                    json={
+                        "model": "gpt-5.5",
+                        "max_tokens": 64,
+                        "messages": [{"role": "user", "content": "a very long conversation"}],
+                    },
+                )
+
+        self._assert_prompt_too_long_response(response)
+        self.assertEqual([call["url"] for call in client.calls], ["https://primary-gpt.example/v1/chat/completions"])
+        self._assert_single_terminal_context_failure(add_usage, "ch_gpt_primary")
+
+    async def test_streaming_messages_still_falls_back_on_ordinary_gpt_502(self):
+        self._configure_gpt_fallback_channels()
+        fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_gpt_502")
+        stream_client = _RecordingStreamClient(
+            [
+                _FakeEventStreamResponse(
+                    [],
+                    status_code=502,
+                    headers={"content-type": "application/json"},
+                    body={"error": {"message": "Upstream access forbidden", "type": "upstream_error"}},
+                ),
+                _FakeEventStreamResponse(
+                    [
+                        'data: {"id":"chatcmpl_backup","choices":[{"delta":{"content":"OK"},"finish_reason":"stop"}],"usage":{"prompt_tokens":4,"completion_tokens":1}}',
+                        "data: [DONE]",
+                    ]
+                ),
+            ]
+        )
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_stream_client", AsyncMock(return_value=stream_client)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()) as add_usage,
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={"authorization": "Bearer sk_test"},
+                    json={
+                        "model": "gpt-5.5",
+                        "stream": True,
+                        "max_tokens": 64,
+                        "messages": [{"role": "user", "content": "Reply with exactly OK"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn('"text":"OK"', response.text)
+        request_calls = [call for call in stream_client.calls if "url" in call]
+        self.assertEqual(
+            [call["url"] for call in request_calls],
+            ["https://primary-gpt.example/v1/chat/completions", "https://backup-gpt.example/v1/chat/completions"],
+        )
+        self.assertEqual(add_usage.await_args_list[0].kwargs["status_code"], 502)
+
     async def test_messages_multi_hop_fallback_reaches_third_channel(self):
         self._configure_anthropic_fallback_channels(include_tertiary=True)
         fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_multi_fallback")
