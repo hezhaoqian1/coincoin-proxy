@@ -1203,6 +1203,84 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(content[0], {"type": "input_text", "text": "Inspect the image"})
         self.assertEqual(content[1], {"type": "input_image", "image_url": image_url})
 
+    async def test_chat_to_responses_emits_typed_message_items_without_client_fields(self) -> None:
+        # datayes' gateway attaches private fields to chat messages; strict
+        # upstreams reject them ("Unknown parameter: 'input[0].isCompactInternal'")
+        # and WebSocket-backed upstreams reject items without `type`
+        # ("Missing required parameter: 'input[0].type'").
+        self._add_grok_model()
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "id": "resp_typed_items",
+                        "model": "grok-4.5-build-free",
+                        "output": [{"type": "message", "content": [{"type": "output_text", "text": "OK"}]}],
+                        "usage": {"input_tokens": 12, "output_tokens": 1, "total_tokens": 13},
+                    }
+                )
+            ]
+        )
+        reasoning_item = {"type": "reasoning", "id": "rs_1", "summary": []}
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(openai_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                openai_module,
+                "get_http_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(openai_module.usage_buffer, "add", AsyncMock()):
+                response = await client.post(
+                    "/v1/chat/completions",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={
+                        "model": "grok-build",
+                        "messages": [
+                            {"role": "system", "content": "Be brief.", "isCompactInternal": True},
+                            {
+                                "role": "user",
+                                "content": "Read a",
+                                "conversationRequestId": "req-123",
+                                "name": "alice",
+                            },
+                            {
+                                "role": "assistant",
+                                "content": "Reading.",
+                                "isCompactInternal": False,
+                                "tool_calls": [
+                                    {
+                                        "id": "call_1",
+                                        "type": "function",
+                                        "function": {"name": "read", "arguments": "{\"path\":\"a\"}"},
+                                    }
+                                ],
+                            },
+                            {"role": "tool", "tool_call_id": "call_1", "content": "file body", "isCompactInternal": True},
+                            reasoning_item,
+                            {"role": "user", "content": [{"type": "text", "text": "continue"}], "isCompactInternal": True},
+                            {"role": "assistant", "content": None, "conversationRequestId": "req-124"},
+                        ],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        upstream_input = upstream_client.calls[0]["json"]["input"]
+        self.assertEqual(
+            upstream_input,
+            [
+                {"type": "message", "role": "system", "content": "Be brief."},
+                {"type": "message", "role": "user", "content": "Read a"},
+                {"type": "message", "role": "assistant", "content": "Reading."},
+                {"type": "function_call", "call_id": "call_1", "name": "read", "arguments": "{\"path\":\"a\"}"},
+                {"type": "function_call_output", "call_id": "call_1", "output": "file body"},
+                reasoning_item,
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "continue"}]},
+                {"type": "message", "role": "assistant", "content": ""},
+            ],
+        )
+        self.assertNotIn("isCompactInternal", json.dumps(upstream_client.calls[0]["json"]))
+        self.assertNotIn("conversationRequestId", json.dumps(upstream_client.calls[0]["json"]))
+
     async def test_grok_build_responses_preserves_function_call_output_round_trip(self) -> None:
         self._add_grok_model()
         upstream_client = _RecordingClient(

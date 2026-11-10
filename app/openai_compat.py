@@ -1261,8 +1261,8 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                         for part in content:
                             if isinstance(part, dict) and part.get("type") == "text":
                                 part["type"] = "output_text"
-                    converted.append({"role": "assistant", "content": content})
-                
+                    converted.append({"type": "message", "role": "assistant", "content": content})
+
                 # 将每个 tool_call 转换为 function_call item
                 # 兼容两种格式：
                 # - 标准 OpenAI: {"id": "xxx", "type": "function", "function": {"name": "...", "arguments": "..."}}
@@ -1299,10 +1299,20 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
                 })
                 continue
             
-            # 3. 普通消息：处理 content 格式转换
-            result = dict(msg)
+            # 已经是 Responses item（function_call / reasoning 等）或缺 role 的
+            # 非标准消息：保持原样，不猜测其格式。
+            if not role or msg.get("type") not in (None, "message"):
+                converted.append(dict(msg))
+                continue
+
+            # 3. 普通消息：输出标准 Responses message item。
+            # 只保留 type/role/content：缺 type 的 item 会被走 WebSocket
+            # response.create 的上游拒绝（"Missing required parameter:
+            # 'input[0].type'"），客户端私有字段（isCompactInternal、
+            # conversationRequestId、name 等）会被严格上游以 unknown_parameter 拒绝。
+            result = {"type": "message", "role": role, "content": msg.get("content")}
             content = result.get("content")
-            if content is None and "content" in result:
+            if content is None:
                 result["content"] = ""
             elif isinstance(content, list):
                 converted_parts = []
