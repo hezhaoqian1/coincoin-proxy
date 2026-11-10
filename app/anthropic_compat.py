@@ -661,6 +661,17 @@ async def _read_upstream_error_body(upstream: Any) -> bytes:
     return body if isinstance(body, (bytes, bytearray)) else b""
 
 
+def _log_upstream_error(cfg: Any, status_code: int, body: bytes) -> None:
+    """Keep the upstream's own error text in the logs; clients only see a sanitized error."""
+    text = bytes(body or b"")[:300].decode("utf-8", errors="replace").replace("\n", " ")
+    logger.warning(
+        "provider channel %s returned %s on /v1/messages: %s",
+        getattr(cfg, "channel_id", "") or "legacy",
+        status_code,
+        text or "<empty or event-stream body>",
+    )
+
+
 def _openai_stream_chunk_reports_context_window_error(raw_line: str) -> bool:
     line = str(raw_line or "").strip()
     if not line.startswith("data:"):
@@ -1622,7 +1633,9 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
             upstream_request_id = extract_upstream_request_id(upstream.headers)
             if upstream.status_code >= 400:
                 status_code = int(upstream.status_code)
-                if is_context_window_error(await _read_upstream_error_body(upstream)):
+                error_body = await _read_upstream_error_body(upstream)
+                _log_upstream_error(used_cfg, status_code, error_body)
+                if is_context_window_error(error_body):
                     await upstream.aclose()
                     return await _reject_context_window_overflow(
                         used_cfg,
@@ -2096,7 +2109,9 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
         upstream_request_id = extract_upstream_request_id(upstream.headers)
         if upstream.status_code >= 400:
             status_code = int(upstream.status_code)
-            if is_context_window_error(await _read_upstream_error_body(upstream)):
+            error_body = await _read_upstream_error_body(upstream)
+            _log_upstream_error(used_cfg, status_code, error_body)
+            if is_context_window_error(error_body):
                 return await _reject_context_window_overflow(
                     used_cfg,
                     route_reason=used_route_reason,
