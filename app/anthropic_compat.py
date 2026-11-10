@@ -50,6 +50,7 @@ from .router import (
 )
 from .station_runtime import resolve_station_model_for_user, usage_pricing_kwargs
 from .security import generate_id
+from .upstream_errors import is_context_window_error
 from .request_telemetry import note_request_payload
 from .user_model_overrides import apply_user_overrides_to_resolution
 from .usage_buffer import (
@@ -614,6 +615,51 @@ def _anthropic_temporary_error(request_id: str, *, status_code: int = 502) -> JS
         status_code=status_code,
         request_id=request_id,
     )
+
+
+CONTEXT_WINDOW_EXCEEDED_REASON = "context_window_exceeded"
+
+
+def _anthropic_prompt_too_long_error(request_id: str, display_model: str) -> JSONResponse:
+    """Report a context overflow the way Anthropic does (400 "prompt is too long").
+
+    Claude Code / Agent SDK recognize this error and compact the conversation;
+    a generic 5xx only makes them resend the same oversized prompt.
+    """
+    model_label = f" of {display_model}" if display_model else ""
+    return anthropic_error(
+        "prompt is too long: the input exceeds the context window"
+        f"{model_label}. Compact or shorten the conversation and retry. "
+        f"Request ID: {request_id}",
+        error_type="invalid_request_error",
+        status_code=400,
+        request_id=request_id,
+    )
+
+
+async def _read_upstream_error_body(upstream: Any) -> bytes:
+    content_type = str(upstream.headers.get("content-type") or "")
+    if "text/event-stream" in content_type:
+        return b""
+    try:
+        body = await upstream.aread()
+    except Exception:
+        return b""
+    return body if isinstance(body, (bytes, bytearray)) else b""
+
+
+def _openai_stream_chunk_reports_context_window_error(raw_line: str) -> bool:
+    line = str(raw_line or "").strip()
+    if not line.startswith("data:"):
+        return False
+    payload = line[5:].strip()
+    if not payload or payload == "[DONE]":
+        return False
+    try:
+        data = json.loads(payload)
+    except (TypeError, ValueError):
+        return False
+    return isinstance(data, dict) and "error" in data and is_context_window_error(data)
 
 
 def _correlated_upstream_request_id(request_id: str, upstream_request_id: str = "") -> str:
@@ -1355,6 +1401,27 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
     def _fallback_reason(reason: str) -> str:
         return _channel_fallback_route_reason(reason)
 
+    async def _reject_context_window_overflow(
+        cfg: Any,
+        *,
+        route_reason: str,
+        upstream_request_id: str = "",
+    ) -> JSONResponse:
+        # The prompt is too long for the model on every channel: fail fast
+        # instead of re-uploading it to each fallback, and don't count it
+        # against the channel's health.
+        await _record_failed_attempt(
+            cfg,
+            route_reason=route_reason,
+            status_code=400,
+            reason=CONTEXT_WINDOW_EXCEEDED_REASON,
+            terminal=True,
+            upstream_request_id=upstream_request_id,
+            affect_channel_health=False,
+            alert_upstream=False,
+        )
+        return _anthropic_prompt_too_long_error(client_request_id, display_model)
+
     async def _preflight_messages_stream(
         upstream_response: Any,
         attempt: _AnthropicUpstreamAttempt,
@@ -1380,6 +1447,8 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
             if payload_dict is None:
                 return False, "upstream_stream_error"
             if _is_anthropic_stream_error_event(event_type, payload_dict):
+                if is_context_window_error(payload_dict):
+                    return False, CONTEXT_WINDOW_EXCEEDED_REASON
                 return False, "upstream_stream_error"
             should_forward_event = not (
                 event_type == "message_start" and stream_state.message_started
@@ -1423,6 +1492,9 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                 continue
             if attempt.is_native and saw_anthropic_event:
                 continue
+
+            if _openai_stream_chunk_reports_context_window_error(raw_line):
+                return False, CONTEXT_WINDOW_EXCEEDED_REASON, initial_events, stream_state, line_iter, saw_anthropic_event
 
             events = _translate_openai_chunk_to_anthropic_events(
                 stream_state,
@@ -1489,6 +1561,13 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
             upstream_request_id = extract_upstream_request_id(upstream.headers)
             if upstream.status_code >= 400:
                 status_code = int(upstream.status_code)
+                if is_context_window_error(await _read_upstream_error_body(upstream)):
+                    await upstream.aclose()
+                    return await _reject_context_window_overflow(
+                        used_cfg,
+                        route_reason=used_route_reason,
+                        upstream_request_id=upstream_request_id,
+                    )
                 fallback_cfg = (
                     _select_fallback(used_cfg, str(status_code))
                     if _is_messages_fallback_status(status_code)
@@ -1527,6 +1606,13 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
             ) = await _preflight_messages_stream(upstream, attempt)
             if preflight_ok:
                 break
+            if preflight_reason == CONTEXT_WINDOW_EXCEEDED_REASON:
+                await upstream.aclose()
+                return await _reject_context_window_overflow(
+                    used_cfg,
+                    route_reason=used_route_reason,
+                    upstream_request_id=upstream_request_id,
+                )
             fallback_cfg = _select_fallback(used_cfg, preflight_reason or "upstream_stream_error")
             await _record_failed_attempt(
                 used_cfg,
@@ -1926,6 +2012,12 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
         upstream_request_id = extract_upstream_request_id(upstream.headers)
         if upstream.status_code >= 400:
             status_code = int(upstream.status_code)
+            if is_context_window_error(await _read_upstream_error_body(upstream)):
+                return await _reject_context_window_overflow(
+                    used_cfg,
+                    route_reason=used_route_reason,
+                    upstream_request_id=upstream_request_id,
+                )
             fallback_cfg = (
                 _select_fallback(used_cfg, str(status_code))
                 if _is_messages_fallback_status(status_code)
