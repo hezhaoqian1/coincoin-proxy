@@ -35,12 +35,13 @@ def _matches_context_window_text(text: Any) -> bool:
         return False
     if "context_length_exceeded" in lower or "context_too_large" in lower:
         return True
-    if "prompt is too long" in lower:
+    if "prompt is too long" in lower or "input is too long" in lower:
         return True
     if "maximum context length" in lower or "max context length" in lower:
         return True
     exceeded = "exceed" in lower or "too large" in lower or "too long" in lower
-    if exceeded and ("context window" in lower or "context length" in lower):
+    # "context limit": kedaya ("The request exceeds the context limit.").
+    if exceeded and ("context window" in lower or "context length" in lower or "context limit" in lower):
         return True
     return exceeded and "token limit" in lower and "context" in lower
 

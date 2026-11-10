@@ -17,6 +17,10 @@ class ContextWindowErrorTests(unittest.TestCase):
             # Responses stream failure envelope
             {"response": {"error": {"code": "context_too_large", "message": "too big"}}},
             {"detail": "Input token count exceeds the context length of the model"},
+            # kedaya (seen live on 2026-11-10 as HTTP 502)
+            {"error": {"message": "The request exceeds the context limit.", "type": "upstream_error"}},
+            # Bedrock-style wording that Claude Code also treats as prompt-too-long
+            {"message": "Input is too long for requested model."},
             {"error": "Request exceeds the token limit for this context"},
         ]
         for payload in cases:
@@ -33,6 +37,10 @@ class ContextWindowErrorTests(unittest.TestCase):
             {"error": {"message": "Service temporarily unavailable"}},
             {"error": {"message": "max_tokens: 64000 > 32000, which is the maximum allowed"}},
             {"error": {"message": "Rate limit exceeded"}},
+            {"code": "INSUFFICIENT_BALANCE", "message": "Insufficient user balance. Please top up your user balance."},
+            {"error": {"message": "No available accounts: no available accounts", "type": "api_error"}},
+            b"<!DOCTYPE html><html><head><title>502 Bad Gateway</title></head><body>cloudflare</body></html>",
+            {"error": {"message": "Request rate exceeds the limit for this key"}},
             b"<html>502 Bad Gateway</html>",
             b"",
             None,
