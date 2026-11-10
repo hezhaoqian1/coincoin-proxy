@@ -478,6 +478,27 @@ EOF
 
 claude`}</pre>
 
+            <h3>Claude 桌面端</h3>
+            <p>打开 Claude 桌面端的 <strong>Configure third-party inference</strong>，Connection 选择 <strong>Gateway</strong>，按下面填写后点 Apply Changes，再用 Test connection 验证。</p>
+            <div className="config-table">
+                <div className="config-row">
+                    <span className="config-label">Credential kind</span>
+                    <code>Static API key</code>
+                </div>
+                <div className="config-row">
+                    <span className="config-label">Gateway base URL</span>
+                    <code>{SITE}</code>
+                </div>
+                <div className="config-row">
+                    <span className="config-label">Gateway API key</span>
+                    <code>sk_cc_xxxxx</code>
+                </div>
+                <div className="config-row">
+                    <span className="config-label">Gateway auth scheme</span>
+                    <code>bearer</code>
+                </div>
+            </div>
+
             <h3>第三方客户端配置</h3>
             <div className="config-table">
                 <div className="config-row">
@@ -494,6 +515,11 @@ claude`}</pre>
                 </div>
             </div>
 
+            <div className="doc-callout">
+                <strong>Base URL 要不要带 /v1？</strong>
+                <p>OpenAI 风格的客户端（Codex、OpenCode、Continue 等）填 <code>{SITE}/v1</code>；Anthropic 风格的客户端（Claude Code、Claude 桌面端）填站点根地址 <code>{SITE}</code>，因为它们会自己补上 <code>/v1</code>。填反了也能用：服务端会自动去掉多出来的 <code>/v1</code>，或补上缺少的 <code>/v1</code>。</p>
+            </div>
+
             <h3>客户端支持矩阵</h3>
             <table className="data-table">
                 <thead>
@@ -505,6 +531,12 @@ claude`}</pre>
                         <td><span className="badge badge-success">一等支持</span></td>
                         <td><code>ANTHROPIC_BASE_URL=root</code></td>
                         <td>官方 Claude CLI 直接走 Anthropic 兼容面，默认推荐 <code>claude-sonnet-4-6</code>；需要更强模型时再显式切到 <code>claude-opus-5-5</code>。</td>
+                    </tr>
+                    <tr>
+                        <td>Claude 桌面端</td>
+                        <td><span className="badge badge-success">支持</span></td>
+                        <td><code>Gateway base URL=root</code></td>
+                        <td>在 Configure third-party inference 里选 Gateway，填站点根地址和开发者 Key，鉴权方式选 <code>bearer</code>。</td>
                     </tr>
                     <tr>
                         <td>Codex CLI</td>
@@ -760,7 +792,7 @@ function ApiReference({ primaryTextModel, primaryImageModel, primaryVideoModel }
             </div>
             <ul className="doc-list">
                 <li>官方 Claude Code 使用 Anthropic 风格接口，不走 OpenAI 的 <code>chat/completions</code> 或 <code>responses</code>。</li>
-                <li>配置时把 <code>ANTHROPIC_BASE_URL</code> 指向站点根地址，例如 <code>{SITE}</code>，不要追加 <code>/v1</code>。</li>
+                <li>配置时把 <code>ANTHROPIC_BASE_URL</code>（Claude 桌面端是 Gateway base URL）指向站点根地址，例如 <code>{SITE}</code>，不需要追加 <code>/v1</code>；误填成 <code>{SITE}/v1</code> 时服务端也会自动纠正。</li>
                 <li>认证变量是 <code>ANTHROPIC_AUTH_TOKEN</code>，值仍然是同一把 <code>sk_cc_</code> 开发者 Key。</li>
             </ul>
 

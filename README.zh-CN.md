@@ -397,6 +397,13 @@ Claude Code-only 上游和普通 OpenAI-compatible 上游不完全一样：真�
 
 - 当前这个仓库的 GitHub remote、部署服务、代码目录和日常沟通都统一按 `coincoin-proxy` 理解
 
+### Base URL 与 /v1 兼容
+
+- OpenAI 风格客户端（Codex、OpenCode、Continue、OpenAI SDK）的 Base URL 填 `https://<coincoin-domain>/v1`。
+- Anthropic 风格客户端（Claude Code 的 `ANTHROPIC_BASE_URL`、Claude 桌面端的 Gateway base URL）填站点根地址 `https://<coincoin-domain>`，客户端会自己补 `/v1/messages`。
+- 填错也能用：`app/api_path_compat.py` 在路由前把 `/v1/v1/...` 收敛为 `/v1/...`，把缺少 `/v1` 的推理端点（`/messages`、`/chat/completions`、`/models`、`/embeddings`、`/images/*`、`/image-jobs/*`、`/videos/generations`，以及 `/openai/` 下的同名端点）补成 `/v1/...`。已有路由和网站页面（如 `/usage`）不受影响。
+- 修复前这类请求会落到前端页面的 GET 兜底路由，表现为 `405 {"detail":"Method Not Allowed"}`。
+
 ### 基础端点
 
 | 端点 | 方法 | 描述 |
