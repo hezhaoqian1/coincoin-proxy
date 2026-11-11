@@ -3,7 +3,7 @@ type: runbook
 status: active
 owner: platform
 audience: [operator, developer, agent]
-updated: 2026-11-10
+updated: 2026-11-11
 canonical_for: messages-stability-operations
 ---
 
@@ -93,7 +93,9 @@ datayes 在其网关（`aladdin-llm-proxy`，出口 IP 47.116.112.194，直连 `
 
 ## 7. 未解决 / 待跟进
 
-- **统一Api GPT（tyapi）余额不足**：2026-11-10 返回 `403 INSUFFICIENT_BALANCE`，需要充值或停用。
+- **统一Api GPT（tyapi）余额不足**：2026-11-10 返回 `403 INSUFFICIENT_BALANCE`；2026-11-11 探测已恢复正常。
+- **渠道余额告警（2026-11-11 起）**：每个渠道的自动探测（约 5 分钟一次）只要拿到「余额/额度不足」的报错，或 HTTP 402，就立刻往告警群推送「上游渠道余额不足」，内容包括站点、渠道名、上游原文和处理建议。之后如果一直没恢复，每 6 小时再提醒一次（`COINCOIN_CHANNEL_BALANCE_ALERT_REPEAT_SECONDS`）；探测恢复正常时推送「余额已恢复」。识别规则在 `app/upstream_errors.py` 的 `is_insufficient_balance_error`。探测记录里这类失败显示为 `上游余额不足 HTTP <状态码>: <上游原文>`，不再只写 `HTTP 403`。告警复用后台「服务可靠性 → 告警」里的 Webhook 和开关，事件类别是 `balance`。
+- **datayes 站的告警 Webhook 失效**：配的是钉钉机器人，2026-09-19 之后每次推送都返回 `errcode 300005`（token 不存在），所以 datayes 站的所有告警都没送达。需要换成有效的钉钉或企业微信机器人地址。
 - **主站 Claude 渠道 2026-11-10 16:55–17:20（北京时间）整条链不稳**：
   - 首选 Yimo Claude MAX（`api.ymocode.com`，优先级 0）几乎全部 1 秒内返回 `503 No available accounts`（号池空了），16:50 起先出现 429；
   - 回落到 Sixoner ccmax 后，部分请求 30–60 秒不出字，超时后再切；

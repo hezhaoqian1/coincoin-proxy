@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from .config import settings
+from .upstream_errors import is_insufficient_balance_error
 from .channel_router import channel_router, should_record_failure as should_record_channel_failure
 from .db import get_db
 from .distributed_state import (
@@ -144,19 +145,6 @@ _RESPONSES_STREAM_CHANNEL_ERROR_MARKERS = (
 UPSTREAM_INSUFFICIENT_BALANCE_STATUS_CODE = 503
 UPSTREAM_INSUFFICIENT_BALANCE_MESSAGE = "当前服务额度不足，请联系管理员处理。"
 UPSTREAM_INSUFFICIENT_BALANCE_CODE = "service_quota_unavailable"
-UPSTREAM_INSUFFICIENT_BALANCE_PATTERNS = (
-    "用户额度不足",
-    "额度不足",
-    "余额不足",
-    "剩余额度",
-    "最低保留额度",
-    "insufficient balance",
-    "insufficient account balance",
-    "insufficient quota",
-    "insufficient_quota",
-    "billing hard limit",
-    "exceeded your current quota",
-)
 UPSTREAM_SERVICE_UNAVAILABLE_STATUS_CODE = 503
 UPSTREAM_SERVICE_UNAVAILABLE_MESSAGE = "当前服务暂时不可用，请联系管理员处理。"
 UPSTREAM_SERVICE_UNAVAILABLE_CODE = "service_temporarily_unavailable"
@@ -2120,8 +2108,7 @@ def _upstream_error_search_text(value: Any) -> str:
 
 
 def _is_upstream_insufficient_balance_error(value: Any) -> bool:
-    text = _upstream_error_search_text(value).lower()
-    return any(pattern.lower() in text for pattern in UPSTREAM_INSUFFICIENT_BALANCE_PATTERNS)
+    return is_insufficient_balance_error(_upstream_error_search_text(value))
 
 
 def _is_upstream_service_unavailable_error(value: Any) -> bool:

@@ -197,6 +197,7 @@ async def list_alert_events(
             "rate_limit",
             "authentication",
             "fallback_exhausted",
+            "balance",
             "configuration_test",
         ]
     ] = None,

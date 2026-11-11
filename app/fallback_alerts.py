@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import logging
+import os
 import re
 import time
 from collections import deque
@@ -776,6 +777,157 @@ async def record_user_upstream_failure(alert: UpstreamFailureBurstAlert, *, now:
     return True
 
 
+CHANNEL_BALANCE_EXHAUSTED = "exhausted"
+CHANNEL_BALANCE_STILL_EXHAUSTED = "still_exhausted"
+CHANNEL_BALANCE_RECOVERED = "recovered"
+_CHANNEL_BALANCE_REMINDERS: Dict[str, float] = {}
+
+
+@dataclass(frozen=True)
+class ChannelBalanceAlert:
+    state: str
+    channel_id: str
+    channel_name: str = ""
+    provider_platform: str = ""
+    endpoint: str = ""
+    model: str = ""
+    status_code: int = 0
+    upstream_message: str = ""
+
+
+def _site_label() -> str:
+    return str(os.environ.get("RAILWAY_SERVICE_NAME") or "").strip()
+
+
+def build_channel_balance_payload(alert: ChannelBalanceAlert) -> Dict[str, Any]:
+    if alert.state == CHANNEL_BALANCE_RECOVERED:
+        title = "CoinCoin 上游渠道余额已恢复"
+    elif alert.state == CHANNEL_BALANCE_STILL_EXHAUSTED:
+        title = "CoinCoin 上游渠道仍然余额不足"
+    else:
+        title = "CoinCoin 上游渠道余额不足"
+    keyword = (settings.fallback_alert_keyword or "").strip()
+    if keyword and keyword not in title:
+        title = f"{keyword} {title}"
+    lines = [title]
+    site = _site_label()
+    if site:
+        lines.append(f"站点: {site}")
+    lines.append(f"渠道: {alert.channel_name or '-'} ({alert.channel_id or '-'})")
+    if alert.provider_platform:
+        lines.append(f"渠道平台: {alert.provider_platform}")
+    lines.append(f"探测: {alert.endpoint or '-'} / {alert.model or '-'}")
+    if alert.state == CHANNEL_BALANCE_RECOVERED:
+        lines.append("说明: 渠道探测已恢复正常，路由会重新使用该渠道。")
+    else:
+        lines.append(f"上游返回: HTTP {int(alert.status_code or 0)} {alert.upstream_message or ''}".rstrip())
+        lines.append("处理: 给该渠道充值，或在后台暂时停用它。未处理前，请求会先打到它失败再切到其他渠道。")
+        if alert.state == CHANNEL_BALANCE_STILL_EXHAUSTED:
+            repeat_hours = max(1, int(settings.channel_balance_alert_repeat_seconds or 0) // 3600)
+            lines.append(f"提醒: 渠道仍未恢复，每 {repeat_hours} 小时提醒一次；充值后下次探测（约 5 分钟）会发送恢复通知。")
+    return {"msgtype": "text", "text": {"content": "\n".join(lines)}}
+
+
+async def _send_channel_balance_alert(alert: ChannelBalanceAlert) -> bool:
+    webhook_url = current_sendable_alert_webhook_url()
+    if not webhook_url:
+        return False
+    destination = alert_webhook_destination(webhook_url)
+    event_id = await _create_alert_event_bounded(
+        destination_type=destination,
+        category="balance",
+        severity="info" if alert.state == CHANNEL_BALANCE_RECOVERED else "critical",
+        alert_type=f"channel_balance_{alert.state}",
+        endpoint=alert.endpoint,
+        model=alert.model,
+        channel_id=alert.channel_id,
+        status_code=alert.status_code,
+        delivery_status="pending",
+    )
+    try:
+        async with _dingtalk_http_client() as client:
+            response = await client.post(webhook_url, json=build_channel_balance_payload(alert))
+        delivered, error_summary = _dingtalk_delivery_result(response, destination)
+        await _complete_alert_event_bounded(
+            event_id,
+            delivery_status="sent" if delivered else "failed",
+            response_status=int(response.status_code or 0),
+            error_summary=error_summary,
+        )
+        if not delivered:
+            logger.warning("channel balance alert failed status=%s", response.status_code)
+        return delivered
+    except Exception as exc:
+        await _complete_alert_event_bounded(
+            event_id,
+            delivery_status="failed",
+            response_status=0,
+            error_summary=f"{_destination_label(destination)} delivery {type(exc).__name__}",
+        )
+        logger.warning("channel balance alert send failed error=%s", type(exc).__name__)
+        return False
+
+
+async def notify_channel_balance_probe(
+    *,
+    exhausted: bool,
+    previously_exhausted: bool,
+    recovered: bool,
+    channel_id: str,
+    channel_name: str = "",
+    provider_platform: str = "",
+    endpoint: str = "",
+    model: str = "",
+    status_code: int = 0,
+    upstream_message: str = "",
+    now: Optional[float] = None,
+) -> bool:
+    """Alert on a channel probe that found (or stopped finding) an out-of-balance upstream.
+
+    * first balance failure after a non-balance result: always sent;
+    * the same failure on later probes: re-sent at most every
+      ``channel_balance_alert_repeat_seconds`` (cluster-wide via Redis);
+    * first healthy probe after a balance failure: recovery notice.
+    """
+    if not current_alert_policy().enabled or not current_sendable_alert_webhook_url():
+        return False
+    if exhausted:
+        state = CHANNEL_BALANCE_STILL_EXHAUSTED if previously_exhausted else CHANNEL_BALANCE_EXHAUSTED
+    elif previously_exhausted and recovered:
+        state = CHANNEL_BALANCE_RECOVERED
+    else:
+        return False
+
+    repeat_seconds = max(60, int(settings.channel_balance_alert_repeat_seconds or 0))
+    current_time = time.time() if now is None else float(now)
+    if state == CHANNEL_BALANCE_STILL_EXHAUSTED:
+        previous = _CHANNEL_BALANCE_REMINDERS.get(channel_id, 0.0)
+        if previous and current_time - previous < repeat_seconds:
+            return False
+        _CHANNEL_BALANCE_REMINDERS[channel_id] = current_time
+        if not await claim_once("channel-balance", channel_id, repeat_seconds):
+            return False
+    elif state == CHANNEL_BALANCE_EXHAUSTED:
+        # Start the reminder window so the next probe does not repeat the alert.
+        _CHANNEL_BALANCE_REMINDERS[channel_id] = current_time
+        await claim_once("channel-balance", channel_id, repeat_seconds)
+    else:
+        _CHANNEL_BALANCE_REMINDERS.pop(channel_id, None)
+
+    return await _send_channel_balance_alert(
+        ChannelBalanceAlert(
+            state=state,
+            channel_id=channel_id,
+            channel_name=channel_name,
+            provider_platform=provider_platform,
+            endpoint=endpoint,
+            model=model,
+            status_code=int(status_code or 0),
+            upstream_message=upstream_message,
+        )
+    )
+
+
 def _finish_upstream_failure_task(task: asyncio.Task) -> None:
     _UPSTREAM_FAILURE_TASKS.discard(task)
     if task.cancelled():
@@ -828,6 +980,7 @@ def reset_fallback_alert_state() -> None:
     _ALERT_STATE.clear()
     _UPSTREAM_FAILURE_BUCKETS.clear()
     _UPSTREAM_FAILURE_DEDUP.clear()
+    _CHANNEL_BALANCE_REMINDERS.clear()
     _RUNTIME_ALERT_SETTINGS.clear()
     for task in list(_UPSTREAM_FAILURE_TASKS):
         if isinstance(task, asyncio.Future) and not task.done():
