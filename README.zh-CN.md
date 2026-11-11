@@ -210,6 +210,7 @@ uvicorn app.main:app --reload --port 8000
 - 老用户如果不传 `model`，仍然走默认 GPT 公共模型
 - 当前公开 GPT alias 包括 `gpt-6`、`gpt-6-astra`、`gpt-6-sol`、`gpt-6.1-sol`、`gpt-6.1-terra`、`gpt-6-luna`、`gpt-5.5`、`gpt-5.6`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`，以及由 `COINCOIN_FIXED_MODEL` 指定的默认 GPT alias
 - 两款 Luna 默认零售价均为 **OpenAI Standard 官方价的 5 倍**：`gpt-5.6-luna` 输入／输出为 **$1／$6 每百万 tokens**，`gpt-6-luna` 为 **$0.50／$2.50**；缓存读写同步按 5 倍收费。完整价格表、长上下文价格和发布核对步骤见 [Luna 模型定价](./docs/reference/luna-pricing.md)。
+- 所有公开 Claude 模型零售价统一为 **官方基础价的 4 倍**（主站与 datayes 专属站一致），例如 `claude-opus-5-5` 输入／输出 **$16／$80**、`claude-fable-5-2` **$32／$160** 每百万 tokens。完整价格表见 [Claude 模型定价](./docs/reference/claude-pricing.md)。
 - `gpt-6` / `gpt-6-astra` 映射到 OpenAI `gpt-6-astra`，标准档价格为输入 `$10/M`、缓存读取 `$1/M`、缓存写入 `$12.50/M`、输出 `$50/M`；上下文窗口 `1,050,000`，最大输出 `128,000`。价格依据 [OpenAI GPT-6 Astra 官方文档](https://developers.openai.com/api/docs/models/gpt-6-astra)。
 - embedding 请求不再复用旧 GPT / CPA lane；`/v1/embeddings` 默认和显式 `text-embedding-3-small` 都直连 Azure
 - Gemini 文本能力是增量暴露；显式传入 Gemini 文本 alias 时，会路由到 native Gemini CPA lane
@@ -319,7 +320,7 @@ uvicorn app.main:app --reload --port 8000
 
 Claude Code-only 上游和普通 OpenAI-compatible 上游不完全一样：真实 Claude Code 客户端请求需要走 Anthropic Messages 形状、Claude Code headers 和 `?beta=true`，普通脚本探测或后台服务端监控可能被上游边缘策略拒绝。不要只根据普通 `/v1/chat/completions` 或监控 `503` 判定这类渠道不可用。
 
-当前 Claude Code 接入使用 `anthropic_compatible` provider channel 加 model route 的方式承载，`claude-opus-5`、`claude-sonnet-5` 等公开 Claude 模型保持 route-only，避免重新落回旧的 GPT-backed Claude alias。Claude Code 模型的基础价格按 Anthropic 官方价格维护，倍率通过 `/admin/model-pricing/{model_id}` 按模型管理，不应对所有 `claude-*` 套用统一倍率或缓存折扣。
+当前 Claude Code 接入使用 `anthropic_compatible` provider channel 加 model route 的方式承载，`claude-opus-5`、`claude-sonnet-5` 等公开 Claude 模型保持 route-only，避免重新落回旧的 GPT-backed Claude alias。所有公开 Claude 模型（含 `best`、`opusplan` 等 Claude Code 别名）零售价统一为官方基础价的 **4 倍**，主站和 datayes 专属站一致；缓存读写倍率按各模型官方比例分别配置，不要对所有 `claude-*` 套用统一缓存折扣。完整价格表、倍率来源和改价步骤见 [Claude 模型定价](./docs/reference/claude-pricing.md)。
 
 2026-09-30 新增 `claude-sonnet-5-5` 和 `gpt-6.1-sol`，不替换旧模型或默认模型：
 
@@ -348,7 +349,15 @@ Claude Code-only 上游和普通 OpenAI-compatible 上游不完全一样：真�
 
 价格及规格来源：[GPT-6.1 Terra 官方文档](https://developers.openai.com/api/docs/models/gpt-6.1-terra)。缓存写入按官方 30 分钟保留价计费；12 小时保留、Fast/Batch/Flex 与区域处理不单独分档。与 `gpt-6.1-sol` 一样走 legacy GPT lane，保留 Chat Completions 和 Responses 入口；上下文窗口 `1,050,000`，最大输出 `128,000`，reasoning effort 为 `none`、`low`、`medium`（默认）、`high`、`xhigh`、`max`。
 
-详细验收项、价格计算公式和运维命令见 [`docs/architecture/claude-code-upstream-runbook.md`](./docs/architecture/claude-code-upstream-runbook.md)。
+2026-11-11 新增 `claude-fable-5-2`（Anthropic 2026-11-09 发布），不替换 `claude-fable-5-1` 或默认模型：
+
+| 模型 | 官方输入 / 输出（USD / 百万 token） | CoinCoin 倍率 | 实际输入 / 输出 | 缓存读取 / 写入（5m） |
+| --- | --- | --- | --- | --- |
+| `claude-fable-5-2` | $8 / $40 | 4 | $32 / $160 | $0.80 / $40 |
+
+价格及规格来源：[Claude Fable 5.2 官方文档](https://platform.claude.com/docs/en/models/fable-5-2/overview)。4 倍写在目录里，部署后两站直接生效；基础价变量为独立的 `COINCOIN_CLAUDE_FABLE_52_*`，不与 Fable 5 / 5.1 共用。与 `claude-opus-5-5` 一样走原生 Anthropic 渠道和 `chat/completions` model route，客户端使用 `/v1/messages`；上下文 `1,000,000`，最大输出 `128,000`，adaptive thinking 常开、默认 high effort，关闭 thinking、`budget_tokens`、采样参数、assistant prefill 和强制工具调用的限制由上游校验。
+
+渠道接入和验收见 [`docs/operations/claude-code-upstream-runbook.md`](./docs/operations/claude-code-upstream-runbook.md)，价格以 [Claude 模型定价](./docs/reference/claude-pricing.md) 为准。
 
 ---
 

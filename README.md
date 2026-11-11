@@ -290,7 +290,7 @@ Routing rules:
 - Embeddings use `text-embedding-3-small` and do not share the old GPT/CPA lane.
 - Admin-created provider channel routes can override catalog defaults for specific public models and endpoints.
 - If a provider channel fails, CoinCoin records the failure, applies cooldown rules, tries one alternate route when available, and then falls back to the system catalog path.
-- Claude Code-only upstreams use Anthropic-compatible provider channels plus route-only public Claude models, including `claude-opus-5`; see [`docs/architecture/claude-code-upstream-runbook.md`](./docs/architecture/claude-code-upstream-runbook.md) for the routes, official base pricing, retail multiplier, and monitoring caveats.
+- Claude Code-only upstreams use Anthropic-compatible provider channels plus route-only public Claude models, including `claude-opus-5`; see [`docs/operations/claude-code-upstream-runbook.md`](./docs/operations/claude-code-upstream-runbook.md) for routes and monitoring caveats. Every public Claude model retails at **4× its base price** on both the main and Datayes sites; see [Claude pricing](./docs/reference/claude-pricing.md).
 
 For the full operator workflow, see the Chinese runbook in [`README.zh-CN.md`](./README.zh-CN.md#上游渠道模型-route-与-fallback).
 

@@ -3,14 +3,15 @@ type: runbook
 status: active
 owner: platform
 audience: [operator, developer, reviewer, agent]
-updated: 2026-09-30
+updated: 2026-11-11
 canonical_for: claude-code-upstream-operations
 ---
 
 # Claude Code Upstream Runbook
 
 This runbook documents CoinCoin's Claude Code upstream behavior. It intentionally
-does not include upstream API keys or admin tokens.
+does not include upstream API keys or admin tokens. Retail prices and multipliers
+for every Claude model are documented in [Claude pricing](../reference/claude-pricing.md).
 
 ## Runtime shape
 
@@ -26,17 +27,46 @@ model routes instead of a legacy GPT-backed Claude catalog path.
 The public model remains a CoinCoin model id. The route decides which upstream
 model name is sent to the provider.
 
+## Claude Fable 5.2
+
+`claude-fable-5-2` was released on November 9, 2026 and is now the current
+Fable model for demanding reasoning and long-horizon agentic work. Like Fable
+5.1 it is a route-only public model: register an active `anthropic_compatible`
+provider channel route with endpoint `chat/completions` and exact upstream model
+`claude-fable-5-2`. Clients use `/v1/messages`; without a route the request
+fails instead of falling back to another model.
+
+The checked-in base price is 800 cents per million input tokens and 4,000 cents
+per million output tokens (`COINCOIN_CLAUDE_FABLE_52_INPUT_PRICE` /
+`COINCOIN_CLAUDE_FABLE_52_OUTPUT_PRICE`, separate from the Fable 5 / 5.1 price
+variables). The catalog carries the standard Claude retail multiplier
+(`model_multiplier: 4.0`), so both sites charge $32 input / $160 output from the
+first deploy without a runtime override. Cache reads use
+`cache_read_multiplier: 0.025` ($0.80 retail) and 5-minute cache writes 1.25x
+($40 retail). See [Claude pricing](../reference/claude-pricing.md).
+
+Request-shape rules are the same as Fable 5.1 and are enforced upstream:
+adaptive thinking is always on (default effort `high`), so `thinking.disabled`,
+`budget_tokens`, sampling parameters, assistant prefill and forced
+`tool_choice` (`any` / `tool`) return 400. New in 5.2: the preserved-thinking
+history-editing check applies to every account, so a client that edits earlier
+turns gets a 400. The admin channel model probe now uses `claude-fable-5-2`
+when an upstream has no `/v1/models`.
+
+`claude-fable-5-1` and `claude-fable-5` remain available for existing clients.
+
 ## Claude Fable 5.1
 
-`claude-fable-5-1` is the current Anthropic model for demanding reasoning and
+`claude-fable-5-1` is the previous Fable model for demanding reasoning and
 long-horizon agentic work. It is exposed as a route-only public model and must
 use an active `anthropic_compatible` provider channel with the exact upstream
 model id `claude-fable-5-1`.
 
 The checked-in base price is 1,000 cents per million input tokens and 5,000
 cents per million output tokens. Anthropic prices cache reads for this model at
-2.5% of base input, so the catalog uses `cache_read_multiplier: 0.025`.
-`claude-fable-5` remains available for existing clients.
+2.5% of base input, so the catalog uses `cache_read_multiplier: 0.025`. Its 4x
+retail multiplier comes from the runtime `/admin/model-pricing` override, not the
+catalog. `claude-fable-5` remains available for existing clients.
 
 The catalog intentionally contains no upstream URL or API key for either Fable
 model. Adding the public id therefore does not silently send traffic to a
