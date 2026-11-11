@@ -57,9 +57,8 @@ class Settings(BaseSettings):
     upstream_auth_alert_threshold: int = 3
     upstream_failure_alert_window_seconds: int = 60
     upstream_failure_alert_dedup_seconds: int = 300
-    # Re-send the "channel out of balance" alert at most this often while the
-    # channel's probe keeps failing with a balance error (first detection and
-    # recovery are always sent).
+    # A real request that hits an out-of-balance channel alerts at most once per
+    # channel per this many seconds (cluster-wide via Redis).
     channel_balance_alert_repeat_seconds: int = 21600
 
     # Gateway-backed public models (legacy/internal OpenAI-compatible gateway)

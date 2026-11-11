@@ -3392,6 +3392,55 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([call["url"] for call in client.calls], ["https://primary-gpt.example/v1/chat/completions"])
         self._assert_single_terminal_context_failure(add_usage, "ch_gpt_primary")
 
+    async def test_streaming_messages_reports_balance_error_and_falls_back(self):
+        self._configure_gpt_fallback_channels()
+        fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_gpt_403")
+        stream_client = _RecordingStreamClient(
+            [
+                _FakeEventStreamResponse(
+                    [],
+                    status_code=403,
+                    headers={"content-type": "application/json"},
+                    body={"code": "INSUFFICIENT_BALANCE", "message": "Insufficient user balance. Please top up your user balance."},
+                ),
+                _FakeEventStreamResponse(
+                    [
+                        'data: {"id":"chatcmpl_backup","choices":[{"delta":{"content":"OK"},"finish_reason":"stop"}],"usage":{"prompt_tokens":4,"completion_tokens":1}}',
+                        "data: [DONE]",
+                    ]
+                ),
+            ]
+        )
+
+        with (
+            patch.object(anthropic_module, "authorize_request", AsyncMock(return_value=fake_user)),
+            patch.object(anthropic_module, "get_stream_client", AsyncMock(return_value=stream_client)),
+            patch.object(anthropic_module.usage_buffer, "add", AsyncMock()),
+            patch.object(anthropic_module, "report_upstream_balance_error") as report_balance,
+        ):
+            async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
+                response = await http_client.post(
+                    "/v1/messages",
+                    headers={"authorization": "Bearer sk_test"},
+                    json={
+                        "model": "gpt-5.5",
+                        "stream": True,
+                        "max_tokens": 64,
+                        "messages": [{"role": "user", "content": "Reply with exactly OK"}],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn('"text":"OK"', response.text)
+        report_balance.assert_called_once()
+        cfg = report_balance.call_args.args[0]
+        kwargs = report_balance.call_args.kwargs
+        self.assertEqual(cfg.channel_id, "ch_gpt_primary")
+        self.assertEqual(kwargs["endpoint"], "messages:stream")
+        self.assertEqual(kwargs["model"], "gpt-5.5")
+        self.assertEqual(kwargs["status_code"], 403)
+        self.assertIn(b"INSUFFICIENT_BALANCE", kwargs["body"])
+
     async def test_streaming_messages_still_falls_back_on_ordinary_gpt_502(self):
         self._configure_gpt_fallback_channels()
         fake_user = SimpleNamespace(id="u_test", status="active", _api_key_id="k_gpt_502")

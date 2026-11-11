@@ -2530,6 +2530,83 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(usage_kwargs["fallback_from_channel_id"], "ch_stream_primary")
         self.assertEqual(usage_kwargs["route_attempt"], 1)
 
+    async def test_responses_stream_reports_channel_balance_error_and_falls_back(self) -> None:
+        channel_router.set_snapshot(
+            [
+                ProviderChannelSnapshot(
+                    channel_id="ch_broke",
+                    provider_platform="new_api",
+                    base_url="https://broke-channel.example/v1",
+                    api_key="broke-key",
+                    auth_style="bearer",
+                    priority=0,
+                ),
+                ProviderChannelSnapshot(
+                    channel_id="ch_funded",
+                    provider_platform="sub2api",
+                    base_url="https://funded-channel.example/v1",
+                    api_key="funded-key",
+                    auth_style="bearer",
+                    priority=10,
+                ),
+            ],
+            [
+                ModelChannelRouteSnapshot(
+                    route_id="mcr_broke",
+                    public_model_id="gpt-5.5",
+                    endpoint="responses",
+                    channel_id="ch_broke",
+                ),
+                ModelChannelRouteSnapshot(
+                    route_id="mcr_funded",
+                    public_model_id="gpt-5.5",
+                    endpoint="responses",
+                    channel_id="ch_funded",
+                ),
+            ],
+        )
+        upstream_client = _RecordingStreamClient(
+            [
+                _FakeUpstreamResponse(
+                    {"error": {"message": "Insufficient user quota", "type": "upstream_error"}},
+                    status_code=403,
+                ),
+                _FakeEventStreamResponse(
+                    [
+                        'data: {"type":"response.created","response":{"id":"resp_balance_fallback","status":"in_progress","model":"gpt-5.5","output":[]}}',
+                        'data: {"type":"response.output_text.delta","delta":"OK"}',
+                        'data: {"type":"response.completed","response":{"id":"resp_balance_fallback","status":"completed","model":"gpt-5.5","output":[{"type":"message","content":[{"type":"output_text","text":"OK"}]}],"usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}}}',
+                        "data: [DONE]",
+                    ]
+                ),
+            ]
+        )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                "get_stream_client",
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(proxy_module.usage_buffer, "add", AsyncMock()), patch.object(
+                proxy_module, "report_upstream_balance_error"
+            ) as report_balance:
+                response = await client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"model": "gpt-5.5", "input": "Reply with only: OK", "stream": True},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(upstream_client.calls[1]["url"], "https://funded-channel.example/v1/responses")
+        report_balance.assert_called_once()
+        self.assertEqual(report_balance.call_args.args[0].channel_id, "ch_broke")
+        kwargs = report_balance.call_args.kwargs
+        self.assertEqual(kwargs["endpoint"], "responses")
+        self.assertEqual(kwargs["model"], "gpt-5.5")
+        self.assertEqual(kwargs["status_code"], 403)
+        self.assertIn(b"Insufficient user quota", kwargs["body"])
+
     async def test_responses_stream_provider_channel_falls_back_to_system_catalog_when_no_peer_route(self) -> None:
         channel_router.set_snapshot(
             [

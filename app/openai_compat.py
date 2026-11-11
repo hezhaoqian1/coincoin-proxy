@@ -31,6 +31,7 @@ from .prompt_cache import (
     build_channel_affinity_key,
     build_claude_code_prompt_cache_key,
 )
+from .fallback_alerts import report_upstream_balance_error
 from .proxy import (
     _build_upstream_headers, _ensure_content_text, _sanitize_encrypted_ids,
     _build_openai_responses_upstream_url,
@@ -1584,6 +1585,9 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
         else:
             data = upstream.text
 
+        report_upstream_balance_error(
+            used_cfg, endpoint="chat/completions", model=display_model, status_code=upstream.status_code, body=data
+        )
         if isinstance(data, dict) and isinstance(data.get("error"), dict):
             _record_channel_failure(used_cfg, status_code=upstream.status_code)
             return _upstream_error_json_response(
@@ -2032,6 +2036,9 @@ async def chat_completions(request: Request, db: AsyncSession = Depends(get_db))
             content_type = upstream.headers.get("content-type", "")
             if status_code >= 400:
                 error_body = b"" if "text/event-stream" in content_type else await upstream.aread()
+                report_upstream_balance_error(
+                    used_cfg, endpoint="chat/completions", model=display_model, status_code=status_code, body=error_body
+                )
                 cooldown = None
                 if status_code == 429:
                     cooldown = _rate_limit_cooldown_seconds(upstream.headers, _upstream_error_object(error_body))

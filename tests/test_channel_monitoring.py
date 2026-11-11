@@ -806,7 +806,7 @@ class _FakeStatusClient:
 
 
 class ChannelBalanceProbeTests(unittest.IsolatedAsyncioTestCase):
-    def _monitor_and_channel(self, *, last_message=""):
+    def _monitor_and_channel(self):
         monitor = SimpleNamespace(
             id="cmon_balance",
             channel_id="ch_tyapi",
@@ -818,10 +818,10 @@ class ChannelBalanceProbeTests(unittest.IsolatedAsyncioTestCase):
             interval_seconds=300,
             timeout_seconds=30,
             last_checked_at=None,
-            last_status="failed" if last_message else "",
+            last_status="",
             last_latency_ms=0,
             last_ping_latency_ms=0,
-            last_message=last_message,
+            last_message="",
         )
         channel = SimpleNamespace(
             id="ch_tyapi",
@@ -834,15 +834,16 @@ class ChannelBalanceProbeTests(unittest.IsolatedAsyncioTestCase):
         )
         return monitor, channel
 
-    async def _run(self, client, *, last_message=""):
-        monitor, channel = self._monitor_and_channel(last_message=last_message)
+    async def _run(self, client):
+        monitor, channel = self._monitor_and_channel()
         db = _FakeDB(monitor=monitor, channel=channel)
-        with patch("app.channel_monitoring.notify_channel_balance_probe", AsyncMock(return_value=True)) as notify:
+        with patch("app.fallback_alerts._send_channel_balance_alert", AsyncMock(return_value=True)) as send:
             results = await run_provider_channel_monitor_once(db, monitor.id, client=client)
-        return monitor, results, notify
+        send.assert_not_awaited()
+        return monitor, results
 
-    async def test_balance_error_is_recorded_with_reason_and_alerted(self) -> None:
-        monitor, results, notify = await self._run(
+    async def test_balance_error_is_recorded_with_upstream_reason(self) -> None:
+        monitor, results = await self._run(
             _FakeStatusClient(
                 403,
                 {"code": "INSUFFICIENT_BALANCE", "message": "Insufficient user balance. Please top up your user balance."},
@@ -855,53 +856,15 @@ class ChannelBalanceProbeTests(unittest.IsolatedAsyncioTestCase):
             monitor.last_message,
             "上游余额不足 HTTP 403: Insufficient user balance. Please top up your user balance.",
         )
-        notify.assert_awaited_once()
-        kwargs = notify.await_args.kwargs
-        self.assertTrue(kwargs["exhausted"])
-        self.assertFalse(kwargs["previously_exhausted"])
-        self.assertEqual(kwargs["channel_id"], "ch_tyapi")
-        self.assertEqual(kwargs["channel_name"], "统一Api GPT 稳定")
-        self.assertEqual(kwargs["status_code"], 403)
-        self.assertEqual(kwargs["upstream_message"], "Insufficient user balance. Please top up your user balance.")
 
     async def test_payment_required_status_counts_as_balance_error(self) -> None:
-        monitor, results, notify = await self._run(_FakeStatusClient(402, {"error": {"message": "Payment Required"}}))
+        monitor, results = await self._run(_FakeStatusClient(402, {"error": {"message": "Payment Required"}}))
 
         self.assertTrue(results[0].balance_exhausted)
         self.assertTrue(monitor.last_message.startswith("上游余额不足 HTTP 402"))
-        notify.assert_awaited_once()
 
-    async def test_other_403_keeps_plain_message_and_does_not_alert(self) -> None:
-        monitor, results, notify = await self._run(
-            _FakeStatusClient(403, {"error": {"message": "Upstream access forbidden"}})
-        )
+    async def test_other_403_keeps_plain_message(self) -> None:
+        monitor, results = await self._run(_FakeStatusClient(403, {"error": {"message": "Upstream access forbidden"}}))
 
         self.assertFalse(results[0].balance_exhausted)
         self.assertEqual(monitor.last_message, "HTTP 403")
-        notify.assert_not_awaited()
-
-    async def test_healthy_probe_after_balance_error_reports_recovery(self) -> None:
-        monitor, results, notify = await self._run(
-            _FakeClient(), last_message="上游余额不足 HTTP 403: Insufficient user balance."
-        )
-
-        self.assertEqual(results[0].status, "operational")
-        self.assertEqual(monitor.last_message, "ok")
-        kwargs = notify.await_args.kwargs
-        self.assertFalse(kwargs["exhausted"])
-        self.assertTrue(kwargs["previously_exhausted"])
-        self.assertTrue(kwargs["recovered"])
-
-    async def test_alert_failure_never_breaks_monitoring(self) -> None:
-        monitor, channel = self._monitor_and_channel()
-        db = _FakeDB(monitor=monitor, channel=channel)
-        with patch(
-            "app.channel_monitoring.notify_channel_balance_probe",
-            AsyncMock(side_effect=RuntimeError("webhook down")),
-        ):
-            results = await run_provider_channel_monitor_once(
-                db, monitor.id, client=_FakeStatusClient(403, {"message": "余额不足"})
-            )
-
-        self.assertTrue(results[0].balance_exhausted)
-        self.assertEqual(db.commits, 1)
