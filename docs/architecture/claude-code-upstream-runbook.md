@@ -2,6 +2,9 @@
 
 Updated: 2026-08-10
 
+> Pricing in this file is outdated; see [Claude pricing](../reference/claude-pricing.md).
+> New-model onboarding notes live in [the operations runbook](../operations/claude-code-upstream-runbook.md).
+
 This runbook documents the runtime setup for Claude Code-only upstreams in CoinCoin. It intentionally does not include upstream API keys or admin tokens.
 
 ## Runtime Shape
@@ -185,38 +188,9 @@ When `COINCOIN_REDIS_URL` is configured, the rolling counter and deduplication a
 
 ## Pricing Multiplier Policy
 
-Claude Code public models use model-level pricing overrides in `/admin/model-pricing/{model_id}`.
-
-Current production policy:
-
-- `model_multiplier`: `6.0`
-- `output_multiplier`: `1.0`
-- `cache_read_multiplier`: `0.1`
-- `pricing_mode`: `multiplier`
-
-The router computes effective prices as:
-
-- input price = `base_input * model_multiplier`
-- output price = `base_output * model_multiplier * output_multiplier`
-- cached input price = `effective_input * cache_read_multiplier`
-- cache creation price = `effective_input * cache_creation_multiplier`
-
-The checked-in base price for `claude-opus-5` matches Anthropic's standard API price:
-
-- input: `500` cents per 1M tokens
-- 5-minute cache write: `625` cents per 1M cache-creation tokens (`1.25x`)
-- cache hit: `50` cents per 1M cache-read tokens (`0.1x`)
-- output: `2500` cents per 1M tokens
-
-With the current `6.0x` production model multiplier, the effective retail prices are `3000` input, `3750` cache creation, `300` cache read, and `15000` output cents per 1M tokens.
-
-For `claude-sonnet-5`, the effective production prices are:
-
-- input: `300 -> 1800` cents per 1M tokens
-- cached input: `30 -> 180` cents per 1M cached-read tokens
-- output: `1500 -> 9000` cents per 1M tokens
-
-When changing Claude Code pricing, update all public `claude-*` model overrides together unless there is an explicit SKU-level pricing decision.
+Superseded. The `6.0x` policy that used to be recorded here is no longer in effect.
+Current Claude retail pricing (4x on both sites), the price table and the override
+procedure live in [Claude pricing](../reference/claude-pricing.md).
 
 ## Monitoring Caveat
 

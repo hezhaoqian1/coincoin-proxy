@@ -13,6 +13,7 @@ CLAUDE_OPUS_55_PRICE = (400, 2000)
 CLAUDE_SONNET_PRICE = (300, 1500)
 CLAUDE_HAIKU_PRICE = (100, 500)
 CLAUDE_FABLE_PRICE = (1000, 5000)
+CLAUDE_FABLE_52_PRICE = (800, 4000)
 FIXED_INPUT_PRICE_PLACEHOLDER = "${COINCOIN_PRICE_INPUT_PER_MILLION:-500}"
 FIXED_OUTPUT_PRICE_PLACEHOLDER = "${COINCOIN_PRICE_OUTPUT_PER_MILLION:-3000}"
 CHEAP_INPUT_PRICE_PLACEHOLDER = "${COINCOIN_CHEAP_PRICE_INPUT:-${COINCOIN_GPT_54_MINI_INPUT_PRICE:-75}}"
@@ -27,6 +28,8 @@ CLAUDE_HAIKU_INPUT_PRICE_PLACEHOLDER = "${COINCOIN_CLAUDE_HAIKU_INPUT_PRICE:-100
 CLAUDE_HAIKU_OUTPUT_PRICE_PLACEHOLDER = "${COINCOIN_CLAUDE_HAIKU_OUTPUT_PRICE:-500}"
 CLAUDE_FABLE_INPUT_PRICE_PLACEHOLDER = "${COINCOIN_CLAUDE_FABLE_INPUT_PRICE:-1000}"
 CLAUDE_FABLE_OUTPUT_PRICE_PLACEHOLDER = "${COINCOIN_CLAUDE_FABLE_OUTPUT_PRICE:-5000}"
+CLAUDE_FABLE_52_INPUT_PRICE_PLACEHOLDER = "${COINCOIN_CLAUDE_FABLE_52_INPUT_PRICE:-800}"
+CLAUDE_FABLE_52_OUTPUT_PRICE_PLACEHOLDER = "${COINCOIN_CLAUDE_FABLE_52_OUTPUT_PRICE:-4000}"
 CLAUDE_OPUS_ALIASES = {
     "claude-opus-4-8",
     "claude-opus-4.8",
@@ -65,6 +68,7 @@ OFFICIAL_DEFAULT_TEXT_PRICES = {
     "gpt-6.1-terra": (100, 500),
     "deepseek-v4-pro": (44, 87),
     "deepseek-v4-flash": (14, 28),
+    "claude-fable-5-2": CLAUDE_FABLE_52_PRICE,
     "claude-fable-5-1": CLAUDE_FABLE_PRICE,
     "claude-fable-5": CLAUDE_FABLE_PRICE,
     "claude-opus-5": CLAUDE_OPUS_PRICE,
@@ -306,6 +310,26 @@ class GatewayCatalogSyncTests(unittest.TestCase):
                 self.assertEqual(fable.get("auth_style"), "x-api-key")
                 self.assertEqual(fable.get("price_input_per_million"), CLAUDE_FABLE_INPUT_PRICE_PLACEHOLDER)
                 self.assertEqual(fable.get("price_output_per_million"), CLAUDE_FABLE_OUTPUT_PRICE_PLACEHOLDER)
+
+        fable_5_2 = public_models["claude-fable-5-2"]
+        self.assertEqual(fable_5_2.get("provider_model"), "claude-fable-5-2")
+        self.assertEqual(fable_5_2.get("upstream_model"), "claude-fable-5-2")
+        self.assertEqual(fable_5_2.get("routing_mode"), "route_only")
+        self.assertEqual(fable_5_2.get("delivery_lane"), "route_only")
+        self.assertEqual(fable_5_2.get("capabilities"), ["chat/completions"])
+        self.assertNotIn("upstream_url", fable_5_2)
+        self.assertNotIn("api_key", fable_5_2)
+        self.assertEqual(fable_5_2.get("auth_style"), "x-api-key")
+        self.assertEqual(fable_5_2.get("price_input_per_million"), CLAUDE_FABLE_52_INPUT_PRICE_PLACEHOLDER)
+        self.assertEqual(fable_5_2.get("price_output_per_million"), CLAUDE_FABLE_52_OUTPUT_PRICE_PLACEHOLDER)
+        self.assertEqual(fable_5_2.get("billable_sku"), "claude-fable-5-2-text")
+        self.assertEqual((fable_5_2.get("pricing") or {}).get("model_multiplier"), 4.0)
+        self.assertEqual((fable_5_2.get("pricing") or {}).get("output_multiplier"), 1.0)
+        self.assertEqual((fable_5_2.get("pricing") or {}).get("cache_read_multiplier"), 0.025)
+        self.assertEqual((fable_5_2.get("pricing") or {}).get("cache_creation_multiplier"), 1.25)
+        self.assertEqual((fable_5_2.get("metadata") or {}).get("provider_protocol"), "anthropic_messages")
+        self.assertEqual((fable_5_2.get("metadata") or {}).get("context_length"), 1_000_000)
+        self.assertEqual((fable_5_2.get("metadata") or {}).get("max_completion_tokens"), 128_000)
 
         fable_5_1 = public_models["claude-fable-5-1"]
         self.assertEqual(fable_5_1.get("billable_sku"), "claude-fable-5-1-text")
