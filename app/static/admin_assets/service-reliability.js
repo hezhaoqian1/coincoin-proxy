@@ -77,6 +77,7 @@
       rate_limit: '429 限流',
       authentication: '鉴权',
       fallback_exhausted: 'Fallback 全部失败',
+      balance: '渠道余额',
       configuration_test: '配置测试',
     }[String(category || '')] || String(category || '-');
   }

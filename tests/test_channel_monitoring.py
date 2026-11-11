@@ -1,7 +1,7 @@
 import unittest
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import httpx
 
@@ -789,3 +789,119 @@ class ChannelMonitoringTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client.calls[0][2]["x-claude-code-session-id"], "coincoin-monitor")
         self.assertEqual(client.calls[0][2]["x-stainless-lang"], "js")
         self.assertEqual(client.calls[0][3]["model"], "claude-sonnet-5")
+
+
+class _FakeStatusClient:
+    def __init__(self, status_code, body):
+        self.status_code = status_code
+        self.body = body
+        self.calls = []
+
+    async def get(self, url, headers):
+        raise AssertionError(f"monitor should not probe /models: {url}")
+
+    async def post(self, url, json, headers):
+        self.calls.append(("POST", url, dict(headers), dict(json)))
+        return httpx.Response(self.status_code, json=self.body)
+
+
+class ChannelBalanceProbeTests(unittest.IsolatedAsyncioTestCase):
+    def _monitor_and_channel(self, *, last_message=""):
+        monitor = SimpleNamespace(
+            id="cmon_balance",
+            channel_id="ch_tyapi",
+            name="tyapi",
+            endpoint="responses",
+            primary_model="gpt-5.6-terra",
+            extra_models="[]",
+            status="active",
+            interval_seconds=300,
+            timeout_seconds=30,
+            last_checked_at=None,
+            last_status="failed" if last_message else "",
+            last_latency_ms=0,
+            last_ping_latency_ms=0,
+            last_message=last_message,
+        )
+        channel = SimpleNamespace(
+            id="ch_tyapi",
+            name="统一Api GPT 稳定",
+            provider_platform="openai",
+            base_url="https://tyapi.example",
+            encrypted_api_key=encrypt_api_key("sk-test"),
+            auth_style="bearer",
+            channel_type="openai_compatible",
+        )
+        return monitor, channel
+
+    async def _run(self, client, *, last_message=""):
+        monitor, channel = self._monitor_and_channel(last_message=last_message)
+        db = _FakeDB(monitor=monitor, channel=channel)
+        with patch("app.channel_monitoring.notify_channel_balance_probe", AsyncMock(return_value=True)) as notify:
+            results = await run_provider_channel_monitor_once(db, monitor.id, client=client)
+        return monitor, results, notify
+
+    async def test_balance_error_is_recorded_with_reason_and_alerted(self) -> None:
+        monitor, results, notify = await self._run(
+            _FakeStatusClient(
+                403,
+                {"code": "INSUFFICIENT_BALANCE", "message": "Insufficient user balance. Please top up your user balance."},
+            )
+        )
+
+        self.assertTrue(results[0].balance_exhausted)
+        self.assertEqual(results[0].status, "error")
+        self.assertEqual(
+            monitor.last_message,
+            "上游余额不足 HTTP 403: Insufficient user balance. Please top up your user balance.",
+        )
+        notify.assert_awaited_once()
+        kwargs = notify.await_args.kwargs
+        self.assertTrue(kwargs["exhausted"])
+        self.assertFalse(kwargs["previously_exhausted"])
+        self.assertEqual(kwargs["channel_id"], "ch_tyapi")
+        self.assertEqual(kwargs["channel_name"], "统一Api GPT 稳定")
+        self.assertEqual(kwargs["status_code"], 403)
+        self.assertEqual(kwargs["upstream_message"], "Insufficient user balance. Please top up your user balance.")
+
+    async def test_payment_required_status_counts_as_balance_error(self) -> None:
+        monitor, results, notify = await self._run(_FakeStatusClient(402, {"error": {"message": "Payment Required"}}))
+
+        self.assertTrue(results[0].balance_exhausted)
+        self.assertTrue(monitor.last_message.startswith("上游余额不足 HTTP 402"))
+        notify.assert_awaited_once()
+
+    async def test_other_403_keeps_plain_message_and_does_not_alert(self) -> None:
+        monitor, results, notify = await self._run(
+            _FakeStatusClient(403, {"error": {"message": "Upstream access forbidden"}})
+        )
+
+        self.assertFalse(results[0].balance_exhausted)
+        self.assertEqual(monitor.last_message, "HTTP 403")
+        notify.assert_not_awaited()
+
+    async def test_healthy_probe_after_balance_error_reports_recovery(self) -> None:
+        monitor, results, notify = await self._run(
+            _FakeClient(), last_message="上游余额不足 HTTP 403: Insufficient user balance."
+        )
+
+        self.assertEqual(results[0].status, "operational")
+        self.assertEqual(monitor.last_message, "ok")
+        kwargs = notify.await_args.kwargs
+        self.assertFalse(kwargs["exhausted"])
+        self.assertTrue(kwargs["previously_exhausted"])
+        self.assertTrue(kwargs["recovered"])
+
+    async def test_alert_failure_never_breaks_monitoring(self) -> None:
+        monitor, channel = self._monitor_and_channel()
+        db = _FakeDB(monitor=monitor, channel=channel)
+        with patch(
+            "app.channel_monitoring.notify_channel_balance_probe",
+            AsyncMock(side_effect=RuntimeError("webhook down")),
+        ):
+            results = await run_provider_channel_monitor_once(
+                db, monitor.id, client=_FakeStatusClient(403, {"message": "余额不足"})
+            )
+
+        self.assertTrue(results[0].balance_exhausted)
+        self.assertEqual(db.commits, 1)

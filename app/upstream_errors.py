@@ -11,9 +11,84 @@ the status code.  The matching rules mirror sub2api's
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Iterable, Tuple
 
 _MAX_SCAN_CHARS = 64 * 1024
+
+# Upstream account has run out of money/quota.  Substring match on the
+# lower-cased error body; shared by the client-facing error rewrite in
+# ``proxy.py`` and the channel balance alert in ``channel_monitoring.py``.
+INSUFFICIENT_BALANCE_PATTERNS: Tuple[str, ...] = (
+    "用户额度不足",
+    "额度不足",
+    "余额不足",
+    "剩余额度",
+    "最低保留额度",
+    "额度已用尽",
+    "预扣费额度失败",
+    "credit balance is too low",
+    "quota is not enough",
+    "billing hard limit",
+    "exceeded your current quota",
+)
+
+# "insufficient balance", "INSUFFICIENT_BALANCE", "Insufficient user quota"
+# (zzshu), "insufficient account balance" (sub2api), "insufficient_quota"
+# (OpenAI), "Insufficient credits" (OpenRouter), ...
+_INSUFFICIENT_FUNDS_RE = re.compile(
+    r"insufficient[\s_-]+(?:(?:user|account)[\s_-]+)?(?:balance|quota|credits?|funds)"
+)
+_SECRET_RE = re.compile(r"\b(?:sk|ak)[-_][A-Za-z0-9_\-]{10,}\b")
+
+
+def _error_search_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value[: _MAX_SCAN_CHARS * 4]).decode("utf-8", errors="replace")[:_MAX_SCAN_CHARS]
+    if isinstance(value, str):
+        return value[:_MAX_SCAN_CHARS]
+    try:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)[:_MAX_SCAN_CHARS]
+    except (TypeError, ValueError):
+        return str(value)[:_MAX_SCAN_CHARS]
+
+
+def is_insufficient_balance_error(body: Any) -> bool:
+    """Return True when an upstream error body says the account is out of balance/quota."""
+    text = _error_search_text(body).lower()
+    if not text:
+        return False
+    return bool(_INSUFFICIENT_FUNDS_RE.search(text)) or any(
+        pattern in text for pattern in INSUFFICIENT_BALANCE_PATTERNS
+    )
+
+
+def upstream_error_summary(body: Any, *, max_length: int = 200) -> str:
+    """Short single-line description of an upstream error body for operator alerts."""
+    message: Any = None
+    payload: Any = body
+    if isinstance(payload, (bytes, bytearray)):
+        payload = _error_search_text(payload)
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except (TypeError, ValueError):
+            message = payload
+    if message is None and isinstance(payload, dict):
+        for path in (("error", "message"), ("message",), ("msg",), ("detail",), ("error",)):
+            value = _lookup(payload, path)
+            if isinstance(value, str) and value.strip():
+                message = value
+                break
+        if message is None:
+            message = _error_search_text(payload)
+    if message is None:
+        message = _error_search_text(payload)
+    text = " ".join(str(message or "").split())
+    text = _SECRET_RE.sub("[redacted]", text)
+    return text[:max_length]
 
 # Only structured error fields are inspected for JSON bodies so that request
 # content echoed back inside an error object cannot change the classification.
