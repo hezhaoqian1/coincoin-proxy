@@ -30,7 +30,6 @@ from .models import (
     ProviderChannelMonitorHistory,
 )
 from .channel_probe_contract import classify_probe_response, mask_probe_message
-from .fallback_alerts import notify_channel_balance_probe
 from .security import decrypt_api_key, generate_id
 from .upstream_errors import is_insufficient_balance_error, upstream_error_summary
 
@@ -39,8 +38,10 @@ logger = logging.getLogger("coincoin.channel_monitoring")
 
 MONITOR_OK_STATUSES = {"operational", "degraded"}
 MONITOR_FAILURE_STATUSES = {"failed", "error"}
-# Probe messages that start with this prefix mark an upstream account that ran
-# out of balance; the next probe compares against it to detect recovery.
+# Probe messages for an upstream account that ran out of balance start with
+# this prefix so operators can tell it apart from other 4xx failures.  Probes
+# only record it; the alert fires when real traffic hits the channel
+# (fallback_alerts.report_upstream_balance_error).
 BALANCE_PROBE_MESSAGE_PREFIX = "上游余额不足"
 PROBE_MAX_OUTPUT_TOKENS = 64
 AUTO_MONITOR_CREATED_BY = "route-reconciler"
@@ -520,40 +521,9 @@ async def run_provider_channel_monitor_once(
         if close_client:
             await client.aclose()
 
-    previously_exhausted = str(getattr(monitor, "last_message", "") or "").startswith(BALANCE_PROBE_MESSAGE_PREFIX)
     await _record_monitor_results(db, monitor, results)
     await db.commit()
-    await _alert_channel_balance(channel, monitor, results[0], previously_exhausted=previously_exhausted)
     return results
-
-
-async def _alert_channel_balance(
-    channel: ProviderChannel,
-    monitor: ProviderChannelMonitor,
-    result: ProbeResult,
-    *,
-    previously_exhausted: bool,
-) -> None:
-    if not result.balance_exhausted and not previously_exhausted:
-        return
-    upstream_message = ""
-    if result.balance_exhausted:
-        upstream_message = result.message.split(": ", 1)[-1]
-    try:
-        await notify_channel_balance_probe(
-            exhausted=result.balance_exhausted,
-            previously_exhausted=previously_exhausted,
-            recovered=result.status in MONITOR_OK_STATUSES,
-            channel_id=str(getattr(channel, "id", "") or getattr(monitor, "channel_id", "") or ""),
-            channel_name=str(getattr(channel, "name", "") or ""),
-            provider_platform=str(getattr(channel, "provider_platform", "") or ""),
-            endpoint=str(getattr(monitor, "endpoint", "") or ""),
-            model=result.model,
-            status_code=result.status_code,
-            upstream_message=upstream_message,
-        )
-    except Exception:
-        logger.warning("channel balance alert failed channel=%s", getattr(channel, "id", ""), exc_info=True)
 
 
 async def _record_monitor_results(

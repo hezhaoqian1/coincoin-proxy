@@ -94,7 +94,8 @@ datayes 在其网关（`aladdin-llm-proxy`，出口 IP 47.116.112.194，直连 `
 ## 7. 未解决 / 待跟进
 
 - **统一Api GPT（tyapi）余额不足**：2026-11-10 返回 `403 INSUFFICIENT_BALANCE`；2026-11-11 探测已恢复正常。
-- **渠道余额告警（2026-11-11 起）**：每个渠道的自动探测（约 5 分钟一次）只要拿到「余额/额度不足」的报错，或 HTTP 402，就立刻往告警群推送「上游渠道余额不足」，内容包括站点、渠道名、上游原文和处理建议。之后如果一直没恢复，每 6 小时再提醒一次（`COINCOIN_CHANNEL_BALANCE_ALERT_REPEAT_SECONDS`）；探测恢复正常时推送「余额已恢复」。识别规则在 `app/upstream_errors.py` 的 `is_insufficient_balance_error`。探测记录里这类失败显示为 `上游余额不足 HTTP <状态码>: <上游原文>`，不再只写 `HTTP 403`。告警复用后台「服务可靠性 → 告警」里的 Webhook 和开关，事件类别是 `balance`。
+- **渠道余额告警（2026-11-11 起，只在有真实流量时推送）**：真实请求（`/v1/messages`、`/v1/responses`、chat）打到某个渠道，上游返回「余额/额度不足」或 HTTP 402 时，立刻往告警群推送「上游渠道余额不足」，内容包括站点、渠道名、触发的接口和模型、上游原文、处理建议。同一渠道 6 小时内只推一次（`COINCOIN_CHANNEL_BALANCE_ALERT_REPEAT_SECONDS`，多个 worker 通过 Redis 去重），之后仍有请求打到它才会再推。没有流量的备用渠道不会推送，但自动探测会把原因记在后台渠道监控里，显示为 `上游余额不足 HTTP <状态码>: <上游原文>`，不再只写 `HTTP 403`，随时可以去看。识别规则在 `app/upstream_errors.py` 的 `is_insufficient_balance_error`。告警复用后台「服务可靠性 → 告警」里的 Webhook 和开关，事件类别是 `balance`。（#76 最初是按探测推送的，11-11 上线后立刻推了 5 条，其中有闲置的备用渠道，所以 #77 改为按流量触发。）
+  - 2026-11-11 探测发现余额不足的渠道：主站 zzshu Claude（余额 −116）、xtoken生图、章鱼特价pro（余额低于最低保留额度），datayes 站 86 PRO。
 - **datayes 站的告警 Webhook 失效**：配的是钉钉机器人，2026-09-19 之后每次推送都返回 `errcode 300005`（token 不存在），所以 datayes 站的所有告警都没送达。需要换成有效的钉钉或企业微信机器人地址。
 - **主站 Claude 渠道 2026-11-10 16:55–17:20（北京时间）整条链不稳**：
   - 首选 Yimo Claude MAX（`api.ymocode.com`，优先级 0）几乎全部 1 秒内返回 `503 No available accounts`（号池空了），16:50 起先出现 429；

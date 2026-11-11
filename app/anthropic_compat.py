@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import settings
 from .db import get_db
-from .fallback_alerts import UpstreamFailureBurstAlert, schedule_user_upstream_failure
+from .fallback_alerts import UpstreamFailureBurstAlert, report_upstream_balance_error, schedule_user_upstream_failure
 from .prompt_cache import build_channel_affinity_key, build_claude_code_prompt_cache_key
 from .anthropic_adapter import (
     build_anthropic_messages_url,
@@ -1635,6 +1635,9 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                 status_code = int(upstream.status_code)
                 error_body = await _read_upstream_error_body(upstream)
                 _log_upstream_error(used_cfg, status_code, error_body)
+                report_upstream_balance_error(
+                    used_cfg, endpoint=endpoint_name, model=display_model, status_code=status_code, body=error_body
+                )
                 if is_context_window_error(error_body):
                     await upstream.aclose()
                     return await _reject_context_window_overflow(
@@ -2111,6 +2114,9 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
             status_code = int(upstream.status_code)
             error_body = await _read_upstream_error_body(upstream)
             _log_upstream_error(used_cfg, status_code, error_body)
+            report_upstream_balance_error(
+                used_cfg, endpoint=endpoint_name, model=display_model, status_code=status_code, body=error_body
+            )
             if is_context_window_error(error_body):
                 return await _reject_context_window_overflow(
                     used_cfg,

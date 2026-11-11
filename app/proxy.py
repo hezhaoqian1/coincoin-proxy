@@ -37,7 +37,7 @@ from .distributed_state import (
     redis_key,
     response_cache_shared,
 )
-from .fallback_alerts import FallbackExhaustedAlert, notify_fallback_exhausted
+from .fallback_alerts import FallbackExhaustedAlert, notify_fallback_exhausted, report_upstream_balance_error
 from . import gemini_cpa
 from .models import ApiKey, RequestLog, UsageDaily, User
 from .media_store import record_media_artifacts_best_effort
@@ -3424,6 +3424,9 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         else:
             data = upstream.text
 
+        report_upstream_balance_error(
+            used_cfg, endpoint="responses", model=display_model, status_code=upstream.status_code, body=data
+        )
         if isinstance(data, dict) and isinstance(data.get("error"), dict):
             _record_channel_failure(used_cfg, status_code=upstream.status_code, error_code=str(upstream.status_code))
             return _upstream_error_json_response(
@@ -3816,6 +3819,9 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             content_type = upstream.headers.get("content-type", "")
             if status_code >= 400:
                 error_body = b"" if "text/event-stream" in content_type else await upstream.aread()
+                report_upstream_balance_error(
+                    used_cfg, endpoint="responses", model=display_model, status_code=status_code, body=error_body
+                )
                 if status_code == 400 and _retry_without_foreign_reasoning(error_body.decode("utf-8", errors="replace")):
                     await upstream.aclose()
                     continue

@@ -1001,17 +1001,21 @@ class UpstreamFailureBurstAlertTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ChannelBalanceAlertTests(unittest.IsolatedAsyncioTestCase):
+    BODY = {"code": "INSUFFICIENT_BALANCE", "message": "Insufficient user balance. Please top up your user balance."}
+
     def setUp(self) -> None:
         self._originals = {
             "fallback_alert_webhook_url": settings.fallback_alert_webhook_url,
             "fallback_alert_enabled": settings.fallback_alert_enabled,
             "fallback_alert_keyword": settings.fallback_alert_keyword,
+            "fallback_alert_max_pending_tasks": settings.fallback_alert_max_pending_tasks,
             "channel_balance_alert_repeat_seconds": settings.channel_balance_alert_repeat_seconds,
             "redis_url": settings.redis_url,
         }
         settings.fallback_alert_webhook_url = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test-key"
         settings.fallback_alert_enabled = True
         settings.fallback_alert_keyword = ""
+        settings.fallback_alert_max_pending_tasks = 256
         settings.channel_balance_alert_repeat_seconds = 21600
         settings.redis_url = ""
         fallback_alerts.reset_fallback_alert_state()
@@ -1021,51 +1025,72 @@ class ChannelBalanceAlertTests(unittest.IsolatedAsyncioTestCase):
         for key, value in self._originals.items():
             setattr(settings, key, value)
 
-    async def _probe(self, *, exhausted, previously_exhausted, recovered=False, now=1000.0):
-        return await fallback_alerts.notify_channel_balance_probe(
-            exhausted=exhausted,
-            previously_exhausted=previously_exhausted,
-            recovered=recovered,
-            channel_id="ch_tyapi",
-            channel_name="统一Api GPT 稳定",
-            provider_platform="openai",
+    def _cfg(self, channel_id="ch_tyapi"):
+        return SimpleNamespace(channel_id=channel_id, provider_platform="openai")
+
+    def _report(self, *, cfg=None, status_code=403, body=None, now=1000.0):
+        return fallback_alerts.report_upstream_balance_error(
+            cfg or self._cfg(),
             endpoint="responses",
-            model="gpt-5.6-terra",
-            status_code=403,
-            upstream_message="Insufficient user balance. Please top up your user balance.",
+            model="gpt-6-sol",
+            status_code=status_code,
+            body=self.BODY if body is None else body,
             now=now,
         )
 
-    async def test_first_detection_sends_then_reminds_only_after_repeat_window(self) -> None:
-        with patch.object(fallback_alerts, "_send_channel_balance_alert", AsyncMock(return_value=True)) as send:
-            first = await self._probe(exhausted=True, previously_exhausted=False, now=1000)
-            five_minutes_later = await self._probe(exhausted=True, previously_exhausted=True, now=1300)
-            after_window = await self._probe(exhausted=True, previously_exhausted=True, now=1000 + 21600)
+    async def _drain(self) -> None:
+        await fallback_alerts.shutdown_fallback_alerts(timeout_seconds=1.0)
 
-        self.assertEqual((first, five_minutes_later, after_window), (True, False, True))
+    async def test_first_traffic_hit_alerts_and_repeats_only_after_window(self) -> None:
+        with patch.object(fallback_alerts, "_send_channel_balance_alert", AsyncMock(return_value=True)) as send:
+            first = self._report(now=1000)
+            same_minute = self._report(now=1030)
+            other_channel = self._report(cfg=self._cfg("ch_zzshu"), now=1031)
+            after_window = self._report(now=1000 + 21600)
+            await self._drain()
+
+        self.assertEqual((first, same_minute, other_channel, after_window), (True, False, True, True))
         self.assertEqual(
-            [call.args[0].state for call in send.await_args_list],
-            [fallback_alerts.CHANNEL_BALANCE_EXHAUSTED, fallback_alerts.CHANNEL_BALANCE_STILL_EXHAUSTED],
+            [call.args[0].channel_id for call in send.await_args_list],
+            ["ch_tyapi", "ch_zzshu", "ch_tyapi"],
         )
+        alert = send.await_args_list[0].args[0]
+        self.assertEqual(alert.endpoint, "responses")
+        self.assertEqual(alert.model, "gpt-6-sol")
+        self.assertEqual(alert.status_code, 403)
+        self.assertEqual(alert.upstream_message, "Insufficient user balance. Please top up your user balance.")
 
-    async def test_recovery_is_announced_once(self) -> None:
+    async def test_payment_required_counts_even_without_balance_wording(self) -> None:
         with patch.object(fallback_alerts, "_send_channel_balance_alert", AsyncMock(return_value=True)) as send:
-            recovered = await self._probe(exhausted=False, previously_exhausted=True, recovered=True)
-            healthy_again = await self._probe(exhausted=False, previously_exhausted=False, recovered=True)
-            other_failure = await self._probe(exhausted=False, previously_exhausted=True, recovered=False)
+            self.assertTrue(self._report(status_code=402, body=b""))
+            await self._drain()
+        self.assertEqual(send.await_args.args[0].upstream_message, "payment required")
 
-        self.assertEqual((recovered, healthy_again, other_failure), (True, False, False))
-        send.assert_awaited_once()
-        self.assertEqual(send.await_args.args[0].state, fallback_alerts.CHANNEL_BALANCE_RECOVERED)
+    async def test_ignores_non_balance_errors_success_and_channelless_upstream(self) -> None:
+        with patch.object(fallback_alerts, "_send_channel_balance_alert", AsyncMock(return_value=True)) as send:
+            self.assertFalse(self._report(body={"error": {"message": "Upstream access forbidden"}}))
+            self.assertFalse(self._report(status_code=200))
+            self.assertFalse(self._report(cfg=SimpleNamespace(channel_id="")))
+            self.assertFalse(self._report(body=b"<html>502</html>", status_code=502))
+            await self._drain()
+        send.assert_not_awaited()
 
     async def test_disabled_policy_or_missing_webhook_sends_nothing(self) -> None:
         with patch.object(fallback_alerts, "_send_channel_balance_alert", AsyncMock(return_value=True)) as send:
             settings.fallback_alert_enabled = False
-            self.assertFalse(await self._probe(exhausted=True, previously_exhausted=False))
+            self.assertFalse(self._report())
             settings.fallback_alert_enabled = True
             settings.fallback_alert_webhook_url = ""
-            self.assertFalse(await self._probe(exhausted=True, previously_exhausted=False))
+            self.assertFalse(self._report())
+            await self._drain()
         send.assert_not_awaited()
+
+    async def test_never_raises_on_bad_input(self) -> None:
+        self.assertFalse(
+            fallback_alerts.report_upstream_balance_error(
+                self._cfg(), endpoint="responses", model="m", status_code="not-a-number", body=object()
+            )
+        )
 
     async def test_delivery_posts_wecom_text_and_records_balance_event(self) -> None:
         posted = {}
@@ -1086,10 +1111,12 @@ class ChannelBalanceAlertTests(unittest.IsolatedAsyncioTestCase):
             patch.object(fallback_alerts, "_dingtalk_http_client", return_value=_Client()),
             patch.object(fallback_alerts, "_create_alert_event_bounded", AsyncMock(return_value="alt_1")) as create,
             patch.object(fallback_alerts, "_complete_alert_event_bounded", AsyncMock()) as complete,
+            patch.object(fallback_alerts.channel_router, "channel_labels", return_value="统一Api GPT 稳定 (ch_tyapi)"),
+            patch.dict(os.environ, {"RAILWAY_SERVICE_NAME": "coincoin-proxy"}),
         ):
-            sent = await self._probe(exhausted=True, previously_exhausted=False)
+            self.assertTrue(self._report())
+            await self._drain()
 
-        self.assertTrue(sent)
         self.assertTrue(posted["url"].startswith("https://qyapi.weixin.qq.com/"))
         self.assertEqual(create.await_args.kwargs["category"], "balance")
         self.assertEqual(create.await_args.kwargs["destination_type"], "wecom")
@@ -1097,24 +1124,12 @@ class ChannelBalanceAlertTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(complete.await_args.kwargs["delivery_status"], "sent")
         content = posted["json"]["text"]["content"]
         self.assertTrue(content.startswith("CoinCoin 上游渠道余额不足"))
-        self.assertIn("统一Api GPT 稳定 (ch_tyapi)", content)
+        self.assertIn("站点: coincoin-proxy", content)
+        self.assertIn("渠道: 统一Api GPT 稳定 (ch_tyapi)", content)
+        self.assertIn("触发请求: responses / gpt-6-sol", content)
         self.assertIn("HTTP 403 Insufficient user balance", content)
         self.assertIn("充值", content)
-
-    def test_payload_variants(self) -> None:
-        base = dict(channel_id="ch_x", channel_name="X", endpoint="responses", model="m", status_code=402, upstream_message="no money")
-        with patch.dict(os.environ, {"RAILWAY_SERVICE_NAME": "通联专属"}):
-            still = fallback_alerts.build_channel_balance_payload(
-                fallback_alerts.ChannelBalanceAlert(state=fallback_alerts.CHANNEL_BALANCE_STILL_EXHAUSTED, **base)
-            )["text"]["content"]
-            recovered = fallback_alerts.build_channel_balance_payload(
-                fallback_alerts.ChannelBalanceAlert(state=fallback_alerts.CHANNEL_BALANCE_RECOVERED, **base)
-            )["text"]["content"]
-        self.assertIn("仍然余额不足", still)
-        self.assertIn("每 6 小时提醒一次", still)
-        self.assertIn("站点: 通联专属", still)
-        self.assertIn("余额已恢复", recovered)
-        self.assertNotIn("no money", recovered)
+        self.assertIn("6 小时内只提醒一次", content)
 
 
 if __name__ == "__main__":
