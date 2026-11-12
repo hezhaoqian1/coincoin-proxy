@@ -64,6 +64,7 @@ from .usage_buffer import flush_loop, flush_once
 from .redis_client import close_redis_client
 from .quota_lifecycle import QuotaReservationASGIMiddleware
 from .request_telemetry import RequestTelemetryASGIMiddleware
+from .request_decompression import RequestDecompressionASGIMiddleware
 from .reconcile import reconcile_loop
 from .router import registry as model_registry
 from .stations import admin_router as admin_stations_router, router as stations_router
@@ -1153,7 +1154,11 @@ app = FastAPI(
     openapi_url=None,
 )
 
-# Innermost: measures first-token latency on the bytes the app sends to the client.
+# Innermost: decodes gzip/deflate request bodies so handlers always read plain
+# JSON. It sits inside the telemetry middleware so first-token latency still
+# counts from the request's arrival, upload included, as for uncompressed bodies.
+app.add_middleware(RequestDecompressionASGIMiddleware)
+# Measures first-token latency on the bytes the app sends to the client.
 app.add_middleware(RequestTelemetryASGIMiddleware)
 app.add_middleware(QuotaReservationASGIMiddleware)
 app.add_middleware(ImageJSONKeepaliveASGIMiddleware)
