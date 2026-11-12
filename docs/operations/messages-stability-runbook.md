@@ -3,7 +3,7 @@ type: runbook
 status: active
 owner: platform
 audience: [operator, developer, agent]
-updated: 2026-11-11
+updated: 2026-11-12
 canonical_for: messages-stability-operations
 ---
 
@@ -53,14 +53,19 @@ datayes 在其网关（`aladdin-llm-proxy`，出口 IP 47.116.112.194，直连 `
 
 | 变量 | 值 | 说明 |
 |---|---|---|
-| `COINCOIN_UPSTREAM_FIRST_OUTPUT_TIMEOUT_SECONDS` | `30` | 2026-11-10 打开；`/v1/messages`、`/v1/responses`、chat 三条路径共用 |
+| `COINCOIN_UPSTREAM_FIRST_OUTPUT_TIMEOUT_SECONDS` | `25` | 2026-11-10 打开时为 30，2026-11-12 两站都改为 25；`/v1/messages`、`/v1/responses`、chat 三条路径共用 |
 | `COINCOIN_UPSTREAM_BASE_URL` / `COINCOIN_UPSTREAM_API_KEY` | **已删除** | 旧 52ai 兜底。必须两个一起删：只删 URL 会回落到 `config.py` 默认的 Azure 地址，并把旧 Key 发过去 |
 
 注意：
 
-- `railway variable delete/set` **不会自动重新部署**，改完要执行 `railway redeploy -s <service> -y`。
+- 改完变量后先看有没有新部署（`railway deployment list -s <service>`）：2026-11-10 的 `variable delete` 没有自动重新部署，2026-11-12 的 `variable set` 自动部署了。没有新部署就执行 `railway redeploy -s <service> -y`。
 - 按模型单独覆盖：`COINCOIN_UPSTREAM_FIRST_OUTPUT_TIMEOUTS='{"<public_model_id>": <秒>}'`；高推理强度：`COINCOIN_UPSTREAM_HIGH_EFFORT_FIRST_OUTPUT_TIMEOUT_SECONDS`（对 high/xhigh 取两者较大值）。两者目前都没设。
-- 选 30 秒的依据：主站过去 24 小时大多数流式请求只有 1–2% 首字超过 30 秒（responses medium 7.5%、messages high 5.8% 偏高）；datayes 的客户端 60 秒超时，30 秒切换后第二个通道还有约 30 秒。
+- 最初选 30 秒的依据：主站过去 24 小时大多数流式请求只有 1–2% 首字超过 30 秒（responses medium 7.5%、messages high 5.8% 偏高）；datayes 的客户端 60 秒超时，30 秒切换后第二个通道还有约 30 秒。
+- 2026-11-12 改为 25 秒的依据：
+  - datayes 的 Flow-Node（`flownode.eu.cc`）服务端首字 p50 为 5–10 秒、p90 为 10–22 秒，30–60 万 token 也一样。
+  - 卡住的 48 次中，26 次集中在 11-11 12:00–12:20；被切走后，ApiMars / birdapi 4–18 秒就出了首字。
+  - 被切换的请求服务端总时长 34–49 秒，加上上传后超过客户端的 60 秒；早切 5 秒能让更多请求赶在 60 秒内返回。
+  - 主站 Flow-Node GPT（`flow-node.com`）处理 30 万 token 以上的请求要 36 秒以上，这类请求本来就大多被切走，改为 25 秒后每次少等 5 秒。
 
 ## 5. 首字超时切换的行为（#72）
 
@@ -107,9 +112,33 @@ datayes 在其网关（`aladdin-llm-proxy`，出口 IP 47.116.112.194，直连 `
 - **心跳尚未实现**：可以参考 sub2api，在首字超时切换之后再开始发 `: ping`。前提是先确认 datayes 网关是按「任何字节」还是按「首个正文」计时。
 - `/v1/responses`、chat 两条路径遇到上下文超限，仍会切通道。
 - 「首个输出」改成按语义判断（见第 5 节的限制）。
-- 给 datayes 的建议：
-  1. 设置 `CLAUDE_CODE_MAX_CONTEXT_TOKENS` 为 30–40 万；
-  2. 网关首字超时放宽到 120 秒以上；
-  3. 不要把内部字段放进发给模型的消息里；
-  4. 网关直接调 GPT 的请求可改用 `/v1/responses`（Claude Code 的流量继续走 `/v1/messages`）。
-- **观察计划**：2026-11-11、11-12 各按第 6 节复查一次，对比失败率、切换次数和成功率、超限 400 次数，并据此决定是否调整 30 秒门限。
+- 给 datayes 的建议（2026-11-12 更新）：
+  1. **网关发给我们的请求体用 gzip 压缩**（`Content-Encoding: gzip`，见第 8 节）；
+  2. **网关改用多条连接**（关掉 HTTP/2，改用 HTTP/1.1 连接池），见第 8 节；
+  3. 设置 `CLAUDE_CODE_AUTO_COMPACT_WINDOW=850000`。`gpt-6.1-sol` 官方最大输入为 922,000 token，旧版 Claude Code（2.1.200）只认这个变量，只设 `CLAUDE_CODE_MAX_CONTEXT_TOKENS` 不起作用；
+  4. 升级 Claude Code / Agent SDK：本机模拟中 2.1.200 遇到「某一轮内容过大」后会永久卡在 400，2.1.322 下一轮就能恢复；同时限制单次工具输出（`BASH_MAX_OUTPUT_LENGTH`、`MAX_MCP_OUTPUT_TOKENS`、`CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS`）；
+  5. 网关首字超时放宽到 120 秒以上；
+  6. 不要把内部字段放进发给模型的消息里。
+- **观察结论（11-10 17:05 → 11-12 09:18）**：
+  - 网关一共 2661 次请求，失败 167 次（6.3%），去掉超限后 4.8%；datayes 自己统计为 2688/178（6.6%），去掉超限后 5.1%。
+  - 失败按原因：上传拥堵约 70 次；传满 Railway 300 秒上限 7 次；首字超时切换后超过 60 秒 18 次；线路慢或 2MB 以上大请求约 28 次；超限 40 次；部署重启 2 次。
+  - 剩下的主因是上传链路，详见第 8 节。
+
+## 8. 请求体上传慢与 gzip 压缩上传
+
+- **现象**：datayes 网关（阿里云上海 47.116.112.194，HTTP/2）高峰期向 Railway 新加坡上传时，所有请求的总速率只有 120–250 KB/s；0.5–3 MB 的请求体要排队几十秒到几分钟，客户端在请求传到我们之前就超时了（499，`txBytes=0`）。
+- **原因**：
+  - 主要是国内到 Railway 新加坡的线路，每条连接只有 50–150 KB/s，不是他们的带宽不够。从另一条国内网络实测：8 条连接合计约 430 KB/s，正好是 1 条的 8 倍；8 个 1 MB 请求挤在 1 条 HTTP/2 连接上合计只有 95–151 KB/s，要 52–82 秒。
+  - 请求体大，是因为 Claude Code 每一轮都会重发完整上下文，内容是文本，不是图片：大请求每个 token 约 3.6–4.5 字节。
+- **服务端支持压缩上传**（`app/request_decompression.py`）：
+  - 支持 `Content-Encoding: gzip` / `x-gzip` / `deflate`，包括多个 gzip 段拼接和多层编码；解压后去掉 `Content-Encoding`、重写 `Content-Length`，后面的处理照常读普通 JSON。
+  - 解压前后的大小上限都是 64 MB（与 sub2api 的 `maxDecompressedBodySize` 一致），超过返回 413；数据损坏或被截断返回 400；不支持的编码（br、zstd）返回 415 并带 `Accept-Encoding: gzip, deflate`。错误体都是 `invalid_request_error`。
+  - 它在首字计时中间件的里面，所以首字计时仍从请求到达开始算。
+  - 实测：一个 1.13 MB、偏代码的 agent 上下文，gzip 1 级压到 0.26 MB（4.3 倍），6 级压到 0.20 MB（5.5 倍）；压缩只要 9–26 毫秒。
+- **客户端怎么开启**：
+  - Claude Code 只在目标地址是 `api.anthropic.com` 时才压缩（`CLAUDE_CODE_GZIP_REQUEST_BODIES` 对自定义网关无效）。
+  - 所以要由客户自己的网关在转发时压缩：请求体 gzip 后加 `Content-Encoding: gzip`，`Content-Type` 保持 `application/json`。
+- **验证方法**：发一个 gzip 后的 JSON 到 `/v1/messages/count_tokens`，返回的 `input_tokens` 应与不压缩时相同。Railway HTTP 日志里的 `rxBytes` 是压缩后的大小。
+- **其他办法**：
+  - 在离客户近的地方放一台中转（阿里云香港 / 新加坡，或 CN2 线路），把高延迟的那一段换成低延迟连接；
+  - 客户网关改用多条连接。
