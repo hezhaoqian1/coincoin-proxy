@@ -53,7 +53,7 @@ from .router import (
 )
 from .station_runtime import resolve_station_model_for_user, usage_pricing_kwargs
 from .security import generate_id
-from .upstream_errors import is_context_window_error
+from .upstream_errors import is_context_window_error, is_insufficient_balance_error
 from .request_telemetry import note_request_payload
 from .user_model_overrides import apply_user_overrides_to_resolution
 from .usage_buffer import (
@@ -1657,6 +1657,9 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                     reason=str(status_code),
                     terminal=fallback_cfg is None,
                     upstream_request_id=upstream_request_id,
+                    # Out of balance is reported once per channel by the balance alert
+                    # above; don't page it again as an auth-error burst.
+                    alert_upstream=not is_insufficient_balance_error(error_body),
                 )
                 await upstream.aclose()
                 if fallback_cfg is not None:
@@ -2135,6 +2138,7 @@ async def anthropic_messages(request: Request, db: AsyncSession = Depends(get_db
                 reason=str(status_code),
                 terminal=fallback_cfg is None,
                 upstream_request_id=upstream_request_id,
+                alert_upstream=not is_insufficient_balance_error(error_body),
             )
             if fallback_cfg is not None:
                 used_cfg = fallback_cfg

@@ -361,7 +361,11 @@ def _failure_category(alert: UpstreamFailureBurstAlert) -> str:
     return ""
 
 
-def _failure_category_label(category: str) -> str:
+def _failure_category_label(category: str, status_code: int = 0) -> str:
+    # Name the status the channel actually returned: a "401/403" title sent
+    # operators hunting for a 401 that never happened.
+    if category == "authentication" and int(status_code or 0) in {401, 403}:
+        return f"{int(status_code)} 鉴权错误"
     return {
         "availability": "可用性错误",
         "rate_limit": "429 限流",
@@ -371,7 +375,7 @@ def _failure_category_label(category: str) -> str:
 
 def build_upstream_failure_burst_payload(notification: UpstreamFailureBurstNotification) -> Dict[str, Any]:
     alert = notification.alert
-    category_label = _failure_category_label(notification.category)
+    category_label = _failure_category_label(notification.category, alert.status_code)
     title = f"CoinCoin 上游{category_label}告警"
     keyword = (settings.fallback_alert_keyword or "").strip()
     if keyword and keyword not in title:
@@ -381,7 +385,7 @@ def build_upstream_failure_burst_payload(notification: UpstreamFailureBurstNotif
         f"真实用户请求在 {notification.window_seconds} 秒内累计 {notification.count} 次{category_label}",
         f"Endpoint: {alert.endpoint or '-'}",
         f"模型: {alert.model or '-'}",
-        f"渠道: {alert.channel_id or '-'}",
+        f"渠道: {channel_router.channel_labels(alert.channel_id) or alert.channel_id or '-'}",
         f"最近状态: HTTP {int(alert.status_code or 0)}",
     ]
     if alert.reason:

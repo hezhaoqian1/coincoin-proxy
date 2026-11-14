@@ -999,6 +999,42 @@ class UpstreamFailureBurstAlertTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("ccreq_trace", content)
         self.assertIn("健康检查、监控探针和后台测试不计入", content)
 
+    def test_auth_burst_payload_names_channel_and_actual_status(self) -> None:
+        alert = self._alert("ccreq_auth", status_code=403, reason="403")
+        with patch.object(
+            fallback_alerts.channel_router, "channel_labels", return_value="zzone独享 (ch_sixoner)"
+        ) as labels:
+            payload = fallback_alerts.build_upstream_failure_burst_payload(
+                fallback_alerts.UpstreamFailureBurstNotification(
+                    alert=alert,
+                    category="authentication",
+                    count=3,
+                    window_seconds=60,
+                )
+            )
+
+        labels.assert_called_once_with("ch_sixoner")
+        content = payload["text"]["content"]
+        self.assertIn("上游403 鉴权错误告警", content)
+        self.assertNotIn("401", content)
+        self.assertIn("渠道: zzone独享 (ch_sixoner)", content)
+
+    def test_burst_payload_falls_back_to_channel_id_for_unknown_channel(self) -> None:
+        alert = self._alert("ccreq_unknown", status_code=401, reason="401")
+        with patch.object(fallback_alerts.channel_router, "channel_labels", return_value=""):
+            payload = fallback_alerts.build_upstream_failure_burst_payload(
+                fallback_alerts.UpstreamFailureBurstNotification(
+                    alert=alert,
+                    category="authentication",
+                    count=3,
+                    window_seconds=60,
+                )
+            )
+
+        content = payload["text"]["content"]
+        self.assertIn("上游401 鉴权错误告警", content)
+        self.assertIn("渠道: ch_sixoner", content)
+
 
 class ChannelBalanceAlertTests(unittest.IsolatedAsyncioTestCase):
     BODY = {"code": "INSUFFICIENT_BALANCE", "message": "Insufficient user balance. Please top up your user balance."}
