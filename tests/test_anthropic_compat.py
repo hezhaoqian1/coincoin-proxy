@@ -3417,6 +3417,7 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
             patch.object(anthropic_module, "get_stream_client", AsyncMock(return_value=stream_client)),
             patch.object(anthropic_module.usage_buffer, "add", AsyncMock()),
             patch.object(anthropic_module, "report_upstream_balance_error") as report_balance,
+            patch.object(anthropic_module, "schedule_user_upstream_failure") as alert_failure,
         ):
             async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as http_client:
                 response = await http_client.post(
@@ -3433,6 +3434,8 @@ class AnthropicCompatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertIn('"text":"OK"', response.text)
         report_balance.assert_called_once()
+        # The balance alert owns this failure; it must not also count as an auth-error burst.
+        alert_failure.assert_not_called()
         cfg = report_balance.call_args.args[0]
         kwargs = report_balance.call_args.kwargs
         self.assertEqual(cfg.channel_id, "ch_gpt_primary")
