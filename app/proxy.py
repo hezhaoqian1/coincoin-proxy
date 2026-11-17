@@ -2923,7 +2923,7 @@ async def _enforce_api_key_controls(request: Request, db: AsyncSession, user: Us
                 )
             ).scalar() or 0
             if int(total_used) + int(pending_cost) >= int(total_quota):
-                raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="api key total quota exceeded")
+                raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail="api key total quota exceeded")
         if monthly_quota:
             monthly_used = (
                 await db.execute(
@@ -2934,7 +2934,7 @@ async def _enforce_api_key_controls(request: Request, db: AsyncSession, user: Us
                 )
             ).scalar() or 0
             if int(monthly_used) + int(pending_cost) >= int(monthly_quota):
-                raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="api key monthly quota exceeded")
+                raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail="api key monthly quota exceeded")
     except HTTPException:
         raise
     except Exception:
@@ -3025,7 +3025,7 @@ async def _authorize_api_user_after_resolution(request: Request, db: AsyncSessio
             spent_today = int(row[0]) if row else 0
             pending_today_cost = await usage_buffer.get_pending_cost_today(user.id)
             if (spent_today + pending_today_cost) >= int(daily_spend_limit):
-                raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="daily spend limit exceeded")
+                raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail="daily spend limit exceeded")
         except HTTPException:
             raise
         except Exception:

@@ -195,7 +195,7 @@ class ProxyAuthCacheTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(HTTPException) as ctx:
                 await proxy_module.authorize_request(request, db)
 
-        self.assertEqual(ctx.exception.status_code, 429)
+        self.assertEqual(ctx.exception.status_code, 402)
         self.assertEqual(ctx.exception.detail, "daily spend limit exceeded")
 
     async def test_authorize_request_rejects_ip_outside_key_allowlist(self) -> None:
@@ -377,7 +377,7 @@ class ProxyAuthCacheTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(HTTPException) as ctx:
                 await proxy_module.authorize_request(request, db)
 
-        self.assertEqual(ctx.exception.status_code, 429)
+        self.assertEqual(ctx.exception.status_code, 402)
         self.assertEqual(ctx.exception.detail, "api key monthly quota exceeded")
 
     async def test_authorize_request_still_rejects_console_session(self) -> None:
