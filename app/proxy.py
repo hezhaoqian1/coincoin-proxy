@@ -39,6 +39,7 @@ from .distributed_state import (
 )
 from .fallback_alerts import FallbackExhaustedAlert, notify_fallback_exhausted, report_upstream_balance_error
 from . import gemini_cpa
+from .inline_image_budget import fit_inline_images, learn_inline_image_budget, learned_inline_image_budget
 from .models import ApiKey, RequestLog, UsageDaily, User
 from .media_store import record_media_artifacts_best_effort
 from .prompt_cache import (
@@ -1549,6 +1550,21 @@ def _drop_encrypted_reasoning_items(payload: Dict[str, Any]) -> bool:
         return False
     payload["input"] = kept
     return True
+
+
+def _inline_image_budget_key(cfg) -> str:
+    return str(getattr(cfg, "channel_id", "") or getattr(cfg, "upstream_url", "") or "")
+
+
+def _fit_send_payload_images(send_payload: Dict[str, Any], cfg) -> None:
+    """Trim inline images to the limits this channel announced earlier, if any."""
+    budget = learned_inline_image_budget(_inline_image_budget_key(cfg))
+    if budget is None:
+        return
+    dropped = fit_inline_images(send_payload, budget)
+    if dropped > 0:
+        logger.info("omitted %d older inline images to fit provider channel %s limits",
+                    dropped, getattr(cfg, "channel_id", ""))
 
 
 class KeyCache:
@@ -3652,6 +3668,25 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 upstream_request_id=upstream_request_id,
             )
 
+    image_budget_retried: set = set()
+
+    def _retry_within_image_budget(error: Any) -> bool:
+        """Retry the same channel once with its inline images trimmed to fit.
+
+        The channel's limits are remembered, so `_fit_send_payload_images`
+        trims later requests to it before they are sent.
+        """
+        key = _inline_image_budget_key(used_cfg)
+        if key in image_budget_retried or not learn_inline_image_budget(key, error):
+            return False
+        budget = learned_inline_image_budget(key)
+        if budget is None or fit_inline_images({"input": base_payload.get("input")}, budget) <= 0:
+            return False
+        image_budget_retried.add(key)
+        logger.warning("provider channel %s rejected the request's inline images (%s); retrying with older images omitted",
+                       getattr(used_cfg, "channel_id", ""), budget)
+        return True
+
     if base_payload.get("stream"):
         stream_client = await get_stream_client()
 
@@ -3689,6 +3724,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
             if cfg.strip_unsupported:
                 for param in _STRIP_PARAMS:
                     send_payload.pop(param, None)
+            _fit_send_payload_images(send_payload, cfg)
             req_url = gemini_cpa.responses_url(cpa_channel) if cpa_channel is not None else _build_openai_responses_upstream_url(cfg.upstream_url)
             req_headers = gemini_cpa.build_headers(cpa_channel) if cpa_channel is not None else _build_upstream_headers(cfg)
             logger.info("stream → %s  model=%s  store=%s  has_prev_resp=%s  input_types=%s",
@@ -3825,6 +3861,9 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 if status_code == 400 and _retry_without_foreign_reasoning(error_body.decode("utf-8", errors="replace")):
                     await upstream.aclose()
                     continue
+                if status_code in (400, 413) and _retry_within_image_budget(error_body):
+                    await upstream.aclose()
+                    continue
                 cooldown = None
                 if status_code == 429:
                     cooldown = _rate_limit_cooldown_seconds(upstream.headers, _upstream_error_object(error_body))
@@ -3901,7 +3940,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 continue
             if prefetch.timed_out or not prefetch.failure_code:
                 break
-            if _retry_without_foreign_reasoning(prefetch.error):
+            if _retry_without_foreign_reasoning(prefetch.error) or _retry_within_image_budget(prefetch.error):
                 reader.cancel()
                 await upstream.aclose()
                 continue
@@ -4126,6 +4165,7 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
         if cfg.strip_unsupported:
             for param in _STRIP_PARAMS:
                 send_payload.pop(param, None)
+        _fit_send_payload_images(send_payload, cfg)
         if cpa_channel is not None:
             send_payload = gemini_cpa.build_responses_chat_payload(send_payload, cpa_channel.provider_model)
             req_url = gemini_cpa.chat_completions_url(cpa_channel)
@@ -4196,6 +4236,8 @@ async def proxy_responses(request: Request, db: AsyncSession = Depends(get_db)):
                 encrypted_retry_used = True
                 logger.warning("provider channel %s rejected encrypted reasoning; retrying without it",
                                getattr(used_cfg, "channel_id", ""))
+                continue
+            if upstream.status_code in (400, 413) and _retry_within_image_budget(upstream.text):
                 continue
             cooldown = None
             if upstream.status_code == 429:

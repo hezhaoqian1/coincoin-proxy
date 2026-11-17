@@ -10,6 +10,7 @@ import httpx
 from app.channel_router import ModelChannelRouteSnapshot, ProviderChannelSnapshot, channel_router
 from app.config import settings
 from app.fallback_alerts import FallbackExhaustedAlert
+from app.inline_image_budget import OMITTED_IMAGE_NOTE, forget_learned_inline_image_budgets
 from app.main import app
 from app.router import registry
 from app.usage_buffer import UsageBuffer
@@ -668,6 +669,7 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
             setattr(settings, key, value)
         channel_router.clear_snapshot()
         fallback_alerts.reset_fallback_alert_state()
+        forget_learned_inline_image_budgets()
         registry._initialized = False
         app.dependency_overrides.pop(proxy_module.get_db, None)
         app.dependency_overrides.pop(openai_module.get_db, None)
@@ -2993,6 +2995,169 @@ class OpenAICompatDefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("reasoning", [item["type"] for item in sent[1]["json"]["input"]])
         self.assertEqual(len(sent[1]["json"]["input"]), 3)
         self.assertFalse(self._channel_cooling_down("ch_stream_primary"))
+
+    @staticmethod
+    def _screenshot_history(count: int, decoded_kib: int = 3) -> list:
+        """Codex-style input: user screenshots and view_image tool outputs, oldest first."""
+        items = []
+        for index in range(count):
+            url = f"data:image/png;base64,{'A' * (decoded_kib * 1024 // 3 * 4)}{index:04d}"
+            if index % 2:
+                items.append({"type": "message", "role": "user", "content": [
+                    {"type": "input_text", "text": f"screen {index}"},
+                    {"type": "input_image", "image_url": url},
+                ]})
+            else:
+                items.append({"type": "function_call", "call_id": f"call_{index}", "name": "view_image", "arguments": "{}"})
+                items.append({"type": "function_call_output", "call_id": f"call_{index}", "output": [
+                    {"type": "input_image", "image_url": url},
+                ]})
+        return items
+
+    @staticmethod
+    def _sent_inline_images(call: dict) -> list:
+        urls = []
+        for item in call["json"]["input"]:
+            for field in ("content", "output"):
+                parts = item.get(field)
+                if isinstance(parts, list):
+                    urls.extend(p["image_url"] for p in parts if p.get("type") == "input_image")
+        return urls
+
+    async def _post_responses_with_input(self, upstream_client, input_items, *, stream: bool = True):
+        transport = httpx.ASGITransport(app=app)
+        client_patch = "get_stream_client" if stream else "get_http_client"
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with patch.object(proxy_module, "authorize_request", AsyncMock(return_value=self.fake_user)), patch.object(
+                proxy_module,
+                client_patch,
+                AsyncMock(return_value=upstream_client),
+            ), patch.object(proxy_module.usage_buffer, "add", AsyncMock()):
+                return await client.post(
+                    "/v1/responses",
+                    headers={"Authorization": "Bearer sk_cc_test"},
+                    json={"model": "gpt-5.5", "stream": stream, "input": input_items},
+                )
+
+    async def test_responses_stream_trims_old_inline_images_when_channel_rejects_their_count(self) -> None:
+        self._configure_responses_stream_channels("primary", "backup")
+        history = self._screenshot_history(7)
+        upstream_client = _RecordingStreamClient(
+            [
+                _FakeUpstreamResponse(
+                    {
+                        "error": {
+                            "type": "invalid_request_error",
+                            "code": "basispoints_request_invalid",
+                            "message": "image relay is configured for at most 5 inline images per request",
+                        }
+                    },
+                    status_code=400,
+                ),
+                _FakeSseResponse(_ok_stream_events("resp_after_trim")),
+                _FakeSseResponse(_ok_stream_events("resp_next_turn")),
+            ]
+        )
+
+        response = await self._post_responses_with_input(upstream_client, history)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn("resp_after_trim", response.text)
+        sent = [call for call in upstream_client.calls if "url" in call]
+        self.assertEqual([call["url"] for call in sent], ["https://primary-channel.example/v1/responses"] * 2)
+        original_urls = self._sent_inline_images(sent[0])
+        self.assertEqual(len(original_urls), 7)
+        self.assertEqual(self._sent_inline_images(sent[1]), original_urls[4:])
+        self.assertIn(OMITTED_IMAGE_NOTE, json.dumps(sent[1]["json"]["input"]))
+        self.assertEqual(len(sent[1]["json"]["input"]), len(sent[0]["json"]["input"]))
+        self.assertFalse(self._channel_cooling_down("ch_stream_primary"))
+
+        # The channel's limit is remembered: the next turn is trimmed before it is sent.
+        response = await self._post_responses_with_input(upstream_client, history + self._screenshot_history(1))
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn("resp_next_turn", response.text)
+        sent = [call for call in upstream_client.calls if "url" in call]
+        self.assertEqual(len(sent), 3)
+        self.assertEqual(len(self._sent_inline_images(sent[2])), 4)
+
+    async def test_responses_stream_trims_old_inline_images_when_stream_fails_on_their_size(self) -> None:
+        self._configure_responses_stream_channels("primary", "backup")
+        history = self._screenshot_history(3, decoded_kib=600)
+        upstream_client = _RecordingStreamClient(
+            [
+                _FakeSseResponse(
+                    _failed_stream_events(
+                        "resp_too_many_bytes",
+                        {
+                            "type": "invalid_request_error",
+                            "code": "basispoints_request_invalid",
+                            "message": "image relay inline images exceed the configured 1 MiB request limit",
+                        },
+                    )
+                ),
+                _FakeSseResponse(_ok_stream_events("resp_after_trim")),
+            ]
+        )
+
+        response = await self._post_responses_with_input(upstream_client, history)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn("resp_after_trim", response.text)
+        self.assertNotIn("resp_too_many_bytes", response.text)
+        sent = [call for call in upstream_client.calls if "url" in call]
+        self.assertEqual([call["url"] for call in sent], ["https://primary-channel.example/v1/responses"] * 2)
+        self.assertEqual(self._sent_inline_images(sent[1]), self._sent_inline_images(sent[0])[-1:])
+
+    async def test_responses_stream_passes_image_budget_error_through_when_newest_image_is_too_big(self) -> None:
+        self._configure_responses_stream_channels("primary", "backup")
+        history = self._screenshot_history(2, decoded_kib=1200)
+        upstream_client = _RecordingStreamClient(
+            [
+                _FakeSseResponse(
+                    _failed_stream_events(
+                        "resp_too_many_bytes",
+                        {
+                            "type": "invalid_request_error",
+                            "code": "basispoints_request_invalid",
+                            "message": "image relay inline images exceed the configured 1 MiB request limit",
+                        },
+                    )
+                ),
+            ]
+        )
+
+        response = await self._post_responses_with_input(upstream_client, history)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn("exceed the configured 1 MiB request limit", response.text)
+        self.assertEqual(len([call for call in upstream_client.calls if "url" in call]), 1)
+
+    async def test_responses_trims_old_inline_images_when_channel_rejects_their_size(self) -> None:
+        self._configure_responses_stream_channels("primary", "backup")
+        history = self._screenshot_history(3, decoded_kib=600)
+        upstream_client = _RecordingClient(
+            [
+                _FakeUpstreamResponse(
+                    {"error": {"message": "image relay inline images exceed the configured 1 MiB request limit"}},
+                    status_code=400,
+                ),
+                _FakeUpstreamResponse(
+                    {
+                        "id": "resp_after_trim",
+                        "output": [{"type": "message", "content": [{"type": "output_text", "text": "OK"}]}],
+                        "usage": {"input_tokens": 3, "output_tokens": 1, "total_tokens": 4},
+                    }
+                ),
+            ]
+        )
+
+        response = await self._post_responses_with_input(upstream_client, history, stream=False)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["id"], "resp_after_trim")
+        self.assertEqual([call["url"] for call in upstream_client.calls], ["https://primary-channel.example/v1/responses"] * 2)
+        self.assertEqual(len(self._sent_inline_images(upstream_client.calls[1])), 1)
 
     async def test_chat_stream_falls_back_to_next_channel_on_rate_limit(self) -> None:
         self._configure_responses_stream_channels("primary", "backup", endpoint="chat/completions")
