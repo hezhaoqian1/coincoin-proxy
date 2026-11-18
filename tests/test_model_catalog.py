@@ -757,6 +757,68 @@ class ModelCatalogTests(unittest.TestCase):
                 self.assertAlmostEqual(cost, official_cost)
                 self.assertEqual(prices["tier"], "long_context" if is_long else "standard")
 
+    def test_checked_in_gpt_6_2_astra_and_sol_use_exact_models_and_official_prices(self) -> None:
+        from app.usage_buffer import calculate_token_cost
+
+        settings.model_catalog_json = ""
+        registry._initialized = False
+        registry.init_from_settings()
+
+        # Official Standard per million tokens: input, output, cached input, 30-minute cache write.
+        expected = {
+            "gpt-6.2-astra": (800, 4000, 40.0, 1000.0),
+            "gpt-6.2-sol": (200, 1000, 10.0, 250.0),
+        }
+        for model_id, (input_price, output_price, cached_price, write_price) in expected.items():
+            for endpoint in ("chat/completions", "responses"):
+                with self.subTest(model=model_id, endpoint=endpoint):
+                    resolved = registry.resolve_public_model(
+                        model_id, endpoint,
+                        messages=[{"role": "user", "content": "hello"}],
+                        tools=[{"type": "function", "function": {"name": "read_file"}}],
+                    )
+                    model = resolved.public_model
+                    self.assertEqual(model.provider_model, model_id)
+                    self.assertEqual(resolved.backend.model_id, model_id)
+                    self.assertEqual(model.routing_mode, "legacy_auto")
+                    self.assertEqual(model.delivery_lane, "legacy")
+                    self.assertEqual(model.billable_sku, f"legacy-{model_id}-text")
+                    self.assertEqual(model.price_input_per_million, input_price)
+                    self.assertEqual(model.price_output_per_million, output_price)
+                    self.assertEqual(model.model_multiplier, 1.0)
+                    self.assertEqual(model.cache_read_multiplier, 0.05)
+                    self.assertEqual(model.cache_creation_multiplier, 1.25)
+                    self.assertEqual(model.effective_cached_input_per_million, cached_price)
+                    self.assertEqual(model.effective_cache_creation_input_per_million, write_price)
+                    self.assertEqual(model.metadata["context_length"], 1_050_000)
+                    self.assertEqual(model.metadata["max_completion_tokens"], 128_000)
+                    self.assertEqual(model.metadata["thinking"]["default"], "medium")
+                    self.assertEqual(
+                        model.metadata["thinking"]["levels"],
+                        ["low", "medium", "high", "xhigh", "max"],
+                    )
+
+            model = registry.get_public_model(model_id)
+            for input_tokens in (272_000, 272_001):
+                with self.subTest(model=model_id, input_tokens=input_tokens):
+                    cost, prices = calculate_token_cost(
+                        input_tokens, 10_000, cached_tokens=100_000, cache_creation_tokens=50_000,
+                        price_input_per_million=model.price_input_per_million,
+                        price_output_per_million=model.price_output_per_million,
+                        cached_price_input_per_million=model.effective_cached_input_per_million,
+                        cache_creation_price_input_per_million=model.effective_cache_creation_input_per_million,
+                        context_pricing_tiers=model.context_pricing_tiers,
+                    )
+                    is_long = input_tokens > 272_000
+                    input_factor, output_factor = (2, 1.5) if is_long else (1, 1)
+                    official_cost = (
+                        ((input_tokens - 150_000) * input_price + 100_000 * cached_price + 50_000 * write_price)
+                        * input_factor
+                        + 10_000 * output_price * output_factor
+                    ) / 1_000_000
+                    self.assertAlmostEqual(cost, official_cost)
+                    self.assertEqual(prices["tier"], "long_context" if is_long else "standard")
+
     def test_checked_in_claude_sonnet_5_5_uses_native_route_and_fourfold_pricing(self) -> None:
         settings.model_catalog_json = ""
         registry._initialized = False

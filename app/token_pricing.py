@@ -18,6 +18,7 @@ class ContextPricingTier:
 GPT_LONG_CONTEXT_MODELS = frozenset({
     "gpt-5.5", "gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
     "gpt-6", "gpt-6-astra", "gpt-6-sol", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-luna",
+    "gpt-6.2-astra", "gpt-6.2-sol",
 })
 
 
@@ -29,7 +30,7 @@ def default_gpt_pricing(model_id: str) -> dict[str, Any]:
     }
     if model_id != "gpt-5.5":
         pricing["cache_creation_multiplier"] = 1.25
-    if model_id in {"gpt-6.1-sol", "gpt-6.1-terra"}:
+    if model_id in {"gpt-6.1-sol", "gpt-6.1-terra", "gpt-6.2-astra", "gpt-6.2-sol"}:
         pricing["cache_read_multiplier"] = 0.05
     return pricing
 
