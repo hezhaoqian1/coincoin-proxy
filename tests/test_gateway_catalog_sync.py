@@ -66,6 +66,8 @@ OFFICIAL_DEFAULT_TEXT_PRICES = {
     "gpt-6-luna": (10, 50),
     "gpt-6.1-sol": (200, 1000),
     "gpt-6.1-terra": (100, 500),
+    "gpt-6.2-astra": (800, 4000),
+    "gpt-6.2-sol": (200, 1000),
     "deepseek-v4-pro": (44, 87),
     "deepseek-v4-flash": (14, 28),
     "claude-fable-5-2": CLAUDE_FABLE_52_PRICE,
