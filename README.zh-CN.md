@@ -215,6 +215,7 @@ uvicorn app.main:app --reload --port 8000
 - embedding 请求不再复用旧 GPT / CPA lane；`/v1/embeddings` 默认和显式 `text-embedding-3-small` 都直连 Azure
 - Gemini 文本能力是增量暴露；显式传入 Gemini 文本 alias 时，会路由到 native Gemini CPA lane
 - DeepSeek 文本 alias `deepseek-v4-pro`、`deepseek-v4-flash` 是 route-only 公共模型，coding 流量 canonical preference 为上游 Responses；部署后需要在后台同时绑定 `responses` 和 `chat/completions` route 到 New API / OpenAI-compatible provider channel，Chat 接口仍由本地 Responses 兼容桥支持
+- Gemini 4 / 3.8 文本模型 `gemini-4-neon`、`gemini-4-hydrogen`、`gemini-4-carbon`、`gemini-4-argon`、`gemini-3.8-flash` 是 route-only 公共模型，走 kedaya OpenAI-compatible 渠道；零售价统一为 **上游参考价的 3 倍**，例如 `gemini-4-neon` 输入／输出 **$9／$45** 每百万 tokens。价格表、渠道 ID 和协议测试见 [Gemini 模型定价](./docs/reference/gemini-pricing.md)。
 - 图片请求如果省略 `model`，默认走 `gpt-image-2` 的 OpenAI/Azure 图片直连 lane；需要 2.5 时显式传 `model=gpt-image-2.5`，2.5 默认按 **$0.80/张** 的独立上游配置计费
 - Gemini 图片 alias 保留为显式模型；传入 `model=gemini-image` 时，会路由到 native Gemini CPA lane，并在 CoinCoin 内转换成 OpenAI-compatible 图片响应
 - 图片模型支持 `/v1/images/generations` 与 `/v1/images/edits`，不会伪装成文本模型

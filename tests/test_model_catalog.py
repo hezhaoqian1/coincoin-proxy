@@ -995,6 +995,44 @@ class ModelCatalogTests(unittest.TestCase):
         with self.assertRaises(ModelCapabilityError):
             registry.resolve_public_model("grok-build", "responses")
 
+    def test_checked_in_kedaya_gemini_models_are_route_only_at_three_times_price(self) -> None:
+        settings.model_catalog_json = ""
+        registry._initialized = False
+        registry.init_from_settings()
+
+        # base input/output cents per 1M (kedaya reference_pricing), cache-read multiplier
+        expected = {
+            "gemini-4-neon": (300, 1500, 0.05),
+            "gemini-4-hydrogen": (150, 750, 0.05),
+            "gemini-4-carbon": (200, 1000, 0.05),
+            "gemini-4-argon": (400, 2000, 0.05),
+            "gemini-3.8-flash": (75, 375, 0.1),
+        }
+        for model_id, (base_in, base_out, cache_mult) in expected.items():
+            with self.subTest(model=model_id):
+                model = registry.get_public_model(model_id)
+                self.assertIsNotNone(model)
+                self.assertEqual(model.owned_by, "google")
+                self.assertEqual(model.provider_model, model_id)
+                self.assertEqual(model.upstream_model, model_id)
+                self.assertEqual(model.routing_mode, "route_only")
+                self.assertEqual(model.delivery_lane, "route_only")
+                self.assertEqual(model.capabilities, ("chat/completions", "responses"))
+                self.assertEqual(model.billable_sku, f"{model_id}-text")
+                self.assertEqual(model.model_multiplier, 3.0)
+                self.assertEqual(model.base_price_input_per_million, base_in)
+                self.assertEqual(model.base_price_output_per_million, base_out)
+                self.assertEqual(model.price_input_per_million, base_in * 3)
+                self.assertEqual(model.price_output_per_million, base_out * 3)
+                self.assertEqual(model.cache_read_multiplier, cache_mult)
+                self.assertAlmostEqual(model.effective_cached_input_per_million, base_in * 3 * cache_mult)
+                self.assertEqual(model.metadata["context_length"], 1048576)
+
+                # No silent fallback to another backend when no channel route exists.
+                for endpoint in ("chat/completions", "responses"):
+                    with self.assertRaises(ModelCapabilityError):
+                        registry.resolve_public_model(model_id, endpoint)
+
     def test_checked_in_deepseek_models_are_route_only_for_newapi_channel(self) -> None:
         settings.model_catalog_json = ""
         registry._initialized = False
