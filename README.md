@@ -286,6 +286,7 @@ Routing rules:
 - Image generation defaults to `gpt-image-2` unless the request selects a different public image alias.
 - Gemini text aliases route through the native Gemini CPA lane.
 - DeepSeek public aliases such as `deepseek-v4-pro` and `deepseek-v4-flash` are route-only and prefer the upstream Responses API for coding traffic. Operators must attach both `responses` and `chat/completions` routes to a New API/OpenAI-compatible provider channel before customer traffic can use them; the Chat endpoint remains compatible through the local Responses bridge.
+- Gemini 4 / 3.8 text aliases (`gemini-4-neon`, `gemini-4-hydrogen`, `gemini-4-carbon`, `gemini-4-argon`, `gemini-3.8-flash`) are route-only and served by the kedaya OpenAI-compatible channel. They retail at **3x the upstream reference price**; see [Gemini pricing](./docs/reference/gemini-pricing.md).
 - `gemini-image` routes through CoinCoin's OpenAI-compatible image adapter.
 - Embeddings use `text-embedding-3-small` and do not share the old GPT/CPA lane.
 - Admin-created provider channel routes can override catalog defaults for specific public models and endpoints.

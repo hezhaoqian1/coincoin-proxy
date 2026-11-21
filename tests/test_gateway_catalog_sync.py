@@ -104,6 +104,11 @@ OFFICIAL_DEFAULT_TEXT_PRICES = {
     "vertex-gemini-3.1-flash-lite-preview": (10, 40),
     "vertex-gemini-3-flash-preview": (50, 300),
     "vertex-gemini-3.1-pro-preview": (125, 1000),
+    "gemini-4-neon": (300, 1500),
+    "gemini-4-hydrogen": (150, 750),
+    "gemini-4-carbon": (200, 1000),
+    "gemini-4-argon": (400, 2000),
+    "gemini-3.8-flash": (75, 375),
 }
 OFFICIAL_DEFAULT_IMAGE_PRICES = {
     "${COINCOIN_IMAGE_MODEL:-gpt-image-2}": 5.3,
